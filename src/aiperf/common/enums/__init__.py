@@ -40,6 +40,7 @@ from aiperf.common.enums.enums import (
     SSEFieldType,
     SystemState,
     VideoFormat,
+    VideoJobStatus,
     VideoSynthType,
     WorkerStatus,
 )
@@ -92,8 +93,8 @@ __all__ = [
     "FrequencyMetricUnitInfo",
     "GPUTelemetryMode",
     "GenericMetricUnit",
-    "ImageFormat",
     "IPVersion",
+    "ImageFormat",
     "LifecycleState",
     "MediaType",
     "MessageType",
@@ -126,6 +127,7 @@ __all__ = [
     "TemperatureMetricUnit",
     "TemperatureMetricUnitInfo",
     "VideoFormat",
+    "VideoJobStatus",
     "VideoSynthType",
     "WorkerStatus",
 ]
