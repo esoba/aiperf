@@ -106,12 +106,7 @@ tree.add_path([1, 5, 6])
 
 # Get statistics
 stats = tree.get_stats()
-# {
-#   'num_nodes': 7,
-#   'num_leaves': 3,
-#   'total_visits': 3,
-#   'max_depth': 3
-# }
+# RadixTreeStats(num_nodes=7, num_leaves=3, total_visits=3, max_depth=3)
 ```
 
 ---
@@ -353,6 +348,7 @@ Parameters for synthetic trace generation.
 - `prompt_len_multiplier: float = 1.0` - Leaf prompt length multiplier (ge 0.0)
 - `max_isl: int | None = None` - Maximum input sequence length filter
 - `block_size: int = 512` - KV cache page size (ge 1)
+- `renormalize_hash_ids: bool = False` - Whether to apply rolling hash renormalization to output hash_ids (typically leave False)
 
 **Class Methods:**
 - `from_synthesis_config(config: SynthesisConfig, block_size: int = 512) -> SynthesisParams` - Create from SynthesisConfig

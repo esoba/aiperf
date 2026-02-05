@@ -162,7 +162,7 @@ aiperf profile \
     --request-rate 100 \
     --arrival-pattern constant \
     --benchmark-duration 60 \
-    --output-dir results/constant
+    --artifact-dir results/constant
 
 **Expected Output (Run 1):**
 ```
@@ -197,7 +197,7 @@ aiperf profile \
     --request-rate 100 \
     --arrival-pattern poisson \
     --benchmark-duration 60 \
-    --output-dir results/poisson
+    --artifact-dir results/poisson
 ```
 
 **Expected Output (Run 2):**
@@ -325,7 +325,7 @@ for smoothness in 2.0 1.0 0.7 0.5 0.3; do
         --arrival-pattern gamma \
         --arrival-smoothness $smoothness \
         --benchmark-duration 60 \
-        --output-dir results/smoothness_$smoothness
+        --artifact-dir results/smoothness_$smoothness
 done
 ```
 
@@ -351,7 +351,7 @@ aiperf profile \
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--arrival-pattern` | str | `poisson` | Pattern for request arrivals: `constant`, `poisson`, `gamma` |
+| `--arrival-pattern` | str | `poisson` | Pattern for request arrivals: `constant`, `poisson`, `gamma`, `concurrency_burst` |
 | `--arrival-smoothness` | float | None | Gamma smoothness: `<1` = bursty, `1` = Poisson, `>1` = smooth. Defaults to `1.0` when using `gamma` pattern. |
 | `--warmup-arrival-pattern` | str | Inherits | Override pattern for warmup phase |
 

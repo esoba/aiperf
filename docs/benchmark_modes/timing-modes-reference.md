@@ -104,7 +104,7 @@ When multiple options are specified, AIPerf uses this priority:
 
 | Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
 |--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--request-cancellation-rate` | ✅ | ✅ | ✅ | Percentage (0-100) |
+| `--request-cancellation-rate` | ✅ | ✅ | ✅ | Percentage (>0 to 100) |
 | `--request-cancellation-delay` | ⚠️ | ⚠️ | ⚠️ | Requires `--request-cancellation-rate`; **raises error** otherwise |
 
 ### Dataset Options
@@ -135,7 +135,7 @@ Warmup options work **independently of the main benchmark configuration**. The w
 | `--warmup-prefill-concurrency` | ⚠️ | Requires `--streaming` |
 | `--warmup-request-rate` | ✅ | Falls back to `--request-rate` |
 | `--warmup-arrival-pattern` | ✅ | Falls back to `--arrival-pattern` |
-| `--warmup-grace-period` | ⚠️ | Requires warmup to be enabled; default: ∞ |
+| `--warmup-grace-period` | ⚠️ | Requires `--warmup-duration`; default: ∞ |
 | `--warmup-concurrency-ramp-duration` | ✅ | Falls back to `--concurrency-ramp-duration` |
 | `--warmup-prefill-concurrency-ramp-duration` | ⚠️ | Requires `--streaming` |
 | `--warmup-request-rate-ramp-duration` | ✅ | Falls back to `--request-rate-ramp-duration` |
@@ -231,7 +231,7 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 | `--user-centric-rate requires --num-users to be set` | Missing required option | Add `--num-users` |
 | `--user-centric-rate requires multi-turn conversations (--session-turns-mean >= 2)` | Single-turn with `--user-centric-rate` | Use `--request-rate` for single-turn or increase `--session-turns-mean` |
 | `--benchmark-grace-period can only be used with duration-based benchmarking` | Grace period without duration | Add `--benchmark-duration` |
-| `--warmup-grace-period can only be used when warmup is enabled` | Warmup grace without warmup | Add `--warmup-request-count`, `--warmup-duration`, or `--num-warmup-sessions` |
+| `--warmup-grace-period can only be used when --warmup-duration is set` | Warmup grace without warmup duration | Add `--warmup-duration` |
 | `--prefill-concurrency requires --streaming to be enabled` | Prefill without streaming | Add `--streaming` |
 | `--arrival-smoothness can only be used with --arrival-pattern gamma` | Wrong arrival pattern | Change to `--arrival-pattern gamma` |
 | `Dataset sampling strategy is not compatible with fixed schedule mode` | Sampling with `--fixed-schedule` | Remove `--dataset-sampling-strategy` |
@@ -240,8 +240,7 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 | `--num-users can only be used with --user-centric-rate` | `--num-users` without `--user-centric-rate` | Add `--user-centric-rate` or remove `--num-users` |
 | `--request-cancellation-delay can only be used with --request-cancellation-rate` | Delay without cancellation rate | Add `--request-cancellation-rate` or remove `--request-cancellation-delay` |
 | `--fixed-schedule-* can only be used with --fixed-schedule` | Fixed schedule options without `--fixed-schedule` | Add `--fixed-schedule` or remove the offset options |
-| `--request-rate-ramp-duration cannot be used with --user-centric-rate` | Rate ramping with `--user-centric-rate` | Remove `--request-rate-ramp-duration` |
-| `--request-rate-ramp-duration cannot be used with --fixed-schedule` | Rate ramping with `--fixed-schedule` | Remove `--request-rate-ramp-duration` |
+| `--request-rate-ramp-duration can only be used with --request-rate scheduling` | Rate ramping without `--request-rate` mode | Use `--request-rate` or remove `--request-rate-ramp-duration` |
 
 ---
 
@@ -305,7 +304,7 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `--request-cancellation-rate` | float | None | Percentage of requests to cancel (0-100) |
+| `--request-cancellation-rate` | float | None | Percentage of requests to cancel (>0 to 100) |
 | `--request-cancellation-delay` | float | 0.0 | Seconds to wait before cancelling (requires `--request-cancellation-rate`) |
 
 ### Warmup Options

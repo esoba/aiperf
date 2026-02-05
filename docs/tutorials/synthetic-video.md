@@ -61,7 +61,7 @@ aiperf profile \
     --request-count 20
 ```
 
-**Note:** Video generation is disabled by default (width=0, height=0). You must specify non-zero width and height to enable video generation.
+**Note:** Video generation is disabled by default (width and height are not set). You must specify both `--video-width` and `--video-height` to enable video generation.
 
 **Sample Output (Successful Run):**
 ```

@@ -19,9 +19,9 @@ flowchart TD
     B3 --> C3["RECORD: RequestLatencyMetric<br/>parse_record() → 203ms<br/><em>(Individual&nbsp;value&nbsp;per&nbsp;request)</em>"]
 
     %% AGGREGATE Metric Path
-    B1 --> D1["AGGREGATE: TotalRequestsMetric<br/>parse_record() → +1<br/><em>(Individual&nbsp;contribution)</em>"]
-    B2 --> D2["AGGREGATE: TotalRequestsMetric<br/>parse_record() → +1<br/><em>(Individual&nbsp;contribution)</em>"]
-    B3 --> D3["AGGREGATE: TotalRequestsMetric<br/>parse_record() → +1<br/><em>(Individual&nbsp;contribution)</em>"]
+    B1 --> D1["AGGREGATE: RequestCountMetric<br/>parse_record() → +1<br/><em>(Individual&nbsp;contribution)</em>"]
+    B2 --> D2["AGGREGATE: RequestCountMetric<br/>parse_record() → +1<br/><em>(Individual&nbsp;contribution)</em>"]
+    B3 --> D3["AGGREGATE: RequestCountMetric<br/>parse_record() → +1<br/><em>(Individual&nbsp;contribution)</em>"]
 
     %% MetricRecordDict Collection
     C1 --> E1["MetricRecordDict<br/><em>(Per-record&nbsp;results)</em>"]
@@ -53,7 +53,7 @@ flowchart TD
 
     I2 --> J2["AGGREGATE Results<br/>final_value=3<br/>count=1<br/><em>(Single&nbsp;accumulated&nbsp;total)</em>"]
 
-    I2 --> J3["DERIVED: ThroughputMetric<br/>derive_value(results)<br/>= total_requests / duration<br/>= 3 / 5.2s = 0.58 req/s<br/><em>(Computed&nbsp;from&nbsp;other&nbsp;metrics)</em>"]
+    I2 --> J3["DERIVED: RequestThroughputMetric<br/>derive_value(results)<br/>= total_requests / duration<br/>= 3 / 5.2s = 0.58 req/s<br/><em>(Computed&nbsp;from&nbsp;other&nbsp;metrics)</em>"]
 
     %% Final Output
     J1 --> K["MetricResult List<br/><em>Complete&nbsp;performance&nbsp;analysis</em>"]

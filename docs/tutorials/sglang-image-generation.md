@@ -204,7 +204,7 @@ with open(input_file, 'r') as f:
                 if b64_image := item.get('b64_json'):
                     # Decode and save image
                     image_data = base64.b64decode(b64_image)
-                    filename = output_dir / f"image_{line_num:04d}_{data_idx:02d}.jpg"
+                    filename = output_dir / f"image_{line_num:04d}_{data_idx:02d}_00.jpg"
 
                     with open(filename, 'wb') as img_file:
                         img_file.write(image_data)
@@ -223,9 +223,9 @@ python extract_images.py
 ```
 **Output:**
 ```
-Extracted: /path/to/extracted_images/image_0001_00.jpg
-Extracted: /path/to/extracted_images/image_0001_01.jpg
-Extracted: /path/to/extracted_images/image_0001_02.jpg
+Extracted: /path/to/extracted_images/image_0001_00_00.jpg
+Extracted: /path/to/extracted_images/image_0002_00_00.jpg
+Extracted: /path/to/extracted_images/image_0003_00_00.jpg
 ```
 
 **View the generated images:**

@@ -338,12 +338,13 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | Name | Class | Description |
 |------|-------|-------------|
 | `chat` | `ChatEndpoint` | OpenAI Chat Completions API |
+| `chat_embeddings` | `ChatEmbeddingsEndpoint` | Chat-style embeddings for vLLM multimodal models |
+| `cohere_rankings` | `CohereRankingsEndpoint` | Cohere Reranking API |
 | `completions` | `CompletionsEndpoint` | OpenAI Completions API |
 | `embeddings` | `EmbeddingsEndpoint` | OpenAI Embeddings API |
-| `image_generation` | `ImageGenerationEndpoint` | OpenAI Image Generation API |
-| `huggingface_generate` | `HuggingFaceGenerateEndpoint` | HuggingFace TGI |
-| `cohere_rankings` | `CohereRankingsEndpoint` | Cohere Reranking API |
 | `hf_tei_rankings` | `HFTeiRankingsEndpoint` | HuggingFace TEI Rankings |
+| `huggingface_generate` | `HuggingFaceGenerateEndpoint` | HuggingFace TGI |
+| `image_generation` | `ImageGenerationEndpoint` | OpenAI Image Generation API |
 | `nim_embeddings` | `NIMEmbeddingsEndpoint` | NVIDIA NIM Embeddings |
 | `nim_rankings` | `NIMRankingsEndpoint` | NVIDIA NIM Rankings |
 | `solido_rag` | `SolidoEndpoint` | Solido RAG Pipeline |
@@ -370,9 +371,18 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 
 | Name | Class | Description |
 |------|-------|-------------|
-| `synthetic` | `SyntheticDatasetComposer` | Generate synthetic conversations |
 | `custom` | `CustomDatasetComposer` | Load from JSONL files |
+| `synthetic` | `SyntheticDatasetComposer` | Generate synthetic conversations |
 | `synthetic_rankings` | `SyntheticRankingsDatasetComposer` | Generate ranking tasks |
+
+### Custom Dataset Loaders
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `mooncake_trace` | `MooncakeTraceDatasetLoader` | Alibaba Mooncake trace format loader |
+| `multi_turn` | `MultiTurnDatasetLoader` | Multi-turn conversation sessions |
+| `random_pool` | `RandomPoolDatasetLoader` | Random sampling from message pools |
+| `single_turn` | `SingleTurnDatasetLoader` | Single-turn with multi-modal support |
 
 ### UI Types
 

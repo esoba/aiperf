@@ -231,7 +231,7 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 ```
 
 **Notes:**
-- Requires at least 2 non-empty response chunks and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
+- Requires `output_sequence_length` of at least 2 and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
 - Result is in seconds when used for throughput calculations (Output Token Throughput Per User).
 
 ---
@@ -805,7 +805,7 @@ Measures the total end-to-end time from sending a request until receiving the fi
 
 **Formula:**
 ```python
-request_latency_ns = request.content_responses[-1].perf_ns - request.start_perf_ns
+request_latency_ns = record.content_responses[-1].perf_ns - record.start_perf_ns
 ```
 
 **Notes:**
@@ -881,7 +881,11 @@ The wall-clock timestamp of the last response received in the benchmark. This is
 
 **Formula:**
 ```python
-max_response_timestamp = max(r.timestamp_ns + r.request_latency for r in records)
+# For each record:
+final_response_ts = record.timestamp_ns + request_latency
+
+# Aggregate:
+max_response_timestamp = max(final_response_ts for all records)
 ```
 
 ---

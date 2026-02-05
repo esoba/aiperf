@@ -40,31 +40,20 @@ aiperf analyze-trace traces/production.jsonl \
 Output example:
 ```
 Trace Analysis Report
-============================================================
-Total requests:        10,000
-Unique prefixes:       2,543
-Prefix groups:         156
-Cache hit rate:        68.5%
-Prefix reuse ratio:    45.2%
+Total requests:   10,000
+Unique prefixes:  2,543
+Prefix groups:    156
 
-ISL (Input Sequence Length):
-  Min:     512
-  P25:     1,024
-  Median:  1,920
-  P75:     2,816
-  Max:     4,096
-  Mean:    1,920.3
-  Std Dev: 856.2
-
-OSL (Output Sequence Length):
-  Min:     64
-  P25:     96
-  Median:  144
-  P75:     208
-  Max:     512
-  Mean:    156.8
-  Std Dev: 72.4
-============================================================
+                             Trace Statistics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃                  Metric ┃     Mean ┃ Std Dev ┃    Min ┃      P25 ┃   Median ┃      P75 ┃      Max ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│            Input Length │ 1,920.30 │  856.20 │ 512.00 │ 1,024.00 │ 1,920.00 │ 2,816.00 │ 4,096.00 │
+│          Context Length │ 1,536.00 │  720.00 │   0.00 │   512.00 │ 1,536.00 │ 2,048.00 │ 3,584.00 │
+│    Unique Prompt Length │   384.30 │  256.20 │  32.00 │   256.00 │   384.00 │   512.00 │ 1,024.00 │
+│           Output Length │   156.80 │   72.40 │  64.00 │    96.00 │   144.00 │   208.00 │   512.00 │
+│  Theoretical Hit Rates  │     0.69 │    0.28 │   0.00 │     0.50 │     0.75 │     0.92 │     1.00 │
+└─────────────────────────┴──────────┴─────────┴────────┴──────────┴──────────┴──────────┴──────────┘
 ```
 
 ### Understanding the Statistics
@@ -73,22 +62,25 @@ OSL (Output Sequence Length):
 - **Total requests**: Number of individual requests in the trace
 - **Unique prefixes**: How many distinct prefix patterns were observed
 - **Prefix groups**: Number of distinct shared first blocks (first blocks appearing in 2+ sequences)
-- **Cache hit rate**: Percentage of tokens that could be reused (assuming infinite cache)
-- **Prefix reuse ratio**: How many prefixes appear more than once
 
-**Percentile statistics** (computed for ISL, OSL, context length, unique prompt length, and hit rate):
+**Table metrics:**
+- **Input Length**: Input sequence length distribution (ISL)
+- **Context Length**: Length of shared prefix portions that could be cached
+- **Unique Prompt Length**: Length of unique (non-shared) prompt portions
+- **Output Length**: Output sequence length distribution (OSL)
+- **Theoretical Hit Rates**: Per-request cache hit rates assuming infinite cache (0.0-1.0)
+
+**Statistics columns** (computed for each metric):
 
 | Statistic | Description |
 |-----------|-------------|
-| `min` | Minimum value |
-| `p25` | 25th percentile (Q1) |
-| `median` | 50th percentile (P50) |
-| `p75` | 75th percentile (Q3) |
-| `max` | Maximum value |
-| `mean` | Arithmetic mean |
-| `std_dev` | Standard deviation (population) |
-
-Percentiles are calculated using linear interpolation: for percentile `p` with `n` sorted values, compute index `k = (n - 1) * p`, then interpolate between `values[floor(k)]` and `values[ceil(k)]`.
+| `Mean` | Arithmetic mean |
+| `Std Dev` | Standard deviation (population) |
+| `Min` | Minimum value |
+| `P25` | 25th percentile (Q1) |
+| `Median` | 50th percentile (P50) |
+| `P75` | 75th percentile (Q3) |
+| `Max` | Maximum value |
 
 These metrics help you understand how much prefix caching could benefit your workload.
 
@@ -305,13 +297,14 @@ The mooncake trace format is JSONL (JSON Lines), where each line is a JSON objec
 }
 ```
 
-**Required fields:**
-- `input_length`: Number of input tokens
+**Required fields (one of):**
+- `input_length`: Number of input tokens (for synthetic prompt generation)
+- `text_input`: The actual text input for the request (mutually exclusive with `input_length`)
 
 **Optional fields:**
 - `output_length`: Expected output tokens
 - `timestamp`: Absolute timestamp in milliseconds (for fixed schedules)
-- `hash_ids`: List of hash IDs representing prefix blocks
+- `hash_ids`: List of hash IDs representing prefix blocks (only valid with `input_length`)
 - `session_id`: Conversation/session identifier for multi-turn
 - `delay`: Milliseconds to wait before sending (for multi-turn)
 

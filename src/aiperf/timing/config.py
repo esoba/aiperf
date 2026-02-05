@@ -165,7 +165,7 @@ class CreditPhaseConfig(AIPerfBaseModel):
     request_rate_ramp_duration_sec: float | None = Field(
         default=None,
         gt=0,
-        description="Duration in seconds to ramp request rate from 1 QPS to target. "
+        description="Duration in seconds to ramp request rate from a proportional minimum to target. "
         "If None, request rate starts at target immediately.",
     )
     auto_offset_timestamps: bool = Field(

@@ -235,7 +235,7 @@ aiperf profile \
     --conversation-num 30 \
     --conversation-turn-mean 4 \
     --request-rate 5 \
-    --request-rate-mode poisson \
+    --arrival-pattern poisson \
     --synthetic-input-tokens-mean 200 \
     --output-tokens-mean 150 \
     --random-seed 42

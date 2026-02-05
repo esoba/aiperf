@@ -11,7 +11,7 @@ The template endpoint provides a flexible way to benchmark custom APIs that don'
 
 Use the template endpoint when:
 - Your API has a custom request/response format
-- Standard endpoints (chat, completions, embeddings, rankings) don't fit your use case
+- Standard endpoints (chat, completions, embeddings, nim_rankings, etc.) don't fit your use case
 
 ## Basic Example
 

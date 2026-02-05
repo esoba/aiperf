@@ -132,7 +132,7 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency8/profile_export_aiperf.j
 ```
 
 **Parameters Explained:**
-- `--request-cancellation-rate 10`: Cancel 10% of requests (value between 0.0 and 100.0)
+- `--request-cancellation-rate 10`: Cancel 10% of requests (value between 0 and 100, exclusive of 0)
 - `--request-cancellation-delay 0.5`: Wait .5 seconds before cancelling selected requests
 
 ### High Cancellation Rate Testing

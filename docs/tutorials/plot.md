@@ -22,22 +22,26 @@ The `aiperf plot` command automatically detects whether to generate multi-run co
 ```bash
 # Analyze a single profiling run
 aiperf plot <single_run_name>
+```
 
 **Sample Output (Successful Run):**
 ```
 INFO     Loading single-run data from: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
 INFO     Detected mode: SINGLE_RUN
-INFO     Generating 4 time series plots
+INFO     Generating 5 time series plots
 INFO     Creating plot: ttft_over_time.png
-INFO     Creating plot: itl_over_time.png
-INFO     Creating plot: latency_over_time.png
-INFO     Creating plot: dispersed_throughput_over_time.png
-INFO     Successfully generated 4 plots
+INFO     Creating plot: ttft_timeline.png
+INFO     Creating plot: timeslices_ttft.png
+INFO     Creating plot: timeslices_itl.png
+INFO     Creating plot: gpu_utilization_and_throughput_over_time.png
+INFO     Successfully generated 5 plots
 INFO     Plots saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/plots/
 ```
 
+```bash
 # Compare multiple runs in a directory
 aiperf plot <run_directory>
+```
 
 **Sample Output (Successful Run):**
 ```
@@ -52,6 +56,7 @@ INFO     Successfully generated 3 plots
 INFO     Plots saved to: artifacts/sweep_qwen/plots/
 ```
 
+```bash
 # Compare all runs across multiple directories
 aiperf plot <dir1> <dir2> <dir3>
 
@@ -63,6 +68,7 @@ aiperf plot <path> --output <output_directory>
 
 # Launch interactive dashboard for exploration
 aiperf plot <path> --dashboard
+```
 
 **Sample Output (Successful Run):**
 ```
@@ -76,8 +82,10 @@ INFO     Dashboard ready at http://localhost:8050/
 INFO     Press Ctrl+C to quit
 ```
 
+```bash
 # Use dark theme
 aiperf plot <path> --theme dark
+```
 
 **Sample Output (Successful Run):**
 ```
@@ -88,7 +96,6 @@ INFO     Found 3 runs to compare
 INFO     Generating 3 comparison plots
 INFO     Successfully generated 3 plots
 INFO     Plots saved to: artifacts/sweep_qwen/plots/
-```
 ```
 
 **Output directory logic:**
@@ -153,15 +160,18 @@ artifacts/single_run/
 └── profile_export.jsonl
 ```
 
-**Default plots (4+):**
+**Default plots (5):**
 1. **TTFT Over Time** - Time to first token per request
-2. **Inter-Token Latency Over Time** - ITL per request
-3. **Request Latency Over Time** - End-to-end latency progression
-4. **Dispersed Throughput Over Time** - Continuous token generation rate
+2. **TTFT Timeline** - Gantt-style view showing TTFT phases per request
+3. **TTFT Across Timeslices** - Average TTFT per time window
+4. **ITL Across Timeslices** - Average inter-token latency per time window
+5. **GPU Utilization and Throughput Over Time** - Token throughput overlaid with GPU utilization
 
-**Additional plots (when data available):**
-- Timeslice plots (when `--slice-duration` used during profiling)
-- GPU telemetry plots (when `--gpu-telemetry` used during profiling)
+**Additional plots available (commented out by default in config):**
+- Inter-Token Latency Over Time
+- Request Latency Over Time
+- Dispersed Throughput Over Time
+- Timeslice throughput/latency plots
 
 #### Example Visualizations
 
@@ -215,8 +225,10 @@ visualization:
 visualization:
   single_run_defaults:
     - ttft_over_time
-    - itl_over_time
-    - dispersed_throughput_over_time
+    - ttft_timeline
+    - timeslices_ttft
+    - timeslices_itl
+    - gpu_utilization_and_throughput_over_time
     # ... add or remove plots
 ```
 

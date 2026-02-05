@@ -108,7 +108,7 @@ Timeslice,Metric,Unit,Stat,Value
 - **Timeslice**: Zero-indexed slice number (0, 1, 2, ...)
 - **Metric**: Human-readable metric name (e.g., "Time to First Token")
 - **Unit**: Measurement unit (ms, tokens/sec, etc.)
-- **Stat**: Statistical measure (avg, min, max, p50, p90, p95, p99)
+- **Stat**: Statistical measure (avg, min, max, p50, p90, p95, p99, std)
 - **Value**: Numeric value formatted to 2 decimal places
 
 ### JSON Timeslice Export

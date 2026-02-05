@@ -13,10 +13,12 @@ flowchart TD
     C --> E["AIPerfLifecycleMixin<br/><em>Component lifecycle state management</em>"]
     D --> E
 
-    E --> F["MessageBusClientMixin<br/><em>Message bus communication capabilities</em>"]
+    E --> F0["CommunicationMixin<br/><em>Communication layer access</em>"]
+    F0 --> F["MessageBusClientMixin<br/><em>Message bus communication capabilities</em>"]
 
     %% Service Base Classes
-    F --> G["BaseService<br/><em>Foundation for AIPerf services</em>"]
+    F --> F1["CommandHandlerMixin<br/><em>Command handling functionality</em>"]
+    F1 --> G["BaseService<br/><em>Foundation for AIPerf services</em>"]
     G --> H["BaseComponentService<br/><em>Component services with status reporting</em>"]
 
     %% Special SystemController path
@@ -29,6 +31,8 @@ flowchart TD
     H --> M[RecordProcessor]
     H --> N[WorkerManager]
     H --> O[Worker]
+    H --> P[GPUTelemetryManager]
+    H --> Q[ServerMetricsManager]
 
     %% Modern styling with better colors and shapes
     classDef baseMixin fill:#e1f5fe,stroke:#0277bd,stroke-width:2px,color:#000000,font-weight:bold
@@ -48,9 +52,10 @@ flowchart TD
     class C hooksMixin
     class D taskMixin
     class E lifecycleMixin
-    class F messageMixin
+    class F0,F messageMixin
+    class F1 hooksMixin
     class G baseService
     class H componentService
     class I systemController
-    class J,K,L,M,N,O services
+    class J,K,L,M,N,O,P,Q services
 ```

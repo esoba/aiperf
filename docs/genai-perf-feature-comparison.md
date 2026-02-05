@@ -39,8 +39,10 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | Endpoint Type | Description | GenAI-Perf | AIPerf | Notes |
 |---------------|-------------|------------|---------|-------|
 | **chat** | Standard chat completion API (OpenAI-compatible) | ✅ | ✅ | |
+| **chat_embeddings** | Chat-style embeddings for vLLM multimodal models (e.g., VLM2Vec) | ❌ | ✅ | Uses chat message format with images/text, returns embeddings |
 | **completions** | Text completion API for prompt completion | ✅ | ✅ | |
 | **embeddings** | Text embedding generation for similarity/search | ✅ | ✅ | |
+| **nim_embeddings** | NVIDIA NIM embeddings API for text and images | ❌ | ✅ | |
 | **rankings** | Text ranking/re-ranking for search relevance | ✅ | ✅ | GenAI-Perf's generic `rankings` is HF TEI compatible; AIPerf has separate `nim_rankings`, `hf_tei_rankings` and `cohere_rankings` |
 | **hf_tei_rankings** | HuggingFace TEI re-ranker API | ✅ | ✅ | GenAI-Perf uses generic `rankings` endpoint |
 | **nim_rankings** | NVIDIA NIM re-ranker API | ❌ | ✅ | |

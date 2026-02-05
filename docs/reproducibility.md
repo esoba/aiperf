@@ -231,12 +231,23 @@ A: None measurable. Network I/O dominates by 1000×.
 # Loaders (2)
 "dataset.loader.random_pool"   # Random pool loader
 "dataset.loader.sharegpt"      # ShareGPT loader
+
+# Rankings (3)
+"dataset.rankings.passages"         # Passage selection
+"dataset.rankings.passages.tokens"  # Passage token generation
+"dataset.rankings.query.tokens"     # Query token generation
+
+# Synthesis (2)
+"dataset.synthesis.empirical_sampler"  # Empirical distribution sampling
+"dataset.synthesis.synthesizer"        # Synthesizer random operations
 ```
 
 **Timing**
 ```python
 "timing.request.cancellation"      # Cancellation decisions (probabilistic)
 "timing.request.poisson_interval"  # Exponential inter-arrival times (Poisson process)
+"timing.request.gamma_interval"    # Gamma-distributed inter-arrival times
+"timing.ramp.poisson"              # Poisson-based ramping strategy
 ```
 
 **Composer**

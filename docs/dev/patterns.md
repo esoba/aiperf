@@ -51,8 +51,9 @@ class Record(AIPerfBaseModel):
 Messages require `message_type` field and handler decorator:
 
 ```python
-from aiperf.common.messages import Message
+from aiperf.common.enums import MessageType
 from aiperf.common.hooks import on_message
+from aiperf.common.messages import Message
 
 class MyMsg(Message):
     message_type: MessageType = MessageType.MY_MSG
@@ -141,8 +142,10 @@ def test_with_params(input, expected):
     assert process(input) == expected
 
 def test_with_mock_plugin():
-    with mock_plugin(PluginType.ENDPOINT, "test", MockClass):
-        assert plugins.get_class(PluginType.ENDPOINT, "test") == MockClass
+    class MockEndpoint:
+        pass
+    with mock_plugin("endpoint", "test", MockEndpoint):
+        assert plugins.get_class(PluginType.ENDPOINT, "test") == MockEndpoint
 ```
 
 **Auto-fixtures** (always active): asyncio.sleep runs instantly, RNG=42, singletons reset.

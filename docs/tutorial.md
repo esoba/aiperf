@@ -49,18 +49,18 @@ INFO     AIPerf System is PROFILING
 Profiling: 64/64 |████████████████████████| 100% [00:42<00:00]
 
 INFO     Benchmark completed successfully
-INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-request_rate32/
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-openai-chat-request_rate32/
 
-            NVIDIA AIPerf | LLM Metrics
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
-┃                      Metric ┃     avg ┃    min ┃     max ┃     p99 ┃     p50 ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
-│        Request Latency (ms) │ 1234.56 │ 987.34 │ 1567.89 │ 1534.23 │ 1223.45 │
-│    Time to First Token (ms) │  234.56 │ 189.23 │  298.45 │  289.34 │  231.12 │
-│    Inter Token Latency (ms) │   15.67 │  12.34 │   19.45 │   19.01 │   15.45 │
-│ Output Token Count (tokens) │  150.00 │ 120.00 │  180.00 │  178.90 │  149.00 │
-│  Request Throughput (req/s) │   31.45 │      - │       - │       - │       - │
-└─────────────────────────────┴─────────┴────────┴─────────┴─────────┴─────────┘
+                                     NVIDIA AIPerf | LLM Metrics
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃                          Metric ┃     avg ┃    min ┃     max ┃     p99 ┃    p90 ┃     p50 ┃     std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│            Request Latency (ms) │ 1234.56 │ 987.34 │ 1567.89 │ 1534.23 │ 1450.12│ 1223.45 │   98.76 │
+│        Time to First Token (ms) │  234.56 │ 189.23 │  298.45 │  289.34 │  275.45│  231.12 │   23.45 │
+│        Inter Token Latency (ms) │   15.67 │  12.34 │   19.45 │   19.01 │   18.23│   15.45 │    1.23 │
+│ Output Sequence Length (tokens) │  150.00 │ 120.00 │  180.00 │  178.90 │  172.50│  149.00 │   12.34 │
+│      Request Throughput (req/s) │   31.45 │      - │       - │       - │      - │       - │       - │
+└─────────────────────────────────┴─────────┴────────┴─────────┴─────────┴────────┴─────────┴─────────┘
 
-JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-request_rate32/profile_export_aiperf.json
+JSON Export: artifacts/Qwen_Qwen3-0.6B-openai-chat-request_rate32/profile_export_aiperf.json
 ```

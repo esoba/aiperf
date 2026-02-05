@@ -45,10 +45,10 @@ Mooncake provides a specification and sample datasets for [trace replay](https:/
 Mooncake traces use a JSONL file where each line represents a request with timing information.
 
 Required fields for trace replay:
-- `timestamp`: Request arrival time in milliseconds
-- `input_length`: Number of input tokens
-- `output_length`: Number of output tokens
-- `hash_ids`: List of block hashes (optional)
+- `timestamp`: Request arrival time in milliseconds (required for first turn in fixed schedule mode)
+- `input_length`: Number of input tokens (or use `text_input` for exact text)
+- `output_length`: Number of output tokens (optional)
+- `hash_ids`: List of block hashes for KV cache simulation (optional)
 
 Example entry:
 

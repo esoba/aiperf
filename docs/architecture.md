@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -74,8 +74,25 @@ This is responsible for managing the collection, organization, and storage of be
 - Providing interfaces for querying, filtering, and summarizing benchmarking results.
 - Supporting the generation of reports and artifacts for performance evaluation.
 
-### GPU Telemetry (Coming soon)
-This connects to a metrics endpoint to gather GPU metrics. This requires DCGM Exporter installed on the server machine.
+### GPU Telemetry Manager
+This service coordinates GPU telemetry collection from DCGM (Data Center GPU Manager) endpoints. Its main functions include:
+
+- Managing lifecycle of TelemetryDataCollector instances for each configured DCGM endpoint.
+- Collecting GPU metrics (utilization, memory, power, temperature, etc.) from multiple DCGM endpoints.
+- Sending TelemetryRecordsMessage to RecordsManager via the message system.
+- Capturing baseline metrics before profiling starts and final metrics after profiling completes.
+- Handling errors gracefully when DCGM endpoints are unreachable.
+- Requires DCGM Exporter installed on the server machine.
+
+### Server Metrics Manager
+This service coordinates server metrics collection from Prometheus endpoints exposed by inference servers. Its main functions include:
+
+- Managing lifecycle of ServerMetricsDataCollector instances for each configured endpoint.
+- Collecting server-side metrics from Prometheus endpoints (typically exposed by vLLM, TRT-LLM, or other inference servers).
+- Supporting multi-URL load balancing by collecting metrics from all configured endpoint URLs.
+- Sending ServerMetricsRecordMessage to RecordsManager via the message system.
+- Capturing baseline metrics before profiling and final metrics after profiling completes.
+- Handling errors gracefully when Prometheus endpoints are unreachable.
 
 ### Inference Server
 This is the endpoint that AIPerf targets to generate benchmarking load.
