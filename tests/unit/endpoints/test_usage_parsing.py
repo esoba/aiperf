@@ -269,7 +269,14 @@ class TestUsageModelProperties:
             # No special fields at all
             (
                 {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-                ["reasoning_tokens"],
+                [
+                    "reasoning_tokens",
+                    "prompt_cached_tokens",
+                    "prompt_audio_tokens",
+                    "completion_audio_tokens",
+                    "accepted_prediction_tokens",
+                    "rejected_prediction_tokens",
+                ],
             ),
         ],
     )
@@ -279,3 +286,75 @@ class TestUsageModelProperties:
 
         for field in missing_fields:
             assert getattr(usage, field) is None
+
+    @pytest.mark.parametrize(
+        "details_key,field,prop",
+        [
+            ("prompt_tokens_details", "cached_tokens", "prompt_cached_tokens"),
+            ("prompt_tokens_details", "audio_tokens", "prompt_audio_tokens"),
+            ("input_tokens_details", "cached_tokens", "prompt_cached_tokens"),
+            ("input_tokens_details", "audio_tokens", "prompt_audio_tokens"),
+            ("completion_tokens_details", "audio_tokens", "completion_audio_tokens"),
+            (
+                "completion_tokens_details",
+                "accepted_prediction_tokens",
+                "accepted_prediction_tokens",
+            ),
+            (
+                "completion_tokens_details",
+                "rejected_prediction_tokens",
+                "rejected_prediction_tokens",
+            ),
+            ("output_tokens_details", "audio_tokens", "completion_audio_tokens"),
+            (
+                "output_tokens_details",
+                "accepted_prediction_tokens",
+                "accepted_prediction_tokens",
+            ),
+            (
+                "output_tokens_details",
+                "rejected_prediction_tokens",
+                "rejected_prediction_tokens",
+            ),
+            ("completion_tokens_details", "reasoning_tokens", "reasoning_tokens"),
+            ("output_tokens_details", "reasoning_tokens", "reasoning_tokens"),
+        ],
+    )
+    def test_detail_token_properties(self, details_key, field, prop):
+        """Test extraction of token detail sub-fields from both naming conventions."""
+        usage = Usage({"prompt_tokens": 10, details_key: {field: 42}})
+        assert getattr(usage, prop) == 42
+
+    @pytest.mark.parametrize(
+        "details_key,field,prop",
+        [
+            ("prompt_tokens_details", "cached_tokens", "prompt_cached_tokens"),
+            ("prompt_tokens_details", "audio_tokens", "prompt_audio_tokens"),
+            ("completion_tokens_details", "audio_tokens", "completion_audio_tokens"),
+            (
+                "completion_tokens_details",
+                "accepted_prediction_tokens",
+                "accepted_prediction_tokens",
+            ),
+            (
+                "completion_tokens_details",
+                "rejected_prediction_tokens",
+                "rejected_prediction_tokens",
+            ),
+            ("completion_tokens_details", "reasoning_tokens", "reasoning_tokens"),
+        ],
+    )
+    def test_detail_token_properties_zero_not_skipped(self, details_key, field, prop):
+        """Test that zero values are returned, not treated as missing."""
+        usage = Usage({"prompt_tokens": 10, details_key: {field: 0}})
+        assert getattr(usage, prop) == 0
+
+    def test_prompt_tokens_zero_not_skipped(self):
+        """Test that prompt_tokens=0 is returned, not falling through to input_tokens."""
+        usage = Usage({"prompt_tokens": 0, "input_tokens": 99})
+        assert usage.prompt_tokens == 0
+
+    def test_completion_tokens_zero_not_skipped(self):
+        """Test that completion_tokens=0 is returned, not falling through to output_tokens."""
+        usage = Usage({"completion_tokens": 0, "output_tokens": 99})
+        assert usage.completion_tokens == 0

@@ -46,13 +46,24 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Usage Completion Tokens](#usage-completion-tokens)
     - [Usage Total Tokens](#usage-total-tokens)
     - [Usage Reasoning Tokens](#usage-reasoning-tokens)
+    - [Usage Prompt Cached Tokens](#usage-prompt-cached-tokens)
+    - [Usage Prompt Audio Tokens](#usage-prompt-audio-tokens)
+    - [Usage Completion Audio Tokens](#usage-completion-audio-tokens)
+    - [Usage Accepted Prediction Tokens](#usage-accepted-prediction-tokens)
+    - [Usage Rejected Prediction Tokens](#usage-rejected-prediction-tokens)
     - [Total Usage Prompt Tokens](#total-usage-prompt-tokens)
     - [Total Usage Completion Tokens](#total-usage-completion-tokens)
     - [Total Usage Total Tokens](#total-usage-total-tokens)
+    - [Total Usage Reasoning Tokens](#total-usage-reasoning-tokens)
+    - [Total Usage Prompt Cached Tokens](#total-usage-prompt-cached-tokens)
+    - [Total Usage Prompt Audio Tokens](#total-usage-prompt-audio-tokens)
+    - [Total Usage Completion Audio Tokens](#total-usage-completion-audio-tokens)
+    - [Total Usage Accepted Prediction Tokens](#total-usage-accepted-prediction-tokens)
+    - [Total Usage Rejected Prediction Tokens](#total-usage-rejected-prediction-tokens)
   - [Usage Discrepancy Metrics](#usage-discrepancy-metrics)
-    - [Usage Prompt Tokens Diff %](#usage-prompt-tokens-diff-)
-    - [Usage Completion Tokens Diff %](#usage-completion-tokens-diff-)
-    - [Usage Reasoning Tokens Diff %](#usage-reasoning-tokens-diff-)
+    - [Usage Prompt Diff %](#usage-prompt-diff-)
+    - [Usage Completion Diff %](#usage-completion-diff-)
+    - [Usage Reasoning Diff %](#usage-reasoning-diff-)
     - [Usage Discrepancy Count](#usage-discrepancy-count)
   - [OSL Mismatch Metrics](#osl-mismatch-metrics)
     - [OSL Mismatch Diff %](#osl-mismatch-diff-)
@@ -78,7 +89,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [HTTP Sending](#http-sending)
     - [HTTP Waiting (TTFB)](#http-waiting-ttfb)
     - [HTTP Receiving](#http-receiving)
-    - [HTTP Duration](#http-duration)
+    - [HTTP Duration (excl. conn)](#http-duration-excl-conn)
     - [HTTP Connection Overhead](#http-connection-overhead)
     - [HTTP Total Time](#http-total-time)
     - [HTTP Data Sent](#http-data-sent)
@@ -654,6 +665,96 @@ usage_reasoning_tokens = response.usage.completion_tokens_details.reasoning_toke
 
 ---
 
+### Usage Prompt Cached Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of cached tokens from the prompt as reported by the API's `usage.prompt_tokens_details.cached_tokens` field for a single request.
+
+**Formula:**
+```python
+usage_prompt_cached_tokens = response.usage.prompt_tokens_details.cached_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- Represents tokens served from the server's KV cache rather than recomputed.
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Prompt Audio Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of audio tokens from the prompt as reported by the API's `usage.prompt_tokens_details.audio_tokens` field for a single request.
+
+**Formula:**
+```python
+usage_prompt_audio_tokens = response.usage.prompt_tokens_details.audio_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- Only available for audio-capable endpoints.
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Completion Audio Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of audio tokens in the completion as reported by the API's `usage.completion_tokens_details.audio_tokens` field for a single request.
+
+**Formula:**
+```python
+usage_completion_audio_tokens = response.usage.completion_tokens_details.audio_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- Only available for audio-capable endpoints.
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Accepted Prediction Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of accepted prediction tokens as reported by the API's `usage.completion_tokens_details.accepted_prediction_tokens` field for a single request. These are tokens from a predicted completion that the model actually used.
+
+**Formula:**
+```python
+usage_accepted_prediction_tokens = response.usage.completion_tokens_details.accepted_prediction_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- Only relevant when using predicted outputs (speculative decoding).
+- For streaming responses, uses the last non-None value reported.
+
+---
+
+### Usage Rejected Prediction Tokens
+
+**Type:** [Record Metric](#record-metrics)
+
+The number of rejected prediction tokens as reported by the API's `usage.completion_tokens_details.rejected_prediction_tokens` field for a single request. These are tokens from a predicted completion that the model did not use.
+
+**Formula:**
+```python
+usage_rejected_prediction_tokens = response.usage.completion_tokens_details.rejected_prediction_tokens  # from last non-None response
+```
+
+**Notes:**
+- Taken from the API response `usage` object, not computed by AIPerf.
+- Only relevant when using predicted outputs (speculative decoding).
+- For streaming responses, uses the last non-None value reported.
+
+---
+
 ### Total Usage Prompt Tokens
 
 **Type:** [Derived Metric](#derived-metrics)
@@ -702,12 +803,108 @@ total_usage_total_tokens = sum(r.usage_total_tokens for r in records if r.valid)
 
 ---
 
+### Total Usage Reasoning Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported reasoning tokens across all requests.
+
+**Formula:**
+```python
+total_usage_reasoning_tokens = sum(r.usage_reasoning_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported reasoning tokens across all requests.
+
+---
+
+### Total Usage Prompt Cached Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported prompt cached tokens across all requests.
+
+**Formula:**
+```python
+total_usage_prompt_cached_tokens = sum(r.usage_prompt_cached_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported cached prompt tokens across all requests.
+
+---
+
+### Total Usage Prompt Audio Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported prompt audio tokens across all requests.
+
+**Formula:**
+```python
+total_usage_prompt_audio_tokens = sum(r.usage_prompt_audio_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported prompt audio tokens across all requests.
+
+---
+
+### Total Usage Completion Audio Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported completion audio tokens across all requests.
+
+**Formula:**
+```python
+total_usage_completion_audio_tokens = sum(r.usage_completion_audio_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported completion audio tokens across all requests.
+
+---
+
+### Total Usage Accepted Prediction Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported accepted prediction tokens across all requests.
+
+**Formula:**
+```python
+total_usage_accepted_prediction_tokens = sum(r.usage_accepted_prediction_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported accepted prediction tokens across all requests.
+
+---
+
+### Total Usage Rejected Prediction Tokens
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The sum of all API-reported rejected prediction tokens across all requests.
+
+**Formula:**
+```python
+total_usage_rejected_prediction_tokens = sum(r.usage_rejected_prediction_tokens for r in records if r.valid)
+```
+
+**Notes:**
+- Aggregates server-reported rejected prediction tokens across all requests.
+
+---
+
 ## Usage Discrepancy Metrics
 
 > [!NOTE]
 > These metrics measure the percentage difference between API-reported token counts (`usage` fields) and client-computed token counts. They are **not displayed in console output** but help identify tokenizer mismatches or counting discrepancies.
 
-### Usage Prompt Tokens Diff %
+### Usage Prompt Diff %
 
 **Type:** [Record Metric](#record-metrics)
 
@@ -724,7 +921,7 @@ usage_prompt_tokens_diff_pct = abs((usage_prompt_tokens - input_sequence_length)
 
 ---
 
-### Usage Completion Tokens Diff %
+### Usage Completion Diff %
 
 **Type:** [Record Metric](#record-metrics)
 
@@ -741,7 +938,7 @@ usage_completion_tokens_diff_pct = abs((usage_completion_tokens - output_sequenc
 
 ---
 
-### Usage Reasoning Tokens Diff %
+### Usage Reasoning Diff %
 
 **Type:** [Record Metric](#record-metrics)
 
@@ -906,7 +1103,7 @@ The sum of all input tokens from requests that resulted in errors.
 
 **Formula:**
 ```python
-total_error_isl = sum(r.input_sequence_length for r in records if not r.valid)
+total_error_isl = sum(r.error_isl for r in records if not r.valid)
 ```
 
 **Notes:**
@@ -1140,7 +1337,7 @@ http_req_receiving = response_chunks[-1][0] - response_chunks[0][0]
 
 ---
 
-### HTTP Duration
+### HTTP Duration (excl. conn)
 
 **Type:** [Record Metric](#record-metrics)
 

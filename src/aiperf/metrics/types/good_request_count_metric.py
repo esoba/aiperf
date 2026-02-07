@@ -17,7 +17,7 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
     """
 
     tag = "good_request_count"
-    header = "GoodRequestCount"
+    header = "Good Request Count"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
     flags = MetricFlags.GOODPUT | MetricFlags.NO_CONSOLE

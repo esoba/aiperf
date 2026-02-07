@@ -36,12 +36,18 @@ class Usage(RootModel[dict[str, Any]]):
     @property
     def prompt_tokens(self) -> int | None:
         """Get prompt/input token count from API usage dict."""
-        return self.get("prompt_tokens") or self.get("input_tokens")
+        val = self.get("prompt_tokens")
+        if val is not None:
+            return val
+        return self.get("input_tokens")
 
     @property
     def completion_tokens(self) -> int | None:
         """Get completion/output token count from API usage dict."""
-        return self.get("completion_tokens") or self.get("output_tokens")
+        val = self.get("completion_tokens")
+        if val is not None:
+            return val
+        return self.get("output_tokens")
 
     @property
     def total_tokens(self) -> int | None:
@@ -56,6 +62,52 @@ class Usage(RootModel[dict[str, Any]]):
         or output_tokens_details.reasoning_tokens.
         """
         for details_key in self.COMPLETION_DETAILS_KEYS:
-            if reasoning_tokens := self.get(details_key, {}).get("reasoning_tokens"):
-                return reasoning_tokens
+            val = self.get(details_key, {}).get("reasoning_tokens")
+            if val is not None:
+                return val
+        return None
+
+    @property
+    def accepted_prediction_tokens(self) -> int | None:
+        """Get accepted prediction tokens from completion_tokens_details."""
+        for details_key in self.COMPLETION_DETAILS_KEYS:
+            val = self.get(details_key, {}).get("accepted_prediction_tokens")
+            if val is not None:
+                return val
+        return None
+
+    @property
+    def completion_audio_tokens(self) -> int | None:
+        """Get audio tokens from completion_tokens_details."""
+        for details_key in self.COMPLETION_DETAILS_KEYS:
+            val = self.get(details_key, {}).get("audio_tokens")
+            if val is not None:
+                return val
+        return None
+
+    @property
+    def rejected_prediction_tokens(self) -> int | None:
+        """Get rejected prediction tokens from completion_tokens_details."""
+        for details_key in self.COMPLETION_DETAILS_KEYS:
+            val = self.get(details_key, {}).get("rejected_prediction_tokens")
+            if val is not None:
+                return val
+        return None
+
+    @property
+    def prompt_audio_tokens(self) -> int | None:
+        """Get audio tokens from prompt_tokens_details."""
+        for details_key in self.PROMPT_DETAILS_KEYS:
+            val = self.get(details_key, {}).get("audio_tokens")
+            if val is not None:
+                return val
+        return None
+
+    @property
+    def prompt_cached_tokens(self) -> int | None:
+        """Get cached tokens from prompt_tokens_details."""
+        for details_key in self.PROMPT_DETAILS_KEYS:
+            val = self.get(details_key, {}).get("cached_tokens")
+            if val is not None:
+                return val
         return None
