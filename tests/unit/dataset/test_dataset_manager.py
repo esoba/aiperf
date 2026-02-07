@@ -85,6 +85,22 @@ def create_mock_conversations(session_ids: list[str]) -> list[Conversation]:
     ]
 
 
+def _make_mock_load(conversations: list[Conversation]) -> AsyncMock:
+    """Create a mock load coroutine that writes conversations to the store."""
+
+    async def _mock_load(self_or_store, store=None):
+        # Handle both bound (self, store) and unbound (store) call patterns
+        if store is None:
+            store = self_or_store
+        for conv in conversations:
+            await store.add_conversation(conv.session_id, conv)
+            self_loader = getattr(_mock_load, "_loader_ref", None)
+            if self_loader is not None:
+                self_loader._loaded_metadata.append(conv.metadata())
+
+    return AsyncMock(side_effect=_mock_load)
+
+
 async def capture_published_messages(dataset_manager, user_config):
     """Configure dataset and capture published messages."""
     published_messages = []
@@ -253,11 +269,22 @@ class TestDatasetManager:
 class TestDatasetManagerSamplingStrategyDefaults:
     """Test default sampling strategy behavior for different dataset types."""
 
+    @staticmethod
+    async def _mock_load_with_dummy_conversation(store):
+        """Write a dummy conversation to the store so mmap files are non-empty."""
+        conv = Conversation(
+            session_id="mock-session",
+            turns=[Turn(texts=[Text(contents=["Hello"])], model="test-model")],
+        )
+        await store.add_conversation(conv.session_id, conv)
+
     @pytest.mark.asyncio
     @patch(
         "aiperf.dataset.dataset_manager.download_public_dataset", new_callable=AsyncMock
     )
-    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load")
+    @patch(
+        "aiperf.dataset.loader.file.base.BaseFileLoader.load", new_callable=AsyncMock
+    )
     async def test_public_dataset_uses_loader_recommended_strategy(
         self,
         mock_load,
@@ -269,7 +296,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
         # Mock download to return a temp file path
         mock_download.return_value = tmp_path / "sharegpt.json"
         (tmp_path / "sharegpt.json").write_text("[]")
-        mock_load.return_value = create_mock_conversations(["session-1", "session-2"])
+        mock_load.side_effect = self._mock_load_with_dummy_conversation
 
         # Create config with public dataset and NO explicit sampling strategy
         user_config = UserConfig(
@@ -324,7 +351,9 @@ class TestDatasetManagerSamplingStrategyDefaults:
     @patch(
         "aiperf.dataset.dataset_manager.download_public_dataset", new_callable=AsyncMock
     )
-    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load")
+    @patch(
+        "aiperf.dataset.loader.file.base.BaseFileLoader.load", new_callable=AsyncMock
+    )
     async def test_explicit_strategy_overrides_loader_recommendation(
         self,
         mock_load,
@@ -336,7 +365,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
         # Mock download to return a temp file path
         mock_download.return_value = tmp_path / "sharegpt.json"
         (tmp_path / "sharegpt.json").write_text("[]")
-        mock_load.return_value = create_mock_conversations(["session-1"])
+        mock_load.side_effect = self._mock_load_with_dummy_conversation
 
         # Create config with explicit SHUFFLE strategy (different from loader's SEQUENTIAL)
         user_config = UserConfig(
@@ -363,7 +392,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
 
 class TestDatasetManagerMemoryAndClient:
-    """Test dataset client initialization and memory freeing after configuration."""
+    """Test dataset client initialization after configuration."""
 
     @pytest.mark.asyncio
     async def test_dataset_client_initialized_after_configuration(
@@ -385,17 +414,20 @@ class TestDatasetManagerMemoryAndClient:
         assert dataset_manager._dataset_client is not None
 
     @pytest.mark.asyncio
-    async def test_in_memory_dataset_freed_after_client_initialization(
+    async def test_no_in_memory_dataset_attribute(
         self,
         mock_tokenizer,
     ):
-        """Test that in-memory dataset is freed after dataset client is initialized."""
+        """Test that DatasetManager no longer has an in-memory dataset dict."""
         user_config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(num_dataset_entries=5),
         )
         service_config = ServiceConfig()
         dataset_manager = DatasetManager(service_config, user_config)
+
+        # DatasetManager should not have a .dataset attribute
+        assert not hasattr(dataset_manager, "dataset")
 
         await dataset_manager.initialize()
         dataset_manager.publish = AsyncMock()
@@ -404,9 +436,8 @@ class TestDatasetManagerMemoryAndClient:
             ProfileConfigureCommand(config=user_config, service_id="test_service")
         )
 
-        # After configuration, in-memory dataset should be empty
-        assert dataset_manager.dataset == {}
-        assert dataset_manager._conversation_ids_cache == []
+        # Still no .dataset attribute after configuration
+        assert not hasattr(dataset_manager, "dataset")
 
     @pytest.mark.asyncio
     async def test_dataset_configured_event_set_after_client_initialization(
@@ -455,7 +486,7 @@ class TestDatasetManagerFallbackHandlers:
         self,
         dataset_manager_with_entries,
     ):
-        """Test that conversation request handler uses dataset client, not in-memory dict."""
+        """Test that conversation request handler uses dataset client."""
         dataset_manager = dataset_manager_with_entries
 
         # Get a valid conversation ID from the metadata
@@ -463,10 +494,7 @@ class TestDatasetManagerFallbackHandlers:
             0
         ].conversation_id
 
-        # Verify in-memory dataset is empty (freed)
-        assert dataset_manager.dataset == {}
-
-        # Request should still work via dataset client
+        # Request should work via dataset client
         request = ConversationRequestMessage(
             service_id="test_worker",
             conversation_id=conversation_id,
@@ -481,7 +509,7 @@ class TestDatasetManagerFallbackHandlers:
         self,
         dataset_manager_with_entries,
     ):
-        """Test that turn request handler uses dataset client, not in-memory dict."""
+        """Test that turn request handler uses dataset client."""
         dataset_manager = dataset_manager_with_entries
 
         # Get a valid conversation ID from the metadata
@@ -489,10 +517,7 @@ class TestDatasetManagerFallbackHandlers:
             0
         ].conversation_id
 
-        # Verify in-memory dataset is empty (freed)
-        assert dataset_manager.dataset == {}
-
-        # Request should still work via dataset client
+        # Request should work via dataset client
         request = ConversationTurnRequestMessage(
             service_id="test_worker",
             conversation_id=conversation_id,

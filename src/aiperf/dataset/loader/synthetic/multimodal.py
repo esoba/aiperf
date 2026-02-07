@@ -1,14 +1,19 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.config import UserConfig
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader.synthetic.base import BaseSyntheticLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.dataset.protocols import DatasetBackingStoreProtocol
 
 
 class SyntheticMultiModalLoader(BaseSyntheticLoader):
@@ -46,13 +51,12 @@ class SyntheticMultiModalLoader(BaseSyntheticLoader):
         """Get the preferred sampling strategy for synthetic datasets."""
         return DatasetSamplingStrategy.SHUFFLE
 
-    def load(self) -> list[Conversation]:
-        """Generate a synthetic multi-modal conversation dataset.
+    async def load(self, store: DatasetBackingStoreProtocol) -> None:
+        """Generate a synthetic multi-modal conversation dataset, streaming to store.
 
-        Returns:
-            List of generated Conversation objects.
+        Args:
+            store: Backing store to write conversations into.
         """
-        conversations = []
         for _ in range(self.config.input.conversation.num_dataset_entries):
             conversation = Conversation(session_id=self.session_id_generator.next())
 
@@ -65,10 +69,8 @@ class SyntheticMultiModalLoader(BaseSyntheticLoader):
             for turn_idx in range(num_turns):
                 turn = self._create_turn(is_first=(turn_idx == 0))
                 conversation.turns.append(turn)
-            conversations.append(conversation)
 
-        self._finalize_conversations(conversations)
-        return conversations
+            await self._finalize_and_store(conversation, store, finalize_turns=False)
 
     def _create_turn(self, is_first: bool) -> Turn:
         """Create a turn with synthetic multi-modal payloads.

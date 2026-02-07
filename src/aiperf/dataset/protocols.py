@@ -9,13 +9,16 @@ from aiperf.common.protocols import AIPerfLifecycleProtocol
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from aiperf.common.models.dataset_models import DatasetClientMetadata
+    from aiperf.common.models.dataset_models import (
+        ConversationMetadata,
+        DatasetClientMetadata,
+    )
     from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
 @runtime_checkable
 class DatasetLoaderProtocol(Protocol):
-    """Protocol for dataset loaders that produce a list of Conversation objects."""
+    """Protocol for dataset loaders that stream conversations into a backing store."""
 
     @classmethod
     def can_load(
@@ -42,12 +45,17 @@ class DatasetLoaderProtocol(Protocol):
         """
         ...
 
-    def load(self) -> list[Conversation]:
-        """Load and return finalized conversations.
+    async def load(self, store: "DatasetBackingStoreProtocol") -> None:
+        """Load conversations and stream them directly into the backing store.
 
-        Returns:
-            List of Conversation objects ready for the dataset manager.
+        Args:
+            store: Backing store to write conversations into.
         """
+        ...
+
+    @property
+    def loaded_metadata(self) -> "list[ConversationMetadata]":
+        """Metadata accumulated during load() for each conversation, in insertion order."""
         ...
 
 

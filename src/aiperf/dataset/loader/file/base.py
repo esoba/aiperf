@@ -1,15 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from abc import abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.config import UserConfig
-from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader.base import BaseDatasetLoader
 from aiperf.dataset.loader.models import CustomDatasetT
+
+if TYPE_CHECKING:
+    from aiperf.common.models import Conversation
+    from aiperf.dataset.protocols import DatasetBackingStoreProtocol
 
 
 class BaseFileLoader(BaseDatasetLoader):
@@ -30,25 +35,21 @@ class BaseFileLoader(BaseDatasetLoader):
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
         self.filename = filename
 
-    def load(self) -> list[Conversation]:
-        """Load dataset via two-stage pipeline.
+    async def load(self, store: DatasetBackingStoreProtocol) -> None:
+        """Load dataset via two-stage pipeline, streaming each conversation to the store.
 
         1. parse_and_validate() -- parse file(s) into typed model objects
         2. convert_to_conversations() -- convert to Conversation objects
-        3. Finalize turns and conversations (model name, max_tokens, context prompts)
+        3. Finalize and store each conversation (turns, context prompts, backing store)
 
-        Returns:
-            List of finalized Conversation objects.
+        Args:
+            store: Backing store to write conversations into.
         """
         data = self.parse_and_validate()
         conversations = self.convert_to_conversations(data)
 
         for conversation in conversations:
-            for turn in conversation.turns:
-                self._finalize_turn(turn)
-
-        self._finalize_conversations(conversations)
-        return conversations
+            await self._finalize_and_store(conversation, store)
 
     @abstractmethod
     def parse_and_validate(self) -> dict[str, list[CustomDatasetT]]:

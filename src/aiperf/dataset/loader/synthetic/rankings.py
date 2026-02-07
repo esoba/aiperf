@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
@@ -10,6 +12,9 @@ from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader.synthetic.base import BaseSyntheticLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.dataset.protocols import DatasetBackingStoreProtocol
 
 
 class SyntheticRankingsLoader(BaseSyntheticLoader):
@@ -39,15 +44,14 @@ class SyntheticRankingsLoader(BaseSyntheticLoader):
         """Get the preferred sampling strategy for synthetic rankings."""
         return DatasetSamplingStrategy.SHUFFLE
 
-    def load(self) -> list[Conversation]:
-        """Generate synthetic dataset for the rankings endpoint.
+    async def load(self, store: DatasetBackingStoreProtocol) -> None:
+        """Generate synthetic dataset for the rankings endpoint, streaming to store.
 
         Each conversation contains one turn with one query and multiple passages.
 
-        Returns:
-            List of generated Conversation objects.
+        Args:
+            store: Backing store to write conversations into.
         """
-        conversations: list[Conversation] = []
         num_entries = self.config.input.conversation.num_dataset_entries
         num_passages_mean = self.config.input.rankings.passages.mean
         num_passages_std = self.config.input.rankings.passages.stddev
@@ -59,9 +63,8 @@ class SyntheticRankingsLoader(BaseSyntheticLoader):
             conversation = Conversation(session_id=self.session_id_generator.next())
             turn = self._create_turn(num_passages=num_passages)
             conversation.turns.append(turn)
-            conversations.append(conversation)
 
-        return conversations
+            await self._finalize_and_store(conversation, store, finalize_turns=False)
 
     def _create_turn(self, num_passages: int) -> Turn:
         """Create a single ranking turn with one synthetic query and multiple synthetic passages.

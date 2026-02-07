@@ -112,7 +112,10 @@ class TestDatasetManagerInputsJsonGeneration:
 
         written_json = json.loads(capture_file_writes.written_content)
         session_ids = [session["session_id"] for session in written_json["data"]]
-        expected_order = list(populated_dataset_manager.dataset.keys())
+        expected_order = [
+            conv.conversation_id
+            for conv in populated_dataset_manager.dataset_metadata.conversations
+        ]
         assert session_ids == expected_order
 
     @pytest.mark.asyncio

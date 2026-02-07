@@ -5,16 +5,20 @@ Shared fixtures for dataset manager testing.
 """
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 import aiperf.endpoints  # noqa: F401  # Import to register endpoints
 import aiperf.transports  # noqa: F401  # Import to register transports
 from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
-from aiperf.common.models import Conversation
+from aiperf.common.models import Conversation, DatasetMetadata
 from aiperf.dataset.dataset_manager import DatasetManager
-from aiperf.plugin.enums import EndpointType
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import (
+    DatasetSamplingStrategy,
+    EndpointType,
+    PluginType,
+)
 
 
 @pytest.fixture
@@ -31,38 +35,73 @@ def user_config(tmp_path: Path) -> UserConfig:
     )
 
 
-@pytest.fixture
-def empty_dataset_manager(
+async def _build_dataset_manager_with_conversations(
     user_config: UserConfig,
+    conversations: dict[str, Conversation],
 ) -> DatasetManager:
-    """Create a DatasetManager instance with empty dataset."""
+    """Build a DatasetManager with conversations written to a real backing store + client.
+
+    This replaces the old pattern of directly assigning manager.dataset = {...}.
+    """
     manager = DatasetManager(
         service_config=ServiceConfig(),
         user_config=user_config,
         service_id="test_dataset_manager",
     )
-    manager.dataset = {}
+
+    # Write conversations to the backing store
+    await manager._backing_store.initialize()
+    for conv_id, conv in conversations.items():
+        await manager._backing_store.add_conversation(conv_id, conv)
+    await manager._backing_store.finalize()
+
+    # Initialize the client so _generate_input_payloads can read from it
+    client_metadata = manager._backing_store.get_client_metadata()
+    ClientStoreClass = plugins.get_class(
+        PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
+    )
+    manager._dataset_client = ClientStoreClass(client_metadata=client_metadata)
+    await manager._dataset_client.initialize()
+
+    # Build dataset metadata
+    manager.dataset_metadata = DatasetMetadata(
+        conversations=[conv.metadata() for conv in conversations.values()],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+
     return manager
 
 
 @pytest.fixture
-def populated_dataset_manager(
+async def empty_dataset_manager(user_config: UserConfig) -> DatasetManager:
+    """Create a DatasetManager instance with empty dataset (no backing store/client)."""
+    manager = DatasetManager(
+        service_config=ServiceConfig(),
+        user_config=user_config,
+        service_id="test_dataset_manager",
+    )
+    manager.dataset_metadata = DatasetMetadata(
+        conversations=[],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    return manager
+
+
+@pytest.fixture
+async def populated_dataset_manager(
     user_config: UserConfig,
     sample_conversations: dict[str, Conversation],
 ) -> DatasetManager:
     """Create a DatasetManager instance with sample data."""
-    manager = DatasetManager(
-        service_config=ServiceConfig(),
-        user_config=user_config,
-        service_id="test_dataset_manager",
+    return await _build_dataset_manager_with_conversations(
+        user_config, sample_conversations
     )
-    manager.dataset = sample_conversations
-    return manager
 
 
 @pytest.fixture
 def capture_file_writes():
     """Provide a fixture to capture file write operations for testing purposes."""
+    from unittest.mock import patch
 
     class FileWriteCapture:
         def __init__(self):

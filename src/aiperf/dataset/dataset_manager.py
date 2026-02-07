@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,7 +29,6 @@ from aiperf.common.messages import (
 )
 from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import (
-    Conversation,
     DatasetMetadata,
     InputsFile,
     ModelEndpointInfo,
@@ -52,6 +50,7 @@ from aiperf.plugin.enums import (
 )
 
 if TYPE_CHECKING:
+    from aiperf.dataset.loader.base import BaseDatasetLoader
     from aiperf.dataset.protocols import (
         DatasetBackingStoreProtocol,
         DatasetClientStoreProtocol,
@@ -64,7 +63,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     Primary responsibilities:
     - Generate synthetic prompts or load datasets from files/public sources
-    - Write conversations to memory-mapped files via backing store
+    - Stream conversations directly to memory-mapped files via backing store
     - Publish DatasetConfiguredNotification with mmap paths for worker access
 
     Workers access conversations directly via mmap (zero-copy), eliminating the
@@ -86,11 +85,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
-        self.dataset: dict[
-            str, Conversation
-        ] = {}  # conversation ID -> Conversation mapping
         self.dataset_metadata: DatasetMetadata | None = None
-        self._conversation_ids_cache: list[str] = []
         self.dataset_configured = asyncio.Event()
 
         BackingStoreClass = plugins.get_class(
@@ -116,34 +111,22 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.info(lambda: f"Configuring dataset for {self.service_id}")
         begin = time.perf_counter()
         await self._configure_dataset()
+        await self._configure_dataset_client()
         await self._generate_inputs_json_file()
-        await self._configure_dataset_client_and_free_memory()
 
         duration = time.perf_counter() - begin
         self.info(lambda: f"Dataset configured in {duration:.2f} seconds")
 
-    async def _configure_dataset_client_and_free_memory(self) -> None:
+    async def _configure_dataset_client(self) -> None:
         """Configure the dataset client for serving fallback requests."""
-        # Create dataset client for serving fallback requests, then free in-memory dataset
         client_metadata = self._backing_store.get_client_metadata()
         ClientStoreClass = plugins.get_class(
             PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
         )
         self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
         await self._dataset_client.initialize()
-        # Now that the client is ready, signal that fallback requests can be served
         self.dataset_configured.set()
-        # Free the in-memory dataset now that we have the client to serve fallback requests.
-        # Reassign to new empty containers (not .clear()) to release object references,
-        # then run gc.collect() twice to ensure circular references are cleaned up.
-        conversation_count = len(self.dataset)
-        self.dataset = {}
-        self._conversation_ids_cache = []
-        gc.collect()
-        gc.collect()
-        self.info(
-            f"Dataset client initialized and freed {conversation_count} conversations from memory"
-        )
+        self.info("Dataset client initialized")
 
     async def _configure_tokenizer(self) -> None:
         """Configure the tokenizer for the dataset manager."""
@@ -160,7 +143,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             resolve_alias=tokenizer_config.should_resolve_alias,
         )
 
-    def _generate_input_payloads(
+    async def _generate_input_payloads(
         self,
         model_endpoint: ModelEndpointInfo,
     ) -> InputsFile:
@@ -176,7 +159,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             f"class: {endpoint.__class__.__name__}",
         )
         session_payloads_map: dict[str, list] = {}
-        for conversation in self.dataset.values():
+        for conv_meta in self.dataset_metadata.conversations:
+            conversation = await self._dataset_client.get_conversation(
+                conv_meta.conversation_id
+            )
             session_id = conversation.session_id
             if session_id not in session_payloads_map:
                 session_payloads_map[session_id] = []
@@ -220,7 +206,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
             model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
-            inputs = self._generate_input_payloads(model_endpoint)
+            inputs = await self._generate_input_payloads(model_endpoint)
 
             temp_file_path.write_bytes(
                 orjson.dumps(
@@ -250,8 +236,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             if temp_file_path.exists():
                 temp_file_path.unlink()
 
-    async def _load_public_dataset(self) -> list[Conversation]:
-        """Load a public dataset by downloading (or using cache) and loading via its loader."""
+    async def _create_public_dataset_loader(self) -> BaseDatasetLoader:
+        """Download a public dataset and return its loader (without calling load)."""
         public_dataset_type = self.user_config.input.public_dataset
         dataset = get_public_dataset(public_dataset_type)
         local_path = await download_public_dataset(dataset)
@@ -269,10 +255,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 loader.get_preferred_sampling_strategy()
             )
 
-        return loader.load()
+        return loader
 
-    def _load_file_dataset(self) -> list[Conversation]:
-        """Load a dataset from a file or directory.
+    def _create_file_loader(self) -> BaseDatasetLoader:
+        """Create a file-based loader (without calling load).
 
         Auto-detects loader type if not explicitly specified.
         """
@@ -301,10 +287,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 f"Using preferred sampling strategy for {dataset_type}: {preferred_strategy}"
             )
 
-        return loader.load()
+        return loader
 
-    def _load_synthetic_dataset(self) -> list[Conversation]:
-        """Load a synthetic dataset.
+    def _create_synthetic_loader(self) -> BaseDatasetLoader:
+        """Create a synthetic loader (without calling load).
 
         Selects the appropriate synthetic loader based on endpoint type.
         """
@@ -332,7 +318,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 f"Using default sampling strategy for synthetic dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
             )
 
-        return loader.load()
+        return loader
+
+    async def _create_loader(self) -> BaseDatasetLoader:
+        """Create the appropriate loader based on user config."""
+        if self.user_config.input.public_dataset is not None:
+            return await self._create_public_dataset_loader()
+        elif self.user_config.input.file is not None:
+            return self._create_file_loader()
+        else:
+            return self._create_synthetic_loader()
 
     def _infer_dataset_type(self, file_path: str) -> DatasetLoaderType:
         """Infer the dataset type from the input file.
@@ -454,38 +449,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         self.dataset_configured.clear()
 
-        if self.user_config.input.public_dataset is not None:
-            conversations = await self._load_public_dataset()
-        elif self.user_config.input.file is not None:
-            conversations = self._load_file_dataset()
-        elif (
-            self.user_config.input.dataset_type is not None
-            and self.user_config.input.dataset_type
-            in {
-                DatasetLoaderType.SYNTHETIC_MULTIMODAL,
-                DatasetLoaderType.SYNTHETIC_RANKINGS,
-            }
-        ):
-            conversations = self._load_synthetic_dataset()
-        else:
-            conversations = self._load_synthetic_dataset()
+        loader = await self._create_loader()
 
-        self.dataset = {conv.session_id: conv for conv in conversations}
-        self._conversation_ids_cache = [
-            conversation.session_id for conversation in conversations
-        ]
-
-        # Initialize backing store and stream conversations to mmap files
-        # Workers read directly from these files
         await self._backing_store.initialize()
-        conversations_dict = {conv.session_id: conv for conv in conversations}
-        await self._backing_store.add_conversations(conversations_dict)
+        await loader.load(self._backing_store)
         await self._backing_store.finalize()
         client_metadata = self._backing_store.get_client_metadata()
         self.info(f"Backing store finalized: {client_metadata}")
 
         self.dataset_metadata = DatasetMetadata(
-            conversations=[conversation.metadata() for conversation in conversations],
+            conversations=loader.loaded_metadata,
             sampling_strategy=self.user_config.input.dataset_sampling_strategy,
         )
         self.info(
