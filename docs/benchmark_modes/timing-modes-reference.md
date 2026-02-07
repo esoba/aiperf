@@ -189,13 +189,13 @@ Replays requests at exact timestamps from dataset metadata. Used for trace repla
 # Replay mooncake trace
 aiperf profile --url localhost:8000 --model llama \
     --input-file trace.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --fixed-schedule
 
 # With time window filtering
 aiperf profile --url localhost:8000 --model llama \
     --input-file trace.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --fixed-schedule \
     --fixed-schedule-start-offset 60000 \
     --fixed-schedule-end-offset 120000

@@ -18,7 +18,7 @@ from aiperf.common.messages import (
 from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.dataset_manager import DatasetManager
-from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
+from aiperf.plugin.enums import DatasetLoaderType, DatasetSamplingStrategy
 
 # ============================================================================
 # Shared Fixtures
@@ -147,7 +147,7 @@ class TestDatasetManager:
             user_config = UserConfig(
                 endpoint=EndpointConfig(model_names=["test-model"]),
                 input=InputConfig(
-                    file=filename, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
+                    file=filename, dataset_type=DatasetLoaderType.MOONCAKE_TRACE
                 ),
             )
 
@@ -214,7 +214,7 @@ class TestDatasetManager:
             user_config = UserConfig(
                 endpoint=EndpointConfig(model_names=["test-model"]),
                 input=InputConfig(
-                    file=filename, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
+                    file=filename, dataset_type=DatasetLoaderType.MOONCAKE_TRACE
                 ),
             )
 
@@ -254,20 +254,22 @@ class TestDatasetManagerSamplingStrategyDefaults:
     """Test default sampling strategy behavior for different dataset types."""
 
     @pytest.mark.asyncio
-    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load_dataset")
-    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.convert_to_conversations")
+    @patch(
+        "aiperf.dataset.dataset_manager.download_public_dataset", new_callable=AsyncMock
+    )
+    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load")
     async def test_public_dataset_uses_loader_recommended_strategy(
         self,
-        mock_convert,
         mock_load,
+        mock_download,
         mock_tokenizer,
+        tmp_path,
     ):
         """Test that public datasets use the loader's recommended sampling strategy."""
-        # Mock dataset loading
-        mock_load.return_value = {}
-        mock_convert.return_value = create_mock_conversations(
-            ["session-1", "session-2"]
-        )
+        # Mock download to return a temp file path
+        mock_download.return_value = tmp_path / "sharegpt.json"
+        (tmp_path / "sharegpt.json").write_text("[]")
+        mock_load.return_value = create_mock_conversations(["session-1", "session-2"])
 
         # Create config with public dataset and NO explicit sampling strategy
         user_config = UserConfig(
@@ -319,18 +321,22 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
     @pytest.mark.asyncio
-    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load_dataset")
-    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.convert_to_conversations")
+    @patch(
+        "aiperf.dataset.dataset_manager.download_public_dataset", new_callable=AsyncMock
+    )
+    @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load")
     async def test_explicit_strategy_overrides_loader_recommendation(
         self,
-        mock_convert,
         mock_load,
+        mock_download,
         mock_tokenizer,
+        tmp_path,
     ):
         """Test that explicitly set strategy is not overridden by loader recommendation."""
-        # Mock dataset loading
-        mock_load.return_value = {}
-        mock_convert.return_value = create_mock_conversations(["session-1"])
+        # Mock download to return a temp file path
+        mock_download.return_value = tmp_path / "sharegpt.json"
+        (tmp_path / "sharegpt.json").write_text("[]")
+        mock_load.return_value = create_mock_conversations(["session-1"])
 
         # Create config with explicit SHUFFLE strategy (different from loader's SEQUENTIAL)
         user_config = UserConfig(

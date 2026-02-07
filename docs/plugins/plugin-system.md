@@ -116,8 +116,8 @@ AIPerf supports 22 plugin categories organized by function:
 | `dataset_backing_store` | `DatasetBackingStoreType` | Server-side dataset storage |
 | `dataset_client_store` | `DatasetClientStoreType` | Worker-side dataset access |
 | `dataset_sampler` | `DatasetSamplingStrategy` | Sampling strategies (random, sequential, shuffle) |
-| `dataset_composer` | `ComposerType` | Dataset generation (synthetic, custom, rankings) |
-| `custom_dataset_loader` | `CustomDatasetType` | JSONL format loaders |
+| `dataset_loader` | `DatasetLoaderType` | Dataset loaders (file and synthetic) |
+| `model_selection_strategy` | `ModelSelectionStrategyType` | Model assignment to turns (round-robin, random, shuffle) |
 
 ### Endpoint and Transport Categories
 
@@ -366,13 +366,17 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `gamma` | `GammaIntervalGenerator` | Gamma distribution with tunable smoothness |
 | `concurrency_burst` | `ConcurrencyBurstIntervalGenerator` | Send ASAP up to concurrency limit |
 
-### Dataset Composers
+### Dataset Loaders
 
 | Name | Class | Description |
 |------|-------|-------------|
-| `synthetic` | `SyntheticDatasetComposer` | Generate synthetic conversations |
-| `custom` | `CustomDatasetComposer` | Load from JSONL files |
-| `synthetic_rankings` | `SyntheticRankingsDatasetComposer` | Generate ranking tasks |
+| `single_turn` | `SingleTurnDatasetLoader` | Single-turn multi-modal data from JSONL |
+| `multi_turn` | `MultiTurnDatasetLoader` | Multi-turn conversations with sessions and delays |
+| `random_pool` | `RandomPoolDatasetLoader` | Random sampling from pools of data |
+| `mooncake_trace` | `MooncakeTraceDatasetLoader` | Mooncake trace replay with timestamps |
+| `sharegpt` | `ShareGPTLoader` | ShareGPT public dataset |
+| `synthetic_multimodal` | `SyntheticMultiModalLoader` | Generate synthetic multi-modal conversations |
+| `synthetic_rankings` | `SyntheticRankingsLoader` | Generate synthetic ranking tasks |
 
 ### UI Types
 

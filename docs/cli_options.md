@@ -34,7 +34,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br>_Choices: [`arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br>_Choices: [`arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_loader`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `model_selection_strategy`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -116,6 +116,7 @@ When multiple models are specified, this is how a specific model should be assig
 |-------|:-------:|-------------|
 | `round_robin` | _default_ | Cycle through models in order. The nth prompt is assigned to model at index (n mod number_of_models). |
 | `random` |  | Randomly select a model for each prompt using uniform distribution. |
+| `shuffle` |  | Shuffle models without replacement, reshuffle when exhausted. |
 
 #### `--custom-endpoint`, `--endpoint` `<str>`
 
@@ -193,7 +194,7 @@ Custom HTTP headers to include with every request. Specify as `Header:Value` pai
 
 #### `--input-file` `<str>`
 
-Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL trace files for `mooncake_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
+Path to file or directory containing benchmark dataset. Required when using `--dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL trace files for `mooncake_trace`, directories for `random_pool`. File is parsed according to `--dataset-type` specification.
 
 #### `--fixed-schedule`
 
@@ -217,7 +218,7 @@ End offset in milliseconds for fixed schedule replay. Stops issuing requests aft
 
 #### `--public-dataset` `<str>`
 
-Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. See `PublicDatasetType` enum for available datasets.
+Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--dataset-type`. See `PublicDatasetType` enum for available datasets.
 
 **Choices:**
 
@@ -225,10 +226,10 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 |-------|:-------:|-------------|
 | `sharegpt` |  | ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges. |
 
-#### `--custom-dataset-type` `<str>`
+#### `--dataset-type`, `--custom-dataset-type` `<str>`
 
-Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br>_Choices: [`mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
+Dataset loader type to use. Determines parsing logic and expected file structure. File loaders: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts), `sharegpt`. Synthetic loaders: `synthetic_multimodal`, `synthetic_rankings`. If not specified, auto-detected from input file or defaults to synthetic.
+<br>_Choices: [`mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`, `sharegpt`, `synthetic_multimodal`, `synthetic_rankings`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 

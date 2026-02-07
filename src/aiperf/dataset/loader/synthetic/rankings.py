@@ -1,41 +1,51 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+from typing import Any
+
 from aiperf.common import random_generator as rng
-from aiperf.common.config import InputDefaults, UserConfig
+from aiperf.common.config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
-from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.dataset.composer.base import BaseDatasetComposer
+from aiperf.dataset.loader.synthetic.base import BaseSyntheticLoader
+from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
-class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
-    """Composer that generates synthetic data for the Rankings endpoint.
+class SyntheticRankingsLoader(BaseSyntheticLoader):
+    """Synthetic dataset loader for ranking tasks.
 
-    Each dataset entry contains one query and multiple passages.
+    Generates synthetic data with one query and multiple passages per entry,
+    designed for ranking model evaluation and benchmarking.
     """
 
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer):
-        super().__init__(config, tokenizer)
-
-        self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs: Any) -> None:
+        super().__init__(config=config, tokenizer=tokenizer, **kwargs)
         self._passages_rng = rng.derive("dataset.rankings.passages")
         self._passages_token_rng = rng.derive("dataset.rankings.passages.tokens")
         self._query_token_rng = rng.derive("dataset.rankings.query.tokens")
 
-        # Set default sampling strategy for synthetic rankings dataset if not explicitly set
-        if self.config.input.dataset_sampling_strategy is None:
-            self.config.input.dataset_sampling_strategy = (
-                InputDefaults.DATASET_SAMPLING_STRATEGY
-            )
-            self.info(
-                f"Using default sampling strategy for synthetic rankings dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
-            )
+    @classmethod
+    def can_load(
+        cls,
+        data: dict[str, Any] | None = None,
+        filename: str | Path | None = None,
+    ) -> bool:
+        """Synthetic loaders don't load from files."""
+        return False
 
-    def create_dataset(self) -> list[Conversation]:
+    @classmethod
+    def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
+        """Get the preferred sampling strategy for synthetic rankings."""
+        return DatasetSamplingStrategy.SHUFFLE
+
+    def load(self) -> list[Conversation]:
         """Generate synthetic dataset for the rankings endpoint.
 
         Each conversation contains one turn with one query and multiple passages.
+
+        Returns:
+            List of generated Conversation objects.
         """
         conversations: list[Conversation] = []
         num_entries = self.config.input.conversation.num_dataset_entries
@@ -54,7 +64,14 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         return conversations
 
     def _create_turn(self, num_passages: int) -> Turn:
-        """Create a single ranking turn with one synthetic query and multiple synthetic passages."""
+        """Create a single ranking turn with one synthetic query and multiple synthetic passages.
+
+        Args:
+            num_passages: Number of passages to generate.
+
+        Returns:
+            A Turn object with query and passage texts.
+        """
         turn = Turn()
 
         query_text = self.prompt_generator.generate_prompt(

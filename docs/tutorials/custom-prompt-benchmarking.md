@@ -59,7 +59,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --input-file production_queries.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --concurrency 2 \
     --warmup-request-count 1
 ```

@@ -928,13 +928,13 @@ if TYPE_CHECKING:
     # ruff: noqa: I001
     from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol, ServiceProtocol
     from aiperf.controller.protocols import ServiceManagerProtocol
-    from aiperf.dataset.composer.base import BaseDatasetComposer
-    from aiperf.dataset.protocols import CustomDatasetLoaderProtocol, DatasetBackingStoreProtocol, DatasetClientStoreProtocol, DatasetSamplingStrategyProtocol
+    from aiperf.dataset.model_selection_strategies import ModelSelectionStrategyProtocol
+    from aiperf.dataset.protocols import DatasetBackingStoreProtocol, DatasetClientStoreProtocol, DatasetLoaderProtocol, DatasetSamplingStrategyProtocol
     from aiperf.endpoints.protocols import EndpointProtocol
     from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
     from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ConsoleExporterType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetLoaderType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, ModelSelectionStrategyType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
@@ -972,13 +972,13 @@ if TYPE_CHECKING:
     @overload
     def iter_all(category: Literal[PluginType.DATASET_SAMPLER, "dataset_sampler"]) -> Iterator[tuple[PluginEntry, type[DatasetSamplingStrategyProtocol]]]: ...
     @overload
-    def get_class(category: Literal[PluginType.DATASET_COMPOSER, "dataset_composer"], name_or_class_path: ComposerType | str) -> type[BaseDatasetComposer]: ...
+    def get_class(category: Literal[PluginType.DATASET_LOADER, "dataset_loader"], name_or_class_path: DatasetLoaderType | str) -> type[DatasetLoaderProtocol]: ...
     @overload
-    def iter_all(category: Literal[PluginType.DATASET_COMPOSER, "dataset_composer"]) -> Iterator[tuple[PluginEntry, type[BaseDatasetComposer]]]: ...
+    def iter_all(category: Literal[PluginType.DATASET_LOADER, "dataset_loader"]) -> Iterator[tuple[PluginEntry, type[DatasetLoaderProtocol]]]: ...
     @overload
-    def get_class(category: Literal[PluginType.CUSTOM_DATASET_LOADER, "custom_dataset_loader"], name_or_class_path: CustomDatasetType | str) -> type[CustomDatasetLoaderProtocol]: ...
+    def get_class(category: Literal[PluginType.MODEL_SELECTION_STRATEGY, "model_selection_strategy"], name_or_class_path: ModelSelectionStrategyType | str) -> type[ModelSelectionStrategyProtocol]: ...
     @overload
-    def iter_all(category: Literal[PluginType.CUSTOM_DATASET_LOADER, "custom_dataset_loader"]) -> Iterator[tuple[PluginEntry, type[CustomDatasetLoaderProtocol]]]: ...
+    def iter_all(category: Literal[PluginType.MODEL_SELECTION_STRATEGY, "model_selection_strategy"]) -> Iterator[tuple[PluginEntry, type[ModelSelectionStrategyProtocol]]]: ...
     @overload
     def get_class(category: Literal[PluginType.ENDPOINT, "endpoint"], name_or_class_path: EndpointType | str) -> type[EndpointProtocol]: ...
     @overload

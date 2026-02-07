@@ -17,7 +17,7 @@ from aiperf.common.config import (
     LoadGeneratorConfig,
     UserConfig,
 )
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.plugin.enums import DatasetLoaderType
 
 
 class TestMooncakeTraceRequestCount:
@@ -55,7 +55,7 @@ class TestMooncakeTraceRequestCount:
             loadgen=LoadGeneratorConfig(request_count=999),  # Should be ignored
             input=InputConfig(
                 file="/fake/path/test.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             ),
         )
 
@@ -80,7 +80,7 @@ class TestMooncakeTraceRequestCount:
             loadgen=LoadGeneratorConfig(request_count=100),
             input=InputConfig(
                 file="/fake/path/test.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             ),
         )
 
@@ -99,7 +99,7 @@ class TestMooncakeTraceRequestCount:
             loadgen=LoadGeneratorConfig(request_count=50),
             input=InputConfig(
                 file="/fake/path/empty.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             ),
         )
 
@@ -116,7 +116,7 @@ class TestMooncakeTraceRequestCount:
             loadgen=LoadGeneratorConfig(request_count=42),
             input=InputConfig(
                 file="/fake/path/test.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             ),
         )
 
@@ -135,7 +135,7 @@ class TestMooncakeTraceRequestCount:
             loadgen=LoadGeneratorConfig(request_count=75),
             input=InputConfig(
                 file="/fake/path/other.jsonl",
-                custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+                dataset_type=DatasetLoaderType.SINGLE_TURN,
             ),
         )
 
@@ -154,7 +154,7 @@ class TestMooncakeTraceRequestCount:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(
                 file="/fake/path/other.jsonl",
-                custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+                dataset_type=DatasetLoaderType.SINGLE_TURN,
             ),
         )
 
@@ -177,7 +177,7 @@ class TestMooncakeTraceRequestCount:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(
                 file="/fake/path/test.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             ),
         )
 
@@ -205,7 +205,7 @@ class TestMooncakeTraceTimingDetection:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(
                 file="/fake/path/with_timestamps.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             ),
         )
 
@@ -228,7 +228,7 @@ class TestMooncakeTraceTimingDetection:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(
                 file="/fake/path/without_timestamps.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             ),
         )
 
@@ -248,7 +248,7 @@ class TestMooncakeTraceTimingDetection:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(
                 file="/fake/path/other_dataset.jsonl",
-                custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+                dataset_type=DatasetLoaderType.SINGLE_TURN,
             ),
         )
 
@@ -279,7 +279,7 @@ class TestMooncakeTraceTimingDetection:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(
                 file="/fake/path/test.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             ),
         )
 
@@ -298,7 +298,7 @@ class TestMooncakeTraceTimingDetection:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(
                 file="/fake/path/empty.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             ),
         )
 
@@ -321,7 +321,7 @@ class TestMooncakeTraceTimingDetection:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(
                 file="/fake/path/malformed.jsonl",
-                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             ),
         )
 

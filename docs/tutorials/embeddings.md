@@ -94,7 +94,7 @@ aiperf profile \
     --endpoint-type embeddings \
     --endpoint /v1/embeddings \
     --input-file inputs.jsonl \
-    --custom-dataset-type single_turn \
+    --dataset-type single_turn \
     --url localhost:8000 \
     --request-count 5
 ```

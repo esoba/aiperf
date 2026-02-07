@@ -27,7 +27,7 @@ from aiperf.common.enums import GPUTelemetryMode, ServerMetricsFormat
 from aiperf.common.utils import load_json_str
 from aiperf.plugin.enums import (
     ArrivalPattern,
-    CustomDatasetType,
+    DatasetLoaderType,
     EndpointType,
     GPUTelemetryCollectorType,
     TimingMode,
@@ -339,7 +339,7 @@ class UserConfig(BaseConfig):
         Returns:
             bool: True if fixed schedule should be enabled for this mooncake trace
         """
-        if self.input.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE:
+        if self.input.dataset_type != DatasetLoaderType.MOONCAKE_TRACE:
             return False
 
         if not self.input.file:

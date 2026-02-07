@@ -9,7 +9,7 @@ from aiperf.common.config import (
     LoadGeneratorConfig,
     UserConfig,
 )
-from aiperf.plugin.enums import CustomDatasetType, TimingMode
+from aiperf.plugin.enums import DatasetLoaderType, TimingMode
 from aiperf.timing.config import TimingConfig
 
 
@@ -21,7 +21,7 @@ class TestTimingConfigurationIntegration:
                 endpoint=EndpointConfig(model_names=["test-model"]),
                 loadgen=LoadGeneratorConfig(request_count=100),
                 input=InputConfig(
-                    file=fname, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
+                    file=fname, dataset_type=DatasetLoaderType.MOONCAKE_TRACE
                 ),
             )
             tcfg = TimingConfig.from_user_config(ucfg)
@@ -35,7 +35,7 @@ class TestTimingConfigurationIntegration:
             ucfg = UserConfig(
                 endpoint=EndpointConfig(model_names=["test-model"]),
                 input=InputConfig(
-                    file=fname, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
+                    file=fname, dataset_type=DatasetLoaderType.MOONCAKE_TRACE
                 ),
             )
             tcfg = TimingConfig.from_user_config(ucfg)
@@ -50,7 +50,7 @@ class TestTimingConfigurationIntegration:
             ucfg = UserConfig(
                 endpoint=EndpointConfig(model_names=["test-model"]),
                 input=InputConfig(
-                    file=fname, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
+                    file=fname, dataset_type=DatasetLoaderType.MOONCAKE_TRACE
                 ),
             )
             tcfg = TimingConfig.from_user_config(ucfg)
@@ -74,7 +74,7 @@ class TestTimingConfigurationIntegration:
             ucfg = UserConfig(
                 endpoint=EndpointConfig(model_names=["test-model"]),
                 input=InputConfig(
-                    file=fname, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
+                    file=fname, dataset_type=DatasetLoaderType.MOONCAKE_TRACE
                 ),
             )
             tcfg = TimingConfig.from_user_config(ucfg)

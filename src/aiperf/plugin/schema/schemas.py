@@ -49,7 +49,7 @@ class PluginsManifest(BaseModel):
           tokenizes_input: true
           metrics_title: My Custom Metrics
 
-    custom_dataset_loader:
+    dataset_loader:
       my_jsonl:
         class: my_package.dataset_loaders.my_jsonl:MyJSONLDatasetLoader
         description: Custom dataset loader for my API.

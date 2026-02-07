@@ -47,7 +47,7 @@ def validate_tokenizer_early(
     input_cfg = user_config.input
     is_synthetic = (
         input_cfg.public_dataset is None
-        and input_cfg.custom_dataset_type is None
+        and input_cfg.dataset_type is None
         and input_cfg.file is None
     )
     if user_config.endpoint.use_server_token_count and not is_synthetic:

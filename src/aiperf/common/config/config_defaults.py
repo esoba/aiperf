@@ -60,7 +60,7 @@ class InputDefaults:
     FIXED_SCHEDULE_END_OFFSET = None
     GOODPUT = None
     PUBLIC_DATASET = None
-    CUSTOM_DATASET_TYPE = None
+    DATASET_TYPE = None
     DATASET_SAMPLING_STRATEGY = DatasetSamplingStrategy.SHUFFLE
     RANDOM_SEED = None
     NUM_DATASET_ENTRIES = 100

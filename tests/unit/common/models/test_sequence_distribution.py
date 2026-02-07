@@ -679,30 +679,39 @@ class TestSequenceCaching:
     def test_turn_sequence_caching(self):
         """Test that sequence lengths are cached per turn for consistency."""
 
-        from aiperf.common.models import Turn
-        from aiperf.dataset.composer.base import BaseDatasetComposer
+        from aiperf.common.models import Conversation, Turn
+        from aiperf.dataset.loader.base import BaseDatasetLoader
+        from aiperf.plugin.enums import DatasetSamplingStrategy
 
-        # Create mock composer
-        class MockComposer(BaseDatasetComposer):
-            def create_dataset(self):
+        # Create mock loader
+        class MockLoader(BaseDatasetLoader):
+            def load(self) -> list[Conversation]:
                 return []
 
-        # Set up composer with distribution
-        composer = MockComposer.__new__(MockComposer)
+            @classmethod
+            def can_load(cls, config) -> bool:
+                return False
+
+            @classmethod
+            def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
+                return DatasetSamplingStrategy.SEQUENTIAL
+
+        # Set up loader with distribution
+        loader = MockLoader.__new__(MockLoader)
         dist = DistributionParser.parse("128,64:50;256,128:50")
-        composer._seq_distribution = dist
-        composer._turn_sequence_cache = {}
+        loader._seq_distribution = dist
+        loader._turn_sequence_cache = {}
         # Use the global RNG instead of _seq_rng
-        composer._rng = rng.derive("test_composer")
+        loader._rng = rng.derive("test_loader")
 
         # Create a turn and get its ID
         turn = Turn()
         turn_id = id(turn)
 
         # Sample multiple times - should get same result due to caching
-        isl1, osl1 = composer._get_turn_sequence_lengths(turn_id)
-        isl2, osl2 = composer._get_turn_sequence_lengths(turn_id)
-        isl3, osl3 = composer._get_turn_sequence_lengths(turn_id)
+        isl1, osl1 = loader._get_turn_sequence_lengths(turn_id)
+        isl2, osl2 = loader._get_turn_sequence_lengths(turn_id)
+        isl3, osl3 = loader._get_turn_sequence_lengths(turn_id)
 
         # All calls should return the same cached result
         assert isl1 == isl2 == isl3
@@ -713,32 +722,41 @@ class TestSequenceCaching:
         assert (isl1, osl1) in valid_pairs
 
         # Test cache clearing
-        composer._clear_turn_cache(turn_id)
+        loader._clear_turn_cache(turn_id)
 
         # After clearing, can sample again (may get different result)
-        isl4, osl4 = composer._get_turn_sequence_lengths(turn_id)
+        isl4, osl4 = loader._get_turn_sequence_lengths(turn_id)
         assert (isl4, osl4) in valid_pairs
 
     def test_different_turns_get_different_cache_entries(self):
         """Test that different turns can have different cached sequence lengths."""
 
-        from aiperf.common.models import Turn
-        from aiperf.dataset.composer.base import BaseDatasetComposer
+        from aiperf.common.models import Conversation, Turn
+        from aiperf.dataset.loader.base import BaseDatasetLoader
+        from aiperf.plugin.enums import DatasetSamplingStrategy
 
-        # Create mock composer
-        class MockComposer(BaseDatasetComposer):
-            def create_dataset(self):
+        # Create mock loader
+        class MockLoader(BaseDatasetLoader):
+            def load(self) -> list[Conversation]:
                 return []
 
-        # Set up composer with distribution
-        composer = MockComposer.__new__(MockComposer)
+            @classmethod
+            def can_load(cls, config) -> bool:
+                return False
+
+            @classmethod
+            def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
+                return DatasetSamplingStrategy.SEQUENTIAL
+
+        # Set up loader with distribution
+        loader = MockLoader.__new__(MockLoader)
         dist = DistributionParser.parse(
             "100,50:100"
         )  # Single pair for predictable results
-        composer._seq_distribution = dist
-        composer._turn_sequence_cache = {}
+        loader._seq_distribution = dist
+        loader._turn_sequence_cache = {}
         # Use the global RNG instead of _seq_rng
-        composer._rng = rng.derive("test_composer2")
+        loader._rng = rng.derive("test_loader2")
 
         # Create two different turns
         turn1 = Turn()
@@ -747,18 +765,18 @@ class TestSequenceCaching:
         turn2_id = id(turn2)
 
         # Get sequence lengths for both turns
-        isl1, osl1 = composer._get_turn_sequence_lengths(turn1_id)
-        isl2, osl2 = composer._get_turn_sequence_lengths(turn2_id)
+        isl1, osl1 = loader._get_turn_sequence_lengths(turn1_id)
+        isl2, osl2 = loader._get_turn_sequence_lengths(turn2_id)
 
         # Both should be the same since there's only one pair in the distribution
         assert (isl1, osl1) == (100, 50)
         assert (isl2, osl2) == (100, 50)
 
         # But they should be cached separately
-        assert turn1_id in composer._turn_sequence_cache
-        assert turn2_id in composer._turn_sequence_cache
+        assert turn1_id in loader._turn_sequence_cache
+        assert turn2_id in loader._turn_sequence_cache
 
         # Clearing one shouldn't affect the other
-        composer._clear_turn_cache(turn1_id)
-        assert turn1_id not in composer._turn_sequence_cache
-        assert turn2_id in composer._turn_sequence_cache
+        loader._clear_turn_cache(turn1_id)
+        assert turn1_id not in loader._turn_sequence_cache
+        assert turn2_id in loader._turn_sequence_cache

@@ -76,21 +76,20 @@ dataset_sampler:
     Supports random, sequential, and shuffle sampling strategies.
     One-to-one mapping based on sampling strategy configuration.
 
-dataset_composer:
-  protocol: aiperf.dataset.composer.base:BaseDatasetComposer
-  enum: ComposerType
+dataset_loader:
+  protocol: aiperf.dataset.protocols:DatasetLoaderProtocol
+  enum: DatasetLoaderType
   description: |
-    Dataset composers create conversation datasets from various sources.
-    Handles synthetic generation, custom file loading, and specialized formats.
-    One-to-one mapping based on composer_type configuration.
-
-custom_dataset_loader:
-  protocol: aiperf.dataset.protocols:CustomDatasetLoaderProtocol
-  enum: CustomDatasetType
-  description: |
-    Custom dataset loaders parse different JSONL file formats into conversations.
-    Supports single-turn, multi-turn, random-pool, and trace formats.
+    Dataset loaders create conversation datasets from various sources.
+    Unified hierarchy: file loaders parse JSONL, synthetic loaders generate data.
     Auto-detection: loaders are tried in priority order based on can_load().
+
+model_selection_strategy:
+  protocol: aiperf.dataset.model_selection_strategies:ModelSelectionStrategyProtocol
+  enum: ModelSelectionStrategyType
+  description: |
+    Model selection strategies control how models are assigned to turns.
+    Supports round-robin, random, and shuffle selection patterns.
 
 # =============================================================================
 # Endpoint and Transport Categories

@@ -7,15 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.config import (
-    ConversationConfig,
-    EndpointConfig,
-    InputConfig,
-    InputTokensConfig,
-    PromptConfig,
-    UserConfig,
-)
-from aiperf.dataset.composer.custom import CustomDatasetComposer
+from aiperf.common.config import EndpointConfig, UserConfig
 
 
 @pytest.fixture
@@ -36,30 +28,6 @@ def create_jsonl_file():
     # Cleanup all created files
     if filename:
         Path(filename).unlink(missing_ok=True)
-
-
-@pytest.fixture
-def create_user_config_and_composer(mock_tokenizer_cls):
-    """Create a UserConfig and CustomDatasetComposer for testing."""
-
-    def _create():
-        config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig.model_construct(
-                file="test_data.jsonl",
-                conversation=ConversationConfig(num=5),
-                prompt=PromptConfig(
-                    input_tokens=InputTokensConfig(mean=10, stddev=2),
-                ),
-            ),
-        )
-        tokenizer = mock_tokenizer_cls.from_pretrained(
-            "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
-        )
-        composer = CustomDatasetComposer(config, tokenizer)
-        return config, composer
-
-    return _create
 
 
 @pytest.fixture

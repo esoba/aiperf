@@ -9,9 +9,9 @@ from pydantic import ValidationError
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.generator.parallel_decode import parallel_decode
-from aiperf.dataset.generator.prompt import PromptGenerator
-from aiperf.dataset.loader.base_loader import BaseFileLoader
+from aiperf.dataset.loader.file.base import BaseFileLoader
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.synthesis.models import SynthesisParams
 from aiperf.dataset.synthesis.synthesizer import Synthesizer
@@ -44,38 +44,34 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         self,
         *,
         filename: str,
-        prompt_generator: PromptGenerator,
-        user_config: UserConfig,
-        **kwargs,
-    ):
-        super().__init__(filename=filename, user_config=user_config, **kwargs)
-        self.prompt_generator = prompt_generator
+        config: UserConfig,
+        tokenizer: Tokenizer,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            filename=filename, config=config, tokenizer=tokenizer, **kwargs
+        )
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
-        self._start_offset = user_config.input.fixed_schedule_start_offset
-        self._end_offset = user_config.input.fixed_schedule_end_offset
-        self._max_isl = user_config.input.synthesis.max_isl
-        self._max_osl = user_config.input.synthesis.max_osl
+        self._start_offset = config.input.fixed_schedule_start_offset
+        self._end_offset = config.input.fixed_schedule_end_offset
+        self._max_isl = config.input.synthesis.max_isl
+        self._max_osl = config.input.synthesis.max_osl
 
         # Store tokenizer name and block size for parallel decode
-        self._tokenizer_name = (
-            user_config.tokenizer.name or user_config.endpoint.model_names[0]
-        )
-        self._block_size = user_config.input.prompt.input_tokens.block_size
+        self._tokenizer_name = config.tokenizer.name or config.endpoint.model_names[0]
+        self._block_size = config.input.prompt.input_tokens.block_size
 
     @classmethod
-    def can_load(
-        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    def can_load_file(
+        cls, data: dict[str, Any], filename: str | Path | None = None
     ) -> bool:
         """Check if this loader can handle the given data format.
 
         For mooncake trace data, simply validate the data against the MooncakeTrace model.
         This will handle all of the validation logic for the different input combinations.
         """
-        if data is None:
-            return False
-
         try:
             MooncakeTrace.model_validate(data)
             return True
@@ -87,7 +83,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         """Get the preferred dataset sampling strategy for MooncakeTrace."""
         return DatasetSamplingStrategy.SEQUENTIAL
 
-    def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
+    def parse_and_validate(self) -> dict[str, list[MooncakeTrace]]:
         """Load Mooncake trace data from a file.
 
         Returns:
@@ -150,7 +146,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         self.debug(lambda: f"Loaded {len(data):,} traces from {self.filename}")
 
         # Apply synthesis if needed
-        synthesis_config = self.user_config.input.synthesis
+        synthesis_config = self.config.input.synthesis
         if synthesis_config.should_synthesize():
             data = self._apply_synthesis(data)
 
@@ -265,7 +261,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
             Dictionary of session_id to list of synthesized MooncakeTrace objects.
         """
         params = SynthesisParams.from_synthesis_config(
-            self.user_config.input.synthesis, block_size=self._block_size
+            self.config.input.synthesis, block_size=self._block_size
         )
 
         # Convert to dicts for synthesizer (exclude discriminator field "type")

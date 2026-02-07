@@ -87,7 +87,7 @@ aiperf profile \
     --endpoint /v1/chat/completions \
     --streaming \
     --input-file inputs.jsonl \
-    --custom-dataset-type single_turn \
+    --dataset-type single_turn \
     --url localhost:8000 \
     --request-count 10
 ```
@@ -156,7 +156,7 @@ aiperf profile \
     --endpoint-type completions \
     --endpoint /v1/completions \
     --input-file inputs.jsonl \
-    --custom-dataset-type single_turn \
+    --dataset-type single_turn \
     --url localhost:8000 \
     --request-count 10
 

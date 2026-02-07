@@ -6,10 +6,16 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.common.config import (
+    ConversationConfig,
+    EndpointConfig,
+    InputConfig,
+    UserConfig,
+)
 from aiperf.common.models import Text
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.plugin.enums import DatasetLoaderType
 
 
 class TestRandomPool:
@@ -21,7 +27,7 @@ class TestRandomPool:
 
         assert data.text == "What is machine learning?"
         assert data.texts is None
-        assert data.type == CustomDatasetType.RANDOM_POOL
+        assert data.type == DatasetLoaderType.RANDOM_POOL
 
     def test_create_with_multimodal_data(self):
         """Test creating RandomPool with multiple modalities."""
@@ -84,7 +90,9 @@ class TestRandomPool:
 class TestRandomPoolDatasetLoader:
     """Tests for RandomPoolDatasetLoader functionality."""
 
-    def test_load_simple_single_file(self, create_jsonl_file, default_user_config):
+    def test_load_simple_single_file(
+        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
+    ):
         """Test loading from a single file with simple content."""
         content = [
             '{"text": "What is deep learning?"}',
@@ -92,10 +100,11 @@ class TestRandomPoolDatasetLoader:
         ]
         filepath = create_jsonl_file(content)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename=filepath, user_config=default_user_config
+            filename=filepath, config=default_user_config, tokenizer=mock_tokenizer
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         filename = Path(filepath).name
         assert isinstance(dataset, dict)
@@ -108,7 +117,9 @@ class TestRandomPoolDatasetLoader:
         assert dataset_pool[1].text == "Explain neural networks"
         assert dataset_pool[1].image == "/chart.png"
 
-    def test_load_multimodal_single_file(self, create_jsonl_file, default_user_config):
+    def test_load_multimodal_single_file(
+        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
+    ):
         """Test loading multimodal content from single file."""
         content = [
             '{"text": "Analyze this image", "image": "/data.png"}',
@@ -117,10 +128,11 @@ class TestRandomPoolDatasetLoader:
         ]
         filepath = create_jsonl_file(content)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename=filepath, user_config=default_user_config
+            filename=filepath, config=default_user_config, tokenizer=mock_tokenizer
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         filename = Path(filepath).name
         dataset_pool = dataset[filename]
@@ -132,7 +144,7 @@ class TestRandomPoolDatasetLoader:
         assert dataset_pool[2].images == ["/img1.jpg", "/img2.jpg"]
 
     def test_load_dataset_skips_empty_lines(
-        self, create_jsonl_file, default_user_config
+        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
     ):
         """Test that empty lines are skipped during loading."""
         content = [
@@ -144,16 +156,19 @@ class TestRandomPoolDatasetLoader:
         ]
         filepath = create_jsonl_file(content)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename=filepath, user_config=default_user_config
+            filename=filepath, config=default_user_config, tokenizer=mock_tokenizer
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         filename = Path(filepath).name
         dataset_pool = dataset[filename]
         assert len(dataset_pool) == 3  # Should skip empty lines
 
-    def test_load_directory_with_multiple_files(self, default_user_config):
+    def test_load_directory_with_multiple_files(
+        self, default_user_config, mock_tokenizer_cls
+    ):
         """Test loading from directory with multiple files."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -186,10 +201,13 @@ class TestRandomPoolDatasetLoader:
                     '{"images": [{"name": "image", "contents": ["/path/to/image2.png"]}]}\n'
                 )
 
+            mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
             loader = RandomPoolDatasetLoader(
-                filename=str(temp_path), user_config=default_user_config
+                filename=str(temp_path),
+                config=default_user_config,
+                tokenizer=mock_tokenizer,
             )
-            dataset = loader.load_dataset()
+            dataset = loader.parse_and_validate()
 
             assert len(dataset) == 3
             assert "queries.jsonl" in dataset
@@ -219,12 +237,17 @@ class TestRandomPoolDatasetLoader:
             assert images_pool[0].images[0].contents == ["/path/to/image1.png"]
             assert images_pool[1].images[0].contents == ["/path/to/image2.png"]
 
-    def test_convert_simple_pool_data(self, default_user_config):
+    def test_convert_simple_pool_data(self, mock_tokenizer_cls):
         """Test converting simple random pool data to conversations."""
         data = {"file1.jsonl": [RandomPool(text="Hello world")]}
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(conversation=ConversationConfig(num=1)),
+        )
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", config=config, tokenizer=mock_tokenizer
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -232,7 +255,7 @@ class TestRandomPoolDatasetLoader:
         assert len(conversations[0].turns) == 1
         assert conversations[0].turns[0].texts[0].contents == ["Hello world"]
 
-    def test_convert_multimodal_pool_data(self, default_user_config):
+    def test_convert_multimodal_pool_data(self, mock_tokenizer_cls):
         """Test converting multimodal random pool data."""
         data = {
             "multimodal.jsonl": [
@@ -243,9 +266,14 @@ class TestRandomPoolDatasetLoader:
                 )
             ]
         }
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(conversation=ConversationConfig(num=1)),
+        )
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", config=config, tokenizer=mock_tokenizer
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -258,7 +286,7 @@ class TestRandomPoolDatasetLoader:
         assert len(turn.audios) == 1
         assert turn.audios[0].contents == ["https://example.com/audio.wav"]
 
-    def test_convert_batched_pool_data(self, default_user_config):
+    def test_convert_batched_pool_data(self, mock_tokenizer_cls):
         """Test converting pool data with batched content."""
         data = {
             "batched.jsonl": [
@@ -271,9 +299,14 @@ class TestRandomPoolDatasetLoader:
                 )
             ]
         }
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(conversation=ConversationConfig(num=1)),
+        )
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
+            filename="dummy.jsonl", config=config, tokenizer=mock_tokenizer
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -287,7 +320,7 @@ class TestRandomPoolDatasetLoader:
             "https://example.com/image2.png",
         ]
 
-    def test_convert_multiple_files_no_name_specified(self, default_user_config):
+    def test_convert_multiple_files_no_name_specified(self, mock_tokenizer_cls):
         """Test converting data from multiple files without name specified."""
         # Simplified version with no name specified
         data = {
@@ -296,9 +329,14 @@ class TestRandomPoolDatasetLoader:
             ],
             "contexts.jsonl": [RandomPool(text="AI is artificial intelligence")],
         }
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(conversation=ConversationConfig(num=1)),
+        )
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy_dir", user_config=default_user_config
+            filename="dummy_dir", config=config, tokenizer=mock_tokenizer
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -311,7 +349,7 @@ class TestRandomPoolDatasetLoader:
         assert turn.texts[1].name == "contexts"  # use filename if not specified
         assert turn.texts[1].contents == ["AI is artificial intelligence"]
 
-    def test_convert_multiple_files_with_name_specified(self, default_user_config):
+    def test_convert_multiple_files_with_name_specified(self, mock_tokenizer_cls):
         """Test converting data from multiple files with name specified."""
         data = {
             "queries.jsonl": [
@@ -325,9 +363,14 @@ class TestRandomPoolDatasetLoader:
                 )
             ],
         }
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(conversation=ConversationConfig(num=1)),
+        )
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy_dir", user_config=default_user_config
+            filename="dummy_dir", config=config, tokenizer=mock_tokenizer
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -340,7 +383,7 @@ class TestRandomPoolDatasetLoader:
         assert turn.texts[1].name == "def456"  # uses name from Text object
         assert turn.texts[1].contents == ["AI is artificial intelligence"]
 
-    def test_convert_multiple_files_with_multiple_samples(self, default_user_config):
+    def test_convert_multiple_files_with_multiple_samples(self, mock_tokenizer_cls):
         """Test converting data from multiple files with multiple samples."""
         data = {
             "queries.jsonl": [
@@ -352,9 +395,16 @@ class TestRandomPoolDatasetLoader:
                 RandomPool(text="text4", image="https://example.com/image4.png"),
             ],
         }
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(conversation=ConversationConfig(num=2)),
+        )
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy_dir", user_config=default_user_config, num_conversations=2
+            filename="dummy_dir",
+            config=config,
+            tokenizer=mock_tokenizer,
         )
         conversations = loader.convert_to_conversations(data)
 

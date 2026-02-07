@@ -79,7 +79,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --input-file custom_trace.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --fixed-schedule
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
@@ -105,7 +105,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --input-file mooncake_trace_short.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --fixed-schedule
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->

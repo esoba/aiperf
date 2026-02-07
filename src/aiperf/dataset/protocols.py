@@ -10,13 +10,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from aiperf.common.models.dataset_models import DatasetClientMetadata
-    from aiperf.dataset.loader.models import CustomDatasetT
     from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
 @runtime_checkable
-class CustomDatasetLoaderProtocol(Protocol):
-    """Protocol for custom dataset loaders that load dataset from a file and convert it to a list of Conversation objects."""
+class DatasetLoaderProtocol(Protocol):
+    """Protocol for dataset loaders that produce a list of Conversation objects."""
 
     @classmethod
     def can_load(
@@ -43,11 +42,13 @@ class CustomDatasetLoaderProtocol(Protocol):
         """
         ...
 
-    def load_dataset(self) -> dict[str, list["CustomDatasetT"]]: ...
+    def load(self) -> list[Conversation]:
+        """Load and return finalized conversations.
 
-    def convert_to_conversations(
-        self, custom_data: dict[str, list["CustomDatasetT"]]
-    ) -> list[Conversation]: ...
+        Returns:
+            List of Conversation objects ready for the dataset manager.
+        """
+        ...
 
 
 @runtime_checkable

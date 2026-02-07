@@ -27,7 +27,7 @@ from aiperf.common.config.video_config import VideoConfig
 from aiperf.common.enums import PublicDatasetType
 from aiperf.common.exceptions import InvalidStateError, MetricTypeError
 from aiperf.plugin.enums import (
-    CustomDatasetType,
+    DatasetLoaderType,
     DatasetSamplingStrategy,
 )
 
@@ -90,25 +90,36 @@ class InputConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_dataset_type(self) -> Self:
         """Validate the different dataset type configuration."""
-        if self.public_dataset is not None and self.custom_dataset_type is not None:
+        if self.public_dataset is not None and self.dataset_type is not None:
             raise ValueError(
-                "The --public-dataset and --custom-dataset-type options cannot be set together"
+                "The --public-dataset and --dataset-type options cannot be set together"
             )
         return self
 
     @model_validator(mode="after")
-    def validate_custom_dataset_file(self) -> Self:
-        """Validate that custom dataset type has a file."""
-        if self.custom_dataset_type is not None and self.file is None:
-            raise ValueError("Custom dataset type requires --input-file to be provided")
+    def validate_dataset_type_file(self) -> Self:
+        """Validate that dataset type has a file for file-based loaders."""
+        file_loader_types = {
+            DatasetLoaderType.SINGLE_TURN,
+            DatasetLoaderType.MULTI_TURN,
+            DatasetLoaderType.RANDOM_POOL,
+            DatasetLoaderType.MOONCAKE_TRACE,
+            DatasetLoaderType.SHAREGPT,
+        }
+        if (
+            self.dataset_type is not None
+            and self.dataset_type in file_loader_types
+            and self.file is None
+        ):
+            raise ValueError("Dataset type requires --input-file to be provided")
         return self
 
     @model_validator(mode="after")
     def validate_synthesis_requires_mooncake_trace(self) -> Self:
         """Validate that synthesis options require mooncake_trace dataset type.
 
-        Only validates when custom_dataset_type is explicitly set to a non-mooncake
-        type. If custom_dataset_type is None (auto-detect), we allow synthesis
+        Only validates when dataset_type is explicitly set to a non-mooncake
+        type. If dataset_type is None (auto-detect), we allow synthesis
         options and defer validation to runtime when the actual type is determined.
         """
         if (
@@ -117,14 +128,14 @@ class InputConfig(BaseConfig):
                 or self.synthesis.max_isl is not None
                 or self.synthesis.max_osl is not None
             )
-            and self.custom_dataset_type is not None
-            and self.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
+            and self.dataset_type is not None
+            and self.dataset_type != DatasetLoaderType.MOONCAKE_TRACE
         ):
             raise ValueError(
                 "Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
                 "--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier, "
                 "--synthesis-max-isl, --synthesis-max-osl) "
-                "require --custom-dataset-type mooncake_trace"
+                "require --dataset-type mooncake_trace"
             )
         return self
 
@@ -190,9 +201,9 @@ class InputConfig(BaseConfig):
     file: Annotated[
         Any,
         Field(
-            description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
+            description="Path to file or directory containing benchmark dataset. Required when using `--dataset-type`. "
             "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL trace files for `mooncake_trace`, "
-            "directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
+            "directories for `random_pool`. File is parsed according to `--dataset-type` specification.",
         ),
         BeforeValidator(parse_file),
         CLIParameter(
@@ -263,7 +274,7 @@ class InputConfig(BaseConfig):
         PublicDatasetType | None,
         Field(
             description="Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). "
-            "AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. "
+            "AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--dataset-type`. "
             "See `PublicDatasetType` enum for available datasets.",
         ),
         CLIParameter(
@@ -272,19 +283,23 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.PUBLIC_DATASET
 
-    custom_dataset_type: Annotated[
-        CustomDatasetType | None,
+    dataset_type: Annotated[
+        DatasetLoaderType | None,
         Field(
-            description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
-            "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
-            "`mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). "
-            "Requires `--input-file`. Mutually exclusive with `--public-dataset`.",
+            description="Dataset loader type to use. Determines parsing logic and expected file structure. "
+            "File loaders: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
+            "`mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts), `sharegpt`. "
+            "Synthetic loaders: `synthetic_multimodal`, `synthetic_rankings`. "
+            "If not specified, auto-detected from input file or defaults to synthetic.",
         ),
         CLIParameter(
-            name=("--custom-dataset-type"),
+            name=(
+                "--dataset-type",
+                "--custom-dataset-type",  # Backward compatibility
+            ),
             group=_CLI_GROUP,
         ),
-    ] = InputDefaults.CUSTOM_DATASET_TYPE
+    ] = InputDefaults.DATASET_TYPE
 
     dataset_sampling_strategy: Annotated[
         DatasetSamplingStrategy | None,

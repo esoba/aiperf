@@ -94,7 +94,7 @@ aiperf profile \
     --endpoint-type huggingface_generate \
     --url localhost:8080 \
     --input-file ./inputs.jsonl \
-    --custom-dataset-type single_turn \
+    --dataset-type single_turn \
     --request-count 10
 ```
 
@@ -158,7 +158,7 @@ aiperf profile \
     --endpoint-type huggingface_generate \
     --url localhost:8080 \
     --input-file ./inputs.jsonl \
-    --custom-dataset-type single_turn \
+    --dataset-type single_turn \
     --streaming \
     --request-count 10
 ```

@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from aiperf.common.enums import MediaType
 from aiperf.common.models import Conversation, Turn
-from aiperf.dataset.loader.base_loader import BaseFileLoader
+from aiperf.dataset.loader.file.base import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import MultiTurn
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -94,17 +94,14 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     """
 
     @classmethod
-    def can_load(
-        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    def can_load_file(
+        cls, data: dict[str, Any], filename: str | Path | None = None
     ) -> bool:
         """Check if this loader can handle the given data format.
 
         For multi-turn data, simply validate the data against the MultiTurn model.
         This will handle all of the validation logic for the different input combinations.
         """
-        if data is None:
-            return False
-
         try:
             MultiTurn.model_validate(data)
             return True
@@ -116,7 +113,7 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         """Get the preferred dataset sampling strategy for MultiTurn."""
         return DatasetSamplingStrategy.SEQUENTIAL
 
-    def load_dataset(self) -> dict[str, list[MultiTurn]]:
+    def parse_and_validate(self) -> dict[str, list[MultiTurn]]:
         """Load multi-turn data from a JSONL file.
 
         Each line represents a complete multi-turn conversation with its own

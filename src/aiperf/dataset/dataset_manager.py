@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import gc
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
@@ -16,7 +17,6 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
-    PublicDatasetType,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_request, on_stop
@@ -38,11 +38,16 @@ from aiperf.common.models import (
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.dataset.loader import ShareGPTLoader
+from aiperf.common.utils import load_json_str
+from aiperf.dataset.public_datasets import (
+    download_public_dataset,
+    get_public_dataset,
+)
+from aiperf.dataset.utils import check_file_exists
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
-    ComposerType,
     DatasetBackingStoreType,
+    DatasetLoaderType,
     PluginType,
 )
 
@@ -246,44 +251,202 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 temp_file_path.unlink()
 
     async def _load_public_dataset(self) -> list[Conversation]:
+        """Load a public dataset by downloading (or using cache) and loading via its loader."""
         public_dataset_type = self.user_config.input.public_dataset
-        match public_dataset_type:
-            case PublicDatasetType.SHAREGPT:
-                loader = ShareGPTLoader(self.user_config, self.tokenizer)
-            case _:
-                raise ValueError(
-                    f"Unsupported public dataset type: {public_dataset_type}"
-                )
+        dataset = get_public_dataset(public_dataset_type)
+        local_path = await download_public_dataset(dataset)
 
-        dataset = await loader.load_dataset()
-        # Only use loader's recommended strategy if user hasn't explicitly set one
+        LoaderClass = plugins.get_class(PluginType.DATASET_LOADER, dataset.loader_type)
+        loader = LoaderClass(
+            filename=str(local_path),
+            config=self.user_config,
+            tokenizer=self.tokenizer,
+        )
+
+        # Set sampling strategy from loader if not user-specified
         if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
             self.user_config.input.dataset_sampling_strategy = (
-                loader.get_recommended_sampling_strategy()
+                loader.get_preferred_sampling_strategy()
             )
-        return await loader.convert_to_conversations(dataset)
 
-    def _load_custom_dataset(self) -> list[Conversation]:
-        ComposerClass = plugins.get_class(
-            PluginType.DATASET_COMPOSER, ComposerType.CUSTOM
+        return loader.load()
+
+    def _load_file_dataset(self) -> list[Conversation]:
+        """Load a dataset from a file or directory.
+
+        Auto-detects loader type if not explicitly specified.
+        """
+        check_file_exists(self.user_config.input.file)
+
+        dataset_type = self.user_config.input.dataset_type
+        if dataset_type is None:
+            dataset_type = self._infer_dataset_type(self.user_config.input.file)
+            self.info(f"Auto-detected dataset type: {dataset_type}")
+
+        # Validate synthesis options are only used with mooncake_trace
+        self._validate_synthesis_config(dataset_type)
+
+        LoaderClass = plugins.get_class(PluginType.DATASET_LOADER, dataset_type)
+        loader = LoaderClass(
+            filename=self.user_config.input.file,
+            config=self.user_config,
+            tokenizer=self.tokenizer,
         )
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
-        return composer.create_dataset()
 
-    def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
-        return "rankings" in endpoint_type.lower()
+        # Set sampling strategy from loader if not user-specified
+        if self.user_config.input.dataset_sampling_strategy is None:
+            preferred_strategy = loader.get_preferred_sampling_strategy()
+            self.user_config.input.dataset_sampling_strategy = preferred_strategy
+            self.info(
+                f"Using preferred sampling strategy for {dataset_type}: {preferred_strategy}"
+            )
+
+        return loader.load()
 
     def _load_synthetic_dataset(self) -> list[Conversation]:
+        """Load a synthetic dataset.
+
+        Selects the appropriate synthetic loader based on endpoint type.
+        """
         endpoint_type = self.user_config.endpoint.type
 
         if self._is_rankings_endpoint(endpoint_type):
-            composer_type = ComposerType.SYNTHETIC_RANKINGS
+            loader_type = DatasetLoaderType.SYNTHETIC_RANKINGS
         else:
-            composer_type = ComposerType.SYNTHETIC
+            loader_type = DatasetLoaderType.SYNTHETIC_MULTIMODAL
 
-        ComposerClass = plugins.get_class(PluginType.DATASET_COMPOSER, composer_type)
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
-        return composer.create_dataset()
+        LoaderClass = plugins.get_class(PluginType.DATASET_LOADER, loader_type)
+        loader = LoaderClass(
+            config=self.user_config,
+            tokenizer=self.tokenizer,
+        )
+
+        # Set default sampling strategy for synthetic datasets if not explicitly set
+        from aiperf.common.config.config_defaults import InputDefaults
+
+        if self.user_config.input.dataset_sampling_strategy is None:
+            self.user_config.input.dataset_sampling_strategy = (
+                InputDefaults.DATASET_SAMPLING_STRATEGY
+            )
+            self.info(
+                f"Using default sampling strategy for synthetic dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
+            )
+
+        return loader.load()
+
+    def _infer_dataset_type(self, file_path: str) -> DatasetLoaderType:
+        """Infer the dataset type from the input file.
+
+        Queries all registered loaders to check if they can handle the data format.
+
+        Args:
+            file_path: Path to the JSONL file or directory
+
+        Returns:
+            DatasetLoaderType if successfully inferred
+
+        Raises:
+            ValueError: If no loader can handle the data format
+        """
+        path = Path(file_path)
+
+        # If it's a directory, use path-based detection only
+        if path.is_dir():
+            return self._infer_type(data=None, filename=file_path)
+
+        # For files, read first non-empty line and use both content and path detection
+        try:
+            with open(file_path) as f:
+                for line in f:
+                    if not (line := line.strip()):
+                        continue
+                    data = load_json_str(line)
+                    return self._infer_type(data=data, filename=file_path)
+        except ValueError as e:
+            self.exception(
+                f"Error inferring dataset type from file: {file_path}: {e!r}"
+            )
+            raise
+
+        raise ValueError(f"Empty file: {file_path}. Cannot infer dataset type.")
+
+    def _infer_type(
+        self, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    ) -> DatasetLoaderType:
+        """Infer the dataset type from data and/or filename.
+
+        Args:
+            data: Optional dictionary representing a single line from the JSONL file.
+            filename: Optional path to the input file/directory
+
+        Returns:
+            DatasetLoaderType if successfully inferred
+
+        Raises:
+            ValueError: If the type field is invalid or no loader can handle the data format
+        """
+        # Check for explicit type field first (most efficient)
+        if data is not None and "type" in data:
+            try:
+                explicit_type = DatasetLoaderType(data["type"])
+                LoaderClass = plugins.get_class(
+                    PluginType.DATASET_LOADER, explicit_type
+                )
+                if not LoaderClass.can_load(data, filename):
+                    raise ValueError(
+                        f"Explicit type field {explicit_type} specified, but loader {LoaderClass.__name__} "
+                        "cannot handle the data format. Please specify --dataset-type explicitly."
+                    )
+                self.info(f"Using explicit type field: {explicit_type}")
+                return explicit_type
+            except (ValueError, KeyError) as e:
+                raise ValueError(
+                    f"Invalid type field value: {data['type']}. Please specify --dataset-type explicitly."
+                ) from e
+
+        detected_type = None
+        for entry, LoaderClass in plugins.iter_all(PluginType.DATASET_LOADER):
+            if LoaderClass.can_load(data, filename):
+                self.info(
+                    f"Loader {LoaderClass.__name__} can handle the input file data format."
+                )
+                dataset_type = DatasetLoaderType(entry.name)
+                if detected_type is not None:
+                    raise ValueError(
+                        f"Multiple loaders can handle the data format: {detected_type} and {dataset_type}. "
+                        "Please specify --dataset-type explicitly."
+                    )
+                detected_type = dataset_type
+
+        if detected_type is None:
+            raise ValueError(
+                "No loader can handle the data format. Please specify --dataset-type explicitly."
+            )
+
+        return detected_type
+
+    def _validate_synthesis_config(self, dataset_type: DatasetLoaderType) -> None:
+        """Validate that synthesis options are only used with mooncake_trace.
+
+        Args:
+            dataset_type: The determined dataset type.
+
+        Raises:
+            ValueError: If synthesis options are set but dataset type is not mooncake_trace.
+        """
+        if (
+            self.user_config.input.synthesis.should_synthesize()
+            and dataset_type != DatasetLoaderType.MOONCAKE_TRACE
+        ):
+            raise ValueError(
+                f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
+                f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
+                f"are only supported with mooncake_trace datasets, but got {dataset_type}. "
+                f"Either remove synthesis options or use --dataset-type mooncake_trace."
+            )
+
+    def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
+        return "rankings" in endpoint_type.lower()
 
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
@@ -293,14 +456,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         if self.user_config.input.public_dataset is not None:
             conversations = await self._load_public_dataset()
+        elif self.user_config.input.file is not None:
+            conversations = self._load_file_dataset()
         elif (
-            self.user_config.input.custom_dataset_type is not None
-            or self.user_config.input.file is not None
+            self.user_config.input.dataset_type is not None
+            and self.user_config.input.dataset_type
+            in {
+                DatasetLoaderType.SYNTHETIC_MULTIMODAL,
+                DatasetLoaderType.SYNTHETIC_RANKINGS,
+            }
         ):
-            # Use CUSTOM composer if either:
-            # 1. custom_dataset_type is explicitly set, OR
-            # 2. input file is provided (composer will auto-infer type)
-            conversations = self._load_custom_dataset()
+            conversations = self._load_synthetic_dataset()
         else:
             conversations = self._load_synthetic_dataset()
 

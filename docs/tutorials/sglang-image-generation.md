@@ -84,7 +84,7 @@ aiperf profile \
   --url http://localhost:30000 \
   --endpoint-type image_generation \
   --input-file image_prompts.jsonl \
-  --custom-dataset-type single_turn \
+  --dataset-type single_turn \
   --extra-inputs size:512x512 \
   --extra-inputs quality:standard \
   --concurrency 1 \
@@ -161,7 +161,7 @@ aiperf profile \
   --url http://localhost:30000 \
   --endpoint-type image_generation \
   --input-file image_prompts.jsonl \
-  --custom-dataset-type single_turn \
+  --dataset-type single_turn \
   --extra-inputs size:512x512 \
   --extra-inputs quality:standard \
   --concurrency 1 \

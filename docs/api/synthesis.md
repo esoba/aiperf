@@ -470,7 +470,7 @@ Synthesis is applied automatically when running `aiperf profile` with mooncake t
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-speedup-ratio 2.0 \
     --synthesis-prefix-len-multiplier 1.5 \
     --synthesis-max-isl 4096 \
@@ -518,7 +518,7 @@ Synthesis is applied automatically during benchmark when using mooncake traces w
 # Run benchmark with synthesis applied in-memory
 aiperf profile \
     --input-file production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-speedup-ratio 2.0 \
     --synthesis-prefix-len-multiplier 1.5 \
     --model Qwen/Qwen3-0.6B \

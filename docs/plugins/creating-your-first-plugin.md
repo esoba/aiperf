@@ -300,7 +300,7 @@ ParsedResponse         ←  parse_response()  ←  HTTP Response ←────
 | Goal | Action |
 |------|--------|
 | **Multiple endpoints** | Add more entries under `endpoint:` in `plugins.yaml` |
-| **Other plugin types** | Use same pattern for `timing_strategy`, `data_exporter`, `dataset_composer` |
+| **Other plugin types** | Use same pattern for `timing_strategy`, `data_exporter`, `dataset_loader` |
 | **Publish** | `python -m build && twine upload dist/*` to PyPI |
 
 ## Troubleshooting

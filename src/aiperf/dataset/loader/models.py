@@ -6,7 +6,7 @@ from typing import Literal, TypeVar
 from pydantic import Field, model_validator
 
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.plugin.enums import DatasetLoaderType
 
 
 class SingleTurn(AIPerfBaseModel):
@@ -21,7 +21,7 @@ class SingleTurn(AIPerfBaseModel):
       - DOES NOT support multi-turn features (e.g. session_id)
     """
 
-    type: Literal[CustomDatasetType.SINGLE_TURN] = CustomDatasetType.SINGLE_TURN
+    type: Literal[DatasetLoaderType.SINGLE_TURN] = DatasetLoaderType.SINGLE_TURN
 
     # TODO (TL-89): investigate if we only want to support single field for each modality
     text: str | None = Field(None, description="Simple text string content")
@@ -100,7 +100,7 @@ class MultiTurn(AIPerfBaseModel):
       - supports client-side batching for each data (e.g. batch size > 1)
     """
 
-    type: Literal[CustomDatasetType.MULTI_TURN] = CustomDatasetType.MULTI_TURN
+    type: Literal[DatasetLoaderType.MULTI_TURN] = DatasetLoaderType.MULTI_TURN
 
     session_id: str | None = Field(
         None, description="Unique identifier for the conversation session"
@@ -127,7 +127,7 @@ class RandomPool(AIPerfBaseModel):
       - DOES NOT support multi-turn or its features (e.g. delay, sessions, etc.)
     """
 
-    type: Literal[CustomDatasetType.RANDOM_POOL] = CustomDatasetType.RANDOM_POOL
+    type: Literal[DatasetLoaderType.RANDOM_POOL] = DatasetLoaderType.RANDOM_POOL
 
     text: str | None = Field(None, description="Simple text string content")
     texts: list[str] | list[Text] | None = Field(
@@ -203,7 +203,7 @@ class MooncakeTrace(AIPerfBaseModel):
     - input_length and hash_ids (uses input length and hash ids to generate reproducible synthetic text input)
     """
 
-    type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
+    type: Literal[DatasetLoaderType.MOONCAKE_TRACE] = DatasetLoaderType.MOONCAKE_TRACE
 
     # Exactly one of input_length or text_input must be provided
     input_length: int | None = Field(

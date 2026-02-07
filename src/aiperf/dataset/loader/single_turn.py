@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from aiperf.common.enums import MediaType
 from aiperf.common.models import Conversation, Turn
-from aiperf.dataset.loader.base_loader import BaseFileLoader
+from aiperf.dataset.loader.file.base import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import SingleTurn
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -68,17 +68,14 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     """
 
     @classmethod
-    def can_load(
-        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    def can_load_file(
+        cls, data: dict[str, Any], filename: str | Path | None = None
     ) -> bool:
         """Check if this loader can handle the given data format.
 
         SingleTurn format has modality fields (text/texts, image/images, etc.)
         but does NOT have a "turns" field. Use the SingleTurn model to validate the data.
         """
-        if data is None:
-            return False
-
         try:
             SingleTurn.model_validate(data)
             return True
@@ -90,7 +87,7 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
         """Get the preferred dataset sampling strategy for SingleTurn."""
         return DatasetSamplingStrategy.SEQUENTIAL
 
-    def load_dataset(self) -> dict[str, list[SingleTurn]]:
+    def parse_and_validate(self) -> dict[str, list[SingleTurn]]:
         """Load single-turn data from a JSONL file.
 
         Each line represents a single turn conversation. Multiple turns with

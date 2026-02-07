@@ -98,7 +98,7 @@ aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
     --input-file inputs.jsonl \
-    --custom-dataset-type single_turn \
+    --dataset-type single_turn \
     --streaming \
     --url localhost:8000 \
     --request-count 5

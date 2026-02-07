@@ -93,7 +93,7 @@ aiperf profile \
     --endpoint-type hf_tei_rankings \
     --url localhost:8080 \
     --input-file ./rankings.jsonl \
-    --custom-dataset-type single_turn \
+    --dataset-type single_turn \
     --request-count 10
 ```
 
@@ -150,6 +150,6 @@ aiperf profile \
     --endpoint-type cohere_rankings \
     --url localhost:8080 \
     --input-file ./rankings.jsonl \
-    --custom-dataset-type single_turn \
+    --dataset-type single_turn \
     --request-count 10
 ```

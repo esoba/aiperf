@@ -1,39 +1,50 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pathlib import Path
+import json
 
 import pytest
 
+from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import Conversation
 from aiperf.dataset.loader import ShareGPTLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
-@pytest.mark.asyncio
 class TestShareGPTLoader:
-    """Test suite for ShareGPTLoader class"""
+    """Test suite for ShareGPTLoader class."""
 
     @pytest.fixture
-    async def sharegpt_loader(self, user_config, mock_tokenizer_cls):
-        tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        return ShareGPTLoader(user_config, tokenizer)
+    def sharegpt_file(self, tmp_path):
+        """Create a temporary ShareGPT JSON file."""
 
-    async def test_initialization(self, sharegpt_loader: ShareGPTLoader):
-        """Test initialization of ShareGPTLoader"""
-        assert sharegpt_loader.tokenizer is not None
-        assert sharegpt_loader.user_config is not None
-        assert sharegpt_loader.turn_count == 0
-        assert sharegpt_loader.tag == "ShareGPT"
-        assert (
-            sharegpt_loader.url
-            == "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"
+        def _create(dataset):
+            filepath = tmp_path / "sharegpt.json"
+            filepath.write_text(json.dumps(dataset))
+            return str(filepath)
+
+        return _create
+
+    @pytest.fixture
+    def user_config(self):
+        return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+
+    @pytest.fixture
+    def mock_tokenizer(self, mock_tokenizer_cls):
+        return mock_tokenizer_cls.from_pretrained("test-model")
+
+    def test_initialization(self, sharegpt_file, user_config, mock_tokenizer):
+        """Test initialization of ShareGPTLoader."""
+        filepath = sharegpt_file([])
+        loader = ShareGPTLoader(
+            filename=filepath, config=user_config, tokenizer=mock_tokenizer
         )
-        assert sharegpt_loader.filename == "ShareGPT_V3_unfiltered_cleaned_split.json"
-        assert isinstance(sharegpt_loader.cache_filepath, Path)
+        assert loader.tokenizer is not None
+        assert loader.config is not None
+        assert loader.filename == filepath
 
-    async def test_convert_to_conversations(self, sharegpt_loader: ShareGPTLoader):
-        """Test converting single entry dataset to conversations"""
+    def test_convert_to_conversations(self, sharegpt_file, user_config, mock_tokenizer):
+        """Test converting single entry dataset to conversations."""
         dataset = [
             {
                 "conversations": [
@@ -42,7 +53,12 @@ class TestShareGPTLoader:
                 ]
             }
         ]
-        conversations = await sharegpt_loader.convert_to_conversations(dataset)
+        filepath = sharegpt_file(dataset)
+        loader = ShareGPTLoader(
+            filename=filepath, config=user_config, tokenizer=mock_tokenizer
+        )
+        data = loader.parse_and_validate()
+        conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 1
         assert isinstance(conversations[0], Conversation)
@@ -50,13 +66,11 @@ class TestShareGPTLoader:
         turn = conversations[0].turns[0]
         assert turn.texts[0].contents[0] == "Hello how are you"
         assert turn.max_tokens == len(["This", "is", "test", "output"])
-        assert turn.model == "test-model"
 
-    async def test_convert_to_conversations_validation(
-        self, sharegpt_loader: ShareGPTLoader
+    def test_convert_to_conversations_validation(
+        self, sharegpt_file, user_config, mock_tokenizer
     ):
-        """Test converting multiple entries dataset to conversations with validation"""
-
+        """Test converting multiple entries dataset to conversations with validation."""
         dataset = [
             {
                 "conversations": [
@@ -73,11 +87,16 @@ class TestShareGPTLoader:
             {
                 "conversations": [
                     {"value": "Hello how are you"},  # 4 prompt tokens
-                    {"value": "This"},  # 1 completion tokens (too short)
+                    {"value": "This"},  # 1 completion token (too short)
                 ]
             },
         ]
-        conversations = await sharegpt_loader.convert_to_conversations(dataset)
+        filepath = sharegpt_file(dataset)
+        loader = ShareGPTLoader(
+            filename=filepath, config=user_config, tokenizer=mock_tokenizer
+        )
+        data = loader.parse_and_validate()
+        conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 1
         assert isinstance(conversations[0], Conversation)
@@ -85,11 +104,8 @@ class TestShareGPTLoader:
         turn = conversations[0].turns[0]
         assert turn.texts[0].contents[0] == "Hello how are you"
         assert turn.max_tokens == len(["This", "is", "test", "output"])
-        assert turn.model == "test-model"
 
-    async def test_get_recommended_sampling_strategy(
-        self, sharegpt_loader: ShareGPTLoader
-    ):
-        """Test that ShareGPTLoader returns the correct recommended sampling strategy."""
-        strategy = sharegpt_loader.get_recommended_sampling_strategy()
+    def test_get_preferred_sampling_strategy(self):
+        """Test that ShareGPTLoader returns the correct preferred sampling strategy."""
+        strategy = ShareGPTLoader.get_preferred_sampling_strategy()
         assert strategy == DatasetSamplingStrategy.SEQUENTIAL

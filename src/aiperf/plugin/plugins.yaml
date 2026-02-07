@@ -318,39 +318,13 @@ transport:
       url_schemes: [http, https]
 
 # =============================================================================
-# Dataset Composers
+# Dataset Loaders
 # =============================================================================
-# Dataset composers create conversation datasets from various sources.
-# One-to-one mapping: exactly one composer is selected based on composer_type config.
+# Dataset loaders create conversation datasets from various sources.
+# Unified hierarchy: file loaders parse JSONL, synthetic loaders generate data.
+# Auto-detection: DatasetManager tries loaders in priority order based on can_load().
 # =============================================================================
-dataset_composer:
-  custom:
-    class: aiperf.dataset.composer.custom:CustomDatasetComposer
-    description: |
-      Custom dataset composer that loads conversations from JSONL files. Supports
-      single-turn, multi-turn, random-pool, and mooncake-trace formats with
-      automatic format detection.
-
-  synthetic:
-    class: aiperf.dataset.composer.synthetic:SyntheticDatasetComposer
-    description: |
-      Synthetic dataset composer that generates multi-turn conversations with
-      synthetic text, image, and audio payloads using configurable distributions.
-      Supports variable turn counts and delays.
-
-  synthetic_rankings:
-    class: aiperf.dataset.composer.synthetic_rankings:SyntheticRankingsDatasetComposer
-    description: |
-      Synthetic rankings dataset composer that generates ranking tasks with query
-      and passage pairs for ranking model evaluation and benchmarking.
-
-# =============================================================================
-# Custom Dataset Loaders
-# =============================================================================
-# Custom dataset loaders parse different JSONL file formats into conversations.
-# Auto-detection: the custom composer tries loaders in priority order based on can_load().
-# =============================================================================
-custom_dataset_loader:
+dataset_loader:
   mooncake_trace:
     class: aiperf.dataset.loader.mooncake_trace:MooncakeTraceDatasetLoader
     description: |
@@ -377,6 +351,48 @@ custom_dataset_loader:
       Single-turn dataset loader supporting multi-modal data and client-side
       batching. Supports text, images, audio with optional timestamps or delays.
       Does NOT support multi-turn features.
+
+  sharegpt:
+    class: aiperf.dataset.loader.sharegpt:ShareGPTLoader
+    description: |
+      ShareGPT dataset loader for loading and processing ShareGPT conversation
+      data from a local JSON file. Validates entries and filters by sequence length.
+
+  synthetic_multimodal:
+    class: aiperf.dataset.loader.synthetic.multimodal:SyntheticMultiModalLoader
+    description: |
+      Synthetic dataset loader that generates multi-turn conversations with
+      synthetic text, image, and audio payloads using configurable distributions.
+      Supports variable turn counts and delays.
+
+  synthetic_rankings:
+    class: aiperf.dataset.loader.synthetic.rankings:SyntheticRankingsLoader
+    description: |
+      Synthetic rankings dataset loader that generates ranking tasks with query
+      and passage pairs for ranking model evaluation and benchmarking.
+
+# =============================================================================
+# Model Selection Strategies
+# =============================================================================
+# Model selection strategies control how models are assigned to turns.
+# =============================================================================
+model_selection_strategy:
+  round_robin:
+    class: aiperf.dataset.model_selection_strategies:RoundRobinModelSelectionStrategy
+    description: |
+      Cycles through models in order. The nth turn is assigned to model at
+      index (n mod number_of_models).
+
+  random:
+    class: aiperf.dataset.model_selection_strategies:RandomModelSelectionStrategy
+    description: |
+      Randomly selects a model for each turn using uniform distribution.
+
+  shuffle:
+    class: aiperf.dataset.model_selection_strategies:ShuffleModelSelectionStrategy
+    description: |
+      Shuffles models without replacement. Once all models are used,
+      reshuffles and starts again.
 
 # =============================================================================
 # Dataset Samplers

@@ -11,10 +11,11 @@ from aiperf.common import random_generator as rng
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import MediaType
 from aiperf.common.models import Conversation, Turn
-from aiperf.dataset.loader.base_loader import BaseFileLoader
+from aiperf.common.tokenizer import Tokenizer
+from aiperf.dataset.loader.file.base import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
-from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
+from aiperf.plugin.enums import DatasetLoaderType, DatasetSamplingStrategy
 
 # Type aliases
 Filename: TypeAlias = str
@@ -75,13 +76,14 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         self,
         *,
         filename: str,
-        user_config: UserConfig,
-        num_conversations: int = 1,
-        **kwargs,
-    ):
-        super().__init__(filename=filename, user_config=user_config, **kwargs)
+        config: UserConfig,
+        tokenizer: Tokenizer,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            filename=filename, config=config, tokenizer=tokenizer, **kwargs
+        )
         self._rng = rng.derive("dataset.loader.random_pool")
-        self.num_conversations = num_conversations
 
     @staticmethod
     def _validate_path(path: Path) -> int:
@@ -99,15 +101,10 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         valid_count = 0
 
         if path.is_dir():
-            # if path is a directory, recursively call this function for each child
-            # if any child fails validation, it will exit early with an exception
             for file in path.iterdir():
                 valid_count += RandomPoolDatasetLoader._validate_path(file)
 
         elif path.is_file():
-            # if path is a file, validate the first non-empty line against the RandomPool model
-            # if the line is valid, increment the valid count and break the loop,
-            # otherwise a ValidationError will be raised and the function will exit early
             with open(path) as f:
                 for line in f:
                     if not (line := line.strip()):
@@ -119,8 +116,8 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         return valid_count
 
     @classmethod
-    def can_load(
-        cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
+    def can_load_file(
+        cls, data: dict[str, Any], filename: str | Path | None = None
     ) -> bool:
         """Check if this loader can handle the given data format.
 
@@ -129,38 +126,39 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         (both have modality fields), so explicit 'type' field or directory path is required.
 
         Returns:
-            True only if filename is a directory with at least one valid file.
+            True only if the data has an explicit type field matching random_pool.
             False otherwise (including for regular files without explicit type).
         """
-
-        if data is not None and data.get("type") == CustomDatasetType.RANDOM_POOL:
+        if data.get("type") == DatasetLoaderType.RANDOM_POOL:
             try:
                 RandomPool.model_validate(data)
                 return True
             except ValidationError:
                 return False
-
-        if filename is not None:
-            try:
-                path = Path(filename) if isinstance(filename, str) else filename
-                # Only match directories - files are ambiguous with SingleTurn
-                if path.is_dir():
-                    valid_count = cls._validate_path(path)
-                    return valid_count > 0
-                return False
-            except ValidationError:
-                return False
-
-        # RandomPool schema is very similar to SingleTurn, so we can't reliably
-        # distinguish without an explicit type field or directory path
         return False
+
+    @classmethod
+    def can_load_directory(cls, path: Path) -> bool:
+        """Check if this loader can handle the given directory.
+
+        Args:
+            path: Directory path.
+
+        Returns:
+            True if the directory contains at least one valid RandomPool file.
+        """
+        try:
+            valid_count = cls._validate_path(path)
+            return valid_count > 0
+        except ValidationError:
+            return False
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
         """Get the preferred dataset sampling strategy for RandomPool."""
         return DatasetSamplingStrategy.SHUFFLE
 
-    def load_dataset(self) -> dict[Filename, list[RandomPool]]:
+    def parse_and_validate(self) -> dict[Filename, list[RandomPool]]:
         """Load random pool data from a file or directory.
 
         If filename is a file, reads and parses using the RandomPool model.
@@ -232,9 +230,10 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Returns:
             A list of conversations.
         """
+        num_conversations = self.config.input.conversation.num
         conversations = [
             Conversation(session_id=self.session_id_generator.next())
-            for _ in range(self.num_conversations)
+            for _ in range(num_conversations)
         ]
 
         # F x N (F: num of files, N: num of conversations)
@@ -242,7 +241,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
 
         # Randomly sample (with replacement) from each dataset pool
         for filename, dataset_pool in data.items():
-            samples = self._rng.choices(dataset_pool, k=self.num_conversations)
+            samples = self._rng.choices(dataset_pool, k=num_conversations)
             turns: list[Turn] = []
             for sample in samples:
                 media = self.convert_to_media_objects(sample, name=Path(filename).stem)

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "plugins.schema.json",
   "additionalProperties": false,
-  "description": "Root model for plugins.yaml file.\n\nThis file registers plugin implementations for AIPerf. Each top-level section\ncorresponds to a category from categories.yaml and maps type names to their\nimplementing classes.\n\nNote: Package metadata (name, version, author) comes from pyproject.toml\nvia importlib.metadata, not from this file.\n\nExample:\n```yaml\nschema_version: \"1.0\"\n\nendpoint:\n  my_custom:\n    class: my_package.endpoints.my_custom:MyCustomEndpoint\n    description: Custom endpoint for my API.\n    metadata:\n      endpoint_path: /v1/generate\n      supports_streaming: true\n      produces_tokens: true\n      tokenizes_input: true\n      metrics_title: My Custom Metrics\n\ncustom_dataset_loader:\n  my_jsonl:\n    class: my_package.dataset_loaders.my_jsonl:MyJSONLDatasetLoader\n    description: Custom dataset loader for my API.\n```",
+  "description": "Root model for plugins.yaml file.\n\nThis file registers plugin implementations for AIPerf. Each top-level section\ncorresponds to a category from categories.yaml and maps type names to their\nimplementing classes.\n\nNote: Package metadata (name, version, author) comes from pyproject.toml\nvia importlib.metadata, not from this file.\n\nExample:\n```yaml\nschema_version: \"1.0\"\n\nendpoint:\n  my_custom:\n    class: my_package.endpoints.my_custom:MyCustomEndpoint\n    description: Custom endpoint for my API.\n    metadata:\n      endpoint_path: /v1/generate\n      supports_streaming: true\n      produces_tokens: true\n      tokenizes_input: true\n      metrics_title: My Custom Metrics\n\ndataset_loader:\n  my_jsonl:\n    class: my_package.dataset_loaders.my_jsonl:MyJSONLDatasetLoader\n    description: Custom dataset loader for my API.\n```",
   "properties": {
     "schema_version": {
       "default": "1.0",
@@ -58,20 +58,20 @@
         "$ref": "#/$defs/DatasetSamplerPlugin"
       }
     },
-    "dataset_composer": {
-      "title": "Dataset Composer Plugins",
+    "dataset_loader": {
+      "title": "Dataset Loader Plugins",
       "type": "object",
-      "description": "Dataset composers create conversation datasets from various sources.\nHandles synthetic generation, custom file loading, and specialized formats.\nOne-to-one mapping based on composer_type configuration.",
+      "description": "Dataset loaders create conversation datasets from various sources.\nUnified hierarchy: file loaders parse JSONL, synthetic loaders generate data.\nAuto-detection: loaders are tried in priority order based on can_load().",
       "additionalProperties": {
-        "$ref": "#/$defs/DatasetComposerPlugin"
+        "$ref": "#/$defs/DatasetLoaderPlugin"
       }
     },
-    "custom_dataset_loader": {
-      "title": "Custom Dataset Loader Plugins",
+    "model_selection_strategy": {
+      "title": "Model Selection Strategy Plugins",
       "type": "object",
-      "description": "Custom dataset loaders parse different JSONL file formats into conversations.\nSupports single-turn, multi-turn, random-pool, and trace formats.\nAuto-detection: loaders are tried in priority order based on can_load().",
+      "description": "Model selection strategies control how models are assigned to turns.\nSupports round-robin, random, and shuffle selection patterns.",
       "additionalProperties": {
-        "$ref": "#/$defs/CustomDatasetLoaderPlugin"
+        "$ref": "#/$defs/ModelSelectionStrategyPlugin"
       }
     },
     "endpoint": {
@@ -444,7 +444,7 @@
       "title": "Dataset Sampler Plugin",
       "description": "Dataset samplers control how conversations are selected from the dataset.\nSupports random, sequential, and shuffle sampling strategies.\nOne-to-one mapping based on sampling strategy configuration."
     },
-    "DatasetComposerPlugin": {
+    "DatasetLoaderPlugin": {
       "type": "object",
       "properties": {
         "class": {
@@ -482,10 +482,10 @@
       "required": [
         "class"
       ],
-      "title": "Dataset Composer Plugin",
-      "description": "Dataset composers create conversation datasets from various sources.\nHandles synthetic generation, custom file loading, and specialized formats.\nOne-to-one mapping based on composer_type configuration."
+      "title": "Dataset Loader Plugin",
+      "description": "Dataset loaders create conversation datasets from various sources.\nUnified hierarchy: file loaders parse JSONL, synthetic loaders generate data.\nAuto-detection: loaders are tried in priority order based on can_load()."
     },
-    "CustomDatasetLoaderPlugin": {
+    "ModelSelectionStrategyPlugin": {
       "type": "object",
       "properties": {
         "class": {
@@ -523,8 +523,8 @@
       "required": [
         "class"
       ],
-      "title": "Custom Dataset Loader Plugin",
-      "description": "Custom dataset loaders parse different JSONL file formats into conversations.\nSupports single-turn, multi-turn, random-pool, and trace formats.\nAuto-detection: loaders are tried in priority order based on can_load()."
+      "title": "Model Selection Strategy Plugin",
+      "description": "Model selection strategies control how models are assigned to turns.\nSupports round-robin, random, and shuffle selection patterns."
     },
     "EndpointPlugin": {
       "type": "object",

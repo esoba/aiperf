@@ -20,7 +20,7 @@ from aiperf.common.exceptions import MetricTypeError
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.plugin.enums import DatasetLoaderType
 
 
 def test_input_config_defaults():
@@ -37,7 +37,7 @@ def test_input_config_defaults():
     assert config.headers == InputDefaults.HEADERS
     assert config.file == InputDefaults.FILE
     assert config.random_seed == InputDefaults.RANDOM_SEED
-    assert config.custom_dataset_type == InputDefaults.CUSTOM_DATASET_TYPE
+    assert config.dataset_type == InputDefaults.DATASET_TYPE
     assert config.goodput == InputDefaults.GOODPUT
     assert isinstance(config.audio, AudioConfig)
     assert isinstance(config.image, ImageConfig)
@@ -57,7 +57,7 @@ def test_input_config_custom_values():
             extra={"key": "value"},
             headers={"Authorization": "Bearer token"},
             random_seed=42,
-            custom_dataset_type=CustomDatasetType.MULTI_TURN,
+            dataset_type=DatasetLoaderType.MULTI_TURN,
             file=temp_file.name,
         )
 
@@ -65,7 +65,7 @@ def test_input_config_custom_values():
         assert config.headers == [("Authorization", "Bearer token")]
         assert config.file == PosixPath(temp_file.name)
         assert config.random_seed == 42
-        assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
+        assert config.dataset_type == DatasetLoaderType.MULTI_TURN
 
 
 def test_input_config_file_validation():
@@ -135,57 +135,57 @@ def test_goodput_derived_metric_raises_error(monkeypatch):
     )
 
 
-def test_custom_dataset_type_without_file_raises_error():
+def test_dataset_type_without_file_raises_error():
     """
-    Test that setting custom_dataset_type without a file raises ValidationError.
+    Test that setting dataset_type without a file raises ValidationError.
 
     This validates the validate_custom_dataset_file model validator.
     """
     with pytest.raises(ValidationError) as exc:
-        InputConfig(custom_dataset_type=CustomDatasetType.SINGLE_TURN, file=None)
+        InputConfig(dataset_type=DatasetLoaderType.SINGLE_TURN, file=None)
 
-    assert "Custom dataset type requires --input-file to be provided" in str(exc.value)
+    assert "Dataset type requires --input-file to be provided" in str(exc.value)
 
 
-def test_custom_dataset_type_with_file_succeeds():
+def test_dataset_type_with_file_succeeds():
     """
-    Test that setting custom_dataset_type with a file succeeds.
+    Test that setting dataset_type with a file succeeds.
     """
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = InputConfig(
-            custom_dataset_type=CustomDatasetType.MULTI_TURN, file=temp_file.name
+            dataset_type=DatasetLoaderType.MULTI_TURN, file=temp_file.name
         )
-        assert config.custom_dataset_type == CustomDatasetType.MULTI_TURN
+        assert config.dataset_type == DatasetLoaderType.MULTI_TURN
         assert config.file == PosixPath(temp_file.name)
 
 
-def test_file_without_custom_dataset_type_succeeds():
+def test_file_without_dataset_type_succeeds():
     """
-    Test that providing a file without custom_dataset_type succeeds (allows auto-inference).
+    Test that providing a file without dataset_type succeeds (allows auto-inference).
     """
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
-        config = InputConfig(file=temp_file.name, custom_dataset_type=None)
+        config = InputConfig(file=temp_file.name, dataset_type=None)
         assert config.file == PosixPath(temp_file.name)
-        assert config.custom_dataset_type is None
+        assert config.dataset_type is None
 
 
 @pytest.mark.parametrize(
     "dataset_type",
     [
-        CustomDatasetType.SINGLE_TURN,
-        CustomDatasetType.MULTI_TURN,
-        CustomDatasetType.RANDOM_POOL,
-        CustomDatasetType.MOONCAKE_TRACE,
+        DatasetLoaderType.SINGLE_TURN,
+        DatasetLoaderType.MULTI_TURN,
+        DatasetLoaderType.RANDOM_POOL,
+        DatasetLoaderType.MOONCAKE_TRACE,
     ],
 )
-def test_all_custom_dataset_types_require_file(dataset_type):
+def test_all_dataset_types_require_file(dataset_type):
     """
     Test that all custom dataset types require a file.
     """
     with pytest.raises(ValidationError) as exc:
-        InputConfig(custom_dataset_type=dataset_type, file=None)
+        InputConfig(dataset_type=dataset_type, file=None)
 
-    assert "Custom dataset type requires --input-file to be provided" in str(exc.value)
+    assert "Dataset type requires --input-file to be provided" in str(exc.value)
 
 
 # ============================================================================
@@ -197,20 +197,20 @@ def test_synthesis_with_mooncake_trace_succeeds():
     """Test that synthesis options with mooncake_trace dataset type succeeds."""
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = InputConfig(
-            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             file=temp_file.name,
             synthesis=SynthesisConfig(speedup_ratio=2.0),
         )
         assert config.synthesis.speedup_ratio == 2.0
-        assert config.custom_dataset_type == CustomDatasetType.MOONCAKE_TRACE
+        assert config.dataset_type == DatasetLoaderType.MOONCAKE_TRACE
 
 
 @pytest.mark.parametrize(
     "dataset_type",
     [
-        CustomDatasetType.SINGLE_TURN,
-        CustomDatasetType.MULTI_TURN,
-        CustomDatasetType.RANDOM_POOL,
+        DatasetLoaderType.SINGLE_TURN,
+        DatasetLoaderType.MULTI_TURN,
+        DatasetLoaderType.RANDOM_POOL,
     ],
 )  # fmt: skip
 def test_synthesis_with_non_mooncake_trace_raises_error(dataset_type):
@@ -218,28 +218,28 @@ def test_synthesis_with_non_mooncake_trace_raises_error(dataset_type):
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         with pytest.raises(ValidationError) as exc:
             InputConfig(
-                custom_dataset_type=dataset_type,
+                dataset_type=dataset_type,
                 file=temp_file.name,
                 synthesis=SynthesisConfig(speedup_ratio=2.0),
             )
 
-        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+        assert "require --dataset-type mooncake_trace" in str(exc.value)
 
 
 def test_synthesis_with_auto_detect_dataset_type_succeeds():
     """Test that synthesis options with auto-detect (None) dataset type succeeds.
 
-    When custom_dataset_type is None, the type will be auto-detected at runtime.
+    When dataset_type is None, the type will be auto-detected at runtime.
     Synthesis validation is deferred until the actual type is known.
     """
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = InputConfig(
-            custom_dataset_type=None,
+            dataset_type=None,
             file=temp_file.name,
             synthesis=SynthesisConfig(prefix_len_multiplier=2.0),
         )
         assert config.synthesis.prefix_len_multiplier == 2.0
-        assert config.custom_dataset_type is None
+        assert config.dataset_type is None
 
 
 @pytest.mark.parametrize(
@@ -257,12 +257,12 @@ def test_synthesis_various_options_require_mooncake_trace(synthesis_config):
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         with pytest.raises(ValidationError) as exc:
             InputConfig(
-                custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+                dataset_type=DatasetLoaderType.SINGLE_TURN,
                 file=temp_file.name,
                 synthesis=synthesis_config,
             )
 
-        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+        assert "require --dataset-type mooncake_trace" in str(exc.value)
 
 
 def test_synthesis_defaults_with_any_dataset_type_succeeds():
@@ -270,12 +270,12 @@ def test_synthesis_defaults_with_any_dataset_type_succeeds():
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         # Default synthesis config (should_synthesize() returns False)
         config = InputConfig(
-            custom_dataset_type=CustomDatasetType.SINGLE_TURN,
+            dataset_type=DatasetLoaderType.SINGLE_TURN,
             file=temp_file.name,
             synthesis=SynthesisConfig(),  # All defaults
         )
         assert not config.synthesis.should_synthesize()
-        assert config.custom_dataset_type == CustomDatasetType.SINGLE_TURN
+        assert config.dataset_type == DatasetLoaderType.SINGLE_TURN
 
 
 def test_synthesis_max_isl_alone_does_not_trigger_synthesis():
@@ -286,7 +286,7 @@ def test_synthesis_max_isl_alone_does_not_trigger_synthesis():
     """
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = InputConfig(
-            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             file=temp_file.name,
             synthesis=SynthesisConfig(max_isl=4096),
         )
@@ -303,7 +303,7 @@ def test_synthesis_max_osl_alone_does_not_trigger_synthesis():
     """
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         config = InputConfig(
-            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            dataset_type=DatasetLoaderType.MOONCAKE_TRACE,
             file=temp_file.name,
             synthesis=SynthesisConfig(max_osl=2048),
         )
@@ -315,9 +315,9 @@ def test_synthesis_max_osl_alone_does_not_trigger_synthesis():
 @pytest.mark.parametrize(
     "dataset_type",
     [
-        CustomDatasetType.SINGLE_TURN,
-        CustomDatasetType.MULTI_TURN,
-        CustomDatasetType.RANDOM_POOL,
+        DatasetLoaderType.SINGLE_TURN,
+        DatasetLoaderType.MULTI_TURN,
+        DatasetLoaderType.RANDOM_POOL,
     ],
 )  # fmt: skip
 def test_synthesis_max_isl_requires_mooncake_trace(dataset_type):
@@ -325,20 +325,20 @@ def test_synthesis_max_isl_requires_mooncake_trace(dataset_type):
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         with pytest.raises(ValidationError) as exc:
             InputConfig(
-                custom_dataset_type=dataset_type,
+                dataset_type=dataset_type,
                 file=temp_file.name,
                 synthesis=SynthesisConfig(max_isl=4096),
             )
 
-        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+        assert "require --dataset-type mooncake_trace" in str(exc.value)
 
 
 @pytest.mark.parametrize(
     "dataset_type",
     [
-        CustomDatasetType.SINGLE_TURN,
-        CustomDatasetType.MULTI_TURN,
-        CustomDatasetType.RANDOM_POOL,
+        DatasetLoaderType.SINGLE_TURN,
+        DatasetLoaderType.MULTI_TURN,
+        DatasetLoaderType.RANDOM_POOL,
     ],
 )  # fmt: skip
 def test_synthesis_max_osl_requires_mooncake_trace(dataset_type):
@@ -346,9 +346,9 @@ def test_synthesis_max_osl_requires_mooncake_trace(dataset_type):
     with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
         with pytest.raises(ValidationError) as exc:
             InputConfig(
-                custom_dataset_type=dataset_type,
+                dataset_type=dataset_type,
                 file=temp_file.name,
                 synthesis=SynthesisConfig(max_osl=2048),
             )
 
-        assert "require --custom-dataset-type mooncake_trace" in str(exc.value)
+        assert "require --dataset-type mooncake_trace" in str(exc.value)

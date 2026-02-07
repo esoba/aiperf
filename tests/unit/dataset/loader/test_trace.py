@@ -16,7 +16,7 @@ from aiperf.common.config import (
 )
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.plugin.enums import DatasetLoaderType
 
 
 class TestMooncakeTrace:
@@ -31,7 +31,7 @@ class TestMooncakeTrace:
         assert data.text_input is None
         assert data.hash_ids == [123, 456, 789]
         assert data.timestamp == 1000
-        assert data.type == CustomDatasetType.MOONCAKE_TRACE
+        assert data.type == DatasetLoaderType.MOONCAKE_TRACE
 
     def test_create_with_text_input(self):
         """Test creating MooncakeTrace with text_input."""
@@ -146,7 +146,7 @@ class TestMooncakeTraceDatasetLoader:
         )
 
     def test_load_dataset_basic_functionality(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_tokenizer_cls, default_user_config
     ):
         """Test basic JSONL file loading."""
         content = [
@@ -155,12 +155,13 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         assert isinstance(dataset, dict)
         assert len(dataset) == 2  # Two different sessions (auto-generated UUIDs)
@@ -182,7 +183,7 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[1][0].timestamp == 2000
 
     def test_load_dataset_with_text_input(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_tokenizer_cls, default_user_config
     ):
         """Test loading JSONL file with text_input fields."""
         content = [
@@ -191,12 +192,13 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         assert len(dataset) == 2
         traces = list(dataset.values())
@@ -207,7 +209,7 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[1][0].input_length is None
 
     def test_load_dataset_mixed_input_types(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_tokenizer_cls, default_user_config
     ):
         """Test loading JSONL file with mixed input_length and text_input entries (but not both in same entry)."""
         content = [
@@ -217,12 +219,13 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         assert len(dataset) == 3
         traces = list(dataset.values())
@@ -242,7 +245,7 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[2][0].text_input is None
 
     def test_load_dataset_skips_empty_lines(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_tokenizer_cls, default_user_config
     ):
         """Test that empty lines are skipped."""
         content = [
@@ -252,17 +255,18 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
         )
-        result = loader.load_dataset()
+        result = loader.parse_and_validate()
 
         assert len(result) == 2  # Should skip empty line
 
     def test_load_dataset_with_timestamps(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_tokenizer_cls, default_user_config
     ):
         """Test loading dataset with timestamp fields."""
         content = [
@@ -271,12 +275,13 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         traces = list(dataset.values())
         assert traces[0][0].timestamp == 1000
@@ -294,7 +299,7 @@ class TestMooncakeTraceDatasetLoader:
     def test_load_dataset_with_offset_filtering(
         self,
         create_jsonl_file,
-        mock_prompt_generator,
+        mock_tokenizer_cls,
         start_offset,
         end_offset,
         expected_count,
@@ -310,12 +315,13 @@ class TestMooncakeTraceDatasetLoader:
         filename = create_jsonl_file(content)
 
         user_config = self.make_user_config(start_offset, end_offset, file=filename)
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         assert len(dataset) == expected_count, f"Failed for {description}"
 
@@ -329,7 +335,7 @@ class TestMooncakeTraceDatasetLoader:
     def test_load_dataset_logs_skipped_traces(
         self,
         create_jsonl_file,
-        mock_prompt_generator,
+        mock_tokenizer_cls,
         caplog,
         start_offset,
         end_offset,
@@ -346,19 +352,20 @@ class TestMooncakeTraceDatasetLoader:
         filename = create_jsonl_file(content)
 
         user_config = self.make_user_config(start_offset, end_offset, file=filename)
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        loader.load_dataset()
+        loader.parse_and_validate()
 
         # Check that the skipped traces message is logged
         assert f"Skipped {expected_skipped:,} traces" in caplog.text
 
     @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
     def test_convert_to_conversations(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+        self, mock_parallel_decode, mock_tokenizer_cls, default_user_config
     ):
         """Test conversion of trace data to conversations."""
         # Mock parallel_decode to return decoded prompts
@@ -396,10 +403,15 @@ class TestMooncakeTraceDatasetLoader:
             ],
         }
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
+        )
+        # Mock _build_token_sequence to return simple tokens (avoids block_size validation)
+        loader.prompt_generator._build_token_sequence = Mock(
+            return_value=[1, 2, 3, 4, 5]
         )
         conversations = loader.convert_to_conversations(trace_data)
 
@@ -424,20 +436,21 @@ class TestMooncakeTraceDatasetLoader:
         assert conv3.turns[0].timestamp == 3000
 
     def test_convert_to_conversations_empty_data(
-        self, mock_prompt_generator, default_user_config
+        self, mock_tokenizer_cls, default_user_config
     ):
         """Test conversion with empty trace data."""
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
         )
         conversations = loader.convert_to_conversations({})
 
         assert len(conversations) == 0
 
     def test_convert_to_conversations_with_text_input(
-        self, mock_prompt_generator, default_user_config
+        self, mock_tokenizer_cls, default_user_config
     ):
         """Test conversion uses text_input when provided - covers 'if trace.text_input is not None' line."""
         # Create traces with text_input to cover the uncovered line
@@ -448,10 +461,11 @@ class TestMooncakeTraceDatasetLoader:
             ]
         }
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
         )
         conversations = loader.convert_to_conversations(trace_data)
 
@@ -463,7 +477,7 @@ class TestMooncakeTraceDatasetLoader:
         assert conversation.turns[1].texts[0].contents[0] == "What is the weather like?"
 
     def test_load_dataset_with_session_ids(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_tokenizer_cls, default_user_config
     ):
         """Test loading JSONL file with session_id fields."""
         content = [
@@ -473,12 +487,13 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         assert len(dataset) == 2
 
@@ -490,7 +505,7 @@ class TestMooncakeTraceDatasetLoader:
         assert dataset["session-2"][0].text_input == "This is session 2 input"
 
     def test_load_dataset_with_delay_field(
-        self, create_jsonl_file, mock_prompt_generator, default_user_config
+        self, create_jsonl_file, mock_tokenizer_cls, default_user_config
     ):
         """Test loading JSONL file with delay fields."""
         content = [
@@ -499,12 +514,13 @@ class TestMooncakeTraceDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         assert len(dataset) == 2
         traces = list(dataset.values())
@@ -526,7 +542,7 @@ class TestMooncakeTraceDatasetLoader:
     def test_load_dataset_with_max_isl_filtering(
         self,
         create_jsonl_file,
-        mock_prompt_generator,
+        mock_tokenizer_cls,
         max_isl,
         expected_count,
         description,
@@ -544,17 +560,18 @@ class TestMooncakeTraceDatasetLoader:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(synthesis=SynthesisConfig(max_isl=max_isl)),
         )
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         assert len(dataset) == expected_count, f"Failed for {description}"
 
     def test_load_dataset_max_isl_does_not_filter_text_input(
-        self, create_jsonl_file, mock_prompt_generator
+        self, create_jsonl_file, mock_tokenizer_cls
     ):
         """Test that max_isl does not filter traces with text_input (no input_length)."""
         content = [
@@ -569,12 +586,13 @@ class TestMooncakeTraceDatasetLoader:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(synthesis=SynthesisConfig(max_isl=100)),
         )
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         # Should have 2 traces (text_input ones pass, input_length=500 filtered)
         assert len(dataset) == 2
@@ -583,7 +601,7 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[1][0].text_input == "This is a longer text input"
 
     def test_load_dataset_max_isl_logs_skipped_traces(
-        self, create_jsonl_file, mock_prompt_generator, caplog
+        self, create_jsonl_file, mock_tokenizer_cls, caplog
     ):
         """Test that skipped traces due to max_isl are properly logged."""
         caplog.set_level(logging.INFO)
@@ -599,12 +617,13 @@ class TestMooncakeTraceDatasetLoader:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(synthesis=SynthesisConfig(max_isl=150)),
         )
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        loader.load_dataset()
+        loader.parse_and_validate()
 
         # Should skip 2 traces (input_length=200 and 300 exceed max_isl=150)
         assert (
@@ -613,7 +632,7 @@ class TestMooncakeTraceDatasetLoader:
         )
 
     def test_load_dataset_max_isl_combined_with_offset_filtering(
-        self, create_jsonl_file, mock_prompt_generator
+        self, create_jsonl_file, mock_tokenizer_cls
     ):
         """Test that max_isl and offset filtering work together."""
         content = [
@@ -634,12 +653,13 @@ class TestMooncakeTraceDatasetLoader:
                 synthesis=SynthesisConfig(max_isl=200),
             ),
         )
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         # Only one trace should pass: timestamp=1500, input_length=100
         assert len(dataset) == 1
@@ -661,7 +681,7 @@ class TestMooncakeTraceDatasetLoader:
     def test_load_dataset_with_max_osl_capping(
         self,
         create_jsonl_file,
-        mock_prompt_generator,
+        mock_tokenizer_cls,
         max_osl,
         expected_output_lengths,
         description,
@@ -679,12 +699,13 @@ class TestMooncakeTraceDatasetLoader:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(synthesis=SynthesisConfig(max_osl=max_osl)),
         )
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         # All traces should be kept (capping, not filtering)
         assert len(dataset) == 4, f"Failed for {description}"
@@ -697,7 +718,7 @@ class TestMooncakeTraceDatasetLoader:
         )
 
     def test_load_dataset_max_osl_does_not_cap_none_output_length(
-        self, create_jsonl_file, mock_prompt_generator
+        self, create_jsonl_file, mock_tokenizer_cls
     ):
         """Test that max_osl does not affect traces without output_length."""
         content = [
@@ -711,12 +732,13 @@ class TestMooncakeTraceDatasetLoader:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(synthesis=SynthesisConfig(max_osl=50)),
         )
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         # All 3 traces should be kept
         assert len(dataset) == 3
@@ -732,7 +754,7 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[2][0].output_length is None
 
     def test_load_dataset_max_osl_logs_capped_traces(
-        self, create_jsonl_file, mock_prompt_generator, caplog
+        self, create_jsonl_file, mock_tokenizer_cls, caplog
     ):
         """Test that capped traces due to max_osl are properly logged."""
         caplog.set_level(logging.INFO)
@@ -748,18 +770,19 @@ class TestMooncakeTraceDatasetLoader:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(synthesis=SynthesisConfig(max_osl=75)),
         )
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        loader.load_dataset()
+        loader.parse_and_validate()
 
         # Should cap 2 traces (output_length=100 and 150 exceed max_osl=75)
         assert "2 traces exceeded max_osl of 75 and were capped to 75" in caplog.text
 
     def test_load_dataset_max_isl_and_max_osl_combined(
-        self, create_jsonl_file, mock_prompt_generator
+        self, create_jsonl_file, mock_tokenizer_cls
     ):
         """Test that max_isl filtering and max_osl capping work together."""
         content = [
@@ -774,12 +797,13 @@ class TestMooncakeTraceDatasetLoader:
             endpoint=EndpointConfig(model_names=["test-model"]),
             input=InputConfig(synthesis=SynthesisConfig(max_isl=200, max_osl=100)),
         )
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         # 3 traces should remain (one filtered by max_isl)
         assert len(dataset) == 3
@@ -836,7 +860,6 @@ class TestMooncakeTraceReproducibility:
         and asserting identical prompts.
         """
         from aiperf.common import random_generator as rng
-        from aiperf.dataset.generator import PromptGenerator
 
         # Mock parallel_decode to return deterministic results based on input
         def deterministic_decode(token_sequences, tokenizer_name):
@@ -875,13 +898,11 @@ class TestMooncakeTraceReproducibility:
         rng.init(42)
 
         tokenizer1 = mock_tokenizer_cls.from_pretrained("test-model")
-        prompt_config1 = user_config_for_reproducibility.input.prompt
-        generator1 = PromptGenerator(prompt_config1, tokenizer1)
 
         loader1 = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config_for_reproducibility,
-            prompt_generator=generator1,
+            config=user_config_for_reproducibility,
+            tokenizer=tokenizer1,
         )
         conversations1 = loader1.convert_to_conversations(trace_data)
         prompts1 = [
@@ -893,13 +914,11 @@ class TestMooncakeTraceReproducibility:
         rng.init(42)
 
         tokenizer2 = mock_tokenizer_cls.from_pretrained("test-model")
-        prompt_config2 = user_config_for_reproducibility.input.prompt
-        generator2 = PromptGenerator(prompt_config2, tokenizer2)
 
         loader2 = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config_for_reproducibility,
-            prompt_generator=generator2,
+            config=user_config_for_reproducibility,
+            tokenizer=tokenizer2,
         )
         conversations2 = loader2.convert_to_conversations(trace_data)
         prompts2 = [
@@ -915,7 +934,7 @@ class TestMooncakeTraceReproducibility:
 
     @patch("aiperf.dataset.loader.mooncake_trace.parallel_decode")
     def test_parallel_decode_length_mismatch_raises(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+        self, mock_parallel_decode, mock_tokenizer_cls, default_user_config
     ):
         """Verify that length mismatch between pending_decodes and decoded_prompts raises.
 
@@ -936,10 +955,15 @@ class TestMooncakeTraceReproducibility:
             ],
         }
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
+            config=default_user_config,
+            tokenizer=mock_tokenizer,
+        )
+        # Mock _build_token_sequence to return simple tokens (avoids block_size validation)
+        loader.prompt_generator._build_token_sequence = Mock(
+            return_value=[1, 2, 3, 4, 5]
         )
 
         # Should raise ValueError due to strict=True in zip
@@ -1011,15 +1035,16 @@ class TestMooncakeTraceSynthesisIntegration:
     # ============================================================================
 
     def test_synthesis_not_applied_when_disabled(
-        self, mock_prompt_generator, sample_trace_data
+        self, mock_tokenizer_cls, sample_trace_data
     ):
         """Test that synthesis is skipped when should_synthesize() returns False."""
         user_config = make_synthesis_config()  # All defaults, should not synthesize
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         # Directly call _apply_synthesis should still work
@@ -1031,15 +1056,16 @@ class TestMooncakeTraceSynthesisIntegration:
         assert len(result["session-2"]) == 1
 
     def test_synthesis_preserves_session_grouping(
-        self, mock_prompt_generator, sample_trace_data
+        self, mock_tokenizer_cls, sample_trace_data
     ):
         """Test that session grouping is preserved through synthesis."""
         user_config = make_synthesis_config(prefix_len_multiplier=2.0)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis(sample_trace_data)
@@ -1049,15 +1075,16 @@ class TestMooncakeTraceSynthesisIntegration:
         assert len(result["session-2"]) == 1
 
     def test_synthesis_returns_mooncake_trace_objects(
-        self, mock_prompt_generator, sample_trace_data
+        self, mock_tokenizer_cls, sample_trace_data
     ):
         """Test that synthesis returns MooncakeTrace objects, not dicts."""
         user_config = make_synthesis_config(speedup_ratio=2.0)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis(sample_trace_data)
@@ -1070,7 +1097,7 @@ class TestMooncakeTraceSynthesisIntegration:
     # Synthesis Parameters
     # ============================================================================
 
-    def test_speedup_ratio_applied(self, mock_prompt_generator):
+    def test_speedup_ratio_applied(self, mock_tokenizer_cls):
         """Test that speedup_ratio scales timestamps."""
         data = {
             "session-1": [
@@ -1080,10 +1107,11 @@ class TestMooncakeTraceSynthesisIntegration:
         }
         user_config = make_synthesis_config(speedup_ratio=2.0)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis(data)
@@ -1091,7 +1119,7 @@ class TestMooncakeTraceSynthesisIntegration:
         assert result["session-1"][0].timestamp == 500
         assert result["session-1"][1].timestamp == 1000
 
-    def test_prefix_len_multiplier_extends_hash_ids(self, mock_prompt_generator):
+    def test_prefix_len_multiplier_extends_hash_ids(self, mock_tokenizer_cls):
         """Test that prefix_len_multiplier extends hash_ids."""
         # Need multiple traces with shared prefixes for the algorithm to work
         # block_size=512, input_length=1024 = 2 blocks, shared prefix [1]
@@ -1103,10 +1131,11 @@ class TestMooncakeTraceSynthesisIntegration:
         }
         user_config = make_synthesis_config(prefix_len_multiplier=2.0)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis(data)
@@ -1118,7 +1147,7 @@ class TestMooncakeTraceSynthesisIntegration:
         assert result["session-1"][0].input_length == 1536
         assert result["session-1"][1].input_length == 1536
 
-    def test_max_isl_caps_input_length(self, mock_prompt_generator):
+    def test_max_isl_caps_input_length(self, mock_tokenizer_cls):
         """Test that max_isl caps synthesized input_length."""
         data = {
             "session-1": [
@@ -1127,10 +1156,11 @@ class TestMooncakeTraceSynthesisIntegration:
         }
         user_config = make_synthesis_config(max_isl=4096)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis(data)
@@ -1147,7 +1177,7 @@ class TestMooncakeTraceSynthesisIntegration:
         ],
     )  # fmt: skip
     def test_speedup_ratio_variations(
-        self, mock_prompt_generator, speedup, input_ts, expected_ts
+        self, mock_tokenizer_cls, speedup, input_ts, expected_ts
     ):
         """Parametrized test for various speedup ratios."""
         data = {
@@ -1157,10 +1187,11 @@ class TestMooncakeTraceSynthesisIntegration:
         }
         user_config = make_synthesis_config(speedup_ratio=speedup)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis(data)
@@ -1171,7 +1202,7 @@ class TestMooncakeTraceSynthesisIntegration:
     # Field Preservation
     # ============================================================================
 
-    def test_delay_field_preserved(self, mock_prompt_generator):
+    def test_delay_field_preserved(self, mock_tokenizer_cls):
         """Test that delay field is preserved through synthesis."""
         data = {
             "session-1": [
@@ -1181,10 +1212,11 @@ class TestMooncakeTraceSynthesisIntegration:
         }
         user_config = make_synthesis_config(speedup_ratio=2.0)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis(data)
@@ -1196,21 +1228,22 @@ class TestMooncakeTraceSynthesisIntegration:
     # Edge Cases
     # ============================================================================
 
-    def test_empty_input(self, mock_prompt_generator):
+    def test_empty_input(self, mock_tokenizer_cls):
         """Test synthesis with empty input data."""
         user_config = make_synthesis_config(prefix_len_multiplier=2.0)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis({})
 
         assert result == {}
 
-    def test_empty_session_preserved(self, mock_prompt_generator):
+    def test_empty_session_preserved(self, mock_tokenizer_cls):
         """Test that empty sessions are preserved, not dropped."""
         data = {
             "empty-session": [],
@@ -1220,10 +1253,11 @@ class TestMooncakeTraceSynthesisIntegration:
         }
         user_config = make_synthesis_config(speedup_ratio=2.0)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis(data)
@@ -1232,7 +1266,7 @@ class TestMooncakeTraceSynthesisIntegration:
         assert result["empty-session"] == []
         assert len(result["non-empty"]) == 1
 
-    def test_block_size_passed_to_synthesis(self, mock_prompt_generator):
+    def test_block_size_passed_to_synthesis(self, mock_tokenizer_cls):
         """Test that user-configured block_size is passed to synthesis."""
         # Need multiple traces with shared prefixes for the algorithm to work
         # block_size=256, input_length=512 = 2 blocks, shared prefix [1]
@@ -1245,10 +1279,11 @@ class TestMooncakeTraceSynthesisIntegration:
         # Use non-default block_size (256 instead of default 512)
         user_config = make_synthesis_config(prefix_len_multiplier=2.0, block_size=256)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         # Verify block_size is set correctly on loader
@@ -1264,7 +1299,7 @@ class TestMooncakeTraceSynthesisIntegration:
         assert result["session-1"][0].input_length == 768
         assert result["session-1"][1].input_length == 768
 
-    def test_traces_without_hash_ids(self, mock_prompt_generator):
+    def test_traces_without_hash_ids(self, mock_tokenizer_cls):
         """Test synthesis with traces that have no hash_ids."""
         data = {
             "session-1": [
@@ -1274,10 +1309,11 @@ class TestMooncakeTraceSynthesisIntegration:
         }
         user_config = make_synthesis_config(speedup_ratio=2.0)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis(data)
@@ -1287,7 +1323,7 @@ class TestMooncakeTraceSynthesisIntegration:
             assert trace.input_length is not None
             assert trace.output_length is not None
 
-    def test_single_trace_single_session(self, mock_prompt_generator):
+    def test_single_trace_single_session(self, mock_tokenizer_cls):
         """Test minimal case: one session, one trace."""
         data = {
             "only-session": [
@@ -1296,10 +1332,11 @@ class TestMooncakeTraceSynthesisIntegration:
         }
         user_config = make_synthesis_config(prefix_len_multiplier=1.5)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
 
         result = loader._apply_synthesis(data)
@@ -1313,7 +1350,7 @@ class TestMooncakeTraceSynthesisIntegration:
     # ============================================================================
 
     def test_load_dataset_applies_synthesis(
-        self, create_jsonl_file, mock_prompt_generator
+        self, create_jsonl_file, mock_tokenizer_cls
     ):
         """Test that load_dataset applies synthesis when configured."""
         # input_length must be >= len(hash_ids) * block_size (512)
@@ -1325,12 +1362,13 @@ class TestMooncakeTraceSynthesisIntegration:
 
         user_config = make_synthesis_config(speedup_ratio=2.0)
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         # Timestamps should be scaled by speedup_ratio
         traces = list(dataset.values())
@@ -1338,7 +1376,7 @@ class TestMooncakeTraceSynthesisIntegration:
         assert traces[1][0].timestamp == 1000
 
     def test_load_dataset_skips_synthesis_when_disabled(
-        self, create_jsonl_file, mock_prompt_generator
+        self, create_jsonl_file, mock_tokenizer_cls
     ):
         """Test that load_dataset skips synthesis when not configured."""
         content = [
@@ -1349,12 +1387,13 @@ class TestMooncakeTraceSynthesisIntegration:
         # Default config - synthesis disabled
         user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
 
+        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            user_config=user_config,
-            prompt_generator=mock_prompt_generator,
+            config=user_config,
+            tokenizer=mock_tokenizer,
         )
-        dataset = loader.load_dataset()
+        dataset = loader.parse_and_validate()
 
         # Timestamp should be unchanged
         traces = list(dataset.values())

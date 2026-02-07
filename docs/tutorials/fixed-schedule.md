@@ -77,7 +77,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --input-file precise_schedule.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --fixed-schedule \
     --fixed-schedule-auto-offset
 ```
@@ -128,7 +128,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --input-file precise_schedule.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --fixed-schedule \
     --fixed-schedule-start-offset 2000 \
     --fixed-schedule-end-offset 4000

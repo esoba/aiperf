@@ -247,6 +247,9 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
     RANDOM = "random"
     """Randomly select a model for each prompt using uniform distribution."""
 
+    SHUFFLE = "shuffle"
+    """Shuffle models without replacement, reshuffle when exhausted."""
+
 
 class PrometheusMetricType(CaseInsensitiveStrEnum):
     """Prometheus metric types as defined in the Prometheus exposition format.

@@ -2,15 +2,65 @@
 # SPDX-License-Identifier: Apache-2.0
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pytest import param
 
+from aiperf.common.utils import load_json_str
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
-from aiperf.plugin.enums import CustomDatasetType
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import DatasetLoaderType, PluginType
+
+
+def _infer_type(
+    data: dict[str, Any] | None = None, filename: str | Path | None = None
+) -> DatasetLoaderType:
+    """Standalone version of DatasetManager._infer_type() for testing."""
+    if data is not None and "type" in data:
+        explicit_type = DatasetLoaderType(data["type"])
+        LoaderClass = plugins.get_class(PluginType.DATASET_LOADER, explicit_type)
+        if not LoaderClass.can_load(data, filename):
+            raise ValueError(
+                f"Explicit type field {explicit_type} specified, but loader {LoaderClass.__name__} "
+                "cannot handle the data format."
+            )
+        return explicit_type
+
+    detected_type = None
+    for entry, LoaderClass in plugins.iter_all(PluginType.DATASET_LOADER):
+        if LoaderClass.can_load(data, filename):
+            dataset_type = DatasetLoaderType(entry.name)
+            if detected_type is not None:
+                raise ValueError(
+                    f"Multiple loaders can handle the data format: {detected_type} and {dataset_type}."
+                )
+            detected_type = dataset_type
+
+    if detected_type is None:
+        raise ValueError("No loader can handle the data format.")
+
+    return detected_type
+
+
+def _infer_dataset_type(file_path: str) -> DatasetLoaderType | None:
+    """Standalone version of DatasetManager._infer_dataset_type() for testing."""
+    path = Path(file_path)
+
+    if path.is_dir():
+        return _infer_type(data=None, filename=file_path)
+
+    with open(file_path) as f:
+        for line in f:
+            if not (line := line.strip()):
+                continue
+            data = load_json_str(line)
+            return _infer_type(data=data, filename=file_path)
+
+    return None
 
 
 class TestSingleTurnCanLoad:
@@ -150,8 +200,8 @@ class TestMooncakeTraceCanLoad:
         assert MooncakeTraceDatasetLoader.can_load(data) is expected
 
 
-class TestCustomDatasetComposerInferType:
-    """Tests for CustomDatasetComposer._infer_type() method.
+class TestDatasetManagerInferType:
+    """Tests for _infer_type() logic (extracted from DatasetManager).
 
     The method first checks for explicit 'type' field, then falls back to
     querying loaders. With pydantic validation, loaders respect type fields."""
@@ -159,34 +209,27 @@ class TestCustomDatasetComposerInferType:
     @pytest.mark.parametrize(
         "data,filename,expected_type",
         [
-            param({"text": "Hello world"}, None, CustomDatasetType.SINGLE_TURN, id="single_turn_text"),
-            param({"type": "single_turn", "text": "Hello"}, None, CustomDatasetType.SINGLE_TURN, id="single_turn_explicit"),
-            param({"image": "/path.png"}, None, CustomDatasetType.SINGLE_TURN, id="single_turn_image"),
-            param({"turns": [{"text": "Turn 1"}]}, None, CustomDatasetType.MULTI_TURN, id="multi_turn_turns"),
-            param({"type": "multi_turn", "turns": [{"text": "Turn 1"}]}, None, CustomDatasetType.MULTI_TURN, id="multi_turn_explicit"),
-            param({"input_length": 100, "output_length": 50}, None, CustomDatasetType.MOONCAKE_TRACE, id="mooncake_input_length"),
-            param({"type": "mooncake_trace", "input_length": 100}, None, CustomDatasetType.MOONCAKE_TRACE, id="mooncake_explicit"),
-            param({"text_input": "Hello"}, None, CustomDatasetType.MOONCAKE_TRACE, id="mooncake_text_input"),
+            param({"text": "Hello world"}, None, DatasetLoaderType.SINGLE_TURN, id="single_turn_text"),
+            param({"type": "single_turn", "text": "Hello"}, None, DatasetLoaderType.SINGLE_TURN, id="single_turn_explicit"),
+            param({"image": "/path.png"}, None, DatasetLoaderType.SINGLE_TURN, id="single_turn_image"),
+            param({"turns": [{"text": "Turn 1"}]}, None, DatasetLoaderType.MULTI_TURN, id="multi_turn_turns"),
+            param({"type": "multi_turn", "turns": [{"text": "Turn 1"}]}, None, DatasetLoaderType.MULTI_TURN, id="multi_turn_explicit"),
+            param({"input_length": 100, "output_length": 50}, None, DatasetLoaderType.MOONCAKE_TRACE, id="mooncake_input_length"),
+            param({"type": "mooncake_trace", "input_length": 100}, None, DatasetLoaderType.MOONCAKE_TRACE, id="mooncake_explicit"),
+            param({"text_input": "Hello"}, None, DatasetLoaderType.MOONCAKE_TRACE, id="mooncake_text_input"),
         ],
     )  # fmt: skip
-    def test_infer_from_data(
-        self, create_user_config_and_composer, data, filename, expected_type
-    ):
+    def test_infer_from_data(self, data, filename, expected_type):
         """Test inferring dataset type from various data formats."""
-        _, composer = create_user_config_and_composer()
-        result = composer._infer_type(data, filename=filename)
+        result = _infer_type(data, filename=filename)
         assert result == expected_type
 
-    def test_infer_random_pool_explicit_type(
-        self, create_user_config_and_composer, create_jsonl_file
-    ):
+    def test_infer_random_pool_explicit_type(self, create_jsonl_file):
         """Test inferring RandomPool with explicit type field (requires file for validation)."""
-        _, composer = create_user_config_and_composer()
-        # RandomPool with explicit type requires a file path for validation
         filepath = create_jsonl_file(['{"type": "random_pool", "text": "Query"}'])
         data = {"type": "random_pool", "text": "Query"}
-        result = composer._infer_type(data, filename=filepath)
-        assert result == CustomDatasetType.RANDOM_POOL
+        result = _infer_type(data, filename=filepath)
+        assert result == DatasetLoaderType.RANDOM_POOL
 
     @pytest.mark.parametrize(
         "data",
@@ -195,58 +238,50 @@ class TestCustomDatasetComposerInferType:
             param({"metadata": "test"}, id="unknown_metadata"),
         ],
     )  # fmt: skip
-    def test_infer_from_data_raises(self, create_user_config_and_composer, data):
+    def test_infer_from_data_raises(self, data):
         """Test that unknown formats raise ValueError."""
-        _, composer = create_user_config_and_composer()
         with pytest.raises(ValueError, match="No loader can handle"):
-            composer._infer_type(data)
+            _infer_type(data)
 
-    def test_infer_random_pool_with_directory(self, create_user_config_and_composer):
+    def test_infer_random_pool_with_directory(self):
         """Test inferring RandomPool with directory path."""
-        _, composer = create_user_config_and_composer()
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            # Create a valid file in the directory
             file_path = temp_path / "data.jsonl"
             file_path.write_text('{"text": "Hello"}\n')
-            result = composer._infer_type(data=None, filename=temp_path)
-            assert result == CustomDatasetType.RANDOM_POOL
+            result = _infer_type(data=None, filename=temp_path)
+            assert result == DatasetLoaderType.RANDOM_POOL
 
-    def test_infer_with_filename_parameter(self, create_user_config_and_composer):
+    def test_infer_with_filename_parameter(self):
         """Test inference with filename parameter for file path."""
-        _, composer = create_user_config_and_composer()
         with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as temp_file:
             temp_path = Path(temp_file.name)
             try:
                 data = {"text": "Hello"}
-                result = composer._infer_type(data, filename=temp_path)
-                # Should infer SingleTurn (file, not directory)
-                assert result == CustomDatasetType.SINGLE_TURN
+                result = _infer_type(data, filename=temp_path)
+                assert result == DatasetLoaderType.SINGLE_TURN
             finally:
                 temp_path.unlink()
 
 
-class TestCustomDatasetComposerInferDatasetType:
-    """Tests for CustomDatasetComposer._infer_dataset_type() method."""
+class TestDatasetManagerInferDatasetType:
+    """Tests for _infer_dataset_type() logic (extracted from DatasetManager)."""
 
     @pytest.mark.parametrize(
         "content,expected_type",
         [
-            param(['{"text": "Hello world"}'], CustomDatasetType.SINGLE_TURN, id="single_turn_text"),
-            param(['{"image": "/path.png"}'], CustomDatasetType.SINGLE_TURN, id="single_turn_image"),
-            param(['{"turns": [{"text": "Turn 1"}, {"text": "Turn 2"}]}'], CustomDatasetType.MULTI_TURN, id="multi_turn"),
-            param(['{"type": "random_pool", "text": "Query"}'], CustomDatasetType.RANDOM_POOL, id="random_pool_explicit"),
-            param(['{"input_length": 100, "output_length": 50}'], CustomDatasetType.MOONCAKE_TRACE, id="mooncake_input_length"),
-            param(['{"text_input": "Hello"}'], CustomDatasetType.MOONCAKE_TRACE, id="mooncake_text_input"),
+            param(['{"text": "Hello world"}'], DatasetLoaderType.SINGLE_TURN, id="single_turn_text"),
+            param(['{"image": "/path.png"}'], DatasetLoaderType.SINGLE_TURN, id="single_turn_image"),
+            param(['{"turns": [{"text": "Turn 1"}, {"text": "Turn 2"}]}'], DatasetLoaderType.MULTI_TURN, id="multi_turn"),
+            param(['{"type": "random_pool", "text": "Query"}'], DatasetLoaderType.RANDOM_POOL, id="random_pool_explicit"),
+            param(['{"input_length": 100, "output_length": 50}'], DatasetLoaderType.MOONCAKE_TRACE, id="mooncake_input_length"),
+            param(['{"text_input": "Hello"}'], DatasetLoaderType.MOONCAKE_TRACE, id="mooncake_text_input"),
         ],
     )  # fmt: skip
-    def test_infer_from_file(
-        self, create_user_config_and_composer, create_jsonl_file, content, expected_type
-    ):
+    def test_infer_from_file(self, create_jsonl_file, content, expected_type):
         """Test inferring dataset type from file with various content."""
-        _, composer = create_user_config_and_composer()
         filepath = create_jsonl_file(content)
-        result = composer._infer_dataset_type(filepath)
+        result = _infer_dataset_type(filepath)
         assert result == expected_type
 
     @pytest.mark.parametrize(
@@ -256,36 +291,27 @@ class TestCustomDatasetComposerInferDatasetType:
             param(["", "   ", "\n"], id="only_empty_lines"),
         ],
     )  # fmt: skip
-    def test_infer_from_file_empty(
-        self, create_user_config_and_composer, create_jsonl_file, content
-    ):
+    def test_infer_from_file_empty(self, create_jsonl_file, content):
         """Test that empty files return None (no valid lines to infer from)."""
-        _, composer = create_user_config_and_composer()
         filepath = create_jsonl_file(content)
-        # Empty files have no valid lines, so the method exits the loop without calling _infer_type
-        result = composer._infer_dataset_type(filepath)
+        result = _infer_dataset_type(filepath)
         assert result is None
 
-    def test_infer_from_file_invalid_json(
-        self, create_user_config_and_composer, create_jsonl_file
-    ):
+    def test_infer_from_file_invalid_json(self, create_jsonl_file):
         """Test that invalid JSON raises an error."""
-        _, composer = create_user_config_and_composer()
         filepath = create_jsonl_file(["not valid json"])
         with pytest.raises((ValueError, Exception)):
-            composer._infer_dataset_type(filepath)
+            _infer_dataset_type(filepath)
 
-    def test_infer_from_directory(self, create_user_config_and_composer):
+    def test_infer_from_directory(self):
         """Test inferring type from directory (should be RandomPool)."""
-        _, composer = create_user_config_and_composer()
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Create some files in the directory
             temp_path = Path(temp_dir)
             file1 = temp_path / "queries.jsonl"
             file1.write_text('{"text": "Query 1"}\n')
 
-            result = composer._infer_dataset_type(temp_dir)
-            assert result == CustomDatasetType.RANDOM_POOL
+            result = _infer_dataset_type(temp_dir)
+            assert result == DatasetLoaderType.RANDOM_POOL
 
 
 class TestDetectionPriorityAndAmbiguity:
@@ -295,10 +321,8 @@ class TestDetectionPriorityAndAmbiguity:
     The 'type' field must match the loader's expected type or be omitted.
     """
 
-    def test_explicit_type_handled_by_validation(self, create_user_config_and_composer):
+    def test_explicit_type_handled_by_validation(self):
         """Test that explicit type field is validated by loaders via pydantic."""
-        _, composer = create_user_config_and_composer()
-        # RandomPool with explicit type
         data = {"type": "random_pool", "text": "Hello"}
 
         # Loader behavior with explicit type field:
@@ -308,8 +332,8 @@ class TestDetectionPriorityAndAmbiguity:
         assert RandomPoolDatasetLoader.can_load(data) is True
 
         # Type inference with explicit type should return RANDOM_POOL
-        result = composer._infer_type(data)
-        assert result == CustomDatasetType.RANDOM_POOL
+        result = _infer_type(data)
+        assert result == DatasetLoaderType.RANDOM_POOL
 
     @pytest.mark.parametrize(
         "data,single_turn,random_pool",

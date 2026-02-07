@@ -99,7 +99,7 @@ Synthesis happens automatically when you run `aiperf profile` with mooncake trac
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --synthesis-speedup-ratio 1.0 \
@@ -149,7 +149,7 @@ Example: Simulate 2x more concurrent load:
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-speedup-ratio 2.0 \
     ...
 ```
@@ -164,7 +164,7 @@ Example: Simulate longer context windows:
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-prefix-len-multiplier 1.5 \
     ...
 ```
@@ -181,7 +181,7 @@ Example: Simulate lower cache hit rates with more diverse prefix roots:
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-prefix-root-multiplier 3 \
     ...
 ```
@@ -196,7 +196,7 @@ Example: Simulate shorter user prompts:
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-prompt-len-multiplier 0.7 \
     ...
 ```
@@ -210,7 +210,7 @@ Example: Filter out long contexts:
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-max-isl 4096 \
     ...
 ```
@@ -224,7 +224,7 @@ Example: Cap output lengths to 2,048 tokens:
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-max-osl 2048 \
     ...
 ```
@@ -242,7 +242,7 @@ aiperf analyze-trace prod.jsonl --output-file analysis.json
 # Benchmark with more prefix reuse
 aiperf profile \
     --input-file prod.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-prefix-root-multiplier 5 \
     --synthesis-prompt-len-multiplier 0.8 \
     --model Qwen/Qwen3-0.6B \
@@ -256,7 +256,7 @@ Compress timestamps to simulate 10x faster request rate:
 ```bash
 aiperf profile \
     --input-file prod.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-speedup-ratio 10.0 \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat
@@ -269,7 +269,7 @@ Benchmark with longer contexts while maintaining prefix patterns:
 ```bash
 aiperf profile \
     --input-file prod.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-prefix-len-multiplier 2.0 \
     --synthesis-max-isl 8192 \
     --model Qwen/Qwen3-0.6B \
@@ -283,7 +283,7 @@ Benchmark with more diverse prefix patterns for multi-turn scenarios:
 ```bash
 aiperf profile \
     --input-file prod.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-prefix-root-multiplier 10 \
     --synthesis-prompt-len-multiplier 1.2 \
     --model Qwen/Qwen3-0.6B \
@@ -329,14 +329,14 @@ Test parameters incrementally rather than changing everything at once:
 # Test prefix scaling alone
 aiperf profile \
     --input-file traces/production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-prefix-len-multiplier 1.2 \
     --model Qwen/Qwen3-0.6B --endpoint-type chat
 
 # Test speedup alone
 aiperf profile \
     --input-file traces/production.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-speedup-ratio 2.0 \
     --model Qwen/Qwen3-0.6B --endpoint-type chat
 ```
@@ -347,7 +347,7 @@ Run benchmarks with different synthesis parameters to compare:
 # Conservative: slight increase in cache hits
 aiperf profile \
     --input-file prod.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-prefix-len-multiplier 1.1 \
     --synthesis-prefix-root-multiplier 2 \
     --model Qwen/Qwen3-0.6B --endpoint-type chat
@@ -355,7 +355,7 @@ aiperf profile \
 # Aggressive: strong cache hit focus
 aiperf profile \
     --input-file prod.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-prefix-len-multiplier 2.0 \
     --synthesis-prefix-root-multiplier 5 \
     --model Qwen/Qwen3-0.6B --endpoint-type chat
@@ -363,7 +363,7 @@ aiperf profile \
 # Load test: faster request rate
 aiperf profile \
     --input-file prod.jsonl \
-    --custom-dataset-type mooncake_trace \
+    --dataset-type mooncake_trace \
     --synthesis-speedup-ratio 5.0 \
     --model Qwen/Qwen3-0.6B --endpoint-type chat
 ```
