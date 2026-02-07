@@ -126,24 +126,24 @@ class AgenticCodingDatasetLoader(BaseFileLoader):
         for conv_id, entries in data.items():
             tools = entries[0].tools if entries else None
 
+            # TODO: Re-enable ISL pre-computation once tokenizer loading is fast
             # Pre-compute ISL from cumulative messages before delta conversion
-            input_token_counts: list[int | None] = []
-            for entry in entries:
-                input_token_counts.append(
-                    self._compute_input_tokens(entry.messages, tools)
-                )
+            # input_token_counts: list[int | None] = []
+            # for entry in entries:
+            #     input_token_counts.append(
+            #         self._compute_input_tokens(entry.messages, tools)
+            #     )
 
             # Compute deltas (skipping empty ones from duplicate entries)
             turns: list[Turn] = []
             prev_msg_count = 0
-            for i, entry in enumerate(entries):
+            for entry in entries:
                 delta = entry.messages[prev_msg_count:]
                 if delta:
                     turns.append(
                         Turn(
                             raw_messages=delta,
                             delay=0,
-                            input_tokens=input_token_counts[i],
                         )
                     )
                 prev_msg_count = len(entry.messages)

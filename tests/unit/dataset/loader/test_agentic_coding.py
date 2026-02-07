@@ -358,6 +358,7 @@ def _make_mock_tokenizer(token_counts: list[int]) -> Tokenizer:
     return tokenizer
 
 
+@pytest.mark.skip(reason="ISL pre-computation temporarily disabled")
 class TestAgenticCodingISLPrecomputation:
     """Tests for ISL (input sequence length) pre-computation."""
 
