@@ -136,9 +136,7 @@ class TestSingleTurn:
 class TestSingleTurnDatasetLoader:
     """Basic functionality tests for SingleTurnDatasetLoader."""
 
-    def test_load_dataset_basic_functionality(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_load_dataset_basic_functionality(self, create_jsonl_file, loader_ctx):
         """Test basic JSONL file loading."""
         content = [
             '{"text": "What is deep learning?"}',
@@ -146,10 +144,7 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         dataset = loader.parse_and_validate()
 
         assert isinstance(dataset, dict)
@@ -168,9 +163,7 @@ class TestSingleTurnDatasetLoader:
         assert turn2[0].image == "https://example.com/image.png"
         assert turn2[0].audio is None
 
-    def test_load_dataset_skips_empty_lines(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_load_dataset_skips_empty_lines(self, create_jsonl_file, loader_ctx):
         """Test that empty lines are skipped."""
         content = [
             '{"text": "Hello"}',
@@ -179,17 +172,12 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         dataset = loader.parse_and_validate()
 
         assert len(dataset) == 2  # Should skip empty line
 
-    def test_load_dataset_with_batched_inputs(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_load_dataset_with_batched_inputs(self, create_jsonl_file, loader_ctx):
         """Test loading dataset with batched inputs."""
         content = [
             '{"texts": ["What is the weather?", "What is AI?"], "images": ["https://example.com/1.png", "https://example.com/2.png"]}',
@@ -197,10 +185,7 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         dataset = loader.parse_and_validate()
 
         # Check that there are two sessions
@@ -221,9 +206,7 @@ class TestSingleTurnDatasetLoader:
             "https://example.com/4.wav",
         ]
 
-    def test_load_dataset_with_timestamp(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_load_dataset_with_timestamp(self, create_jsonl_file, loader_ctx):
         """Test loading dataset with timestamp field."""
         content = [
             '{"text": "What is deep learning?", "timestamp": 1000}',
@@ -231,10 +214,7 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         dataset = loader.parse_and_validate()
 
         assert len(dataset) == 2
@@ -248,9 +228,7 @@ class TestSingleTurnDatasetLoader:
         assert turn2[0].timestamp == 2000
         assert turn2[0].delay is None
 
-    def test_load_dataset_with_delay(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_load_dataset_with_delay(self, create_jsonl_file, loader_ctx):
         """Test loading dataset with delay field."""
         content = [
             '{"text": "What is deep learning?", "delay": 0}',
@@ -258,10 +236,7 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         dataset = loader.parse_and_validate()
 
         assert len(dataset) == 2
@@ -276,7 +251,7 @@ class TestSingleTurnDatasetLoader:
         assert turn2[0].timestamp is None
 
     def test_load_dataset_with_full_featured_version(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
+        self, create_jsonl_file, loader_ctx
     ):
         """Test loading dataset with full-featured version."""
 
@@ -305,10 +280,7 @@ class TestSingleTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         dataset = loader.parse_and_validate()
 
         assert len(dataset) == 1
@@ -334,12 +306,9 @@ class TestSingleTurnDatasetLoader:
 class TestSingleTurnDatasetLoaderConvertToConversations:
     """Test convert_to_conversations method for SingleTurnDatasetLoader."""
 
-    def test_convert_simple_text_data(self, default_user_config, mock_tokenizer_cls):
+    def test_convert_simple_text_data(self, loader_ctx):
         """Test converting simple text data to conversations."""
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename="dummy.jsonl", ctx=loader_ctx)
         data = {
             "session_1": [SingleTurn(text="Hello world")],
             "session_2": [SingleTurn(text="How are you?")],
@@ -356,12 +325,9 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert len(conversations[1].turns) == 1
         assert conversations[1].turns[0].texts[0].contents == ["How are you?"]
 
-    def test_convert_multimodal_data(self, default_user_config, mock_tokenizer_cls):
+    def test_convert_multimodal_data(self, loader_ctx):
         """Test converting multimodal data to conversations."""
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename="dummy.jsonl", ctx=loader_ctx)
         data = {
             "session_1": [
                 SingleTurn(
@@ -383,12 +349,9 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert len(turn.audios) == 1
         assert turn.audios[0].contents == ["https://example.com/audio.wav"]
 
-    def test_convert_batched_data(self, default_user_config, mock_tokenizer_cls):
+    def test_convert_batched_data(self, loader_ctx):
         """Test converting batched data to conversations."""
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename="dummy.jsonl", ctx=loader_ctx)
         data = {
             "session_1": [
                 SingleTurn(
@@ -410,12 +373,9 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
             "https://example.com/2.png",
         ]
 
-    def test_convert_with_timing_data(self, default_user_config, mock_tokenizer_cls):
+    def test_convert_with_timing_data(self, loader_ctx):
         """Test converting data with timestamp and delay."""
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename="dummy.jsonl", ctx=loader_ctx)
         data = {
             "session_1": [
                 SingleTurn(text="First", timestamp=1000),
@@ -438,14 +398,9 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert second_turn.delay == 500
         assert second_turn.role == "user"
 
-    def test_convert_structured_text_objects(
-        self, default_user_config, mock_tokenizer_cls
-    ):
+    def test_convert_structured_text_objects(self, loader_ctx):
         """Test converting data with structured Text objects."""
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename="dummy.jsonl", ctx=loader_ctx)
         text_objects = [
             Text(name="query", contents=["What is AI?"]),
             Text(name="context", contents=["AI stands for artificial intelligence"]),
@@ -470,8 +425,7 @@ class TestSingleTurnMediaEncoding:
         self,
         create_jsonl_file,
         create_test_image,
-        default_user_config,
-        mock_tokenizer_cls,
+        loader_ctx,
     ):
         """Test that local image files are encoded to base64 data URLs."""
         test_image = create_test_image("test_image.jpg")
@@ -479,10 +433,7 @@ class TestSingleTurnMediaEncoding:
         content = [json.dumps({"text": "What is in this image?", "image": test_image})]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -504,9 +455,7 @@ class TestSingleTurnMediaEncoding:
         except Exception as e:
             pytest.fail(f"Invalid base64 encoding: {e}")
 
-    def test_url_images_not_encoded(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_url_images_not_encoded(self, create_jsonl_file, loader_ctx):
         """Test that URLs are not encoded and passed through as-is."""
         content = [
             json.dumps(
@@ -515,10 +464,7 @@ class TestSingleTurnMediaEncoding:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -528,18 +474,13 @@ class TestSingleTurnMediaEncoding:
         # URL should remain unchanged
         assert turn.images[0].contents[0] == "https://example.com/image.png"
 
-    def test_data_url_not_reencoded(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_data_url_not_reencoded(self, create_jsonl_file, loader_ctx):
         """Test that existing data URLs are not re-encoded."""
         data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
         content = [json.dumps({"text": "Already encoded", "image": data_url})]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -553,8 +494,7 @@ class TestSingleTurnMediaEncoding:
         self,
         create_jsonl_file,
         create_test_image,
-        default_user_config,
-        mock_tokenizer_cls,
+        loader_ctx,
     ):
         """Test that multiple local images are all encoded."""
         test_image1 = create_test_image("image1.jpg")
@@ -567,10 +507,7 @@ class TestSingleTurnMediaEncoding:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -589,8 +526,7 @@ class TestSingleTurnMediaEncoding:
         self,
         create_jsonl_file,
         create_test_image,
-        default_user_config,
-        mock_tokenizer_cls,
+        loader_ctx,
     ):
         """Test handling of mixed image sources (URL + local file)."""
         test_image = create_test_image("local_image.jpg")
@@ -605,10 +541,7 @@ class TestSingleTurnMediaEncoding:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -625,9 +558,7 @@ class TestSingleTurnMediaEncoding:
         assert contents[1].startswith("data:image/")
         assert ";base64," in contents[1]
 
-    def test_invalid_image_path_raises_error(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_invalid_image_path_raises_error(self, create_jsonl_file, loader_ctx):
         """Test that invalid image paths raise FileNotFoundError."""
         content = [
             json.dumps(
@@ -636,10 +567,7 @@ class TestSingleTurnMediaEncoding:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
 
         with pytest.raises(FileNotFoundError):
@@ -649,8 +577,7 @@ class TestSingleTurnMediaEncoding:
         self,
         create_jsonl_file,
         create_test_audio,
-        default_user_config,
-        mock_tokenizer_cls,
+        loader_ctx,
     ):
         """Test that local audio files are encoded to base64."""
         test_audio = create_test_audio("test_audio.wav")
@@ -658,10 +585,7 @@ class TestSingleTurnMediaEncoding:
         content = [json.dumps({"text": "What is in this audio?", "audio": test_audio})]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -683,9 +607,7 @@ class TestSingleTurnMediaEncoding:
         except Exception as e:
             pytest.fail(f"Invalid base64 encoding: {e}")
 
-    def test_audio_url_not_encoded(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_audio_url_not_encoded(self, create_jsonl_file, loader_ctx):
         """Test that audio URLs are not encoded and passed through as-is."""
         content = [
             json.dumps(
@@ -694,10 +616,7 @@ class TestSingleTurnMediaEncoding:
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -707,18 +626,13 @@ class TestSingleTurnMediaEncoding:
         # URL should remain unchanged
         assert turn.audios[0].contents[0] == "https://example.com/audio.wav"
 
-    def test_audio_already_encoded_not_reencoded(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_audio_already_encoded_not_reencoded(self, create_jsonl_file, loader_ctx):
         """Test that already-encoded audio is not re-encoded."""
         encoded_audio = "wav,SGVsbG8gV29ybGQ="  # "Hello World" in base64
         content = [json.dumps({"text": "Already encoded", "audio": encoded_audio})]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -732,8 +646,7 @@ class TestSingleTurnMediaEncoding:
         self,
         create_jsonl_file,
         create_test_video,
-        default_user_config,
-        mock_tokenizer_cls,
+        loader_ctx,
     ):
         """Test that local video files are encoded to base64 data URLs."""
         test_video = create_test_video("test_video.mp4")
@@ -741,10 +654,7 @@ class TestSingleTurnMediaEncoding:
         content = [json.dumps({"text": "What is in this video?", "video": test_video})]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -766,19 +676,14 @@ class TestSingleTurnMediaEncoding:
         except Exception as e:
             pytest.fail(f"Invalid base64 encoding: {e}")
 
-    def test_video_url_not_encoded(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_video_url_not_encoded(self, create_jsonl_file, loader_ctx):
         """Test that video URLs are not encoded and passed through as-is."""
         content = [
             json.dumps({"text": "Watch this", "video": "https://example.com/video.mp4"})
         ]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -788,18 +693,13 @@ class TestSingleTurnMediaEncoding:
         # URL should remain unchanged
         assert turn.videos[0].contents[0] == "https://example.com/video.mp4"
 
-    def test_video_data_url_not_reencoded(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_video_data_url_not_reencoded(self, create_jsonl_file, loader_ctx):
         """Test that existing video data URLs are not re-encoded."""
         data_url = "data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMQ=="
         content = [json.dumps({"text": "Already encoded", "video": data_url})]
         filename = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = SingleTurnDatasetLoader(
-            filename=filename, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = SingleTurnDatasetLoader(filename=filename, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 

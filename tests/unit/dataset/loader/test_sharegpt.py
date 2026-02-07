@@ -5,7 +5,6 @@ import json
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import Conversation
 from aiperf.dataset.loader import ShareGPTLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -25,25 +24,15 @@ class TestShareGPTLoader:
 
         return _create
 
-    @pytest.fixture
-    def user_config(self):
-        return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-
-    @pytest.fixture
-    def mock_tokenizer(self, mock_tokenizer_cls):
-        return mock_tokenizer_cls.from_pretrained("test-model")
-
-    def test_initialization(self, sharegpt_file, user_config, mock_tokenizer):
+    def test_initialization(self, sharegpt_file, loader_ctx):
         """Test initialization of ShareGPTLoader."""
         filepath = sharegpt_file([])
-        loader = ShareGPTLoader(
-            filename=filepath, config=user_config, tokenizer=mock_tokenizer
-        )
-        assert loader.tokenizer is not None
-        assert loader.config is not None
+        loader = ShareGPTLoader(filename=filepath, ctx=loader_ctx)
+        assert loader.ctx.tokenizer is not None
+        assert loader.ctx.config is not None
         assert loader.filename == filepath
 
-    def test_convert_to_conversations(self, sharegpt_file, user_config, mock_tokenizer):
+    def test_convert_to_conversations(self, sharegpt_file, loader_ctx):
         """Test converting single entry dataset to conversations."""
         dataset = [
             {
@@ -54,9 +43,7 @@ class TestShareGPTLoader:
             }
         ]
         filepath = sharegpt_file(dataset)
-        loader = ShareGPTLoader(
-            filename=filepath, config=user_config, tokenizer=mock_tokenizer
-        )
+        loader = ShareGPTLoader(filename=filepath, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 
@@ -67,9 +54,7 @@ class TestShareGPTLoader:
         assert turn.texts[0].contents[0] == "Hello how are you"
         assert turn.max_tokens == len(["This", "is", "test", "output"])
 
-    def test_convert_to_conversations_validation(
-        self, sharegpt_file, user_config, mock_tokenizer
-    ):
+    def test_convert_to_conversations_validation(self, sharegpt_file, loader_ctx):
         """Test converting multiple entries dataset to conversations with validation."""
         dataset = [
             {
@@ -92,9 +77,7 @@ class TestShareGPTLoader:
             },
         ]
         filepath = sharegpt_file(dataset)
-        loader = ShareGPTLoader(
-            filename=filepath, config=user_config, tokenizer=mock_tokenizer
-        )
+        loader = ShareGPTLoader(filename=filepath, ctx=loader_ctx)
         data = loader.parse_and_validate()
         conversations = loader.convert_to_conversations(data)
 

@@ -1,36 +1,38 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import UserConfig
 from aiperf.common.models import Audio, Image, Text, Turn, Video
-from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.generator.audio import AudioGenerator
 from aiperf.dataset.generator.image import ImageGenerator
 from aiperf.dataset.generator.video import VideoGenerator
 from aiperf.dataset.loader.base import BaseDatasetLoader
 
+if TYPE_CHECKING:
+    from aiperf.dataset.loader.context import LoaderContext
+
 
 class BaseSyntheticLoader(BaseDatasetLoader):
     """Base class for synthetic dataset loaders.
 
-    Absorbs generator management, ISL/OSL pairing, and multi-modal payload
-    generation from the old SyntheticDatasetComposer.
+    Manages media generators, ISL/OSL pairing, and multi-modal payload
+    generation. Shared state and finalization are accessed via ctx.
 
     Args:
-        config: User configuration.
-        tokenizer: Tokenizer instance.
+        ctx: Shared loader context with dependencies and finalization.
     """
 
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs: Any) -> None:
-        super().__init__(config=config, tokenizer=tokenizer, **kwargs)
+    def __init__(self, ctx: LoaderContext, **kwargs: Any) -> None:
+        super().__init__(ctx=ctx, **kwargs)
 
-        self.image_generator = ImageGenerator(config.input.image)
-        self.audio_generator = AudioGenerator(config.input.audio)
-        self.video_generator = VideoGenerator(config.input.video)
+        self.image_generator = ImageGenerator(ctx.config.input.image)
+        self.audio_generator = AudioGenerator(ctx.config.input.audio)
+        self.video_generator = VideoGenerator(ctx.config.input.video)
 
         self._turn_sampler_rng = rng.derive("composer.conversation.turn_count")
         self._delay_sampler_rng = rng.derive("composer.conversation.turn_delay")
@@ -59,19 +61,19 @@ class BaseSyntheticLoader(BaseDatasetLoader):
         text = Text(name="text")
 
         turn_id = id(turn)
-        isl, _ = self._get_turn_sequence_lengths(turn_id)
+        isl, _ = self.ctx.get_turn_sequence_lengths(turn_id)
 
         stddev = (
             0
-            if self._seq_distribution is not None
-            else self.config.input.prompt.input_tokens.stddev
+            if self.ctx.seq_distribution is not None
+            else self.ctx.config.input.prompt.input_tokens.stddev
         )
 
-        for _ in range(self.config.input.prompt.batch_size):
-            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
+        for _ in range(self.ctx.config.input.prompt.batch_size):
+            content = self.ctx.prompt_generator.generate(mean=isl, stddev=stddev)
 
-            if is_first and self.prefix_prompt_enabled:
-                prefix = self.prompt_generator.get_random_prefix_prompt()
+            if is_first and self.ctx.prefix_prompt_enabled:
+                prefix = self.ctx.prompt_generator.get_random_prefix_prompt()
                 content = f"{prefix} {content}"
 
             text.contents.append(content)
@@ -85,7 +87,7 @@ class BaseSyntheticLoader(BaseDatasetLoader):
             Image payload object.
         """
         image = Image(name="image_url")
-        for _ in range(self.config.input.image.batch_size):
+        for _ in range(self.ctx.config.input.image.batch_size):
             data = self.image_generator.generate()
             image.contents.append(data)
         return image
@@ -97,7 +99,7 @@ class BaseSyntheticLoader(BaseDatasetLoader):
             Audio payload object.
         """
         audio = Audio(name="input_audio")
-        for _ in range(self.config.input.audio.batch_size):
+        for _ in range(self.ctx.config.input.audio.batch_size):
             data = self.audio_generator.generate()
             audio.contents.append(data)
         return audio
@@ -109,7 +111,7 @@ class BaseSyntheticLoader(BaseDatasetLoader):
             Video payload object.
         """
         video = Video(name="video_url")
-        for _ in range(self.config.input.video.batch_size):
+        for _ in range(self.ctx.config.input.video.batch_size):
             data = self.video_generator.generate()
             if data:
                 video.contents.append(data)
@@ -118,22 +120,24 @@ class BaseSyntheticLoader(BaseDatasetLoader):
     @property
     def include_prompt(self) -> bool:
         """Whether prompt generation is enabled."""
-        return self.config.input.prompt.input_tokens.mean > 0
+        return self.ctx.config.input.prompt.input_tokens.mean > 0
 
     @property
     def include_image(self) -> bool:
         """Whether image generation is enabled."""
         return (
-            self.config.input.image.width.mean > 0
-            and self.config.input.image.height.mean > 0
+            self.ctx.config.input.image.width.mean > 0
+            and self.ctx.config.input.image.height.mean > 0
         )
 
     @property
     def include_audio(self) -> bool:
         """Whether audio generation is enabled."""
-        return self.config.input.audio.length.mean > 0
+        return self.ctx.config.input.audio.length.mean > 0
 
     @property
     def include_video(self) -> bool:
         """Whether video generation is enabled."""
-        return bool(self.config.input.video.width and self.config.input.video.height)
+        return bool(
+            self.ctx.config.input.video.width and self.ctx.config.input.video.height
+        )

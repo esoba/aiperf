@@ -8,31 +8,27 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aiperf.common.config import UserConfig
-from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader.base import BaseDatasetLoader
 from aiperf.dataset.loader.models import CustomDatasetT
 
 if TYPE_CHECKING:
     from aiperf.common.models import Conversation
+    from aiperf.dataset.loader.context import LoaderContext
 
 
 class BaseFileLoader(BaseDatasetLoader):
     """Base class for file-based dataset loaders.
 
     Implements a two-stage pipeline: parse_and_validate() -> convert_to_conversations().
-    Turn finalization and conversation finalization are applied automatically.
+    Turn finalization and conversation finalization are applied automatically via ctx.
 
     Args:
         filename: Path to the file or directory to load.
-        config: User configuration.
-        tokenizer: Tokenizer instance.
+        ctx: Shared loader context with dependencies and finalization.
     """
 
-    def __init__(
-        self, *, filename: str, config: UserConfig, tokenizer: Tokenizer, **kwargs: Any
-    ) -> None:
-        super().__init__(config=config, tokenizer=tokenizer, **kwargs)
+    def __init__(self, *, filename: str, ctx: LoaderContext, **kwargs: Any) -> None:
+        super().__init__(ctx=ctx, **kwargs)
         self.filename = filename
 
     async def load(self) -> AsyncIterator[Conversation]:
@@ -50,8 +46,8 @@ class BaseFileLoader(BaseDatasetLoader):
 
         for idx, conversation in enumerate(conversations):
             for turn in conversation.turns:
-                self._finalize_turn(turn)
-            self._finalize_conversation(conversation, idx)
+                self.ctx.finalize_turn(turn)
+            self.ctx.finalize_conversation(conversation, idx)
             yield conversation
 
     @abstractmethod

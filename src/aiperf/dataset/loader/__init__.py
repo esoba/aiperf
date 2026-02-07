@@ -3,6 +3,7 @@
 """Dataset loader package for AIPerf."""
 
 from aiperf.dataset.loader.base import BaseDatasetLoader
+from aiperf.dataset.loader.context import LoaderContext
 from aiperf.dataset.loader.file.base import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import (
@@ -23,6 +24,7 @@ from aiperf.dataset.loader.synthetic.rankings import SyntheticRankingsLoader
 __all__ = [
     "BaseDatasetLoader",
     "BaseFileLoader",
+    "LoaderContext",
     "BaseSyntheticLoader",
     "MediaConversionMixin",
     "MooncakeTrace",

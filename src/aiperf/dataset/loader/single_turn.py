@@ -104,7 +104,7 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                     continue  # Skip empty lines
 
                 single_turn_data = SingleTurn.model_validate_json(line)
-                session_id = self.session_id_generator.next()
+                session_id = self.ctx.session_id_generator.next()
                 data[session_id].append(single_turn_data)
 
         return data

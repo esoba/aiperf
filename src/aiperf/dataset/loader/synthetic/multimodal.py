@@ -5,13 +5,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from aiperf.common.config import UserConfig
 from aiperf.common.models import Conversation, Turn
-from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader.synthetic.base import BaseSyntheticLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.dataset.loader.context import LoaderContext
 
 
 class SyntheticMultiModalLoader(BaseSyntheticLoader):
@@ -21,8 +22,8 @@ class SyntheticMultiModalLoader(BaseSyntheticLoader):
     using configurable distributions. Supports variable turn counts and delays.
     """
 
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs: Any) -> None:
-        super().__init__(config=config, tokenizer=tokenizer, **kwargs)
+    def __init__(self, ctx: LoaderContext, **kwargs: Any) -> None:
+        super().__init__(ctx=ctx, **kwargs)
 
         if (
             not self.include_prompt
@@ -55,12 +56,12 @@ class SyntheticMultiModalLoader(BaseSyntheticLoader):
         Returns:
             AsyncIterator of finalized Conversation objects.
         """
-        for idx in range(self.config.input.conversation.num_dataset_entries):
-            conversation = Conversation(session_id=self.session_id_generator.next())
+        for idx in range(self.ctx.config.input.conversation.num_dataset_entries):
+            conversation = Conversation(session_id=self.ctx.session_id_generator.next())
 
             num_turns = self._turn_sampler_rng.sample_positive_normal_integer(
-                self.config.input.conversation.turn.mean,
-                self.config.input.conversation.turn.stddev,
+                self.ctx.config.input.conversation.turn.mean,
+                self.ctx.config.input.conversation.turn.stddev,
             )
             self.logger.debug("Creating conversation with %d turns", num_turns)
 
@@ -68,7 +69,7 @@ class SyntheticMultiModalLoader(BaseSyntheticLoader):
                 turn = self._create_turn(is_first=(turn_idx == 0))
                 conversation.turns.append(turn)
 
-            self._finalize_conversation(conversation, idx)
+            self.ctx.finalize_conversation(conversation, idx)
             yield conversation
 
     def _create_turn(self, is_first: bool) -> Turn:
@@ -91,12 +92,12 @@ class SyntheticMultiModalLoader(BaseSyntheticLoader):
         if self.include_video:
             turn.videos.append(self._generate_video_payloads())
 
-        if not is_first and self.config.input.conversation.turn.delay.mean > 0:
+        if not is_first and self.ctx.config.input.conversation.turn.delay.mean > 0:
             delay = self._delay_sampler_rng.sample_positive_normal_integer(
-                self.config.input.conversation.turn.delay.mean,
-                self.config.input.conversation.turn.delay.stddev,
+                self.ctx.config.input.conversation.turn.delay.mean,
+                self.ctx.config.input.conversation.turn.delay.stddev,
             )
-            turn.delay = delay * self.config.input.conversation.turn.delay.ratio
+            turn.delay = delay * self.ctx.config.input.conversation.turn.delay.ratio
 
         if not turn.texts and not turn.images and not turn.audios and not turn.videos:
             self.logger.warning(
@@ -105,6 +106,6 @@ class SyntheticMultiModalLoader(BaseSyntheticLoader):
                 "setting the mean to a positive value."
             )
 
-        self._finalize_turn(turn)
+        self.ctx.finalize_turn(turn)
 
         return turn

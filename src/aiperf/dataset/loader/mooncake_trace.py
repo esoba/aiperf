@@ -1,21 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
-from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.loader.file.base import BaseFileLoader
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.synthesis.models import SynthesisParams
 from aiperf.dataset.synthesis.synthesizer import Synthesizer
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.dataset.loader.context import LoaderContext
 
 
 class MooncakeTraceDatasetLoader(BaseFileLoader):
@@ -44,24 +47,23 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         self,
         *,
         filename: str,
-        config: UserConfig,
-        tokenizer: Tokenizer,
+        ctx: LoaderContext,
         **kwargs: Any,
     ) -> None:
-        super().__init__(
-            filename=filename, config=config, tokenizer=tokenizer, **kwargs
-        )
+        super().__init__(filename=filename, ctx=ctx, **kwargs)
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
-        self._start_offset = config.input.fixed_schedule_start_offset
-        self._end_offset = config.input.fixed_schedule_end_offset
-        self._max_isl = config.input.synthesis.max_isl
-        self._max_osl = config.input.synthesis.max_osl
+        self._start_offset = ctx.config.input.fixed_schedule_start_offset
+        self._end_offset = ctx.config.input.fixed_schedule_end_offset
+        self._max_isl = ctx.config.input.synthesis.max_isl
+        self._max_osl = ctx.config.input.synthesis.max_osl
 
         # Store tokenizer name and block size for parallel decode
-        self._tokenizer_name = config.tokenizer.name or config.endpoint.model_names[0]
-        self._block_size = config.input.prompt.input_tokens.block_size
+        self._tokenizer_name = (
+            ctx.config.tokenizer.name or ctx.config.endpoint.model_names[0]
+        )
+        self._block_size = ctx.config.input.prompt.input_tokens.block_size
 
     @classmethod
     def can_load_file(
@@ -125,7 +127,9 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
                     # Only cap it, do not skip the trace
                     trace_data.output_length = self._max_osl
 
-                session_id = trace_data.session_id or self.session_id_generator.next()
+                session_id = (
+                    trace_data.session_id or self.ctx.session_id_generator.next()
+                )
                 data[session_id].append(trace_data)
 
         if self._skipped_traces > 0:
@@ -146,7 +150,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         self.debug(lambda: f"Loaded {len(data):,} traces from {self.filename}")
 
         # Apply synthesis if needed
-        synthesis_config = self.config.input.synthesis
+        synthesis_config = self.ctx.config.input.synthesis
         if synthesis_config.should_synthesize():
             data = self._apply_synthesis(data)
 
@@ -194,13 +198,13 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
                             trace.input_length,
                             self._block_size,
                         )
-                        if cache_key in self.prompt_generator._decoded_cache:
+                        if cache_key in self.ctx.prompt_generator._decoded_cache:
                             # Cache hit - use cached prompt
-                            prompt = self.prompt_generator._decoded_cache[cache_key]
+                            prompt = self.ctx.prompt_generator._decoded_cache[cache_key]
                             conversations_data[session_id].append((trace, prompt))
                         else:
                             # Cache miss - build tokens for batch decode
-                            tokens = self.prompt_generator._build_token_sequence(
+                            tokens = self.ctx.prompt_generator._build_token_sequence(
                                 trace.input_length, hash_ids, self._block_size
                             )
                             pending_decodes.append((session_id, idx, tokens, cache_key))
@@ -209,7 +213,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
                             )  # Placeholder
                     else:
                         # No hash_ids - use normal generation (already optimized)
-                        prompt = self.prompt_generator.generate(
+                        prompt = self.ctx.prompt_generator.generate(
                             mean=trace.input_length, stddev=0, hash_ids=[]
                         )
                         conversations_data[session_id].append((trace, prompt))
@@ -228,7 +232,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
                 pending_decodes, decoded_prompts, strict=True
             ):
                 # Update decoded cache for future reuse
-                self.prompt_generator._decoded_cache[cache_key] = prompt
+                self.ctx.prompt_generator._decoded_cache[cache_key] = prompt
                 # Update placeholder in conversations_data
                 trace, _ = conversations_data[session_id][idx]
                 conversations_data[session_id][idx] = (trace, prompt)
@@ -261,7 +265,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
             Dictionary of session_id to list of synthesized MooncakeTrace objects.
         """
         params = SynthesisParams.from_synthesis_config(
-            self.config.input.synthesis, block_size=self._block_size
+            self.ctx.config.input.synthesis, block_size=self._block_size
         )
 
         # Convert to dicts for synthesizer (exclude discriminator field "type")

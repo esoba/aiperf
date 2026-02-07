@@ -14,6 +14,7 @@ from aiperf.common.config import (
     SynthesisConfig,
     UserConfig,
 )
+from aiperf.dataset.loader.context import LoaderContext
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.plugin.enums import DatasetLoaderType
@@ -158,8 +159,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -195,8 +195,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -222,8 +221,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -258,8 +256,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         result = loader.parse_and_validate()
 
@@ -278,8 +275,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -318,8 +314,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -355,8 +350,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         loader.parse_and_validate()
 
@@ -406,11 +400,10 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         # Mock _build_token_sequence to return simple tokens (avoids block_size validation)
-        loader.prompt_generator._build_token_sequence = Mock(
+        loader.ctx.prompt_generator._build_token_sequence = Mock(
             return_value=[1, 2, 3, 4, 5]
         )
         conversations = loader.convert_to_conversations(trace_data)
@@ -442,8 +435,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         conversations = loader.convert_to_conversations({})
 
@@ -464,8 +456,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         conversations = loader.convert_to_conversations(trace_data)
 
@@ -490,8 +481,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -517,8 +507,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -563,8 +552,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -589,8 +577,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -620,8 +607,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         loader.parse_and_validate()
 
@@ -656,8 +642,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -702,8 +687,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -735,8 +719,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -773,8 +756,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         loader.parse_and_validate()
 
@@ -800,8 +782,7 @@ class TestMooncakeTraceDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -901,8 +882,9 @@ class TestMooncakeTraceReproducibility:
 
         loader1 = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config_for_reproducibility,
-            tokenizer=tokenizer1,
+            ctx=LoaderContext(
+                config=user_config_for_reproducibility, tokenizer=tokenizer1
+            ),
         )
         conversations1 = loader1.convert_to_conversations(trace_data)
         prompts1 = [
@@ -917,8 +899,9 @@ class TestMooncakeTraceReproducibility:
 
         loader2 = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config_for_reproducibility,
-            tokenizer=tokenizer2,
+            ctx=LoaderContext(
+                config=user_config_for_reproducibility, tokenizer=tokenizer2
+            ),
         )
         conversations2 = loader2.convert_to_conversations(trace_data)
         prompts2 = [
@@ -958,11 +941,10 @@ class TestMooncakeTraceReproducibility:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=default_user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=default_user_config, tokenizer=mock_tokenizer),
         )
         # Mock _build_token_sequence to return simple tokens (avoids block_size validation)
-        loader.prompt_generator._build_token_sequence = Mock(
+        loader.ctx.prompt_generator._build_token_sequence = Mock(
             return_value=[1, 2, 3, 4, 5]
         )
 
@@ -1043,8 +1025,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         # Directly call _apply_synthesis should still work
@@ -1064,8 +1045,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis(sample_trace_data)
@@ -1083,8 +1063,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis(sample_trace_data)
@@ -1110,8 +1089,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis(data)
@@ -1134,8 +1112,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis(data)
@@ -1159,8 +1136,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis(data)
@@ -1190,8 +1166,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis(data)
@@ -1215,8 +1190,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis(data)
@@ -1235,8 +1209,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis({})
@@ -1256,8 +1229,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis(data)
@@ -1282,8 +1254,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         # Verify block_size is set correctly on loader
@@ -1312,8 +1283,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis(data)
@@ -1335,8 +1305,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename="dummy.jsonl",
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
 
         result = loader._apply_synthesis(data)
@@ -1365,8 +1334,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 
@@ -1390,8 +1358,7 @@ class TestMooncakeTraceSynthesisIntegration:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = MooncakeTraceDatasetLoader(
             filename=filename,
-            config=user_config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=user_config, tokenizer=mock_tokenizer),
         )
         dataset = loader.parse_and_validate()
 

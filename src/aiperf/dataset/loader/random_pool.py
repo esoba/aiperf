@@ -1,21 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import ValidationError
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import MediaType
 from aiperf.common.models import Conversation, Turn
-from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader.file.base import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.plugin.enums import DatasetLoaderType, DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.dataset.loader.context import LoaderContext
 
 # Type aliases
 Filename: TypeAlias = str
@@ -76,13 +79,10 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         self,
         *,
         filename: str,
-        config: UserConfig,
-        tokenizer: Tokenizer,
+        ctx: LoaderContext,
         **kwargs: Any,
     ) -> None:
-        super().__init__(
-            filename=filename, config=config, tokenizer=tokenizer, **kwargs
-        )
+        super().__init__(filename=filename, ctx=ctx, **kwargs)
         self._rng = rng.derive("dataset.loader.random_pool")
 
     @staticmethod
@@ -230,9 +230,9 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         Returns:
             A list of conversations.
         """
-        num_conversations = self.config.input.conversation.num
+        num_conversations = self.ctx.config.input.conversation.num
         conversations = [
-            Conversation(session_id=self.session_id_generator.next())
+            Conversation(session_id=self.ctx.session_id_generator.next())
             for _ in range(num_conversations)
         ]
 

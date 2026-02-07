@@ -131,7 +131,7 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
 
                 multi_turn_data = MultiTurn.model_validate_json(line)
                 session_id = (
-                    multi_turn_data.session_id or self.session_id_generator.next()
+                    multi_turn_data.session_id or self.ctx.session_id_generator.next()
                 )
                 data[session_id].append(multi_turn_data)
 

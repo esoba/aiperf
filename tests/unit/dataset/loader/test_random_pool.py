@@ -13,6 +13,7 @@ from aiperf.common.config import (
     UserConfig,
 )
 from aiperf.common.models import Text
+from aiperf.dataset.loader.context import LoaderContext
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.plugin.enums import DatasetLoaderType
@@ -90,9 +91,7 @@ class TestRandomPool:
 class TestRandomPoolDatasetLoader:
     """Tests for RandomPoolDatasetLoader functionality."""
 
-    def test_load_simple_single_file(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_load_simple_single_file(self, create_jsonl_file, loader_ctx):
         """Test loading from a single file with simple content."""
         content = [
             '{"text": "What is deep learning?"}',
@@ -100,10 +99,7 @@ class TestRandomPoolDatasetLoader:
         ]
         filepath = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = RandomPoolDatasetLoader(
-            filename=filepath, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = RandomPoolDatasetLoader(filename=filepath, ctx=loader_ctx)
         dataset = loader.parse_and_validate()
 
         filename = Path(filepath).name
@@ -117,9 +113,7 @@ class TestRandomPoolDatasetLoader:
         assert dataset_pool[1].text == "Explain neural networks"
         assert dataset_pool[1].image == "/chart.png"
 
-    def test_load_multimodal_single_file(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_load_multimodal_single_file(self, create_jsonl_file, loader_ctx):
         """Test loading multimodal content from single file."""
         content = [
             '{"text": "Analyze this image", "image": "/data.png"}',
@@ -128,10 +122,7 @@ class TestRandomPoolDatasetLoader:
         ]
         filepath = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = RandomPoolDatasetLoader(
-            filename=filepath, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = RandomPoolDatasetLoader(filename=filepath, ctx=loader_ctx)
         dataset = loader.parse_and_validate()
 
         filename = Path(filepath).name
@@ -143,9 +134,7 @@ class TestRandomPoolDatasetLoader:
         assert dataset_pool[2].texts == ["Query 1", "Query 2"]
         assert dataset_pool[2].images == ["/img1.jpg", "/img2.jpg"]
 
-    def test_load_dataset_skips_empty_lines(
-        self, create_jsonl_file, default_user_config, mock_tokenizer_cls
-    ):
+    def test_load_dataset_skips_empty_lines(self, create_jsonl_file, loader_ctx):
         """Test that empty lines are skipped during loading."""
         content = [
             '{"text": "First entry"}',
@@ -156,19 +145,14 @@ class TestRandomPoolDatasetLoader:
         ]
         filepath = create_jsonl_file(content)
 
-        mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-        loader = RandomPoolDatasetLoader(
-            filename=filepath, config=default_user_config, tokenizer=mock_tokenizer
-        )
+        loader = RandomPoolDatasetLoader(filename=filepath, ctx=loader_ctx)
         dataset = loader.parse_and_validate()
 
         filename = Path(filepath).name
         dataset_pool = dataset[filename]
         assert len(dataset_pool) == 3  # Should skip empty lines
 
-    def test_load_directory_with_multiple_files(
-        self, default_user_config, mock_tokenizer_cls
-    ):
+    def test_load_directory_with_multiple_files(self, loader_ctx):
         """Test loading from directory with multiple files."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -201,12 +185,7 @@ class TestRandomPoolDatasetLoader:
                     '{"images": [{"name": "image", "contents": ["/path/to/image2.png"]}]}\n'
                 )
 
-            mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
-            loader = RandomPoolDatasetLoader(
-                filename=str(temp_path),
-                config=default_user_config,
-                tokenizer=mock_tokenizer,
-            )
+            loader = RandomPoolDatasetLoader(filename=str(temp_path), ctx=loader_ctx)
             dataset = loader.parse_and_validate()
 
             assert len(dataset) == 3
@@ -247,7 +226,8 @@ class TestRandomPoolDatasetLoader:
 
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", config=config, tokenizer=mock_tokenizer
+            filename="dummy.jsonl",
+            ctx=LoaderContext(config=config, tokenizer=mock_tokenizer),
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -273,7 +253,8 @@ class TestRandomPoolDatasetLoader:
 
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", config=config, tokenizer=mock_tokenizer
+            filename="dummy.jsonl",
+            ctx=LoaderContext(config=config, tokenizer=mock_tokenizer),
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -306,7 +287,8 @@ class TestRandomPoolDatasetLoader:
 
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy.jsonl", config=config, tokenizer=mock_tokenizer
+            filename="dummy.jsonl",
+            ctx=LoaderContext(config=config, tokenizer=mock_tokenizer),
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -336,7 +318,8 @@ class TestRandomPoolDatasetLoader:
 
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy_dir", config=config, tokenizer=mock_tokenizer
+            filename="dummy_dir",
+            ctx=LoaderContext(config=config, tokenizer=mock_tokenizer),
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -370,7 +353,8 @@ class TestRandomPoolDatasetLoader:
 
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
-            filename="dummy_dir", config=config, tokenizer=mock_tokenizer
+            filename="dummy_dir",
+            ctx=LoaderContext(config=config, tokenizer=mock_tokenizer),
         )
         conversations = loader.convert_to_conversations(data)
 
@@ -403,8 +387,7 @@ class TestRandomPoolDatasetLoader:
         mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
         loader = RandomPoolDatasetLoader(
             filename="dummy_dir",
-            config=config,
-            tokenizer=mock_tokenizer,
+            ctx=LoaderContext(config=config, tokenizer=mock_tokenizer),
         )
         conversations = loader.convert_to_conversations(data)
 

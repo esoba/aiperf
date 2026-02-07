@@ -1,15 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pathlib import Path
-from typing import Any
+from __future__ import annotations
 
-from aiperf.common.config.user_config import UserConfig
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
 from aiperf.common.models import Conversation, Text, Turn
-from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.dataset.loader.file.base import BaseFileLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.dataset.loader.context import LoaderContext
 
 
 class ShareGPTLoader(BaseFileLoader):
@@ -29,14 +32,11 @@ class ShareGPTLoader(BaseFileLoader):
         self,
         *,
         filename: str,
-        config: UserConfig,
-        tokenizer: Tokenizer,
+        ctx: LoaderContext,
         **kwargs: Any,
     ) -> None:
-        super().__init__(
-            filename=filename, config=config, tokenizer=tokenizer, **kwargs
-        )
-        self.output_tokens_mean = self.config.input.prompt.output_tokens.mean
+        super().__init__(filename=filename, ctx=ctx, **kwargs)
+        self.output_tokens_mean = self.ctx.config.input.prompt.output_tokens.mean
 
     @classmethod
     def can_load_file(
@@ -86,8 +86,8 @@ class ShareGPTLoader(BaseFileLoader):
                 continue
 
             prompt, completion = conversations[0]["value"], conversations[1]["value"]
-            prompt_length = len(self.tokenizer.encode(prompt))
-            completion_length = len(self.tokenizer.encode(completion))
+            prompt_length = len(self.ctx.tokenizer.encode(prompt))
+            completion_length = len(self.ctx.tokenizer.encode(completion))
 
             if not self._is_valid_sequence(
                 prompt_len=prompt_length,
@@ -103,7 +103,7 @@ class ShareGPTLoader(BaseFileLoader):
             )
             filtered_dataset.append(
                 Conversation(
-                    session_id=self.session_id_generator.next(),
+                    session_id=self.ctx.session_id_generator.next(),
                     turns=[turn],
                 )
             )

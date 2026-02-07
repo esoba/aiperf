@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.config import EndpointConfig, UserConfig
+from aiperf.dataset.loader.context import LoaderContext
 
 
 @pytest.fixture
@@ -34,6 +35,13 @@ def create_jsonl_file():
 def default_user_config() -> UserConfig:
     """Create a default UserConfig for testing."""
     return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+
+
+@pytest.fixture
+def loader_ctx(default_user_config, mock_tokenizer_cls) -> LoaderContext:
+    """Shared loader context for loader tests."""
+    mock_tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
+    return LoaderContext(config=default_user_config, tokenizer=mock_tokenizer)
 
 
 @pytest.fixture

@@ -52,6 +52,7 @@ from aiperf.plugin.enums import (
 
 if TYPE_CHECKING:
     from aiperf.dataset.loader.base import BaseDatasetLoader
+    from aiperf.dataset.loader.context import LoaderContext
     from aiperf.dataset.protocols import (
         DatasetBackingStoreProtocol,
         DatasetClientStoreProtocol,
@@ -237,7 +238,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             if temp_file_path.exists():
                 temp_file_path.unlink()
 
-    async def _create_public_dataset_loader(self) -> BaseDatasetLoader:
+    async def _create_public_dataset_loader(
+        self, ctx: LoaderContext
+    ) -> BaseDatasetLoader:
         """Download a public dataset and return its loader (without calling load)."""
         public_dataset_type = self.user_config.input.public_dataset
         dataset = get_public_dataset(public_dataset_type)
@@ -246,8 +249,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         LoaderClass = plugins.get_class(PluginType.DATASET_LOADER, dataset.loader_type)
         loader = LoaderClass(
             filename=str(local_path),
-            config=self.user_config,
-            tokenizer=self.tokenizer,
+            ctx=ctx,
         )
 
         # Set sampling strategy from loader if not user-specified
@@ -258,7 +260,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         return loader
 
-    def _create_file_loader(self) -> BaseDatasetLoader:
+    def _create_file_loader(self, ctx: LoaderContext) -> BaseDatasetLoader:
         """Create a file-based loader (without calling load).
 
         Auto-detects loader type if not explicitly specified.
@@ -276,8 +278,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         LoaderClass = plugins.get_class(PluginType.DATASET_LOADER, dataset_type)
         loader = LoaderClass(
             filename=self.user_config.input.file,
-            config=self.user_config,
-            tokenizer=self.tokenizer,
+            ctx=ctx,
         )
 
         # Set sampling strategy from loader if not user-specified
@@ -290,7 +291,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         return loader
 
-    def _create_synthetic_loader(self) -> BaseDatasetLoader:
+    def _create_synthetic_loader(self, ctx: LoaderContext) -> BaseDatasetLoader:
         """Create a synthetic loader (without calling load).
 
         Selects the appropriate synthetic loader based on endpoint type.
@@ -303,10 +304,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             loader_type = DatasetLoaderType.SYNTHETIC_MULTIMODAL
 
         LoaderClass = plugins.get_class(PluginType.DATASET_LOADER, loader_type)
-        loader = LoaderClass(
-            config=self.user_config,
-            tokenizer=self.tokenizer,
-        )
+        loader = LoaderClass(ctx=ctx)
 
         # Set default sampling strategy for synthetic datasets if not explicitly set
         from aiperf.common.config.config_defaults import InputDefaults
@@ -323,12 +321,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _create_loader(self) -> BaseDatasetLoader:
         """Create the appropriate loader based on user config."""
+        from aiperf.dataset.loader.context import LoaderContext
+
+        ctx = LoaderContext(config=self.user_config, tokenizer=self.tokenizer)
+
         if self.user_config.input.public_dataset is not None:
-            return await self._create_public_dataset_loader()
+            return await self._create_public_dataset_loader(ctx)
         elif self.user_config.input.file is not None:
-            return self._create_file_loader()
+            return self._create_file_loader(ctx)
         else:
-            return self._create_synthetic_loader()
+            return self._create_synthetic_loader(ctx)
 
     def _infer_dataset_type(self, file_path: str) -> DatasetLoaderType:
         """Infer the dataset type from the input file.
