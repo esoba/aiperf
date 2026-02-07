@@ -35,6 +35,7 @@ from aiperf.common.models import (
     RequestInfo,
     SessionPayloads,
 )
+from aiperf.common.models.dataset_models import ConversationMetadata
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.dataset.public_datasets import (
@@ -452,13 +453,20 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         loader = await self._create_loader()
 
         await self._backing_store.initialize()
-        await loader.load(self._backing_store)
+
+        conversation_metadata: list[ConversationMetadata] = []
+        async for conversation in loader.load():
+            await self._backing_store.add_conversation(
+                conversation.session_id, conversation
+            )
+            conversation_metadata.append(conversation.metadata())
+
         await self._backing_store.finalize()
         client_metadata = self._backing_store.get_client_metadata()
         self.info(f"Backing store finalized: {client_metadata}")
 
         self.dataset_metadata = DatasetMetadata(
-            conversations=loader.loaded_metadata,
+            conversations=conversation_metadata,
             sampling_strategy=self.user_config.input.dataset_sampling_strategy,
         )
         self.info(

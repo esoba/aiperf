@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -14,7 +15,6 @@ from aiperf.dataset.loader.models import CustomDatasetT
 
 if TYPE_CHECKING:
     from aiperf.common.models import Conversation
-    from aiperf.dataset.protocols import DatasetBackingStoreProtocol
 
 
 class BaseFileLoader(BaseDatasetLoader):
@@ -35,21 +35,24 @@ class BaseFileLoader(BaseDatasetLoader):
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
         self.filename = filename
 
-    async def load(self, store: DatasetBackingStoreProtocol) -> None:
-        """Load dataset via two-stage pipeline, streaming each conversation to the store.
+    async def load(self) -> AsyncIterator[Conversation]:
+        """Load dataset via two-stage pipeline, yielding finalized conversations.
 
         1. parse_and_validate() -- parse file(s) into typed model objects
         2. convert_to_conversations() -- convert to Conversation objects
-        3. Finalize and store each conversation (turns, context prompts, backing store)
+        3. Finalize each conversation (turns, context prompts) and yield it
 
-        Args:
-            store: Backing store to write conversations into.
+        Returns:
+            AsyncIterator of finalized Conversation objects.
         """
         data = self.parse_and_validate()
         conversations = self.convert_to_conversations(data)
 
-        for conversation in conversations:
-            await self._finalize_and_store(conversation, store)
+        for idx, conversation in enumerate(conversations):
+            for turn in conversation.turns:
+                self._finalize_turn(turn)
+            self._finalize_conversation(conversation, idx)
+            yield conversation
 
     @abstractmethod
     def parse_and_validate(self) -> dict[str, list[CustomDatasetT]]:

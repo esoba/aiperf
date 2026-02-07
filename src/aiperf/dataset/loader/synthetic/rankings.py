@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
@@ -12,9 +13,6 @@ from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader.synthetic.base import BaseSyntheticLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
-
-if TYPE_CHECKING:
-    from aiperf.dataset.protocols import DatasetBackingStoreProtocol
 
 
 class SyntheticRankingsLoader(BaseSyntheticLoader):
@@ -44,19 +42,19 @@ class SyntheticRankingsLoader(BaseSyntheticLoader):
         """Get the preferred sampling strategy for synthetic rankings."""
         return DatasetSamplingStrategy.SHUFFLE
 
-    async def load(self, store: DatasetBackingStoreProtocol) -> None:
-        """Generate synthetic dataset for the rankings endpoint, streaming to store.
+    async def load(self) -> AsyncIterator[Conversation]:
+        """Generate synthetic dataset for the rankings endpoint.
 
         Each conversation contains one turn with one query and multiple passages.
 
-        Args:
-            store: Backing store to write conversations into.
+        Returns:
+            AsyncIterator of finalized Conversation objects.
         """
         num_entries = self.config.input.conversation.num_dataset_entries
         num_passages_mean = self.config.input.rankings.passages.mean
         num_passages_std = self.config.input.rankings.passages.stddev
 
-        for _ in range(num_entries):
+        for idx in range(num_entries):
             num_passages = self._passages_rng.sample_positive_normal_integer(
                 num_passages_mean, num_passages_std
             )
@@ -64,7 +62,8 @@ class SyntheticRankingsLoader(BaseSyntheticLoader):
             turn = self._create_turn(num_passages=num_passages)
             conversation.turns.append(turn)
 
-            await self._finalize_and_store(conversation, store, finalize_turns=False)
+            self._finalize_conversation(conversation, idx)
+            yield conversation
 
     def _create_turn(self, num_passages: int) -> Turn:
         """Create a single ranking turn with one synthetic query and multiple synthetic passages.

@@ -4,14 +4,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from aiperf.common.config import UserConfig
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
-from aiperf.common.models.dataset_models import ConversationMetadata
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.generator.prompt import PromptGenerator
@@ -23,9 +23,6 @@ from aiperf.dataset.model_selection_strategies import (
 )
 from aiperf.dataset.output_tokens_sampler import OutputTokensSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
-
-if TYPE_CHECKING:
-    from aiperf.dataset.protocols import DatasetBackingStoreProtocol
 
 # Map config enum values to strategy classes
 _MODEL_SELECTION_MAP: dict[str, type] = {
@@ -62,15 +59,6 @@ class BaseDatasetLoader(AIPerfLoggerMixin, ABC):
         self._seq_distribution = config.input.prompt.get_sequence_distribution()
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
 
-        # Metadata accumulated during load()
-        self._loaded_metadata: list[ConversationMetadata] = []
-        self._conversation_index: int = 0
-
-    @property
-    def loaded_metadata(self) -> list[ConversationMetadata]:
-        """Metadata accumulated during load() for each conversation, in insertion order."""
-        return self._loaded_metadata
-
     def _create_model_selector(self) -> ModelSelectionStrategyProtocol:
         """Create a model selection strategy from the endpoint config."""
         strategy_name = str(self.config.endpoint.model_selection_strategy)
@@ -84,11 +72,11 @@ class BaseDatasetLoader(AIPerfLoggerMixin, ABC):
         return cls(model_names=model_names)
 
     @abstractmethod
-    async def load(self, store: DatasetBackingStoreProtocol) -> None:
-        """Load conversations and stream them directly into the backing store.
+    async def load(self) -> AsyncIterator[Conversation]:
+        """Yield finalized conversations as an async iterator.
 
-        Args:
-            store: Backing store to write conversations into.
+        Returns:
+            AsyncIterator of Conversation objects, each fully finalized.
         """
         ...
 
@@ -180,16 +168,16 @@ class BaseDatasetLoader(AIPerfLoggerMixin, ABC):
 
     # ---- Conversation finalization (streaming) ----
 
-    def _finalize_conversation(self, conversation: Conversation) -> None:
+    def _finalize_conversation(
+        self, conversation: Conversation, session_index: int
+    ) -> None:
         """Finalize a single conversation by injecting context prompts.
-
-        Uses self._conversation_index as the session index, then increments it.
 
         Args:
             conversation: Conversation to finalize.
+            session_index: Index of this conversation in the dataset.
         """
-        self._inject_context_prompt(conversation, self._conversation_index)
-        self._conversation_index += 1
+        self._inject_context_prompt(conversation, session_index)
 
     def _inject_context_prompt(
         self, conversation: Conversation, session_index: int
@@ -231,29 +219,6 @@ class BaseDatasetLoader(AIPerfLoggerMixin, ABC):
         if config.shared_system_prompt_length is not None:
             return self.prompt_generator.get_shared_system_prompt()
         return None
-
-    async def _finalize_and_store(
-        self,
-        conversation: Conversation,
-        store: DatasetBackingStoreProtocol,
-        *,
-        finalize_turns: bool = True,
-    ) -> None:
-        """Finalize a conversation and stream it into the backing store.
-
-        Args:
-            conversation: Conversation to finalize and store.
-            store: Backing store to write to.
-            finalize_turns: Whether to finalize turns (model name, max_tokens).
-                Set to False when turns are already finalized (e.g. synthetic loaders).
-        """
-        if finalize_turns:
-            for turn in conversation.turns:
-                self._finalize_turn(turn)
-
-        self._finalize_conversation(conversation)
-        await store.add_conversation(conversation.session_id, conversation)
-        self._loaded_metadata.append(conversation.metadata())
 
     @property
     def prefix_prompt_enabled(self) -> bool:

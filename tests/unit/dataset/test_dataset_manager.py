@@ -85,20 +85,13 @@ def create_mock_conversations(session_ids: list[str]) -> list[Conversation]:
     ]
 
 
-def _make_mock_load(conversations: list[Conversation]) -> AsyncMock:
-    """Create a mock load coroutine that writes conversations to the store."""
-
-    async def _mock_load(self_or_store, store=None):
-        # Handle both bound (self, store) and unbound (store) call patterns
-        if store is None:
-            store = self_or_store
-        for conv in conversations:
-            await store.add_conversation(conv.session_id, conv)
-            self_loader = getattr(_mock_load, "_loader_ref", None)
-            if self_loader is not None:
-                self_loader._loaded_metadata.append(conv.metadata())
-
-    return AsyncMock(side_effect=_mock_load)
+async def _mock_load_dummy_conversation(*args, **kwargs):
+    """Yield a single dummy conversation (module-level helper for patching)."""
+    conv = Conversation(
+        session_id="mock-session",
+        turns=[Turn(texts=[Text(contents=["Hello"])], model="test-model")],
+    )
+    yield conv
 
 
 async def capture_published_messages(dataset_manager, user_config):
@@ -269,25 +262,16 @@ class TestDatasetManager:
 class TestDatasetManagerSamplingStrategyDefaults:
     """Test default sampling strategy behavior for different dataset types."""
 
-    @staticmethod
-    async def _mock_load_with_dummy_conversation(store):
-        """Write a dummy conversation to the store so mmap files are non-empty."""
-        conv = Conversation(
-            session_id="mock-session",
-            turns=[Turn(texts=[Text(contents=["Hello"])], model="test-model")],
-        )
-        await store.add_conversation(conv.session_id, conv)
-
     @pytest.mark.asyncio
     @patch(
         "aiperf.dataset.dataset_manager.download_public_dataset", new_callable=AsyncMock
     )
     @patch(
-        "aiperf.dataset.loader.file.base.BaseFileLoader.load", new_callable=AsyncMock
+        "aiperf.dataset.loader.file.base.BaseFileLoader.load",
+        new=_mock_load_dummy_conversation,
     )
     async def test_public_dataset_uses_loader_recommended_strategy(
         self,
-        mock_load,
         mock_download,
         mock_tokenizer,
         tmp_path,
@@ -296,7 +280,6 @@ class TestDatasetManagerSamplingStrategyDefaults:
         # Mock download to return a temp file path
         mock_download.return_value = tmp_path / "sharegpt.json"
         (tmp_path / "sharegpt.json").write_text("[]")
-        mock_load.side_effect = self._mock_load_with_dummy_conversation
 
         # Create config with public dataset and NO explicit sampling strategy
         user_config = UserConfig(
@@ -352,11 +335,11 @@ class TestDatasetManagerSamplingStrategyDefaults:
         "aiperf.dataset.dataset_manager.download_public_dataset", new_callable=AsyncMock
     )
     @patch(
-        "aiperf.dataset.loader.file.base.BaseFileLoader.load", new_callable=AsyncMock
+        "aiperf.dataset.loader.file.base.BaseFileLoader.load",
+        new=_mock_load_dummy_conversation,
     )
     async def test_explicit_strategy_overrides_loader_recommendation(
         self,
-        mock_load,
         mock_download,
         mock_tokenizer,
         tmp_path,
@@ -365,7 +348,6 @@ class TestDatasetManagerSamplingStrategyDefaults:
         # Mock download to return a temp file path
         mock_download.return_value = tmp_path / "sharegpt.json"
         (tmp_path / "sharegpt.json").write_text("[]")
-        mock_load.side_effect = self._mock_load_with_dummy_conversation
 
         # Create config with explicit SHUFFLE strategy (different from loader's SEQUENTIAL)
         user_config = UserConfig(

@@ -3,17 +3,15 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from aiperf.common.config import UserConfig
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.loader.synthetic.base import BaseSyntheticLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
-
-if TYPE_CHECKING:
-    from aiperf.dataset.protocols import DatasetBackingStoreProtocol
 
 
 class SyntheticMultiModalLoader(BaseSyntheticLoader):
@@ -51,13 +49,13 @@ class SyntheticMultiModalLoader(BaseSyntheticLoader):
         """Get the preferred sampling strategy for synthetic datasets."""
         return DatasetSamplingStrategy.SHUFFLE
 
-    async def load(self, store: DatasetBackingStoreProtocol) -> None:
-        """Generate a synthetic multi-modal conversation dataset, streaming to store.
+    async def load(self) -> AsyncIterator[Conversation]:
+        """Generate a synthetic multi-modal conversation dataset.
 
-        Args:
-            store: Backing store to write conversations into.
+        Returns:
+            AsyncIterator of finalized Conversation objects.
         """
-        for _ in range(self.config.input.conversation.num_dataset_entries):
+        for idx in range(self.config.input.conversation.num_dataset_entries):
             conversation = Conversation(session_id=self.session_id_generator.next())
 
             num_turns = self._turn_sampler_rng.sample_positive_normal_integer(
@@ -70,7 +68,8 @@ class SyntheticMultiModalLoader(BaseSyntheticLoader):
                 turn = self._create_turn(is_first=(turn_idx == 0))
                 conversation.turns.append(turn)
 
-            await self._finalize_and_store(conversation, store, finalize_turns=False)
+            self._finalize_conversation(conversation, idx)
+            yield conversation
 
     def _create_turn(self, is_first: bool) -> Turn:
         """Create a turn with synthetic multi-modal payloads.
