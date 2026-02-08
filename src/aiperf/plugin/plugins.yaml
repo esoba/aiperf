@@ -400,6 +400,45 @@ endpoint:
         serializer: aiperf.transports.grpc.kserve_v2_serializers:KServeV2GrpcSerializer
         method: /inference.GRPCInferenceService/ModelInfer
 
+  kserve_v2_vlm:
+    class: aiperf.endpoints.kserve_v2_vlm:KServeV2VLMEndpoint
+    description: |
+      KServe V2 Open Inference Protocol endpoint for vision-language models on Triton.
+      Maps text and images to BYTES tensors. Model name embedded in URL path.
+      Configure tensor names: --extra v2_text_name:X --extra v2_image_name:Y --extra v2_output_name:Z
+    metadata:
+      endpoint_path: /v2/models/{model_name}/infer
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      supports_images: true
+      metrics_title: KServe V2 VLM Metrics
+      service_kind: kserve
+      health_path: /v2/models/{model_name}/ready
+      grpc:
+        serializer: aiperf.transports.grpc.kserve_v2_serializers:KServeV2GrpcSerializer
+        method: /inference.GRPCInferenceService/ModelInfer
+        stream_method: /inference.GRPCInferenceService/ModelStreamInfer
+
+  kserve_v2_images:
+    class: aiperf.endpoints.kserve_v2_images:KServeV2ImagesEndpoint
+    description: |
+      KServe V2 Open Inference Protocol endpoint for image generation models on Triton (Stable Diffusion, SDXL, Flux).
+      Maps prompt to BYTES tensor, supports diffusion parameters as typed tensors.
+      Configure tensor names: --extra v2_prompt_name:X --extra v2_output_name:Y
+    metadata:
+      endpoint_path: /v2/models/{model_name}/infer
+      supports_streaming: false
+      produces_tokens: false
+      produces_images: true
+      tokenizes_input: true
+      metrics_title: KServe V2 Image Generation Metrics
+      service_kind: kserve
+      health_path: /v2/models/{model_name}/ready
+      grpc:
+        serializer: aiperf.transports.grpc.kserve_v2_serializers:KServeV2GrpcSerializer
+        method: /inference.GRPCInferenceService/ModelInfer
+
   template:
     class: aiperf.endpoints.template_endpoint:TemplateEndpoint
     description: |
