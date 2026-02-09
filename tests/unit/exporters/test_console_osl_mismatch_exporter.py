@@ -38,41 +38,38 @@ class TestConsoleOSLMismatchExporter:
         self, count: int, total_records: int = 100, include_mismatch: bool = True
     ) -> ProfileResults:
         """Helper to create a ProfileResults with optional OSL mismatch count metric."""
-        records = []
+        records: dict[str, MetricResult] = {}
         if include_mismatch:
-            records.append(
-                MetricResult(
-                    tag=OSLMismatchCountMetric.tag,
-                    header="OSL Mismatch Count",
-                    unit=GenericMetricUnit.REQUESTS,
-                    avg=float(count),
-                    count=total_records,
-                    min=float(count),
-                    max=float(count),
-                )
+            _mismatch = MetricResult(
+                tag=OSLMismatchCountMetric.tag,
+                header="OSL Mismatch Count",
+                unit=GenericMetricUnit.REQUESTS,
+                avg=float(count),
+                count=total_records,
+                min=float(count),
+                max=float(count),
             )
-        records.extend(
-            [
-                MetricResult(
-                    tag=RequestCountMetric.tag,
-                    header="Request Count",
-                    unit=GenericMetricUnit.REQUESTS,
-                    avg=float(total_records),
-                    count=total_records,
-                    min=float(total_records),
-                    max=float(total_records),
-                ),
-                MetricResult(
-                    tag="time_to_first_token",
-                    header="Time to First Token",
-                    unit=MetricTimeUnit.MILLISECONDS,
-                    avg=100.0,
-                    count=total_records,
-                    min=50.0,
-                    max=150.0,
-                ),
-            ]
+            records[_mismatch.tag] = _mismatch
+        _req_count = MetricResult(
+            tag=RequestCountMetric.tag,
+            header="Request Count",
+            unit=GenericMetricUnit.REQUESTS,
+            avg=float(total_records),
+            count=total_records,
+            min=float(total_records),
+            max=float(total_records),
         )
+        _ttft = MetricResult(
+            tag="time_to_first_token",
+            header="Time to First Token",
+            unit=MetricTimeUnit.MILLISECONDS,
+            avg=100.0,
+            count=total_records,
+            min=50.0,
+            max=150.0,
+        )
+        records[_req_count.tag] = _req_count
+        records[_ttft.tag] = _ttft
         return ProfileResults(
             records=records,
             completed=total_records,

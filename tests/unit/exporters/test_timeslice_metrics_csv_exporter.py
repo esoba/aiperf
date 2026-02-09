@@ -35,59 +35,57 @@ def mock_user_config():
 @pytest.fixture
 def sample_timeslice_metric_results():
     """Create sample timeslice metric results."""
+    _ttft_0 = MetricResult(
+        tag="time_to_first_token",
+        header="Time to First Token",
+        unit="ms",
+        avg=45.2,
+        min=12.1,
+        max=89.3,
+        p50=44.0,
+        p90=78.0,
+        p99=88.0,
+        std=15.2,
+    )
+    _itl_0 = MetricResult(
+        tag="inter_token_latency",
+        header="Inter Token Latency",
+        unit="ms",
+        avg=5.1,
+        min=2.3,
+        max=12.4,
+        p50=4.8,
+        p90=9.2,
+        p99=11.8,
+        std=2.1,
+    )
+    _ttft_1 = MetricResult(
+        tag="time_to_first_token",
+        header="Time to First Token",
+        unit="ms",
+        avg=48.5,
+        min=15.2,
+        max=92.1,
+        p50=47.3,
+        p90=82.4,
+        p99=90.5,
+        std=16.1,
+    )
+    _itl_1 = MetricResult(
+        tag="inter_token_latency",
+        header="Inter Token Latency",
+        unit="ms",
+        avg=5.4,
+        min=2.5,
+        max=13.1,
+        p50=5.1,
+        p90=9.8,
+        p99=12.3,
+        std=2.3,
+    )
     return {
-        0: [
-            MetricResult(
-                tag="time_to_first_token",
-                header="Time to First Token",
-                unit="ms",
-                avg=45.2,
-                min=12.1,
-                max=89.3,
-                p50=44.0,
-                p90=78.0,
-                p99=88.0,
-                std=15.2,
-            ),
-            MetricResult(
-                tag="inter_token_latency",
-                header="Inter Token Latency",
-                unit="ms",
-                avg=5.1,
-                min=2.3,
-                max=12.4,
-                p50=4.8,
-                p90=9.2,
-                p99=11.8,
-                std=2.1,
-            ),
-        ],
-        1: [
-            MetricResult(
-                tag="time_to_first_token",
-                header="Time to First Token",
-                unit="ms",
-                avg=48.5,
-                min=15.2,
-                max=92.1,
-                p50=47.3,
-                p90=82.4,
-                p99=90.5,
-                std=16.1,
-            ),
-            MetricResult(
-                tag="inter_token_latency",
-                header="Inter Token Latency",
-                unit="ms",
-                avg=5.4,
-                min=2.5,
-                max=13.1,
-                p50=5.1,
-                p90=9.8,
-                p99=12.3,
-                std=2.3,
-            ),
-        ],
+        0: {_ttft_0.tag: _ttft_0, _itl_0.tag: _itl_0},
+        1: {_ttft_1.tag: _ttft_1, _itl_1.tag: _itl_1},
     }
 
 
@@ -98,7 +96,7 @@ def mock_results_with_timeslices(sample_timeslice_metric_results):
     class MockResultsWithTimeslices:
         def __init__(self):
             self.timeslice_metric_results = sample_timeslice_metric_results
-            self.records = []
+            self.records = {}
             self.start_ns = None
             self.end_ns = None
             self.has_results = True
@@ -115,7 +113,7 @@ def mock_results_without_timeslices():
     class MockResultsNoTimeslices:
         def __init__(self):
             self.timeslice_metric_results = None
-            self.records = []
+            self.records = {}
             self.start_ns = None
             self.end_ns = None
             self.has_results = False
@@ -260,21 +258,21 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
         """Verify all timeslice indices appear in output."""
         # Create 5 timeslices
         timeslice_results = {
-            i: [
-                MetricResult(
+            i: {
+                "test_metric": MetricResult(
                     tag="test_metric",
                     header="Test Metric",
                     unit="ms",
                     avg=10.0 * i,
                 )
-            ]
+            }
             for i in range(5)
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -317,15 +315,27 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
         """Verify output has rows in sorted timeslice order."""
         # Create timeslices with indices [2, 0, 1]
         timeslice_results = {
-            2: [MetricResult(tag="metric", header="Metric", unit="ms", avg=20.0)],
-            0: [MetricResult(tag="metric", header="Metric", unit="ms", avg=0.0)],
-            1: [MetricResult(tag="metric", header="Metric", unit="ms", avg=10.0)],
+            2: {
+                "metric": MetricResult(
+                    tag="metric", header="Metric", unit="ms", avg=20.0
+                )
+            },
+            0: {
+                "metric": MetricResult(
+                    tag="metric", header="Metric", unit="ms", avg=0.0
+                )
+            },
+            1: {
+                "metric": MetricResult(
+                    tag="metric", header="Metric", unit="ms", avg=10.0
+                )
+            },
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -366,8 +376,8 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
     def test_generate_content_includes_all_stats(self, mock_user_config):
         """Verify each stat gets its own row."""
         timeslice_results = {
-            0: [
-                MetricResult(
+            0: {
+                "metric": MetricResult(
                     tag="metric",
                     header="Metric",
                     unit="ms",
@@ -380,13 +390,13 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                     p99=88.0,
                     std=15.0,
                 )
-            ]
+            }
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -430,8 +440,8 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
     def test_generate_content_skips_none_stats(self, mock_user_config):
         """Verify only non-None stats appear in output."""
         timeslice_results = {
-            0: [
-                MetricResult(
+            0: {
+                "metric": MetricResult(
                     tag="metric",
                     header="Metric",
                     unit="ms",
@@ -444,13 +454,13 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
                     p99=88.0,
                     std=15.0,
                 )
-            ]
+            }
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -496,20 +506,20 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
     def test_generate_content_uses_metric_header(self, mock_user_config):
         """Verify CSV uses header, not tag."""
         timeslice_results = {
-            0: [
-                MetricResult(
+            0: {
+                "ttft": MetricResult(
                     tag="ttft",
                     header="Time to First Token",
                     unit="ms",
                     avg=45.0,
                 )
-            ]
+            }
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -548,13 +558,17 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
     def test_generate_content_includes_unit(self, mock_user_config):
         """Verify unit column contains unit value."""
         timeslice_results = {
-            0: [MetricResult(tag="metric", header="Metric", unit="ms", avg=45.0)]
+            0: {
+                "metric": MetricResult(
+                    tag="metric", header="Metric", unit="ms", avg=45.0
+                )
+            }
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -593,13 +607,15 @@ class TestTimesliceMetricsCsvExporterGenerateContent:
     def test_generate_content_empty_unit_for_unitless_metrics(self, mock_user_config):
         """Verify unit column is empty for unitless metrics."""
         timeslice_results = {
-            0: [MetricResult(tag="metric", header="Metric", unit="", avg=45.0)]
+            0: {
+                "metric": MetricResult(tag="metric", header="Metric", unit="", avg=45.0)
+            }
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -718,8 +734,8 @@ class TestTimesliceMetricsCsvExporterIntegration:
         """Verify export with 10 timeslices creates correct row count."""
         # Create 10 timeslices with 2 metrics each (each with avg, min, max)
         timeslice_results = {
-            i: [
-                MetricResult(
+            i: {
+                "metric1": MetricResult(
                     tag="metric1",
                     header="Metric 1",
                     unit="ms",
@@ -727,7 +743,7 @@ class TestTimesliceMetricsCsvExporterIntegration:
                     min=5.0,
                     max=15.0,
                 ),
-                MetricResult(
+                "metric2": MetricResult(
                     tag="metric2",
                     header="Metric 2",
                     unit="ms",
@@ -735,14 +751,14 @@ class TestTimesliceMetricsCsvExporterIntegration:
                     min=10.0,
                     max=30.0,
                 ),
-            ]
+            }
             for i in range(10)
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -783,13 +799,13 @@ class TestTimesliceMetricsCsvExporterIntegration:
     async def test_export_empty_timeslice_data(self, mock_user_config):
         """Verify export with empty metrics creates header-only CSV."""
         timeslice_results = {
-            0: [],  # Empty metric list
+            0: {},  # Empty metric dict
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True

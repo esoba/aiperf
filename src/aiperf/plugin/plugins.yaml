@@ -59,8 +59,8 @@ service:
     class: aiperf.records.records_manager:RecordsManager
     description: |
       Record aggregation and results management service. Aggregates metrics from all
-      record processors, manages results processors, and coordinates final results
-      export.
+      record processors, manages accumulators and stream exporters, and coordinates
+      final results export.
     metadata:
       required: true
       auto_start: true
@@ -592,9 +592,9 @@ stream_exporter:
       record_types: [gpu_telemetry]
 
   record_export:
-    class: aiperf.post_processors.record_export_results_processor:RecordExportResultsProcessor
+    class: aiperf.post_processors.record_export_jsonl_writer:RecordExportJSONLWriter
     description: |
-      Record export processor that writes per-record metrics to JSONL files with
+      Record export JSONL writer that writes per-record metrics to JSONL files with
       display unit conversion and filtering. Enabled when export_level is RECORDS.
     metadata:
       record_types: [metric_records]

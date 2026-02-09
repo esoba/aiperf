@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
+from collections.abc import Iterable
 from datetime import datetime
 
 from rich.console import Console, RenderableType
@@ -31,7 +32,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
             return
 
         self._print_renderable(
-            console, self.get_renderable(self._results.records, console)
+            console, self.get_renderable(self._results.records.values(), console)
         )
 
     def _print_renderable(self, console: Console, renderable: RenderableType) -> None:
@@ -40,7 +41,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         console.file.flush()
 
     def get_renderable(
-        self, records: list[MetricResult], console: Console
+        self, records: Iterable[MetricResult], console: Console
     ) -> RenderableType:
         table = Table(title=self._get_title())
         table.add_column("Metric", justify="right", style="cyan")
@@ -49,7 +50,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         self._construct_table(table, records)
         return table
 
-    def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
+    def _construct_table(self, table: Table, records: Iterable[MetricResult]) -> None:
         records = sorted(
             (to_display_unit(r, MetricRegistry) for r in records),
             key=lambda x: MetricRegistry.get_class(x.tag).display_order or sys.maxsize,

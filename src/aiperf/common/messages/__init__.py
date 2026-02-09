@@ -43,12 +43,11 @@ from aiperf.common.messages.inference_messages import (
 )
 from aiperf.common.messages.progress_messages import (
     AllRecordsReceivedMessage,
-    ProcessRecordsResultMessage,
+    ProcessAllResultsMessage,
     ProfileResultsMessage,
     RecordsProcessingStatsMessage,
 )
 from aiperf.common.messages.server_metrics_messages import (
-    ProcessServerMetricsResultMessage,
     ServerMetricsRecordMessage,
     ServerMetricsStatusMessage,
 )
@@ -61,7 +60,6 @@ from aiperf.common.messages.service_messages import (
     StatusMessage,
 )
 from aiperf.common.messages.telemetry_messages import (
-    ProcessTelemetryResultMessage,
     RealtimeTelemetryMetricsMessage,
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
@@ -96,9 +94,7 @@ __all__ = [
     "MetricRecordsMessage",
     "ProcessRecordsCommand",
     "ProcessRecordsResponse",
-    "ProcessRecordsResultMessage",
-    "ProcessServerMetricsResultMessage",
-    "ProcessTelemetryResultMessage",
+    "ProcessAllResultsMessage",
     "ProfileCancelCommand",
     "ProfileCompleteCommand",
     "ProfileConfigureCommand",

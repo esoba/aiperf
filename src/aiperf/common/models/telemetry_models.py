@@ -9,7 +9,6 @@ from pydantic import ConfigDict, Field
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
-from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
 
@@ -543,18 +542,3 @@ class TelemetryHierarchy(AIPerfBaseModel):
             )
 
         dcgm_data[record.gpu_uuid].add_record(record)
-
-
-class ProcessTelemetryResult(AIPerfBaseModel):
-    """Result of telemetry processing - mirrors ProcessRecordsResult pattern.
-
-    This provides a parallel structure to ProcessRecordsResult for the telemetry pipeline,
-    maintaining complete separation while following the same architectural patterns.
-
-    Note: Uses TelemetryExportData (wire-safe, pre-computed stats) rather than
-    TelemetryResults (internal, contains non-serializable GpuMetricTimeSeries).
-    """
-
-    results: TelemetryExportData | None = Field(
-        default=None, description="Pre-computed telemetry export data (wire-safe)"
-    )

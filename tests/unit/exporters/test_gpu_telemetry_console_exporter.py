@@ -46,7 +46,7 @@ def mock_user_config(mock_endpoint_config):
 def mock_profile_results():
     """Create mock profile results."""
     return ProfileResults(
-        records=[],
+        records={},
         start_ns=0,
         end_ns=0,
         completed=0,

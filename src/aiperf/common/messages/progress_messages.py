@@ -10,7 +10,9 @@ from aiperf.common.models import (
     PhaseRecordsStats,
     WorkerProcessingStats,
 )
+from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
+from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.types import MessageTypeT
 
 
@@ -47,9 +49,15 @@ class AllRecordsReceivedMessage(BaseServiceMessage, RequiresRequestNSMixin):
     )
 
 
-class ProcessRecordsResultMessage(BaseServiceMessage):
-    """Message for process records result."""
+class ProcessAllResultsMessage(BaseServiceMessage):
+    """Unified message carrying all accumulator results from RecordsManager to SystemController."""
 
-    message_type: MessageTypeT = MessageType.PROCESS_RECORDS_RESULT
+    message_type: MessageTypeT = MessageType.PROCESS_ALL_RESULTS
 
-    results: ProcessRecordsResult = Field(..., description="The process records result")
+    results: ProcessRecordsResult = Field(description="Inference metric results")
+    telemetry_results: TelemetryExportData | None = Field(
+        default=None, description="GPU telemetry export data"
+    )
+    server_metrics_results: ServerMetricsResults | None = Field(
+        default=None, description="Server metrics results"
+    )

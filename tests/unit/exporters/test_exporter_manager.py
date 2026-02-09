@@ -25,14 +25,13 @@ def output_config(tmp_path):
 
 @pytest.fixture
 def sample_records():
-    return [
-        MetricResult(
-            tag="Latency",
-            unit="ms",
-            avg=10.0,
-            header="test-header",
-        )
-    ]
+    _mr = MetricResult(
+        tag="Latency",
+        unit="ms",
+        avg=10.0,
+        header="test-header",
+    )
+    return {_mr.tag: _mr}
 
 
 @pytest.fixture

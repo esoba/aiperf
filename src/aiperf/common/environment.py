@@ -156,7 +156,7 @@ class _GPUSettings(BaseSettings):
         ge=1,
         le=1000000,
         default=100,
-        description="Batch size for telemetry record export results processor",
+        description="Batch size for GPU telemetry JSONL writer",
     )
     REACHABILITY_TIMEOUT: int = Field(
         ge=1,
@@ -359,7 +359,7 @@ class _RecordSettings(BaseSettings):
         ge=1,
         le=1000000,
         default=100,
-        description="Batch size for record export results processor",
+        description="Batch size for record export stream exporter",
     )
     RAW_EXPORT_BATCH_SIZE: int = Field(
         ge=1,
@@ -418,7 +418,7 @@ class _ServerMetricsSettings(BaseSettings):
         ge=1,
         le=1000000,
         default=100,
-        description="Batch size for server metrics jsonl writer export results processor",
+        description="Batch size for server metrics JSONL writer",
     )
     REACHABILITY_TIMEOUT: int = Field(
         ge=1,

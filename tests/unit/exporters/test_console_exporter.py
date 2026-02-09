@@ -32,47 +32,46 @@ def mock_endpoint_config():
 
 @pytest.fixture
 def sample_records():
-    return [
-        MetricResult(
-            tag="time_to_first_token",
-            header="Time to First Token",
-            unit="ms",
-            avg=120.5,
-            min=110.0,
-            max=130.0,
-            p99=128.0,
-            p90=125.0,
-            p75=122.0,
-        ),
-        MetricResult(
-            tag="request_latency",
-            header="Request Latency",
-            unit="ms",
-            avg=15.3,
-            min=12.1,
-            max=21.4,
-            p99=20.5,
-            p90=18.7,
-            p75=16.2,
-        ),
-        MetricResult(
-            tag="inter_token_latency",
-            header="Inter Token Latency",
-            unit="ms",
-            avg=3.7,
-            min=2.9,
-            max=5.1,
-            p99=4.9,
-            p90=4.5,
-            p75=4.0,
-        ),
-        MetricResult(
-            tag="request_throughput",
-            header="Request Throughput",
-            unit="requests/sec",
-            avg=95.0,
-        ),
-    ]
+    _ttft = MetricResult(
+        tag="time_to_first_token",
+        header="Time to First Token",
+        unit="ms",
+        avg=120.5,
+        min=110.0,
+        max=130.0,
+        p99=128.0,
+        p90=125.0,
+        p75=122.0,
+    )
+    _rl = MetricResult(
+        tag="request_latency",
+        header="Request Latency",
+        unit="ms",
+        avg=15.3,
+        min=12.1,
+        max=21.4,
+        p99=20.5,
+        p90=18.7,
+        p75=16.2,
+    )
+    _itl = MetricResult(
+        tag="inter_token_latency",
+        header="Inter Token Latency",
+        unit="ms",
+        avg=3.7,
+        min=2.9,
+        max=5.1,
+        p99=4.9,
+        p90=4.5,
+        p75=4.0,
+    )
+    _rt = MetricResult(
+        tag="request_throughput",
+        header="Request Throughput",
+        unit="requests/sec",
+        avg=95.0,
+    )
+    return {_ttft.tag: _ttft, _rl.tag: _rl, _itl.tag: _itl, _rt.tag: _rt}
 
 
 @pytest.fixture
@@ -132,7 +131,7 @@ class TestConsoleExporter:
         service_config = ServiceConfig()
         config = ExporterConfig(
             results=ProfileResults(
-                records=[],
+                records={},
                 start_ns=0,
                 end_ns=0,
                 completed=0,

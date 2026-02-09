@@ -37,41 +37,38 @@ class TestConsoleUsageDiscrepancyExporter:
         self, count: int, total_records: int = 100, include_discrepancy: bool = True
     ) -> ProfileResults:
         """Helper to create a ProfileResults with optional discrepancy count metric."""
-        records = []
+        records: dict[str, MetricResult] = {}
         if include_discrepancy:
-            records.append(
-                MetricResult(
-                    tag=UsageDiscrepancyCountMetric.tag,
-                    header="Usage Discrepancy Count",
-                    unit=GenericMetricUnit.REQUESTS,
-                    avg=float(count),
-                    count=total_records,
-                    min=float(count),
-                    max=float(count),
-                )
+            _disc = MetricResult(
+                tag=UsageDiscrepancyCountMetric.tag,
+                header="Usage Discrepancy Count",
+                unit=GenericMetricUnit.REQUESTS,
+                avg=float(count),
+                count=total_records,
+                min=float(count),
+                max=float(count),
             )
-        records.extend(
-            [
-                MetricResult(
-                    tag=RequestCountMetric.tag,
-                    header="Request Count",
-                    unit=GenericMetricUnit.REQUESTS,
-                    avg=float(total_records),
-                    count=total_records,
-                    min=float(total_records),
-                    max=float(total_records),
-                ),
-                MetricResult(
-                    tag="time_to_first_token",
-                    header="Time to First Token",
-                    unit=MetricTimeUnit.MILLISECONDS,
-                    avg=100.0,
-                    count=total_records,
-                    min=50.0,
-                    max=150.0,
-                ),
-            ]
+            records[_disc.tag] = _disc
+        _req_count = MetricResult(
+            tag=RequestCountMetric.tag,
+            header="Request Count",
+            unit=GenericMetricUnit.REQUESTS,
+            avg=float(total_records),
+            count=total_records,
+            min=float(total_records),
+            max=float(total_records),
         )
+        _ttft = MetricResult(
+            tag="time_to_first_token",
+            header="Time to First Token",
+            unit=MetricTimeUnit.MILLISECONDS,
+            avg=100.0,
+            count=total_records,
+            min=50.0,
+            max=150.0,
+        )
+        records[_req_count.tag] = _req_count
+        records[_ttft.tag] = _ttft
         return ProfileResults(
             records=records,
             completed=total_records,

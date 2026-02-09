@@ -141,10 +141,12 @@ class MetricRecordMetadata(AIPerfBaseModel):
 class ProfileResults(AIPerfBaseModel):
     """The results of a profile run."""
 
-    records: list[MetricResult] | None = Field(
-        ..., description="The records of the profile results"
+    records: dict[MetricTagT, MetricResult] | None = Field(
+        ..., description="The metric results of the profile, keyed by metric tag"
     )
-    timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
+    timeslice_metric_results: (
+        dict[TimeSliceT, dict[MetricTagT, MetricResult]] | None
+    ) = Field(
         default=None,
         description="The timeslice metric results of the profile (if using timeslice mode)",
     )
@@ -172,10 +174,7 @@ class ProfileResults(AIPerfBaseModel):
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
         """Get a metric result by tag, if it exists."""
-        for record in self.records or []:
-            if record.tag == tag:
-                return record
-        return None
+        return (self.records or {}).get(tag)
 
 
 class ProcessRecordsResult(AIPerfBaseModel):

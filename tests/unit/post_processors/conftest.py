@@ -316,13 +316,13 @@ def setup_mock_registry_sequences(
     return valid_tags, error_tags
 
 
-def create_results_processor_with_metrics(
+def create_accumulator_with_metrics(
     user_config: UserConfig, *metrics: type[BaseMetric]
 ) -> MetricsAccumulator:
     """Create a MetricsAccumulator with pre-configured metrics.
 
     Args:
-        user_config: User configuration for the processor
+        user_config: User configuration for the accumulator
         metrics: list of metric classes
 
     Returns:

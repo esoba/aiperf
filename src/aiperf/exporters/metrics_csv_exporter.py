@@ -49,7 +49,9 @@ class MetricsCsvExporter(MetricsBaseExporter):
         writer = csv.writer(buf)
 
         # Use base class method to prepare metrics
-        prepared_metrics = self._prepare_metrics(self._results.records)
+        prepared_metrics = self._prepare_metrics(
+            self._results.records.values() if self._results.records else []
+        )
 
         request_metrics, system_metrics = self._split_metrics(prepared_metrics)
 

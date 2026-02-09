@@ -5,9 +5,8 @@ from pathlib import Path
 
 from aiperf.common.config import UserConfig
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.exceptions import PluginDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
-from aiperf.common.models import MetricResult
 from aiperf.common.models.telemetry_models import TelemetryRecord
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
@@ -17,7 +16,7 @@ class GPUTelemetryJSONLWriter(
 ):
     """Exports per-record GPU telemetry data to JSONL files.
 
-    This processor streams each TelemetryRecord as it arrives from the GPUTelemetryManager,
+    Streams each TelemetryRecord as it arrives from the GPUTelemetryManager,
     writing one JSON line per GPU per collection cycle. The output format supports
     multi-endpoint and multi-GPU time series analysis.
 
@@ -37,7 +36,7 @@ class GPUTelemetryJSONLWriter(
         **kwargs,
     ):
         if user_config.gpu_telemetry_disabled:
-            raise PostProcessorDisabled(
+            raise PluginDisabled(
                 "GPU telemetry export is disabled via --no-gpu-telemetry"
             )
 
@@ -53,11 +52,7 @@ class GPUTelemetryJSONLWriter(
         self.info(f"GPU telemetry export enabled: {self.output_file}")
 
     async def process_record(self, record: TelemetryRecord) -> None:
-        """Alias for process_telemetry_record (StreamExporterProtocol compatibility)."""
-        await self.process_telemetry_record(record)
-
-    async def process_telemetry_record(self, record: TelemetryRecord) -> None:
-        """Process individual telemetry record by writing it to JSONL.
+        """Write a telemetry record to JSONL.
 
         Args:
             record: TelemetryRecord containing GPU metrics and hierarchical metadata
@@ -70,7 +65,3 @@ class GPUTelemetryJSONLWriter(
     async def finalize(self) -> None:
         """Flush any buffered data (StreamExporterProtocol)."""
         await self.flush_buffer()
-
-    async def summarize(self) -> list[MetricResult]:
-        """Summarize the results. For this processor, we don't need to summarize anything."""
-        return []

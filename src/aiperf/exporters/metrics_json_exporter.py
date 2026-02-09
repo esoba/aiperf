@@ -42,7 +42,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
             str: Complete JSON content with all sections formatted and ready to write
         """
         # Use helper method to prepare metrics
-        prepared_json_metrics = self._prepare_metrics_for_json(self._results.records)
+        prepared_json_metrics = self._prepare_metrics_for_json(
+            self._results.records.values() if self._results.records else []
+        )
 
         start_time = (
             datetime.fromtimestamp(self._results.start_ns / NANOS_PER_SECOND)

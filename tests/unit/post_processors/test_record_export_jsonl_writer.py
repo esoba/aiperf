@@ -16,7 +16,7 @@ from aiperf.common.config import (
 )
 from aiperf.common.enums import CreditPhase, ExportLevel
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.exceptions import PluginDisabled
 from aiperf.common.messages import MetricRecordsMessage
 from aiperf.common.models.record_models import (
     MetricRecordInfo,
@@ -26,8 +26,8 @@ from aiperf.common.models.record_models import (
 from aiperf.common.models.trace_models import AioHttpTraceData
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.record_export_results_processor import (
-    RecordExportResultsProcessor,
+from aiperf.post_processors.record_export_jsonl_writer import (
+    RecordExportJSONLWriter,
 )
 from tests.unit.post_processors.conftest import (
     aiperf_lifecycle,
@@ -78,8 +78,8 @@ def sample_metric_records_message():
     )
 
 
-class TestRecordExportResultsProcessorInitialization:
-    """Test RecordExportResultsProcessor initialization."""
+class TestRecordExportJSONLWriterInitialization:
+    """Test RecordExportJSONLWriter initialization."""
 
     @pytest.mark.parametrize(
         "export_level, raise_exception",
@@ -100,14 +100,14 @@ class TestRecordExportResultsProcessorInitialization:
         """Test init with various export levels enable or disable the processor."""
         user_config_records_export.output.export_level = export_level
         if raise_exception:
-            with pytest.raises(PostProcessorDisabled):
-                _ = RecordExportResultsProcessor(
+            with pytest.raises(PluginDisabled):
+                _ = RecordExportJSONLWriter(
                     service_id="records-manager",
                     service_config=service_config,
                     user_config=user_config_records_export,
                 )
         else:
-            processor = RecordExportResultsProcessor(
+            processor = RecordExportJSONLWriter(
                 service_id="records-manager",
                 service_config=service_config,
                 user_config=user_config_records_export,
@@ -123,7 +123,7 @@ class TestRecordExportResultsProcessorInitialization:
         service_config: ServiceConfig,
     ):
         """Test initialization with RAW export level enables the processor."""
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -139,7 +139,7 @@ class TestRecordExportResultsProcessorInitialization:
         service_config: ServiceConfig,
     ):
         """Test that initialization creates the output directory."""
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -162,7 +162,7 @@ class TestRecordExportResultsProcessorInitialization:
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.write_text("existing content\n")
 
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -186,7 +186,7 @@ class TestRecordExportResultsProcessorInitialization:
             patch.object(Environment.DEV, "SHOW_INTERNAL_METRICS", True),
             patch.object(Environment.DEV, "SHOW_EXPERIMENTAL_METRICS", False),
         ):
-            processor = RecordExportResultsProcessor(
+            processor = RecordExportJSONLWriter(
                 service_id="records-manager",
                 service_config=service_config,
                 user_config=user_config_records_export,
@@ -195,24 +195,24 @@ class TestRecordExportResultsProcessorInitialization:
             assert processor.show_internal is True
 
 
-class TestRecordExportResultsProcessorProcessResult:
-    """Test RecordExportResultsProcessor process_result method."""
+class TestRecordExportJSONLWriterProcessRecord:
+    """Test RecordExportJSONLWriter process_record method."""
 
     @pytest.mark.asyncio
-    async def test_process_result_writes_valid_data(
+    async def test_process_record_writes_valid_data(
         self,
         user_config_records_export: UserConfig,
         service_config: ServiceConfig,
         sample_metric_records_message: MetricRecordsMessage,
         mock_metric_registry: Mock,
     ):
-        """Test that process_result writes valid data to file."""
+        """Test that process_record writes valid data to file."""
         mock_display_dict = {
             "request_latency": MetricValue(value=1.0, unit="ms"),
             "output_token_count": MetricValue(value=10, unit="tokens"),
         }
 
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -224,7 +224,7 @@ class TestRecordExportResultsProcessorProcessResult:
                 "to_display_dict",
                 return_value=mock_display_dict,
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_record(sample_metric_records_message.to_data())
 
         lines = processor.output_file.read_text().splitlines()
 
@@ -243,15 +243,15 @@ class TestRecordExportResultsProcessorProcessResult:
         assert "output_token_count" in record.metrics
 
     @pytest.mark.asyncio
-    async def test_process_result_with_empty_display_metrics(
+    async def test_process_record_with_empty_display_metrics(
         self,
         user_config_records_export: UserConfig,
         service_config: ServiceConfig,
         sample_metric_records_message: MetricRecordsMessage,
         mock_metric_registry: Mock,
     ):
-        """Test that process_result skips records with empty display metrics."""
-        processor = RecordExportResultsProcessor(
+        """Test that process_record skips records with empty display metrics."""
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -259,7 +259,7 @@ class TestRecordExportResultsProcessorProcessResult:
 
         # Mock to_display_dict to return empty dict
         with patch.object(MetricRecordDict, "to_display_dict", return_value={}):
-            await processor.process_result(sample_metric_records_message.to_data())
+            await processor.process_record(sample_metric_records_message.to_data())
 
         # Should not write anything since display_metrics is empty
         assert processor.lines_written == 0
@@ -268,7 +268,7 @@ class TestRecordExportResultsProcessorProcessResult:
             assert content == ""
 
     @pytest.mark.asyncio
-    async def test_process_result_handles_errors_gracefully(
+    async def test_process_record_handles_errors_gracefully(
         self,
         user_config_records_export: UserConfig,
         service_config: ServiceConfig,
@@ -276,7 +276,7 @@ class TestRecordExportResultsProcessorProcessResult:
         mock_metric_registry: Mock,
     ):
         """Test that errors during processing don't raise exceptions."""
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -290,7 +290,7 @@ class TestRecordExportResultsProcessorProcessResult:
             patch.object(processor, "error") as mock_error,
         ):
             # Should not raise
-            await processor.process_result(sample_metric_records_message.to_data())
+            await processor.process_record(sample_metric_records_message.to_data())
 
             # Should log the error
             assert mock_error.call_count >= 1
@@ -299,7 +299,7 @@ class TestRecordExportResultsProcessorProcessResult:
         assert processor.lines_written == 0
 
     @pytest.mark.asyncio
-    async def test_process_result_multiple_messages(
+    async def test_process_record_multiple_messages(
         self,
         user_config_records_export: UserConfig,
         service_config: ServiceConfig,
@@ -311,7 +311,7 @@ class TestRecordExportResultsProcessorProcessResult:
             "request_latency": MetricValue(value=1.0, unit="ms"),
         }
 
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -329,7 +329,7 @@ class TestRecordExportResultsProcessorProcessResult:
                         request_start_ns=1_000_000_000 + i,
                         results=[{"metric1": 100}, {"metric2": 200}],
                     )
-                    await processor.process_result(message.to_data())
+                    await processor.process_record(message.to_data())
 
         assert processor.lines_written == 5
         assert processor.output_file.exists()
@@ -346,8 +346,8 @@ class TestRecordExportResultsProcessorProcessResult:
             assert "request_latency" in record.metrics
 
 
-class TestRecordExportResultsProcessorFileFormat:
-    """Test RecordExportResultsProcessor file format."""
+class TestRecordExportJSONLWriterFileFormat:
+    """Test RecordExportJSONLWriter file format."""
 
     @pytest.mark.asyncio
     async def test_output_is_valid_jsonl(
@@ -360,7 +360,7 @@ class TestRecordExportResultsProcessorFileFormat:
         """Test that output file is valid JSONL format."""
         mock_display_dict = {"test_metric": MetricValue(value=42, unit="ms")}
 
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -370,7 +370,7 @@ class TestRecordExportResultsProcessorFileFormat:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_record(sample_metric_records_message.to_data())
 
         lines = processor.output_file.read_text().splitlines()
 
@@ -392,7 +392,7 @@ class TestRecordExportResultsProcessorFileFormat:
         """Test that each record has the expected structure."""
         mock_display_dict = {"test_metric": MetricValue(value=42, unit="ms")}
 
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -402,7 +402,7 @@ class TestRecordExportResultsProcessorFileFormat:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(sample_metric_records_message.to_data())
+                await processor.process_record(sample_metric_records_message.to_data())
 
         lines = processor.output_file.read_text().splitlines()
 
@@ -426,8 +426,8 @@ class TestRecordExportResultsProcessorFileFormat:
             assert record.metrics["test_metric"].unit == "ms"
 
 
-class TestRecordExportResultsProcessorLogging:
-    """Test RecordExportResultsProcessor logging behavior."""
+class TestRecordExportJSONLWriterLogging:
+    """Test RecordExportJSONLWriter logging behavior."""
 
     @pytest.mark.asyncio
     async def test_periodic_debug_logging(
@@ -440,7 +440,7 @@ class TestRecordExportResultsProcessorLogging:
         """Test that debug logging occurs when buffer is flushed."""
         mock_display_dict = {"test_metric": MetricValue(value=42, unit="ms")}
 
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -459,7 +459,7 @@ class TestRecordExportResultsProcessorLogging:
                             request_start_ns=1_000_000_000 + i,
                             results=[{"metric1": 100}, {"metric2": 200}],
                         )
-                        await processor.process_result(message.to_data())
+                        await processor.process_record(message.to_data())
 
                     # Wait for async flush task to complete
                     await processor.wait_for_tasks()
@@ -476,7 +476,7 @@ class TestRecordExportResultsProcessorLogging:
         mock_metric_registry: Mock,
     ):
         """Test that errors are logged when write fails."""
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -488,15 +488,15 @@ class TestRecordExportResultsProcessorLogging:
             ),
             patch.object(processor, "error") as mock_error,
         ):
-            await processor.process_result(sample_metric_records_message.to_data())
+            await processor.process_record(sample_metric_records_message.to_data())
 
             assert mock_error.call_count >= 1
             call_args = str(mock_error.call_args_list[0])
             assert "Failed to write record metrics" in call_args
 
 
-class TestRecordExportResultsProcessorShutdown:
-    """Test RecordExportResultsProcessor shutdown behavior."""
+class TestRecordExportJSONLWriterShutdown:
+    """Test RecordExportJSONLWriter shutdown behavior."""
 
     @pytest.mark.asyncio
     async def test_shutdown_logs_statistics(
@@ -509,7 +509,7 @@ class TestRecordExportResultsProcessorShutdown:
         """Test that shutdown logs final statistics."""
         mock_display_dict = {"test_metric": MetricValue(value=42, unit="ms")}
 
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -530,7 +530,7 @@ class TestRecordExportResultsProcessorShutdown:
                         request_start_ns=1_000_000_000 + i,
                         results=[{"metric1": 100}],
                     )
-                    await processor.process_result(message.to_data())
+                    await processor.process_record(message.to_data())
 
                 # Wait for any pending flush tasks
                 await processor.wait_for_tasks()
@@ -546,30 +546,8 @@ class TestRecordExportResultsProcessorShutdown:
             raise
 
 
-class TestRecordExportResultsProcessorSummarize:
-    """Test RecordExportResultsProcessor summarize method."""
-
-    @pytest.mark.asyncio
-    async def test_summarize_returns_empty_list(
-        self,
-        user_config_records_export: UserConfig,
-        service_config: ServiceConfig,
-    ):
-        """Test that summarize returns an empty list (no aggregation needed)."""
-        processor = RecordExportResultsProcessor(
-            service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_records_export,
-        )
-
-        result = await processor.summarize()
-
-        assert result == []
-        assert isinstance(result, list)
-
-
-class TestRecordExportResultsProcessorHttpTrace:
-    """Test RecordExportResultsProcessor HTTP trace export functionality."""
+class TestRecordExportJSONLWriterHttpTrace:
+    """Test RecordExportJSONLWriter HTTP trace export functionality."""
 
     @pytest.fixture
     def user_config_with_http_trace(self, tmp_artifact_dir: Path) -> UserConfig:
@@ -630,7 +608,7 @@ class TestRecordExportResultsProcessorHttpTrace:
         service_config: ServiceConfig,
     ):
         """Test that export_http_trace defaults to False."""
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -644,7 +622,7 @@ class TestRecordExportResultsProcessorHttpTrace:
         service_config: ServiceConfig,
     ):
         """Test that export_http_trace can be enabled via config."""
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_with_http_trace,
@@ -660,7 +638,7 @@ class TestRecordExportResultsProcessorHttpTrace:
     ):
         """Test that initialization logs when HTTP trace export is enabled."""
         with caplog.at_level(logging.INFO):
-            _ = RecordExportResultsProcessor(
+            _ = RecordExportJSONLWriter(
                 service_id="records-manager",
                 service_config=service_config,
                 user_config=user_config_with_http_trace,
@@ -679,7 +657,7 @@ class TestRecordExportResultsProcessorHttpTrace:
         """Test that trace_data is NOT in output when export_http_trace=False."""
         mock_display_dict = {"test_metric": MetricValue(value=42, unit="ms")}
 
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -697,7 +675,7 @@ class TestRecordExportResultsProcessorHttpTrace:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_record(message.to_data())
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
@@ -721,7 +699,7 @@ class TestRecordExportResultsProcessorHttpTrace:
         """Test that trace_data IS included in output when export_http_trace=True."""
         mock_display_dict = {"test_metric": MetricValue(value=42, unit="ms")}
 
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_with_http_trace,
@@ -739,7 +717,7 @@ class TestRecordExportResultsProcessorHttpTrace:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_record(message.to_data())
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
@@ -771,14 +749,14 @@ class TestRecordExportResultsProcessorHttpTrace:
         }
 
         # Test with trace disabled
-        processor_disabled = RecordExportResultsProcessor(
+        processor_disabled = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
         )
 
         # Test with trace enabled
-        processor_enabled = RecordExportResultsProcessor(
+        processor_enabled = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_with_http_trace,
@@ -796,7 +774,7 @@ class TestRecordExportResultsProcessorHttpTrace:
                 with patch.object(
                     MetricRecordDict, "to_display_dict", return_value=mock_display_dict
                 ):
-                    await processor.process_result(message.to_data())
+                    await processor.process_record(message.to_data())
 
             lines = processor.output_file.read_text().splitlines()
             assert len(lines) == 1
@@ -820,7 +798,7 @@ class TestRecordExportResultsProcessorHttpTrace:
         """Test trace_data is null when record has no trace data (even if enabled)."""
         mock_display_dict = {"test_metric": MetricValue(value=42, unit="ms")}
 
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_with_http_trace,
@@ -838,7 +816,7 @@ class TestRecordExportResultsProcessorHttpTrace:
             with patch.object(
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
-                await processor.process_result(message.to_data())
+                await processor.process_record(message.to_data())
 
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
@@ -850,8 +828,8 @@ class TestRecordExportResultsProcessorHttpTrace:
         assert record.trace_data is None
 
 
-class TestRecordExportResultsProcessorLifecycle:
-    """Test RecordExportResultsProcessor lifecycle."""
+class TestRecordExportJSONLWriterLifecycle:
+    """Test RecordExportJSONLWriter lifecycle."""
 
     @pytest.mark.asyncio
     async def test_lifecycle(
@@ -862,7 +840,7 @@ class TestRecordExportResultsProcessorLifecycle:
         mock_aiofiles_stringio,
     ):
         """Test that the processor can be initialized, processed, and shutdown."""
-        processor = RecordExportResultsProcessor(
+        processor = RecordExportJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
             user_config=user_config_records_export,
@@ -880,7 +858,7 @@ class TestRecordExportResultsProcessorLifecycle:
                 MetricRecordDict, "to_display_dict", return_value=mock_display_dict
             ):
                 for i in range(Environment.RECORD.EXPORT_BATCH_SIZE * 2):
-                    await processor.process_result(
+                    await processor.process_record(
                         create_metric_records_message(
                             x_request_id=f"record-{i}",
                             conversation_id=f"conv-{i}",

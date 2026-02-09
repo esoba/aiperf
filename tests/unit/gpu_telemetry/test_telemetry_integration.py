@@ -192,9 +192,9 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             assert len(self.collection_errors) == 0
 
             for record in self.collected_records:
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
             summary = await processor.summarize()
-            metric_results = summary.results
+            metric_results = list(summary.results.values())
 
             assert len(processor._hierarchy.dcgm_endpoints) == 2
 
@@ -272,15 +272,15 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             pub_client=mock_pub_client,
         )
 
-        # Mock the process_telemetry_record method to raise an exception
-        original_process = faulty_processor.process_telemetry_record
+        # Mock the process_record method to raise an exception
+        original_process = faulty_processor.process_record
 
-        async def failing_process_result(record):
+        async def failing_process_record(record):
             if record.gpu_index == 0:  # Fail on first GPU only
                 raise ValueError("Simulated processing error")
             return await original_process(record)
 
-        faulty_processor.process_telemetry_record = failing_process_result
+        faulty_processor.process_record = failing_process_record
 
         async def failing_record_callback(records, collector_id):
             """Async callback that processes records and may encounter errors."""
@@ -289,7 +289,7 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
                 # Process each record (this would normally be done by RecordsManager)
                 for record in records:
                     try:
-                        await faulty_processor.process_telemetry_record(record)
+                        await faulty_processor.process_record(record)
                     except Exception as e:
                         self.collection_errors.append(f"Processing error: {e}")
             except Exception as e:
@@ -381,9 +381,9 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
             await collector.stop()
 
             for record in self.collected_records:
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
             summary = await processor.summarize()
-            metric_results = summary.results
+            metric_results = list(summary.results.values())
 
             assert len(self.collected_records) == 0
             assert len(metric_results) == 0
@@ -431,9 +431,9 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
             await collector.stop()
 
             for record in self.collected_records:
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
             summary = await processor.summarize()
-            metric_results = summary.results
+            metric_results = list(summary.results.values())
 
             memory_metrics = [r for r in metric_results if "gpu_memory_used" in r.tag]
             energy_metrics = [

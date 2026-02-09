@@ -64,12 +64,12 @@ class TimesliceMetricsCsvExporter(MetricsBaseExporter):
 
         # Process each timeslice in sorted order
         for timeslice_index in sorted(self._results.timeslice_metric_results.keys()):
-            metric_results_list = self._results.timeslice_metric_results[
+            metric_results_dict = self._results.timeslice_metric_results[
                 timeslice_index
             ]
 
             # Convert to display units and filter exportable metrics
-            prepared_metrics = self._prepare_metrics(metric_results_list)
+            prepared_metrics = self._prepare_metrics(metric_results_dict.values())
 
             # Write rows for each metric
             for tag, metric in sorted(prepared_metrics.items()):

@@ -42,7 +42,7 @@ def mock_endpoint_config():
 @pytest.fixture
 def sample_http_trace_records():
     """Sample HTTP trace metric records for testing."""
-    return [
+    _records = [
         MetricResult(
             tag="http_req_blocked",
             header="HTTP Blocked",
@@ -121,40 +121,39 @@ def sample_http_trace_records():
             p50=151.5,
         ),
     ]
+    return {r.tag: r for r in _records}
 
 
 @pytest.fixture
 def sample_mixed_records(sample_http_trace_records):
     """Mix of HTTP trace records and regular metrics."""
-    regular_records = [
-        MetricResult(
-            tag="time_to_first_token",
-            header="Time to First Token",
-            unit="ms",
-            avg=120.5,
-            min=110.0,
-            max=130.0,
-            p99=128.0,
-            p90=125.0,
-            p50=119.0,
-        ),
-        MetricResult(
-            tag="request_latency",
-            header="Request Latency",
-            unit="ms",
-            avg=15.3,
-            min=12.1,
-            max=21.4,
-            p99=20.5,
-            p90=18.7,
-            p50=15.0,
-        ),
-    ]
-    return sample_http_trace_records + regular_records
+    _ttft = MetricResult(
+        tag="time_to_first_token",
+        header="Time to First Token",
+        unit="ms",
+        avg=120.5,
+        min=110.0,
+        max=130.0,
+        p99=128.0,
+        p90=125.0,
+        p50=119.0,
+    )
+    _rl = MetricResult(
+        tag="request_latency",
+        header="Request Latency",
+        unit="ms",
+        avg=15.3,
+        min=12.1,
+        max=21.4,
+        p99=20.5,
+        p90=18.7,
+        p50=15.0,
+    )
+    return {**sample_http_trace_records, _ttft.tag: _ttft, _rl.tag: _rl}
 
 
 def make_exporter_config(
-    records: list[MetricResult],
+    records: dict[str, MetricResult],
     endpoint_config: EndpointConfig,
     show_trace_timing: bool = True,
 ) -> ExporterConfig:
@@ -182,7 +181,7 @@ class TestHttpTraceConsoleExporter:
     def test_raises_when_disabled(self, mock_endpoint_config):
         """Test that exporter raises ConsoleExporterDisabled when flag is False."""
         config = make_exporter_config(
-            records=[],
+            records={},
             endpoint_config=mock_endpoint_config,
             show_trace_timing=False,
         )
@@ -194,7 +193,7 @@ class TestHttpTraceConsoleExporter:
     def test_creates_successfully_when_enabled(self, mock_endpoint_config):
         """Test that exporter creates successfully when flag is True."""
         config = make_exporter_config(
-            records=[],
+            records={},
             endpoint_config=mock_endpoint_config,
             show_trace_timing=True,
         )
@@ -204,7 +203,7 @@ class TestHttpTraceConsoleExporter:
     def test_get_title_returns_http_trace_title(self, mock_endpoint_config):
         """Test that _get_title returns the correct title."""
         config = make_exporter_config(
-            records=[],
+            records={},
             endpoint_config=mock_endpoint_config,
             show_trace_timing=True,
         )
@@ -242,7 +241,7 @@ class TestHttpTraceConsoleExporter:
     ):
         """Test that only HTTP trace metrics are shown."""
         config = make_exporter_config(
-            records=[],
+            records={},
             endpoint_config=mock_endpoint_config,
             show_trace_timing=True,
         )
@@ -306,7 +305,7 @@ class TestHttpTraceConsoleExporter:
     ):
         """Test that export returns early when there are no records."""
         config = make_exporter_config(
-            records=[],
+            records={},
             endpoint_config=mock_endpoint_config,
             show_trace_timing=True,
         )

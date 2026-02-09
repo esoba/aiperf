@@ -11,6 +11,7 @@ import pytest
 from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
     AccumulatorResult,
+    ExportContext,
     StreamExporterProtocol,
     SubProcessorProtocol,
     SummaryContext,
@@ -46,6 +47,9 @@ class StubAccumulator:
         return []
 
     async def summarize(self, ctx: SummaryContext | None = None) -> StubResult:
+        return StubResult(values=[])
+
+    async def export_results(self, ctx: ExportContext) -> StubResult:
         return StubResult(values=[])
 
 
@@ -182,7 +186,7 @@ class TestSummaryContext:
     def test_default_construction(self) -> None:
         ctx = SummaryContext()
         assert ctx.accumulators == {}
-        assert ctx.processor_outputs == {}
+        assert ctx.accumulator_outputs == {}
         assert ctx.start_ns == 0
         assert ctx.end_ns == 0
         assert ctx.cancelled is False
@@ -199,7 +203,7 @@ class TestSummaryContext:
     def test_get_output_present(self) -> None:
         sentinel = object()
         ctx = SummaryContext(
-            processor_outputs={AccumulatorType.GPU_TELEMETRY: sentinel}
+            accumulator_outputs={AccumulatorType.GPU_TELEMETRY: sentinel}
         )
         assert ctx.get_output(AccumulatorType.GPU_TELEMETRY) is sentinel
 
@@ -216,7 +220,30 @@ class TestSummaryContext:
         assert ctx.start_ns == 1_000_000
         assert ctx.end_ns == 2_000_000
 
-    def test_processor_outputs_mutable(self) -> None:
+    def test_accumulator_outputs_mutable(self) -> None:
         ctx = SummaryContext()
-        ctx.processor_outputs[AccumulatorType.METRIC_RESULTS] = [1, 2, 3]
+        ctx.accumulator_outputs[AccumulatorType.METRIC_RESULTS] = [1, 2, 3]
         assert ctx.get_output(AccumulatorType.METRIC_RESULTS) == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# ExportContext tests
+# ---------------------------------------------------------------------------
+
+
+class TestExportContext:
+    def test_default_construction(self) -> None:
+        ctx = ExportContext()
+        assert ctx.start_ns is None
+        assert ctx.end_ns is None
+        assert ctx.error_summary is None
+        assert ctx.cancelled is False
+
+    def test_cancelled_flag(self) -> None:
+        ctx = ExportContext(cancelled=True)
+        assert ctx.cancelled is True
+
+    def test_with_time_range(self) -> None:
+        ctx = ExportContext(start_ns=1_000, end_ns=2_000)
+        assert ctx.start_ns == 1_000
+        assert ctx.end_ns == 2_000

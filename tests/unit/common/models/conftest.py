@@ -28,7 +28,7 @@ def process_records_result():
     """Minimal valid ProcessRecordsResult data."""
     return {
         "results": {
-            "records": [],
+            "records": {},
             "completed": True,
             "start_ns": 0,
             "end_ns": 1000,

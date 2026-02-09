@@ -38,8 +38,8 @@ def mock_user_config():
 def sample_timeslice_metric_results():
     """Create sample timeslice metric results."""
     return {
-        0: [
-            MetricResult(
+        0: {
+            "time_to_first_token": MetricResult(
                 tag="time_to_first_token",
                 header="Time to First Token",
                 unit="ms",
@@ -51,7 +51,7 @@ def sample_timeslice_metric_results():
                 p99=88.0,
                 std=15.2,
             ),
-            MetricResult(
+            "inter_token_latency": MetricResult(
                 tag="inter_token_latency",
                 header="Inter Token Latency",
                 unit="ms",
@@ -63,9 +63,9 @@ def sample_timeslice_metric_results():
                 p99=11.8,
                 std=2.1,
             ),
-        ],
-        1: [
-            MetricResult(
+        },
+        1: {
+            "time_to_first_token": MetricResult(
                 tag="time_to_first_token",
                 header="Time to First Token",
                 unit="ms",
@@ -77,7 +77,7 @@ def sample_timeslice_metric_results():
                 p99=90.5,
                 std=16.1,
             ),
-            MetricResult(
+            "inter_token_latency": MetricResult(
                 tag="inter_token_latency",
                 header="Inter Token Latency",
                 unit="ms",
@@ -89,7 +89,7 @@ def sample_timeslice_metric_results():
                 p99=12.3,
                 std=2.3,
             ),
-        ],
+        },
     }
 
 
@@ -100,7 +100,7 @@ def mock_results_with_timeslices(sample_timeslice_metric_results):
     class MockResultsWithTimeslices:
         def __init__(self):
             self.timeslice_metric_results = sample_timeslice_metric_results
-            self.records = []
+            self.records = {}
             self.start_ns = None
             self.end_ns = None
             self.has_results = True
@@ -117,7 +117,7 @@ def mock_results_without_timeslices():
     class MockResultsNoTimeslices:
         def __init__(self):
             self.timeslice_metric_results = None
-            self.records = []
+            self.records = {}
             self.start_ns = None
             self.end_ns = None
             self.has_results = False
@@ -255,14 +255,18 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
     def test_generate_content_timeslices_have_index(self, mock_user_config):
         """Verify each timeslice object has timeslice_index field."""
         timeslice_results = {
-            i: [MetricResult(tag="metric", header="Metric", unit="ms", avg=10.0)]
+            i: {
+                "metric": MetricResult(
+                    tag="metric", header="Metric", unit="ms", avg=10.0
+                )
+            }
             for i in range(3)
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -300,26 +304,26 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
     def test_generate_content_includes_metrics_dynamically(self, mock_user_config):
         """Verify JSON has fields for all metrics at timeslice level."""
         timeslice_results = {
-            0: [
-                MetricResult(
+            0: {
+                "time_to_first_token": MetricResult(
                     tag="time_to_first_token",
                     header="Time to First Token",
                     unit="ms",
                     avg=45.0,
                 ),
-                MetricResult(
+                "inter_token_latency": MetricResult(
                     tag="inter_token_latency",
                     header="Inter Token Latency",
                     unit="ms",
                     avg=5.0,
                 ),
-            ]
+            }
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -358,8 +362,8 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
     def test_generate_content_uses_json_result_format(self, mock_user_config):
         """Verify uses JsonMetricResult format."""
         timeslice_results = {
-            0: [
-                MetricResult(
+            0: {
+                "metric": MetricResult(
                     tag="metric",
                     header="Metric",
                     unit="ms",
@@ -367,13 +371,13 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
                     min=10.0,
                     max=90.0,
                 )
-            ]
+            }
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -414,20 +418,28 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
     def test_generate_content_different_metrics_per_timeslice(self, mock_user_config):
         """Verify each timeslice can have different metrics."""
         timeslice_results = {
-            0: [
-                MetricResult(tag="metric_a", header="Metric A", unit="ms", avg=10.0),
-                MetricResult(tag="metric_b", header="Metric B", unit="ms", avg=20.0),
-            ],
-            1: [
-                MetricResult(tag="metric_b", header="Metric B", unit="ms", avg=25.0),
-                MetricResult(tag="metric_c", header="Metric C", unit="ms", avg=30.0),
-            ],
+            0: {
+                "metric_a": MetricResult(
+                    tag="metric_a", header="Metric A", unit="ms", avg=10.0
+                ),
+                "metric_b": MetricResult(
+                    tag="metric_b", header="Metric B", unit="ms", avg=20.0
+                ),
+            },
+            1: {
+                "metric_b": MetricResult(
+                    tag="metric_b", header="Metric B", unit="ms", avg=25.0
+                ),
+                "metric_c": MetricResult(
+                    tag="metric_c", header="Metric C", unit="ms", avg=30.0
+                ),
+            },
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True
@@ -593,14 +605,18 @@ class TestTimesliceMetricsJsonExporterIntegration:
     async def test_export_with_many_timeslices(self, mock_user_config):
         """Verify export with 50 timeslices."""
         timeslice_results = {
-            i: [MetricResult(tag="metric", header="Metric", unit="ms", avg=10.0 * i)]
+            i: {
+                "metric": MetricResult(
+                    tag="metric", header="Metric", unit="ms", avg=10.0 * i
+                )
+            }
             for i in range(50)
         }
 
         class MockResults:
             def __init__(self):
                 self.timeslice_metric_results = timeslice_results
-                self.records = []
+                self.records = {}
                 self.start_ns = None
                 self.end_ns = None
                 self.has_results = True

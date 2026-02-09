@@ -136,15 +136,15 @@ class TestRecordsManagerTelemetry:
         assert error_counts[error] == 1
 
     @pytest.mark.asyncio
-    async def test_send_telemetry_to_results_processors(self):
-        """Test sending telemetry records to processors."""
+    async def test_dispatch_telemetry_records(self):
+        """Test dispatching telemetry records to accumulators."""
         from unittest.mock import AsyncMock, Mock
 
         from aiperf.common.models import TelemetryMetrics, TelemetryRecord
 
         # Create mock telemetry processor
         mock_processor = Mock()
-        mock_processor.process_telemetry_record = AsyncMock()
+        mock_processor.process_record = AsyncMock()
 
         records = [
             TelemetryRecord(
@@ -167,10 +167,10 @@ class TestRecordsManagerTelemetry:
 
         # Test the logic: each record should be sent to processor
         for record in records:
-            await mock_processor.process_telemetry_record(record)
+            await mock_processor.process_record(record)
 
         # Processor should be called for each record
-        assert mock_processor.process_telemetry_record.call_count == len(records)
+        assert mock_processor.process_record.call_count == len(records)
 
     def test_telemetry_hierarchy_add_record(self):
         """Test that telemetry hierarchy adds records correctly."""
@@ -217,14 +217,17 @@ class TestRecordsManagerTimeslice:
         )
 
         timeslice_results = {
-            0: [metric_result],
-            1: [metric_result],
+            0: {metric_result.tag: metric_result},
+            1: {metric_result.tag: metric_result},
         }
 
         # Create a ProcessRecordsResult with both types of results
         result = ProcessRecordsResult(
             results=ProfileResults(
-                records=[metric_result, metric_result],
+                records={
+                    metric_result.tag: metric_result,
+                    "request_latency_2": metric_result,
+                },
                 timeslice_metric_results=timeslice_results,
                 completed=2,
                 start_ns=1000000000,
@@ -249,12 +252,12 @@ class TestRecordsManagerTimeslice:
         )
 
         timeslice_results = {
-            0: [metric_result],
-            1: [metric_result],
+            0: {metric_result.tag: metric_result},
+            1: {metric_result.tag: metric_result},
         }
 
         profile_results = ProfileResults(
-            records=[metric_result],
+            records={metric_result.tag: metric_result},
             timeslice_metric_results=timeslice_results,
             completed=1,
             start_ns=1000000000,

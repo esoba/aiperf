@@ -4,9 +4,8 @@
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import ServerMetricsFormat
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.exceptions import PluginDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
-from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.server_metrics_models import (
     ServerMetricsRecord,
     SlimRecord,
@@ -20,7 +19,7 @@ class ServerMetricsJSONLWriter(
 ):
     """Exports per-record server metrics data to JSONL files in slim format.
 
-    This processor converts full ServerMetricsRecord objects to slim format before writing,
+    Converts full ServerMetricsRecord objects to slim format before writing,
     excluding static metadata (metric types, description text) to minimize file size.
     Writes one JSON line per collection cycle.
 
@@ -37,13 +36,13 @@ class ServerMetricsJSONLWriter(
         **kwargs,
     ) -> None:
         if user_config.server_metrics_disabled:
-            raise PostProcessorDisabled(
+            raise PluginDisabled(
                 "Server metrics JSONL export is disabled via --no-server-metrics"
             )
 
         # Check if JSONL format is enabled
         if ServerMetricsFormat.JSONL not in user_config.server_metrics_formats:
-            raise PostProcessorDisabled(
+            raise PluginDisabled(
                 "Server metrics JSONL export disabled: format not selected"
             )
 
@@ -59,13 +58,8 @@ class ServerMetricsJSONLWriter(
         self.info(f"Server metrics JSONL export enabled: {self.output_file}")
 
     async def process_record(self, record: ServerMetricsRecord) -> None:
-        """Alias for process_server_metrics_record (StreamExporterProtocol compatibility)."""
-        await self.process_server_metrics_record(record)
+        """Convert a server metrics record to slim format and write to JSONL.
 
-    async def process_server_metrics_record(self, record: ServerMetricsRecord) -> None:
-        """Process individual server metrics record by converting to slim and writing to JSONL.
-
-        Converts full record to slim format to reduce file size by excluding static metadata.
         Skips duplicate records to avoid cluttering the JSONL file.
 
         Args:
@@ -82,7 +76,3 @@ class ServerMetricsJSONLWriter(
     async def finalize(self) -> None:
         """Flush any buffered data (StreamExporterProtocol)."""
         await self.flush_buffer()
-
-    async def summarize(self) -> list[MetricResult]:
-        """Summarize result. Not used for this processor"""
-        return []

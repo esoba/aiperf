@@ -37,7 +37,7 @@ def accumulator() -> ServerMetricsAccumulator:
     return ServerMetricsAccumulator(user_config=user_config)
 
 
-class TestServerMetricsAccumulatorProtocol:
+class TestServerMetricsAccumulatorConformance:
     def test_satisfies_accumulator_protocol(
         self, accumulator: ServerMetricsAccumulator
     ) -> None:
@@ -54,16 +54,6 @@ class TestProcessRecord:
 
         assert len(accumulator._raw_records) == 1
         assert accumulator._raw_timestamps_ns == [1_000]
-
-    @pytest.mark.asyncio
-    async def test_process_server_metrics_record_delegates_to_process_record(
-        self, accumulator: ServerMetricsAccumulator
-    ) -> None:
-        record = _make_server_metrics_record(2_000)
-        await accumulator.process_server_metrics_record(record)
-
-        assert len(accumulator._raw_records) == 1
-        assert accumulator._raw_timestamps_ns == [2_000]
 
 
 class TestQueryTimeRange:

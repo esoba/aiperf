@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from aiperf.common.config import UserConfig
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.enums import ServerMetricsFormat
-from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
+from aiperf.common.exceptions import DataExporterDisabled, PluginDisabled
 from aiperf.common.models.server_metrics_models import (
     ServerMetricsEndpointInfo,
     ServerMetricsEndpointSummary,
@@ -265,7 +265,7 @@ class TestJsonlWriterFormatSelection:
             output={"artifact_dir": str(tmp_path)},
         )
 
-        with pytest.raises(PostProcessorDisabled, match="format not selected"):
+        with pytest.raises(PluginDisabled, match="format not selected"):
             ServerMetricsJSONLWriter(user_config=config)
 
 
@@ -337,5 +337,5 @@ class TestAllExportersEnabled:
         assert csv_exporter is not None
 
         # JSONL should be disabled by default
-        with pytest.raises(PostProcessorDisabled, match="format not selected"):
+        with pytest.raises(PluginDisabled, match="format not selected"):
             ServerMetricsJSONLWriter(user_config=config)

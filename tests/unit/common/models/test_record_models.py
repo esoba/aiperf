@@ -18,12 +18,12 @@ class TestProfileResults:
         )
 
         timeslice_results = {
-            0: [metric_result],
-            1: [metric_result],
+            0: {metric_result.tag: metric_result},
+            1: {metric_result.tag: metric_result},
         }
 
         profile_results = ProfileResults(
-            records=[metric_result],
+            records={metric_result.tag: metric_result},
             timeslice_metric_results=timeslice_results,
             completed=1,
             start_ns=1000000000,
@@ -47,7 +47,7 @@ class TestProfileResults:
         )
 
         profile_results = ProfileResults(
-            records=[metric_result],
+            records={metric_result.tag: metric_result},
             completed=1,
             start_ns=1000000000,
             end_ns=2000000000,
@@ -66,7 +66,7 @@ class TestProfileResults:
         )
 
         profile_results = ProfileResults(
-            records=[metric_result],
+            records={metric_result.tag: metric_result},
             timeslice_metric_results={},
             completed=1,
             start_ns=1000000000,
@@ -95,13 +95,25 @@ class TestProfileResults:
         )
 
         timeslice_results = {
-            0: [latency_result, throughput_result],
-            1: [latency_result, throughput_result],
-            2: [latency_result, throughput_result],
+            0: {
+                latency_result.tag: latency_result,
+                throughput_result.tag: throughput_result,
+            },
+            1: {
+                latency_result.tag: latency_result,
+                throughput_result.tag: throughput_result,
+            },
+            2: {
+                latency_result.tag: latency_result,
+                throughput_result.tag: throughput_result,
+            },
         }
 
         profile_results = ProfileResults(
-            records=[latency_result, throughput_result],
+            records={
+                latency_result.tag: latency_result,
+                throughput_result.tag: throughput_result,
+            },
             timeslice_metric_results=timeslice_results,
             completed=2,
             start_ns=1000000000,

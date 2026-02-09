@@ -28,21 +28,18 @@ def mock_user_config():
 
 
 class _MockResults:
-    def __init__(self, records_list):
-        self._records_list = records_list
+    def __init__(self, records_dict):
+        self._records_dict = records_dict
         self.start_ns = None
         self.end_ns = None
 
     @property
     def records(self):
-        # MetricsCsvExporter expects a dict[str, MetricResult] *after conversion*
-        # but we monkeypatch the converter to return a dict.
-        # Before conversion, we return a list.
-        return self._records_list
+        return self._records_dict
 
     @property
     def has_results(self):
-        return bool(self._records_list)
+        return bool(self._records_dict)
 
     @property
     def was_cancelled(self):
@@ -127,7 +124,7 @@ async def test_metrics_csv_exporter_writes_two_sections_and_values(
     }
 
     # Before conversion the exporter sees a list (consistent with your other exporters)
-    results = _MockResults(list(converted.values()))
+    results = _MockResults(converted)
 
     # Monkeypatch converter to return our dict above
     import aiperf.exporters.metrics_base_exporter as mbe
@@ -177,7 +174,7 @@ async def test_metrics_csv_exporter_empty_records_creates_empty_file(
     With no records, exporter still creates the file but content is empty (no sections).
     """
     # No records pre-conversion
-    results = _MockResults([])
+    results = _MockResults({})
 
     # Converter returns empty dict to the generator
     import aiperf.exporters.metrics_base_exporter as mbe
@@ -217,7 +214,7 @@ async def test_metrics_csv_exporter_deterministic_sort_order(
         "aaa_latency": mk_metric("aaa_latency", "A Latency", "ms", avg=1.0, p50=1.0),
         "mmm_gpu_util": mk_metric("mmm_gpu_util", "GPU Util", "percent", avg=80.0),
     }
-    results = _MockResults(list(converted.values()))
+    results = _MockResults(converted)
 
     import aiperf.exporters.metrics_base_exporter as mbe
 
@@ -273,7 +270,7 @@ async def test_metrics_csv_exporter_unit_aware_number_formatting(
             "req_latency", "Request Latency", "ms", avg=1.2345, p50=1.234, p90=1.9
         ),
     }
-    results = _MockResults(list(converted.values()))
+    results = _MockResults(converted)
 
     import aiperf.exporters.metrics_base_exporter as mbe
 
@@ -315,7 +312,7 @@ async def test_metrics_csv_exporter_logs_and_raises_on_write_failure(
             "req_latency", "Request Latency", "ms", avg=1.0, p50=1.0
         ),
     }
-    results = _MockResults(list(converted.values()))
+    results = _MockResults(converted)
 
     import aiperf.exporters.metrics_base_exporter as mbe
 
@@ -416,15 +413,14 @@ class TestMetricsCsvExporterTelemetry:
             outdir = Path(tmp)
             mock_user_config.output.artifact_directory = outdir
 
+            _mr = MetricResult(
+                tag="time_to_first_token",
+                header="Time to First Token",
+                unit="ms",
+                avg=120.5,
+            )
             results = ProfileResults(
-                records=[
-                    MetricResult(
-                        tag="time_to_first_token",
-                        header="Time to First Token",
-                        unit="ms",
-                        avg=120.5,
-                    )
-                ],
+                records={_mr.tag: _mr},
                 start_ns=0,
                 end_ns=0,
                 completed=0,
@@ -459,15 +455,14 @@ class TestMetricsCsvExporterTelemetry:
             outdir = Path(tmp)
             mock_user_config.output.artifact_directory = outdir
 
+            _mr = MetricResult(
+                tag="time_to_first_token",
+                header="Time to First Token",
+                unit="ms",
+                avg=120.5,
+            )
             results = ProfileResults(
-                records=[
-                    MetricResult(
-                        tag="time_to_first_token",
-                        header="Time to First Token",
-                        unit="ms",
-                        avg=120.5,
-                    )
-                ],
+                records={_mr.tag: _mr},
                 start_ns=0,
                 end_ns=0,
                 completed=0,
@@ -502,7 +497,7 @@ class TestMetricsCsvExporterTelemetry:
             outdir = Path(tmp)
             mock_user_config.output.artifact_directory = outdir
 
-            results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+            results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
 
             cfg = ExporterConfig(
                 results=results,
@@ -562,7 +557,7 @@ class TestMetricsCsvExporterTelemetry:
                 },
             )
 
-            results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+            results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
 
             cfg = ExporterConfig(
                 results=results,
@@ -688,7 +683,7 @@ class TestMetricsCsvExporterTelemetry:
                 },
             )
 
-            results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+            results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
 
             cfg = ExporterConfig(
                 results=results,
@@ -750,7 +745,7 @@ class TestMetricsCsvExporterTelemetry:
                 },
             )
 
-            results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+            results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
 
             cfg = ExporterConfig(
                 results=results,
@@ -776,7 +771,7 @@ class TestMetricsCsvExporterTelemetry:
         """Test _format_number with very small values."""
         from aiperf.common.models import ProfileResults
 
-        results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+        results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
         cfg = ExporterConfig(
             results=results,
             user_config=mock_user_config,
@@ -801,7 +796,7 @@ class TestMetricsCsvExporterTelemetry:
 
         from aiperf.common.models import ProfileResults
 
-        results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+        results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
         cfg = ExporterConfig(
             results=results,
             user_config=mock_user_config,
@@ -869,7 +864,7 @@ class TestOptionalTelemetryHeaders:
         """Create exporter with given telemetry data."""
         from aiperf.common.models import ProfileResults
 
-        results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+        results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
         cfg = ExporterConfig(
             results=results,
             user_config=mock_user_config,
@@ -989,7 +984,7 @@ def test_metrics_csv_exporter_inherits_from_base(mock_user_config):
     """Verify MetricsCsvExporter inherits from MetricsBaseExporter."""
     from aiperf.common.models import ProfileResults
 
-    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
         user_config=mock_user_config,
@@ -1011,7 +1006,7 @@ async def test_metrics_csv_exporter_uses_base_export(mock_user_config):
 
     from aiperf.common.models import ProfileResults
 
-    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
         user_config=mock_user_config,
@@ -1040,14 +1035,13 @@ def test_metrics_csv_exporter_generate_content_uses_instance_data_members(
     from aiperf.common.models import ProfileResults
 
     # Create mock records
-    mock_records = [
-        MetricResult(
-            tag="time_to_first_token",
-            header="Time to First Token",
-            unit="ms",
-            avg=45.2,
-        )
-    ]
+    _mr = MetricResult(
+        tag="time_to_first_token",
+        header="Time to First Token",
+        unit="ms",
+        avg=45.2,
+    )
+    mock_records = {_mr.tag: _mr}
 
     results = ProfileResults(records=mock_records, start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
@@ -1081,7 +1075,7 @@ def test_metrics_csv_exporter_generate_content_uses_telemetry_results_from_insta
     """Verify _generate_content() uses self._telemetry_results."""
     from aiperf.common.models import ProfileResults
 
-    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
         user_config=mock_user_config,
@@ -1110,7 +1104,7 @@ async def test_metrics_csv_exporter_export_calls_generate_content_internally(
     """Verify export() calls _generate_content() internally."""
     from aiperf.common.models import ProfileResults
 
-    results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
+    results = ProfileResults(records={}, start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
         user_config=mock_user_config,

@@ -4,6 +4,7 @@
 
 import pytest
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.models.error_models import ErrorDetailsCount
@@ -78,8 +79,8 @@ def sample_server_metrics_record(
 
 
 @pytest.mark.asyncio
-class TestServerMetricsResultsProcessor:
-    """Test cases for ServerMetricsResultsProcessor."""
+class TestServerMetricsAccumulator:
+    """Test cases for ServerMetricsAccumulator."""
 
     async def test_initialization(self, mock_user_config: UserConfig) -> None:
         """Test processor initialization sets up hierarchy."""
@@ -87,7 +88,7 @@ class TestServerMetricsResultsProcessor:
 
         assert isinstance(processor._server_metrics_hierarchy, ServerMetricsHierarchy)
 
-    async def test_process_server_metrics_record(
+    async def test_process_record(
         self,
         mock_user_config: UserConfig,
         sample_server_metrics_record: ServerMetricsRecord,
@@ -95,7 +96,7 @@ class TestServerMetricsResultsProcessor:
         """Test processing a server metrics record adds it to the hierarchy."""
         processor = ServerMetricsAccumulator(mock_user_config)
 
-        await processor.process_server_metrics_record(sample_server_metrics_record)
+        await processor.process_record(sample_server_metrics_record)
 
         endpoint_url = sample_server_metrics_record.endpoint_url
         assert endpoint_url in processor._server_metrics_hierarchy.endpoints
@@ -105,8 +106,7 @@ class TestServerMetricsResultsProcessor:
         processor = ServerMetricsAccumulator(mock_user_config)
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=2_000_000_000,
+            ExportContext(start_ns=1_000_000_000, end_ns=2_000_000_000)
         )
 
         assert result is None
@@ -131,11 +131,13 @@ class TestServerMetricsResultsProcessor:
                 endpoint_latency_ns=5_000_000,
                 metrics={"cache_usage": gauge},
             )
-            await processor.process_server_metrics_record(record)
+            await processor.process_record(record)
 
         start_ns = 1_000_000_000
         end_ns = 2_000_000_000
-        result = await processor.export_results(start_ns=start_ns, end_ns=end_ns)
+        result = await processor.export_results(
+            ExportContext(start_ns=start_ns, end_ns=end_ns)
+        )
 
         assert result is not None
         assert isinstance(result, ServerMetricsResults)
@@ -154,7 +156,7 @@ class TestServerMetricsResultsProcessor:
         """Test export_results includes error summary when provided."""
         processor = ServerMetricsAccumulator(mock_user_config)
 
-        await processor.process_server_metrics_record(sample_server_metrics_record)
+        await processor.process_record(sample_server_metrics_record)
 
         from aiperf.common.models import ErrorDetails
 
@@ -168,9 +170,11 @@ class TestServerMetricsResultsProcessor:
         ]
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=2_000_000_000,
-            error_summary=error_summary,
+            ExportContext(
+                start_ns=1_000_000_000,
+                end_ns=2_000_000_000,
+                error_summary=error_summary,
+            )
         )
 
         assert result is not None
@@ -196,13 +200,15 @@ class TestServerMetricsResultsProcessor:
                 endpoint_latency_ns=5_000_000,
                 metrics={"cache_usage": gauge},
             )
-            await processor.process_server_metrics_record(record)
+            await processor.process_record(record)
 
         # export_results now constructs per-endpoint TimeFilters internally
         # start_ns and end_ns define the profiling phase bounds
         result = await processor.export_results(
-            start_ns=1_000_000_000,  # Profiling start
-            end_ns=2_000_000_000,  # Profiling end
+            ExportContext(
+                start_ns=1_000_000_000,  # Profiling start
+                end_ns=2_000_000_000,  # Profiling end
+            )
         )
 
         assert result is not None
@@ -231,11 +237,10 @@ class TestServerMetricsResultsProcessor:
                     endpoint_latency_ns=5_000_000,
                     metrics={"cache_usage": gauge},
                 )
-                await processor.process_server_metrics_record(record)
+                await processor.process_record(record)
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=2_000_000_000,
+            ExportContext(start_ns=1_000_000_000, end_ns=2_000_000_000)
         )
 
         assert result is not None
@@ -266,11 +271,10 @@ class TestServerMetricsResultsProcessor:
                 endpoint_latency_ns=5_000_000,
                 metrics={"cache_usage": gauge},
             )
-            await processor.process_server_metrics_record(record)
+            await processor.process_record(record)
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=2_000_000_000,
+            ExportContext(start_ns=1_000_000_000, end_ns=2_000_000_000)
         )
 
         assert result is not None
@@ -299,11 +303,10 @@ class TestServerMetricsResultsProcessor:
                 endpoint_latency_ns=scrape_latency_ns,
                 metrics={"cache_usage": gauge},
             )
-            await processor.process_server_metrics_record(record)
+            await processor.process_record(record)
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=6_000_000_000,
+            ExportContext(start_ns=1_000_000_000, end_ns=6_000_000_000)
         )
 
         assert result is not None
@@ -350,11 +353,10 @@ class TestServerMetricsResultsProcessor:
                 endpoint_latency_ns=1_000_000,
                 metrics={"cache_usage": gauge},
             )
-            await processor.process_server_metrics_record(record)
+            await processor.process_record(record)
 
         result = await processor.export_results(
-            start_ns=1_000_000_000,
-            end_ns=10_000_000_000,
+            ExportContext(start_ns=1_000_000_000, end_ns=10_000_000_000)
         )
 
         summary = list(result.endpoint_summaries.values())[0]
@@ -397,11 +399,10 @@ class TestSliceDurationConfig:
                 endpoint_latency_ns=1_000_000,
                 metrics={"requests_total": counter},
             )
-            await processor.process_server_metrics_record(record)
+            await processor.process_record(record)
 
         result = await processor.export_results(
-            start_ns=0,
-            end_ns=9_000_000_000,
+            ExportContext(start_ns=0, end_ns=9_000_000_000)
         )
 
         assert result is not None

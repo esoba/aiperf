@@ -30,7 +30,7 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.post_processors.inference_time_series import InferenceTimeSeries
 
 if TYPE_CHECKING:
-    from aiperf.common.accumulator_protocols import SummaryContext
+    from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
 
 _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
     AggregationKind.SUM: lambda a: float(np.sum(a)),
@@ -48,25 +48,27 @@ class MetricsSummary:
     fields are populated from a single accumulator.
     """
 
-    results: list[MetricResult]
-    timeslices: dict[TimeSliceT, list[MetricResult]] | None = field(default=None)
+    results: dict[MetricTagT, MetricResult]
+    timeslices: dict[TimeSliceT, dict[MetricTagT, MetricResult]] | None = field(
+        default=None
+    )
 
     def to_json(self) -> dict[str, Any]:
         data: dict[str, Any] = {
-            "results": [r.to_json_result().model_dump() for r in self.results],
+            "results": [r.to_json_result().model_dump() for r in self.results.values()],
         }
         if self.timeslices is not None:
             data["timeslices"] = {
-                str(k): [r.to_json_result().model_dump() for r in v]
+                str(k): [r.to_json_result().model_dump() for r in v.values()]
                 for k, v in self.timeslices.items()
             }
         return data
 
     def to_csv(self) -> list[dict[str, Any]]:
-        rows = [r.model_dump(exclude={"current"}) for r in self.results]
+        rows = [r.model_dump(exclude={"current"}) for r in self.results.values()]
         if self.timeslices is not None:
             for ts, results in self.timeslices.items():
-                for r in results:
+                for r in results.values():
                     row = r.model_dump(exclude={"current"})
                     row["timeslice"] = ts
                     rows.append(row)
@@ -267,13 +269,14 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
         raise ValueError(f"Unexpected values type: {type(values)}")
 
-    def _results_to_metric_results(
+    def _build_metric_results(
         self, results: MetricResultsDict
-    ) -> list[MetricResult]:
-        """Convert a MetricResultsDict to a list of MetricResult objects."""
-        return [
-            self._create_metric_result(tag, values) for tag, values in results.items()
-        ]
+    ) -> dict[MetricTagT, MetricResult]:
+        """Convert a MetricResultsDict to a dict of MetricResult objects keyed by tag."""
+        return {
+            tag: self._create_metric_result(tag, values)
+            for tag, values in results.items()
+        }
 
     async def summarize(self, ctx: SummaryContext | None = None) -> MetricsSummary:
         """Compute and return aggregated metric results.
@@ -284,9 +287,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # Build overall results
         results_dict = self._build_results_dict()
         self._compute_derived(results_dict)
-        overall_results = self._results_to_metric_results(results_dict)
+        overall_results = self._build_metric_results(results_dict)
 
-        timeslices: dict[TimeSliceT, list[MetricResult]] | None = None
+        timeslices: dict[TimeSliceT, dict[MetricTagT, MetricResult]] | None = None
 
         if self._slice_duration_ns is not None and len(self._records) > 0:
             timeslices = self._compute_timeslices()
@@ -294,7 +297,13 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")
         return MetricsSummary(results=overall_results, timeslices=timeslices)
 
-    def _compute_timeslices(self) -> dict[TimeSliceT, list[MetricResult]]:
+    async def export_results(self, ctx: ExportContext) -> MetricsSummary:
+        """Export final metrics results. Delegates to summarize()."""
+        return await self.summarize()
+
+    def _compute_timeslices(
+        self,
+    ) -> dict[TimeSliceT, dict[MetricTagT, MetricResult]]:
         """Compute per-timeslice results by partitioning the time range."""
         assert self._slice_duration_ns is not None
 
@@ -302,7 +311,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         min_ts = int(timestamps.min())
         max_ts = int(timestamps.max())
 
-        timeslice_results: dict[TimeSliceT, list[MetricResult]] = {}
+        timeslice_results: dict[TimeSliceT, dict[MetricTagT, MetricResult]] = {}
         slice_start = min_ts
         counter = 0
 
@@ -312,9 +321,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
             if len(window_results) > 0:
                 self._compute_derived(window_results)
-                timeslice_results[counter] = self._results_to_metric_results(
-                    window_results
-                )
+                timeslice_results[counter] = self._build_metric_results(window_results)
 
             counter += 1
             slice_start = slice_end

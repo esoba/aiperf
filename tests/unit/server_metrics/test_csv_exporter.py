@@ -129,7 +129,7 @@ def mock_user_config(tmp_path):
 def mock_profile_results():
     """Create a minimal ProfileResults for exporter config."""
     return ProfileResults(
-        records=[],
+        records={},
         completed=100,
         start_ns=1_000_000_000_000,
         end_ns=1_300_000_000_000,

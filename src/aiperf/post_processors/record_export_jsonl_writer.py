@@ -4,16 +4,16 @@
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.exceptions import PluginDisabled
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import BufferedJSONLWriterMixin
-from aiperf.common.models.record_models import MetricRecordInfo, MetricResult
+from aiperf.common.models.record_models import MetricRecordInfo
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
-class RecordExportResultsProcessor(
+class RecordExportJSONLWriter(
     BaseMetricsProcessor, BufferedJSONLWriterMixin[MetricRecordInfo]
 ):
     """Exports per-record metrics to JSONL with display unit conversion and filtering."""
@@ -27,8 +27,8 @@ class RecordExportResultsProcessor(
     ):
         export_level = user_config.output.export_level
         if export_level not in (ExportLevel.RECORDS, ExportLevel.RAW):
-            raise PostProcessorDisabled(
-                f"Record export results processor is disabled for export level {export_level}"
+            raise PluginDisabled(
+                f"Record export JSONL writer is disabled for export level {export_level}"
             )
 
         output_file = user_config.output.profile_export_jsonl_file
@@ -54,11 +54,7 @@ class RecordExportResultsProcessor(
         if self.export_http_trace:
             self.info("HTTP trace export enabled (--export-http-trace)")
 
-    async def process_record(self, record: MetricRecordsData) -> None:
-        """Alias for process_result (AccumulatorProtocol compatibility)."""
-        await self.process_result(record)
-
-    async def process_result(self, record_data: MetricRecordsData) -> None:
+    async def process_record(self, record_data: MetricRecordsData) -> None:
         try:
             metric_dict = MetricRecordDict(record_data.metrics)
             display_metrics = metric_dict.to_display_dict(
@@ -90,7 +86,3 @@ class RecordExportResultsProcessor(
     async def finalize(self) -> None:
         """Flush any buffered data (StreamExporterProtocol)."""
         await self.flush_buffer()
-
-    async def summarize(self) -> list[MetricResult]:
-        """Summarize the results. For this processor, we don't need to summarize anything."""
-        return []

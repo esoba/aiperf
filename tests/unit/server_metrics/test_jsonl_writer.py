@@ -117,9 +117,7 @@ class TestServerMetricsRecordProcessing:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_server_metrics_record(
-                sample_server_metrics_record_for_export
-            )
+            await processor.process_record(sample_server_metrics_record_for_export)
 
         output_file = (
             user_config_server_metrics_export.output.server_metrics_export_jsonl_file
@@ -169,7 +167,7 @@ class TestServerMetricsRecordProcessing:
                         ),
                     },
                 )
-                await processor.process_server_metrics_record(record)
+                await processor.process_record(record)
 
         output_file = (
             user_config_server_metrics_export.output.server_metrics_export_jsonl_file
@@ -192,9 +190,7 @@ class TestServerMetricsRecordProcessing:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_server_metrics_record(
-                sample_server_metrics_record_for_export
-            )
+            await processor.process_record(sample_server_metrics_record_for_export)
 
         output_file = (
             user_config_server_metrics_export.output.server_metrics_export_jsonl_file
@@ -238,7 +234,7 @@ class TestServerMetricsRecordProcessing:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_server_metrics_record(record)
+            await processor.process_record(record)
 
         output_file = (
             user_config_server_metrics_export.output.server_metrics_export_jsonl_file
@@ -301,8 +297,8 @@ class TestDuplicateRecordHandling:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_server_metrics_record(unique_record)
-            await processor.process_server_metrics_record(duplicate_record)
+            await processor.process_record(unique_record)
+            await processor.process_record(duplicate_record)
 
         output_file = (
             user_config_server_metrics_export.output.server_metrics_export_jsonl_file
@@ -313,28 +309,6 @@ class TestDuplicateRecordHandling:
         assert len(lines) == 1
         data = orjson.loads(lines[0])
         assert data["timestamp_ns"] == 1_000_000_000
-
-
-class TestSummarizeMethod:
-    """Test summarize method behavior."""
-
-    @pytest.mark.asyncio
-    async def test_summarize_returns_empty_list(
-        self,
-        user_config_server_metrics_export: UserConfig,
-        service_config: ServiceConfig,
-    ):
-        """Test that summarize returns empty list (export processors don't summarize)."""
-        processor = ServerMetricsJSONLWriter(
-            service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_server_metrics_export,
-        )
-
-        async with aiperf_lifecycle(processor):
-            results = await processor.summarize()
-
-        assert results == []
 
 
 class TestInfoMetricsHandling:
@@ -392,7 +366,7 @@ class TestInfoMetricsHandling:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_server_metrics_record(record)
+            await processor.process_record(record)
 
         jsonl_file = (
             user_config_server_metrics_export.output.server_metrics_export_jsonl_file
@@ -453,7 +427,7 @@ class TestInfoMetricsHandling:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_server_metrics_record(record)
+            await processor.process_record(record)
 
         # Check JSONL file
         jsonl_file = (

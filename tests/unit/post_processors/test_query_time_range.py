@@ -11,8 +11,8 @@ from aiperf.common.accumulator_protocols import AccumulatorProtocol
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.post_processors.metrics_accumulator import MetricsAccumulator
 from tests.unit.post_processors.conftest import (
+    create_accumulator_with_metrics,
     create_metric_metadata,
-    create_results_processor_with_metrics,
 )
 
 
@@ -29,7 +29,7 @@ def _make_record(request_start_ns: int) -> MetricRecordsData:
 
 @pytest.fixture
 def processor(mock_user_config, mock_metric_registry) -> MetricsAccumulator:
-    return create_results_processor_with_metrics(mock_user_config)
+    return create_accumulator_with_metrics(mock_user_config)
 
 
 class TestMetricsAccumulatorProtocol:

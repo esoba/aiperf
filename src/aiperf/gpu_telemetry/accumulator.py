@@ -9,16 +9,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import GPUTelemetryMode
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
+from aiperf.common.exceptions import NoMetricValue, PluginDisabled
 from aiperf.common.hooks import background_task
 from aiperf.common.messages import RealtimeTelemetryMetricsMessage
 from aiperf.common.models import (
     EndpointData,
-    ErrorDetailsCount,
     GpuSummary,
     MetricResult,
     TelemetryExportData,
@@ -27,6 +27,7 @@ from aiperf.common.models import (
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
 from aiperf.common.models.telemetry_models import TelemetryHierarchy, TelemetryRecord
 from aiperf.common.protocols import PubClientProtocol
+from aiperf.common.types import MetricTagT
 from aiperf.exporters.display_units_utils import normalize_endpoint_display
 from aiperf.gpu_telemetry.constants import (
     GPU_TELEMETRY_COUNTER_METRICS,
@@ -43,13 +44,13 @@ if TYPE_CHECKING:
 class TelemetryMetricsSummary:
     """Typed result from GPUTelemetryAccumulator.summarize()."""
 
-    results: list[MetricResult]
+    results: dict[MetricTagT, MetricResult]
 
     def to_json(self) -> list[dict[str, Any]]:
-        return [r.to_json_result().model_dump() for r in self.results]
+        return [r.to_json_result().model_dump() for r in self.results.values()]
 
     def to_csv(self) -> list[dict[str, Any]]:
-        return [r.model_dump(exclude={"current"}) for r in self.results]
+        return [r.model_dump(exclude={"current"}) for r in self.results.values()]
 
 
 class GPUTelemetryAccumulator(BaseMetricsProcessor):
@@ -72,7 +73,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         **kwargs: Additional arguments passed to base class
 
     Raises:
-        PostProcessorDisabled: If GPU telemetry is disabled via --no-gpu-telemetry
+        PluginDisabled: If GPU telemetry is disabled via --no-gpu-telemetry
     """
 
     def __init__(
@@ -83,7 +84,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         **kwargs: Any,
     ):
         if user_config.gpu_telemetry_disabled:
-            raise PostProcessorDisabled(
+            raise PluginDisabled(
                 "GPU telemetry accumulator is disabled via --no-gpu-telemetry"
             )
         self.pub_client = pub_client
@@ -106,14 +107,6 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         self._raw_records.append(record)
         self._raw_timestamps_ns.append(record.timestamp_ns)
         self._hierarchy.add_record(record)
-
-    async def process_telemetry_record(self, record: TelemetryRecord) -> None:
-        """Process individual GPU telemetry record into hierarchical storage.
-
-        Args:
-            record: GPU TelemetryRecord containing GPU metrics and hierarchical metadata
-        """
-        await self.process_record(record)
 
     def query_time_range(self, start_ns: int, end_ns: int) -> list[TelemetryRecord]:
         """Return records whose timestamp_ns falls within [start_ns, end_ns)."""
@@ -165,12 +158,11 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         # if the time has elapsed. (and avoid summarizing the metrics again)
 
         summary = await self.summarize()
-        telemetry_metrics = summary.results
-        self._total_metrics_generated += len(telemetry_metrics)
+        self._total_metrics_generated += len(summary.results)
 
-        if telemetry_metrics:
+        if summary.results:
             # Only publish if values have changed - extract once for efficiency
-            new_values = {m.tag: m.current for m in telemetry_metrics}
+            new_values = {tag: m.current for tag, m in summary.results.items()}
             if (
                 self._last_metric_values is None
                 or new_values != self._last_metric_values
@@ -178,7 +170,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                 await self.pub_client.publish(
                     RealtimeTelemetryMetricsMessage(
                         service_id=self.id,
-                        metrics=telemetry_metrics,
+                        metrics=list(summary.results.values()),
                     )
                 )
                 self._last_metric_values = new_values
@@ -199,7 +191,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
             TelemetryMetricsSummary containing MetricResult objects, one per GPU per metric type.
             Tags follow hierarchical naming pattern for dashboard filtering.
         """
-        results: list[MetricResult] = []
+        results: dict[MetricTagT, MetricResult] = {}
 
         for dcgm_url, gpu_data in self._hierarchy.dcgm_endpoints.items():
             endpoint_display = normalize_endpoint_display(dcgm_url)
@@ -226,7 +218,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                         result = telemetry_data.get_metric_result(
                             metric_name, tag, header, unit_enum
                         )
-                        results.append(result)
+                        results[tag] = result
                     except NoMetricValue:
                         self.debug(
                             f"No data available for metric '{metric_name}' on GPU {gpu_uuid[:12]} from {dcgm_url}"
@@ -240,12 +232,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
         return TelemetryMetricsSummary(results=results)
 
-    def export_results(
-        self,
-        start_ns: int | None = None,
-        end_ns: int | None = None,
-        error_summary: list[ErrorDetailsCount] | None = None,
-    ) -> TelemetryExportData | None:
+    async def export_results(self, ctx: ExportContext) -> TelemetryExportData | None:
         """Export accumulated telemetry data as a TelemetryExportData object.
 
         Transforms the internal numpy-backed telemetry hierarchy into a serializable
@@ -256,11 +243,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         - Counter metrics (energy, errors): Delta computed from baseline before start_ns
 
         Args:
-            start_ns: Start time of profiling phase in nanoseconds (excludes warmup).
-                     If None, includes all data from beginning.
-            end_ns: End time of profiling phase in nanoseconds. If None, includes all
-                   data after start_ns (including final scrape after profiling completes).
-            error_summary: Optional list of error counts
+            ctx: ExportContext with profiling time window and error summary.
 
         Returns:
             TelemetryExportData object with pre-computed metrics for each GPU
@@ -268,18 +251,18 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         # Create time filter for warmup exclusion
         # Note: end_ns is typically None to include the final telemetry scrape
         # that occurs after PROFILE_COMPLETE but before export
-        time_filter = TimeRangeFilter(start_ns=start_ns, end_ns=end_ns)
+        time_filter = TimeRangeFilter(start_ns=ctx.start_ns, end_ns=ctx.end_ns)
 
         # Build summary
         # When start_ns/end_ns is None, use current time as the timestamp
         start_time = (
-            datetime.fromtimestamp(start_ns / NANOS_PER_SECOND)
-            if start_ns is not None
+            datetime.fromtimestamp(ctx.start_ns / NANOS_PER_SECOND)
+            if ctx.start_ns is not None
             else datetime.now()
         )
         end_time = (
-            datetime.fromtimestamp(end_ns / NANOS_PER_SECOND)
-            if end_ns is not None
+            datetime.fromtimestamp(ctx.end_ns / NANOS_PER_SECOND)
+            if ctx.end_ns is not None
             else datetime.now()
         )
         summary = TelemetrySummary(
@@ -342,5 +325,5 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                 endpoints[endpoint_display] = EndpointData(gpus=gpus_dict)
 
         return TelemetryExportData(
-            summary=summary, endpoints=endpoints, error_summary=error_summary
+            summary=summary, endpoints=endpoints, error_summary=ctx.error_summary
         )

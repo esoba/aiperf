@@ -31,9 +31,7 @@ from aiperf.common.messages import (
     CommandResponse,
     CommandSuccessResponse,
     HeartbeatMessage,
-    ProcessRecordsResultMessage,
-    ProcessServerMetricsResultMessage,
-    ProcessTelemetryResultMessage,
+    ProcessAllResultsMessage,
     ProfileCancelCommand,
     ProfileConfigureCommand,
     ProfileStartCommand,
@@ -136,8 +134,6 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._telemetry_results: TelemetryExportData | None = None
         self._server_metrics_results: ServerMetricsResults | None = None
         self._profile_results_received = False
-        self._should_wait_for_telemetry = False
-        self._should_wait_for_server_metrics = False
 
         self._shutdown_triggered = False
         self._shutdown_lock = asyncio.Lock()
@@ -211,14 +207,12 @@ class SystemController(SignalHandlerMixin, BaseService):
             await self.service_manager.run_service(ServiceType.GPU_TELEMETRY_MANAGER)
         else:
             self.info("GPU telemetry disabled via --no-gpu-telemetry")
-            self._should_wait_for_telemetry = False
 
         if not self.user_config.server_metrics_disabled:
             self.debug("Starting optional ServerMetricsManager service")
             await self.service_manager.run_service(ServiceType.SERVER_METRICS_MANAGER)
         else:
             self.info("Server metrics disabled via --no-server-metrics")
-            self._should_wait_for_server_metrics = False
 
         async with self.try_operation_or_stop("Register Services"):
             await self.service_manager.wait_for_all_services_registration(
@@ -417,12 +411,11 @@ class SystemController(SignalHandlerMixin, BaseService):
     ) -> None:
         """Handle telemetry status from TelemetryManager.
 
-        TelemetryStatusMessage informs SystemController if telemetry results will be available.
+        TelemetryStatusMessage informs SystemController about endpoint reachability
+        for display in the final telemetry results.
         """
-
         self._telemetry_endpoints_configured = message.endpoints_configured
         self._telemetry_endpoints_reachable = message.endpoints_reachable
-        self._should_wait_for_telemetry = message.enabled
 
         if not message.enabled:
             reason_msg = f" - {message.reason}" if message.reason else ""
@@ -432,21 +425,17 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"GPU telemetry enabled - {len(message.endpoints_reachable)}/{len(message.endpoints_configured)} endpoint(s) reachable"
             )
 
-        # Re-check shutdown readiness in case results arrived before status message
-        await self._check_and_trigger_shutdown()
-
     @on_message(MessageType.SERVER_METRICS_STATUS)
     async def _on_server_metrics_status_message(
         self, message: ServerMetricsStatusMessage
     ) -> None:
         """Handle server metrics status from ServerMetricsManager.
 
-        ServerMetricsStatusMessage informs SystemController if server metrics results will be available.
+        ServerMetricsStatusMessage informs SystemController about endpoint reachability
+        for display in the final server metrics results.
         """
-
         self._server_metrics_endpoints_configured = message.endpoints_configured
         self._server_metrics_endpoints_reachable = message.endpoints_reachable
-        self._should_wait_for_server_metrics = message.enabled
 
         if not message.enabled:
             reason_msg = f" - {message.reason}" if message.reason else ""
@@ -462,9 +451,6 @@ class SystemController(SignalHandlerMixin, BaseService):
                 self.warning(
                     f"Unreachable endpoints: {', '.join(unreachable_endpoints)}"
                 )
-
-        # Re-check shutdown readiness in case results arrived before status message
-        await self._check_and_trigger_shutdown()
 
     @on_message(MessageType.COMMAND_RESPONSE)
     async def _process_command_response_message(self, message: CommandResponse) -> None:
@@ -510,173 +496,58 @@ class SystemController(SignalHandlerMixin, BaseService):
         if self.scale_record_processors_with_workers:
             await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
 
-    @on_message(MessageType.PROCESS_RECORDS_RESULT)
-    async def _on_process_records_result_message(
-        self, message: ProcessRecordsResultMessage
-    ) -> None:
-        """Handle a profile results message."""
+    @on_message(MessageType.PROCESS_ALL_RESULTS)
+    async def _on_all_results_message(self, message: ProcessAllResultsMessage) -> None:
+        """Handle the unified results message from RecordsManager.
+
+        All accumulator results arrive in a single message. Data files have already
+        been exported by RecordsManager; SystemController only handles console export.
+        """
         self.trace_or_debug(
-            lambda: f"Received profile results message: {message}",
+            lambda: f"Received all results message: {message}",
             lambda: (
-                f"Received profile results message: {len(message.results.results.records) if message.results.results else 0} records"
+                f"Received all results: "
+                f"{len(message.results.results.records)} metric records, "
+                f"telemetry={'yes' if message.telemetry_results else 'no'}, "
+                f"server_metrics={'yes' if message.server_metrics_results else 'no'}"
             ),
         )
-        if message.results.errors:
-            self.error(
-                f"Received process records result message with errors: {message.results.errors}"
-            )
 
-        self.debug(
-            lambda: (
-                f"Error summary: {message.results.results.error_summary if message.results.results else 'N/A'}"
-            )
-        )
+        if message.results.errors:
+            self.error(f"Results contain errors: {message.results.errors}")
 
         self._profile_results = message.results
-
-        if not message.results.results:
-            self.error(
-                f"Received process records result message with no records: {message.results.results}"
-            )
-
         self._profile_results_received = True
-        # Coordinate with telemetry results before shutdown
-        await self._check_and_trigger_shutdown()
 
-    @on_message(MessageType.PROCESS_TELEMETRY_RESULT)
-    async def _on_process_telemetry_result_message(
-        self, message: ProcessTelemetryResultMessage
-    ) -> None:
-        """Handle a telemetry results message."""
-        try:
-            self.trace_or_debug(
-                lambda: f"Received telemetry results message: {message}",
-                lambda: (
-                    f"Received telemetry results message: {len(message.telemetry_result.results.endpoints) if message.telemetry_result.results else 0} endpoints"
-                ),
+        # Telemetry endpoint fixup (endpoints_configured/reachable come from status message)
+        if message.telemetry_results:
+            message.telemetry_results.summary.endpoints_configured = (
+                self._telemetry_endpoints_configured
             )
-
-            telemetry_results = message.telemetry_result.results
-            if not telemetry_results:
-                self.error(
-                    f"Received process telemetry result message with no records: {telemetry_results}"
-                )
-            else:
-                # Update endpoint info in the summary (TelemetryExportData structure)
-                telemetry_results.summary.endpoints_configured = (
-                    self._telemetry_endpoints_configured
-                )
-                telemetry_results.summary.endpoints_successful = (
-                    self._telemetry_endpoints_reachable
-                )
-
-            self._telemetry_results = telemetry_results
-        except Exception as e:
-            self.exception(f"Error processing telemetry results message: {e!r}")
-        finally:
-            self._should_wait_for_telemetry = False
-            await self._check_and_trigger_shutdown()
-
-    @on_message(MessageType.PROCESS_SERVER_METRICS_RESULT)
-    async def _on_process_server_metrics_result_message(
-        self, message: ProcessServerMetricsResultMessage
-    ) -> None:
-        """Handle a server metrics results message."""
-        try:
-            self.trace_or_debug(
-                lambda: f"Received server metrics results message: {message}",
-                lambda: (
-                    f"Received server metrics results message: {len(message.server_metrics_result.results.endpoint_summaries or {}) if message.server_metrics_result.results else 0} endpoints"
-                ),
+            message.telemetry_results.summary.endpoints_successful = (
+                self._telemetry_endpoints_reachable
             )
+        self._telemetry_results = message.telemetry_results
 
-            self.debug(
-                lambda: (
-                    f"Server metrics error summary: {message.server_metrics_result.results.error_summary if message.server_metrics_result.results else 'N/A'}"
-                )
+        # Server metrics endpoint fixup
+        if message.server_metrics_results:
+            message.server_metrics_results.endpoints_configured = (
+                self._server_metrics_endpoints_configured
             )
+            message.server_metrics_results.endpoints_successful = (
+                self._server_metrics_endpoints_reachable
+            )
+        self._server_metrics_results = message.server_metrics_results
 
-            server_metrics_results = message.server_metrics_result.results
-
-            if not server_metrics_results:
-                self.debug(
-                    f"Received process server metrics result message with no results: {server_metrics_results}"
-                )
-            else:
-                server_metrics_results.endpoints_configured = (
-                    self._server_metrics_endpoints_configured
-                )
-                server_metrics_results.endpoints_successful = (
-                    self._server_metrics_endpoints_reachable
-                )
-
-            self._server_metrics_results = server_metrics_results
-        except Exception as e:
-            self.exception(f"Error processing server metrics results message: {e!r}")
-        finally:
-            self._should_wait_for_server_metrics = False
-            await self._check_and_trigger_shutdown()
-
-    async def _check_and_trigger_shutdown(self) -> None:
-        """Check if all required results are received and trigger unified export + shutdown.
-
-        Coordination logic:
-        1. Always wait for profile results (ProcessRecordsResultMessage)
-        2. If telemetry disabled OR telemetry results received → proceed
-        3. If server metrics disabled OR server metrics results received → proceed
-        4. Otherwise → wait (results arrive nearly simultaneously and will call this method again)
-
-        Thread safety:
-        Uses self._shutdown_lock to prevent race conditions when ProcessRecordsResultMessage,
-        ProcessTelemetryResultMessage, and ProcessServerMetricsResultMessage arrive concurrently.
-        The lock ensures atomic check-and-set of _shutdown_triggered, preventing double-triggering of stop().
-        """
-        self.debug(
-            f"_check_and_trigger_shutdown: profile_received={self._profile_results_received}, "
-            f"wait_telemetry={self._should_wait_for_telemetry}, telemetry_results={self._telemetry_results is not None}, "
-            f"wait_server_metrics={self._should_wait_for_server_metrics}, server_metrics_results={self._server_metrics_results is not None}, "
-            f"shutdown_triggered={self._shutdown_triggered}"
-        )
-        # Check if we should trigger shutdown (with lock protection)
-        should_shutdown = False
+        # Trigger shutdown (lock still needed for cancel race)
+        should_stop = False
         async with self._shutdown_lock:
-            if self._shutdown_triggered:
-                self.debug(
-                    "_check_and_trigger_shutdown: shutdown already triggered, returning"
-                )
-                return
-
-            if not self._profile_results_received:
-                self.debug(
-                    "_check_and_trigger_shutdown: profile results not received yet"
-                )
-                return
-
-            telemetry_ready_for_shutdown = (
-                not self._should_wait_for_telemetry
-                or self._telemetry_results is not None
-            )
-
-            server_metrics_ready_for_shutdown = (
-                not self._should_wait_for_server_metrics
-                or self._server_metrics_results is not None
-            )
-
-            if telemetry_ready_for_shutdown and server_metrics_ready_for_shutdown:
+            if not self._shutdown_triggered:
                 self._shutdown_triggered = True
-                should_shutdown = True
-                self.info("All results received, initiating shutdown")
-            else:
-                if not telemetry_ready_for_shutdown:
-                    self.info("Waiting for telemetry results...")
-                if not server_metrics_ready_for_shutdown:
-                    self.info("Waiting for server metrics results...")
-
-        # Call stop() OUTSIDE the lock to prevent deadlock
-        if should_shutdown:
-            self.debug("Calling self.stop()...")
+                should_stop = True
+        if should_stop:
+            self.info("All results received, initiating shutdown")
             await asyncio.shield(self.stop())
-            self.debug("self.stop() completed")
 
     async def _handle_signal(self, sig: int) -> None:
         """Handle received signals with two-stage cancellation.
@@ -755,10 +626,9 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.debug("Cancelling profiling of all services")
         self._was_cancelled = True
 
-        # Mark shutdown as triggered FIRST to prevent _check_and_trigger_shutdown()
+        # Mark shutdown as triggered FIRST to prevent _on_all_results_message()
         # from also calling stop() when results arrive during cancellation.
         # This prevents the race condition that causes SIGKILL (exit code -9).
-        # Also track if shutdown was already triggered to avoid double-stop.
         should_call_stop = False
         async with self._shutdown_lock:
             if not self._shutdown_triggered:
@@ -803,7 +673,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             # Extract ProcessRecordsResult from the RecordsManager's response.
             # We must set _profile_results here because we've blocked the normal
             # message-based shutdown flow by setting _shutdown_triggered = True.
-            # The command response contains the same data as ProcessRecordsResultMessage.
+            # The command response contains the same ProcessRecordsResult data.
             for response in responses:
                 if (
                     isinstance(response, CommandSuccessResponse)
@@ -821,6 +691,12 @@ class SystemController(SignalHandlerMixin, BaseService):
         except Exception as e:
             # Catch ANY exception during cancellation - we must always proceed to stop().
             self.warning(f"Exception during cancel command (proceeding to stop): {e!r}")
+
+        # Yield to the event loop so _on_all_results_message() can process the
+        # ProcessAllResultsMessage that RecordsManager published (via pub/sub)
+        # before returning the command response. This populates _telemetry_results
+        # and _server_metrics_results for console export.
+        await asyncio.sleep(0)
 
         # Only call stop() if we were the first to trigger shutdown
         if should_call_stop:
@@ -886,10 +762,8 @@ class SystemController(SignalHandlerMixin, BaseService):
             server_metrics_results=self._server_metrics_results,
         )
 
-        # Export data files (CSV, JSON) with complete dataset including telemetry
-        await exporter_manager.export_data()
-
-        # Export console output with complete dataset including telemetry
+        # Data files (CSV, JSON) already exported by RecordsManager.
+        # Console export runs here after UI stops so output is visible.
         await exporter_manager.export_console(console=console)
 
         console.print()

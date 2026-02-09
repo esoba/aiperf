@@ -280,8 +280,8 @@ class TestSummarize:
 
         assert isinstance(summary, MetricsSummary)
         assert len(summary.results) == 1
-        assert isinstance(summary.results[0], MetricResult)
-        assert summary.results[0].tag == RequestLatencyMetric.tag
+        assert RequestLatencyMetric.tag in summary.results
+        assert isinstance(summary.results[RequestLatencyMetric.tag], MetricResult)
         assert summary.timeslices is None
 
     @pytest.mark.asyncio
@@ -302,8 +302,7 @@ class TestSummarize:
         summary = await processor.summarize()
 
         assert isinstance(summary, MetricsSummary)
-        tags = [r.tag for r in summary.results]
-        assert RequestThroughputMetric.tag in tags
+        assert RequestThroughputMetric.tag in summary.results
 
     @pytest.mark.asyncio
     async def test_summarize_derived_handles_no_metric_value(
@@ -320,7 +319,7 @@ class TestSummarize:
 
         with patch.object(processor, "debug") as mock_debug:
             summary = await processor.summarize()
-            assert all(r.tag != RequestThroughputMetric.tag for r in summary.results)
+            assert RequestThroughputMetric.tag not in summary.results
             mock_debug.assert_called()
 
     @pytest.mark.asyncio
@@ -338,7 +337,7 @@ class TestSummarize:
 
         with patch.object(processor, "warning") as mock_warning:
             summary = await processor.summarize()
-            assert all(r.tag != RequestThroughputMetric.tag for r in summary.results)
+            assert RequestThroughputMetric.tag not in summary.results
             mock_warning.assert_called()
 
 
@@ -469,8 +468,8 @@ class TestTimesliceSummarize:
         assert len(summary.timeslices) == 2
 
         # Each timeslice should have aggregated separately via SUM
-        ts0_results = {r.tag: r for r in summary.timeslices[0]}
-        ts1_results = {r.tag: r for r in summary.timeslices[1]}
+        ts0_results = summary.timeslices[0]
+        ts1_results = summary.timeslices[1]
         assert ts0_results[RequestCountMetric.tag].avg == 8  # 5 + 3
         assert ts1_results[RequestCountMetric.tag].avg == 7
 
@@ -501,7 +500,7 @@ class TestTimesliceSummarize:
 
         summary = await processor.summarize()
         assert summary.timeslices is not None
-        ts0_results = {r.tag: r for r in summary.timeslices[0]}
+        ts0_results = summary.timeslices[0]
         assert ts0_results["max_ts"].avg == 300.0  # MAX of 100, 300
 
     @pytest.mark.asyncio
@@ -531,16 +530,18 @@ class TestTimesliceSummarize:
 
         summary = await processor.summarize()
         assert summary.timeslices is not None
-        ts0_results = {r.tag: r for r in summary.timeslices[0]}
+        ts0_results = summary.timeslices[0]
         assert ts0_results["min_ts"].avg == 200.0  # MIN of 500, 200
 
 
 class TestMetricsSummary:
     def test_to_json(self) -> None:
         summary = MetricsSummary(
-            results=[
-                MetricResult(tag="test", header="Test", unit="ms", avg=42.0, count=1)
-            ]
+            results={
+                "test": MetricResult(
+                    tag="test", header="Test", unit="ms", avg=42.0, count=1
+                )
+            }
         )
         json_data = summary.to_json()
         assert "results" in json_data
@@ -548,13 +549,13 @@ class TestMetricsSummary:
 
     def test_to_json_with_timeslices(self) -> None:
         summary = MetricsSummary(
-            results=[],
+            results={},
             timeslices={
-                0: [
-                    MetricResult(
+                0: {
+                    "test": MetricResult(
                         tag="test", header="Test", unit="ms", avg=42.0, count=1
                     )
-                ]
+                }
             },
         )
         json_data = summary.to_json()
@@ -563,24 +564,28 @@ class TestMetricsSummary:
 
     def test_to_csv(self) -> None:
         summary = MetricsSummary(
-            results=[
-                MetricResult(tag="test", header="Test", unit="ms", avg=42.0, count=1)
-            ]
+            results={
+                "test": MetricResult(
+                    tag="test", header="Test", unit="ms", avg=42.0, count=1
+                )
+            }
         )
         csv_data = summary.to_csv()
         assert len(csv_data) == 1
 
     def test_to_csv_with_timeslices(self) -> None:
         summary = MetricsSummary(
-            results=[
-                MetricResult(tag="test", header="Test", unit="ms", avg=42.0, count=1)
-            ],
+            results={
+                "test": MetricResult(
+                    tag="test", header="Test", unit="ms", avg=42.0, count=1
+                )
+            },
             timeslices={
-                0: [
-                    MetricResult(
+                0: {
+                    "ts_test": MetricResult(
                         tag="ts_test", header="TS Test", unit="ms", avg=10.0, count=1
                     )
-                ]
+                }
             },
         )
         csv_data = summary.to_csv()
@@ -601,7 +606,7 @@ class TestProtocolConformance:
     def test_summary_satisfies_accumulator_result(self) -> None:
         from aiperf.common.accumulator_protocols import AccumulatorResult
 
-        summary = MetricsSummary(results=[])
+        summary = MetricsSummary(results={})
         assert isinstance(summary, AccumulatorResult)
 
 

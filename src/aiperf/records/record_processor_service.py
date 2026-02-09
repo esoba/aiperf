@@ -7,7 +7,7 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CommAddress, CommandType, MessageType
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.exceptions import PluginDisabled
 from aiperf.common.hooks import on_command, on_pull_message
 from aiperf.common.messages import (
     InferenceResultsMessage,
@@ -81,7 +81,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 self.debug(
                     f"Created record processor: {entry.name}: {processor.__class__.__name__}"
                 )
-            except PostProcessorDisabled:
+            except PluginDisabled:
                 self.debug(
                     f"Record processor {entry.name} is disabled and will not be used"
                 )

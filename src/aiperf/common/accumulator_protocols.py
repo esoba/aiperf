@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from aiperf.common.models.error_models import ErrorDetailsCount
     from aiperf.plugin.enums import AccumulatorType
 
 
@@ -23,28 +24,42 @@ class AccumulatorResult(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class ExportContext:
+    """Context passed to domain-specific export_results() methods.
+
+    Bundles the profiling time window and error summary so that export_results
+    signatures stay stable as new fields are added.
+    """
+
+    start_ns: int | None = None
+    end_ns: int | None = None
+    error_summary: list[ErrorDetailsCount] | None = None
+    cancelled: bool = False
+
+
 @dataclass
 class SummaryContext:
-    """Typed cross-processor communication context for dependency-ordered summarization.
+    """Typed cross-accumulator communication context for dependency-ordered summarization.
 
     NOT a Pydantic model — this is never serialized over the wire. It is created
-    by RecordsManager._summarize_all() and passed through the topological-sort
-    pipeline so each processor can read outputs from its declared dependencies.
+    by RecordsManager._process_results() and passed through the topological-sort
+    pipeline so each accumulator can read outputs from its declared dependencies.
     """
 
     accumulators: dict[AccumulatorType, Any] = field(default_factory=dict)
-    processor_outputs: dict[str, Any] = field(default_factory=dict)
+    accumulator_outputs: dict[str, Any] = field(default_factory=dict)
     start_ns: int = 0
     end_ns: int = 0
     cancelled: bool = False
 
-    def get_accumulator(self, processor_type: AccumulatorType) -> Any | None:
-        """Look up an accumulator by its processor_type. Returns None if not present."""
-        return self.accumulators.get(processor_type)
+    def get_accumulator(self, accumulator_type: AccumulatorType) -> Any | None:
+        """Look up an accumulator by its type. Returns None if not present."""
+        return self.accumulators.get(accumulator_type)
 
-    def get_output(self, processor_type: str) -> Any | None:
-        """Look up a previously-computed processor output. Returns None if not yet available."""
-        return self.processor_outputs.get(processor_type)
+    def get_output(self, accumulator_type: str) -> Any | None:
+        """Look up a previously-computed accumulator output. Returns None if not yet available."""
+        return self.accumulator_outputs.get(accumulator_type)
 
 
 @runtime_checkable
@@ -73,6 +88,18 @@ class AccumulatorProtocol(Protocol):
         Args:
             ctx: Optional SummaryContext for reading dependency outputs.
                  None when called for realtime metrics (no cross-processor deps).
+        """
+        ...
+
+    async def export_results(self, ctx: ExportContext) -> Any:
+        """Export final results for this accumulator.
+
+        Called once after profiling completes. Each accumulator returns its own
+        typed result (MetricsSummary, TelemetryExportData, ServerMetricsResults)
+        which is consumed by typed fields on the unified results message.
+
+        Args:
+            ctx: ExportContext with profiling time window, error summary, and cancelled flag.
         """
         ...
 

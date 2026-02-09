@@ -5,7 +5,6 @@ from pydantic import Field
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
-from aiperf.common.models.server_metrics_models import ProcessServerMetricsResult
 from aiperf.common.types import MessageTypeT
 
 
@@ -55,14 +54,4 @@ class ServerMetricsStatusMessage(BaseServiceMessage):
     endpoints_reachable: list[str] = Field(
         default_factory=list,
         description="List of Prometheus endpoint URLs that were reachable and will provide data",
-    )
-
-
-class ProcessServerMetricsResultMessage(BaseServiceMessage):
-    """Message containing processed server metrics results - mirrors ProcessTelemetryResultMessage."""
-
-    message_type: MessageTypeT = MessageType.PROCESS_SERVER_METRICS_RESULT
-
-    server_metrics_result: ProcessServerMetricsResult = Field(
-        description="The processed server metrics results"
     )

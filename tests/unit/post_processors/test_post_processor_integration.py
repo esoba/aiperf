@@ -19,8 +19,8 @@ from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetr
 from aiperf.post_processors.metric_record_processor import MetricRecordProcessor
 from aiperf.post_processors.metrics_accumulator import MetricsAccumulator
 from tests.unit.post_processors.conftest import (
+    create_accumulator_with_metrics,
     create_metric_records_message,
-    create_results_processor_with_metrics,
     setup_mock_registry_sequences,
 )
 
@@ -39,8 +39,8 @@ class TestPostProcessorIntegration:
         mock_metric_registry: Mock,
         mock_user_config: UserConfig,
     ) -> None:
-        """Test data flows correctly from record processor to results processor."""
-        results_processor = create_results_processor_with_metrics(
+        """Test data flows correctly from record processor to accumulator."""
+        accumulator = create_accumulator_with_metrics(
             mock_user_config, RequestLatencyMetric, RequestCountMetric
         )
         message = create_metric_records_message(
@@ -48,18 +48,16 @@ class TestPostProcessorIntegration:
             results=[{RequestLatencyMetric.tag: 100.0, RequestCountMetric.tag: 1}],
         )
 
-        await results_processor.process_record(message.to_data())
+        await accumulator.process_record(message.to_data())
 
-        assert RequestLatencyMetric.tag in results_processor._time_series
-        assert list(
-            results_processor._time_series[RequestLatencyMetric.tag].values
-        ) == [100.0]
+        assert RequestLatencyMetric.tag in accumulator._time_series
+        assert list(accumulator._time_series[RequestLatencyMetric.tag].values) == [
+            100.0
+        ]
 
         # Aggregate metrics also stored in time series
-        assert RequestCountMetric.tag in results_processor._time_series
-        assert list(results_processor._time_series[RequestCountMetric.tag].values) == [
-            1.0
-        ]
+        assert RequestCountMetric.tag in accumulator._time_series
+        assert list(accumulator._time_series[RequestCountMetric.tag].values) == [1.0]
 
     async def test_multiple_batches_accumulation(
         self,
@@ -67,7 +65,7 @@ class TestPostProcessorIntegration:
         mock_user_config: UserConfig,
     ) -> None:
         """Test accumulation across multiple record batches."""
-        results_processor = create_results_processor_with_metrics(
+        accumulator = create_accumulator_with_metrics(
             mock_user_config, RequestLatencyMetric
         )
 
@@ -78,11 +76,11 @@ class TestPostProcessorIntegration:
                 x_correlation_id=f"test-correlation-{idx}",
                 results=[{RequestLatencyMetric.tag: value}],
             )
-            await results_processor.process_record(message.to_data())
+            await accumulator.process_record(message.to_data())
 
-        assert RequestLatencyMetric.tag in results_processor._time_series
+        assert RequestLatencyMetric.tag in accumulator._time_series
         accumulated_data = list(
-            results_processor._time_series[RequestLatencyMetric.tag].values
+            accumulator._time_series[RequestLatencyMetric.tag].values
         )
         assert accumulated_data == TEST_LATENCY_VALUES
 
@@ -119,20 +117,20 @@ class TestPostProcessorIntegration:
             mock_metric_registry, [RequestThroughputMetric], []
         )
 
-        results_processor = MetricsAccumulator(mock_user_config)
+        accumulator = MetricsAccumulator(mock_user_config)
 
         # Set up RequestCount as aggregate with values in time series
         from aiperf.post_processors.inference_time_series import InferenceTimeSeries
 
-        results_processor._tags_to_types = {
+        accumulator._tags_to_types = {
             RequestCountMetric.tag: MetricType.AGGREGATE,
         }
-        results_processor._aggregation_kinds = {
+        accumulator._aggregation_kinds = {
             RequestCountMetric.tag: AggregationKind.SUM,
         }
         ts = InferenceTimeSeries()
         ts.append(0, float(TEST_REQUEST_COUNT))
-        results_processor._time_series[RequestCountMetric.tag] = ts
+        accumulator._time_series[RequestCountMetric.tag] = ts
 
         # BenchmarkDuration is a DERIVED metric; add it as a derive func that
         # returns a constant, then let RequestThroughput compute from both.
@@ -141,12 +139,12 @@ class TestPostProcessorIntegration:
         def benchmark_duration_derive(results_dict: MetricResultsDict) -> int:
             return benchmark_ns
 
-        results_processor._derive_funcs = {
+        accumulator._derive_funcs = {
             BenchmarkDurationMetric.tag: benchmark_duration_derive,
-            **results_processor._derive_funcs,
+            **accumulator._derive_funcs,
         }
 
-        full_results = await results_processor.full_metrics()
+        full_results = await accumulator.full_metrics()
 
         assert RequestThroughputMetric.tag in full_results
         assert full_results[RequestThroughputMetric.tag] == EXPECTED_THROUGHPUT
@@ -157,7 +155,7 @@ class TestPostProcessorIntegration:
         mock_user_config: UserConfig,
     ) -> None:
         """Test complete pipeline produces proper summary results."""
-        results_processor = create_results_processor_with_metrics(
+        accumulator = create_accumulator_with_metrics(
             mock_user_config, RequestLatencyMetric
         )
 
@@ -167,12 +165,12 @@ class TestPostProcessorIntegration:
         ts = InferenceTimeSeries()
         for i, v in enumerate(TEST_LATENCY_VALUES):
             ts.append(i, v)
-        results_processor._time_series[RequestLatencyMetric.tag] = ts
+        accumulator._time_series[RequestLatencyMetric.tag] = ts
 
-        summary = await results_processor.summarize()
+        summary = await accumulator.summarize()
 
         assert hasattr(summary, "results")
-        assert isinstance(summary.results, list)
-        assert all(hasattr(result, "tag") for result in summary.results)
-        assert all(hasattr(result, "avg") for result in summary.results)
-        assert all(hasattr(result, "count") for result in summary.results)
+        assert isinstance(summary.results, dict)
+        assert all(hasattr(result, "tag") for result in summary.results.values())
+        assert all(hasattr(result, "avg") for result in summary.results.values())
+        assert all(hasattr(result, "count") for result in summary.results.values())

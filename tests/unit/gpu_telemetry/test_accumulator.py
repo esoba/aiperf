@@ -88,7 +88,7 @@ class TestGPUTelemetryAccumulator:
         assert isinstance(processor._hierarchy, TelemetryHierarchy)
 
     @pytest.mark.asyncio
-    async def test_process_telemetry_record(
+    async def test_process_record(
         self,
         mock_user_config: UserConfig,
         mock_service_config: ServiceConfig,
@@ -102,7 +102,7 @@ class TestGPUTelemetryAccumulator:
             pub_client=mock_pub_client,
         )
 
-        await processor.process_telemetry_record(sample_telemetry_record)
+        await processor.process_record(sample_telemetry_record)
 
         dcgm_url = sample_telemetry_record.dcgm_url
         gpu_uuid = sample_telemetry_record.gpu_uuid
@@ -126,7 +126,7 @@ class TestGPUTelemetryAccumulator:
         )
 
         # Add some records
-        await processor.process_telemetry_record(sample_telemetry_record)
+        await processor.process_record(sample_telemetry_record)
 
         # Get hierarchy
         hierarchy = processor._hierarchy
@@ -165,19 +165,18 @@ class TestGPUTelemetryAccumulator:
                 gpu_utilization=80.0 + i,
                 gpu_memory_used=15.0 + i * 0.1,
             )
-            await processor.process_telemetry_record(record)
+            await processor.process_record(record)
 
         summary = await processor.summarize()
         results = summary.results
 
         # Should have results for all metrics that had data
         assert len(results) > 0
-        assert all(isinstance(r, MetricResult) for r in results)
+        assert all(isinstance(r, MetricResult) for r in results.values())
 
         # Check that metrics are properly tagged
-        result_tags = [r.tag for r in results]
-        assert any("gpu_power_usage" in tag for tag in result_tags)
-        assert any("energy_consumption" in tag for tag in result_tags)
+        assert any("gpu_power_usage" in tag for tag in results)
+        assert any("energy_consumption" in tag for tag in results)
 
     @pytest.mark.asyncio
     async def test_summarize_handles_no_metric_value(
@@ -214,7 +213,7 @@ class TestGPUTelemetryAccumulator:
             assert any("No data available" in msg for msg in debug_messages)
 
             # Should return empty results when no data available
-            assert summary.results == []
+            assert summary.results == {}
 
     @pytest.mark.asyncio
     async def test_summarize_handles_unexpected_exception(
@@ -262,7 +261,7 @@ class TestGPUTelemetryAccumulator:
             )  # First 12 chars
 
             # Should return empty results when all metrics fail
-            assert summary.results == []
+            assert summary.results == {}
 
     @pytest.mark.asyncio
     async def test_summarize_continues_after_errors(
@@ -322,7 +321,8 @@ class TestGPUTelemetryAccumulator:
 
             # Should have one successful result despite errors
             assert len(summary.results) == 1
-            assert summary.results[0].avg == 50.0
+            result = next(iter(summary.results.values()))
+            assert result.avg == 50.0
 
     @pytest.mark.asyncio
     async def test_summarize_generates_correct_tags(
@@ -346,13 +346,13 @@ class TestGPUTelemetryAccumulator:
                 gpu_model_name="NVIDIA RTX 6000",
                 gpu_power_usage=75.0 + i,
             )
-            await processor.process_telemetry_record(record)
+            await processor.process_record(record)
 
         summary = await processor.summarize()
         results = summary.results
 
         # Check tag format: metric_name_dcgm_TAG_gpuINDEX_UUID
-        power_results = [r for r in results if "gpu_power_usage" in r.tag]
+        power_results = [r for r in results.values() if "gpu_power_usage" in r.tag]
         assert len(power_results) > 0
 
         tag = power_results[0].tag
@@ -385,14 +385,14 @@ class TestGPUTelemetryAccumulator:
                     gpu_model_name="NVIDIA RTX 6000",
                     gpu_power_usage=75.0 + gpu_index * 10 + i,
                 )
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
         summary = await processor.summarize()
         results = summary.results
 
         # Should have results for both GPUs
-        gpu0_results = [r for r in results if "gpu0" in r.tag]
-        gpu1_results = [r for r in results if "gpu1" in r.tag]
+        gpu0_results = [r for r in results.values() if "gpu0" in r.tag]
+        gpu1_results = [r for r in results.values() if "gpu1" in r.tag]
 
         assert len(gpu0_results) > 0
         assert len(gpu1_results) > 0

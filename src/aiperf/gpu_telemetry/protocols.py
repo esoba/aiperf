@@ -9,11 +9,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 
 if TYPE_CHECKING:
-    from aiperf.common.models import (
-        ErrorDetailsCount,
-        MetricResult,
-        TelemetryExportData,
-    )
+    from aiperf.gpu_telemetry.accumulator import TelemetryMetricsSummary
 
 
 @runtime_checkable
@@ -64,48 +60,12 @@ TErrorCallback = Callable[[ErrorDetails, str], Awaitable[None]]
 
 
 @runtime_checkable
-class GPUTelemetryProcessorProtocol(Protocol):
-    """Protocol for GPU telemetry results processors that handle TelemetryRecord objects.
+class GPUTelemetryAccumulatorProtocol(Protocol):
+    """Protocol for GPU telemetry accumulator methods beyond AccumulatorProtocol.
 
-    GPU telemetry data has fundamentally different structure (hierarchical with metadata)
-    compared to inference metrics (flat key-value pairs).
+    export_results() is now on AccumulatorProtocol. This protocol captures
+    telemetry-specific methods needed by RecordsManager for realtime dashboard.
     """
-
-    async def process_telemetry_record(self, record: TelemetryRecord) -> None:
-        """Process individual telemetry record with rich metadata.
-
-        Args:
-            record: TelemetryRecord containing GPU metrics and hierarchical metadata
-        """
-        ...
-
-
-@runtime_checkable
-class GPUTelemetryAccumulatorProtocol(GPUTelemetryProcessorProtocol, Protocol):
-    """Protocol for GPU telemetry accumulators that accumulate GPU telemetry data and export pre-computed metrics.
-
-    Extends GPUTelemetryProcessorProtocol to provide result export, realtime telemetry, and summarization
-    capabilities. Implementations should accumulate DCGM metrics, compute aggregated statistics per GPU,
-    and support dynamic dashboard enablement for realtime monitoring.
-    """
-
-    def export_results(
-        self,
-        start_ns: int,
-        end_ns: int,
-        error_summary: list[ErrorDetailsCount] | None = None,
-    ) -> TelemetryExportData | None:
-        """Export accumulated telemetry data as a TelemetryExportData object.
-
-        Args:
-            start_ns: Start time of collection in nanoseconds
-            end_ns: End time of collection in nanoseconds
-            error_summary: Optional list of error counts
-
-        Returns:
-            TelemetryExportData object with pre-computed metrics for each GPU
-        """
-        ...
 
     def start_realtime_telemetry(self) -> None:
         """Start the realtime telemetry background task.
@@ -115,11 +75,11 @@ class GPUTelemetryAccumulatorProtocol(GPUTelemetryProcessorProtocol, Protocol):
         at startup.
         """
 
-    async def summarize(self) -> list[MetricResult]:
-        """Generate MetricResult list with hierarchical tags for telemetry data.
+    async def summarize(self) -> TelemetryMetricsSummary:
+        """Generate telemetry summary with hierarchical tags for telemetry data.
 
         Returns:
-            List of MetricResult objects with hierarchical tags that preserve
-            dcgm_url -> gpu_uuid grouping structure for dashboard filtering.
+            TelemetryMetricsSummary containing MetricResult objects with hierarchical
+            tags that preserve dcgm_url -> gpu_uuid grouping structure for dashboard filtering.
         """
         ...

@@ -10,7 +10,7 @@ from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
+from aiperf.common.exceptions import DataExporterDisabled, PluginDisabled
 from aiperf.common.mixins import AIPerfLoggerMixin, BufferedJSONLWriterMixin
 from aiperf.common.models import (
     MetricRecordMetadata,
@@ -44,7 +44,7 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         self.user_config = user_config
 
         if self.user_config.output.export_level != ExportLevel.RAW:
-            raise PostProcessorDisabled(
+            raise PluginDisabled(
                 f"RawRecordWriter processor is disabled for export level {self.user_config.output.export_level}"
             )
 

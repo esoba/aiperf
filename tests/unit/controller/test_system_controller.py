@@ -384,3 +384,238 @@ class TestSSLVerificationWarning:
             await system_controller._profile_configure_all_services()
 
             mock_warning.assert_not_called()
+
+
+# =============================================================================
+# Unified Results Handler Tests
+# =============================================================================
+
+
+def _make_process_all_results_message(
+    telemetry: bool = False,
+    server_metrics: bool = False,
+):
+    """Build a ProcessAllResultsMessage with optional domain results."""
+    from datetime import datetime, timezone
+
+    from aiperf.common.messages import ProcessAllResultsMessage
+    from aiperf.common.models import MetricResult, ProcessRecordsResult, ProfileResults
+    from aiperf.common.models.export_models import (
+        TelemetryExportData,
+        TelemetrySummary,
+    )
+    from aiperf.common.models.server_metrics_models import ServerMetricsResults
+    from aiperf.common.models.telemetry_models import TelemetryHierarchy
+
+    _mr = MetricResult(tag="latency", header="Latency", unit="ms", avg=50.0, count=5)
+    result = ProcessRecordsResult(
+        results=ProfileResults(
+            records={_mr.tag: _mr},
+            completed=5,
+            start_ns=1_000_000_000,
+            end_ns=2_000_000_000,
+        ),
+    )
+    now = datetime.now(tz=timezone.utc)
+    telemetry_results = (
+        TelemetryExportData(
+            hierarchy=TelemetryHierarchy(),
+            summary=TelemetrySummary(start_time=now, end_time=now),
+            endpoints={},
+        )
+        if telemetry
+        else None
+    )
+    server_metrics_results = (
+        ServerMetricsResults(start_ns=1_000_000_000, end_ns=2_000_000_000)
+        if server_metrics
+        else None
+    )
+
+    return ProcessAllResultsMessage(
+        service_id="records_manager",
+        results=result,
+        telemetry_results=telemetry_results,
+        server_metrics_results=server_metrics_results,
+    )
+
+
+class TestOnAllResultsMessage:
+    """Tests for SystemController._on_all_results_message handler."""
+
+    @pytest.mark.asyncio
+    async def test_stores_profile_results(
+        self, system_controller: SystemController
+    ) -> None:
+        """Message results are stored on the controller."""
+        msg = _make_process_all_results_message()
+
+        await system_controller._on_all_results_message(msg)
+
+        assert system_controller._profile_results is msg.results
+        assert system_controller._profile_results_received is True
+
+    @pytest.mark.asyncio
+    async def test_triggers_shutdown(self, system_controller: SystemController) -> None:
+        """Handler triggers stop() exactly once via shutdown lock."""
+        msg = _make_process_all_results_message()
+
+        await system_controller._on_all_results_message(msg)
+
+        system_controller.stop.assert_called_once()
+        assert system_controller._shutdown_triggered is True
+
+    @pytest.mark.asyncio
+    async def test_idempotent_shutdown_lock(
+        self, system_controller: SystemController
+    ) -> None:
+        """Second call does not trigger stop() again."""
+        msg = _make_process_all_results_message()
+
+        await system_controller._on_all_results_message(msg)
+        system_controller.stop.reset_mock()
+
+        await system_controller._on_all_results_message(msg)
+        system_controller.stop.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_telemetry_endpoint_fixup(
+        self, system_controller: SystemController
+    ) -> None:
+        """Telemetry results get endpoint lists from status message data."""
+        system_controller._telemetry_endpoints_configured = ["http://a:9400"]
+        system_controller._telemetry_endpoints_reachable = ["http://a:9400"]
+
+        msg = _make_process_all_results_message(telemetry=True)
+        await system_controller._on_all_results_message(msg)
+
+        assert msg.telemetry_results.summary.endpoints_configured == ["http://a:9400"]
+        assert msg.telemetry_results.summary.endpoints_successful == ["http://a:9400"]
+        assert system_controller._telemetry_results is msg.telemetry_results
+
+    @pytest.mark.asyncio
+    async def test_server_metrics_endpoint_fixup(
+        self, system_controller: SystemController
+    ) -> None:
+        """Server metrics results get endpoint lists from status message data."""
+        system_controller._server_metrics_endpoints_configured = ["http://b:9090"]
+        system_controller._server_metrics_endpoints_reachable = ["http://b:9090"]
+
+        msg = _make_process_all_results_message(server_metrics=True)
+        await system_controller._on_all_results_message(msg)
+
+        assert msg.server_metrics_results.endpoints_configured == ["http://b:9090"]
+        assert msg.server_metrics_results.endpoints_successful == ["http://b:9090"]
+        assert system_controller._server_metrics_results is msg.server_metrics_results
+
+    @pytest.mark.asyncio
+    async def test_none_domain_results_stored(
+        self, system_controller: SystemController
+    ) -> None:
+        """When telemetry/server_metrics are None, they remain None on controller."""
+        msg = _make_process_all_results_message()
+        await system_controller._on_all_results_message(msg)
+
+        assert system_controller._telemetry_results is None
+        assert system_controller._server_metrics_results is None
+
+    @pytest.mark.asyncio
+    async def test_cancel_then_results_does_not_double_stop(
+        self, system_controller: SystemController
+    ) -> None:
+        """If cancel already triggered shutdown, results handler skips stop()."""
+        # Simulate cancel path having taken the lock
+        system_controller._shutdown_triggered = True
+
+        msg = _make_process_all_results_message()
+        await system_controller._on_all_results_message(msg)
+
+        # Results are still stored even though stop() isn't called
+        assert system_controller._profile_results is msg.results
+        system_controller.stop.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_errors_in_results_are_logged(
+        self, system_controller: SystemController
+    ) -> None:
+        """When message.results.errors is non-empty, an error is logged."""
+        msg = _make_process_all_results_message()
+        msg.results.errors = [ErrorDetails(message="accumulator failed", code=500)]
+
+        with patch.object(system_controller, "error") as mock_error:
+            await system_controller._on_all_results_message(msg)
+
+        mock_error.assert_called_once()
+        assert "accumulator failed" in mock_error.call_args[0][0]
+
+
+class TestCancelPathExtraction:
+    """Tests for cancel path extraction of ProcessRecordsResult."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_extracts_profile_results_from_command_response(
+        self, system_controller: SystemController, mock_service_manager: AsyncMock
+    ) -> None:
+        """_cancel_profiling extracts ProcessRecordsResult from the command response."""
+        from aiperf.common.enums import CommandType
+        from aiperf.common.messages import CommandSuccessResponse
+        from aiperf.common.models import (
+            MetricResult,
+            ProcessRecordsResult,
+            ProfileResults,
+        )
+
+        _mr = MetricResult(
+            tag="latency", header="Latency", unit="ms", avg=50.0, count=5
+        )
+        expected_result = ProcessRecordsResult(
+            results=ProfileResults(
+                records={_mr.tag: _mr},
+                completed=5,
+                start_ns=1_000_000_000,
+                end_ns=2_000_000_000,
+            ),
+        )
+
+        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+            return_value=[
+                CommandSuccessResponse(
+                    service_id="records_manager",
+                    command=CommandType.PROFILE_CANCEL,
+                    command_id="cmd_1",
+                    data=expected_result,
+                )
+            ]
+        )
+
+        await system_controller._cancel_profiling()
+
+        assert system_controller._profile_results is expected_result
+        assert system_controller._profile_results_received is True
+
+    @pytest.mark.asyncio
+    async def test_cancel_with_no_success_response_leaves_results_none(
+        self, system_controller: SystemController, mock_service_manager: AsyncMock
+    ) -> None:
+        """If cancel gets no success response, _profile_results stays None."""
+        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+            return_value=[ErrorDetails(message="timeout", code=408)]
+        )
+
+        await system_controller._cancel_profiling()
+
+        assert system_controller._profile_results is None
+        assert system_controller._profile_results_received is False
+
+    @pytest.mark.asyncio
+    async def test_cancel_with_exception_still_calls_stop(
+        self, system_controller: SystemController, mock_service_manager: AsyncMock
+    ) -> None:
+        """Even if send_command raises, stop() is still called."""
+        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
+            side_effect=RuntimeError("comms failed")
+        )
+
+        await system_controller._cancel_profiling()
+
+        system_controller.stop.assert_called_once()

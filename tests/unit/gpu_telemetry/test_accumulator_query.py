@@ -53,16 +53,6 @@ class TestProcessRecord:
         assert accumulator._raw_timestamps_ns == [1_000]
         assert len(accumulator._hierarchy.dcgm_endpoints) > 0
 
-    @pytest.mark.asyncio
-    async def test_process_telemetry_record_delegates_to_process_record(
-        self, accumulator: GPUTelemetryAccumulator
-    ) -> None:
-        record = make_telemetry_record(timestamp_ns=2_000)
-        await accumulator.process_telemetry_record(record)
-
-        assert len(accumulator._raw_records) == 1
-        assert accumulator._raw_timestamps_ns == [2_000]
-
 
 class TestQueryTimeRange:
     @pytest.mark.asyncio

@@ -693,11 +693,3 @@ class ServerMetricsResults(AIPerfBaseModel):
         default=None,
         description="Time filter for aggregation, excluding warmup periods",
     )
-
-
-class ProcessServerMetricsResult(AIPerfBaseModel):
-    """Result of server metrics processing - mirrors ProcessTelemetryResult pattern."""
-
-    results: ServerMetricsResults | None = Field(
-        default=None, description="The processed server metrics results"
-    )

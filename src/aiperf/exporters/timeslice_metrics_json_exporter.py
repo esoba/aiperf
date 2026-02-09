@@ -57,10 +57,14 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
         timeslices_list = []
 
         for timeslice_index in sorted(self._results.timeslice_metric_results.keys()):
-            metric_results = self._results.timeslice_metric_results[timeslice_index]
+            metric_results_dict = self._results.timeslice_metric_results[
+                timeslice_index
+            ]
 
             # Reuse base class helper to prepare metrics
-            prepared_json_metrics = self._prepare_metrics_for_json(metric_results)
+            prepared_json_metrics = self._prepare_metrics_for_json(
+                metric_results_dict.values()
+            )
 
             # Create timeslice object with dynamic metrics
             timeslice = TimesliceData(timeslice_index=timeslice_index)

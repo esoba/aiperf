@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import (
     MILLIS_PER_SECOND,
@@ -16,8 +17,7 @@ from aiperf.common.constants import (
     NANOS_PER_SECOND,
 )
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
-from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
-from aiperf.common.models.error_models import ErrorDetailsCount
+from aiperf.common.exceptions import DataExporterDisabled, PluginDisabled
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
     GaugeMetricData,
@@ -52,7 +52,7 @@ class ServerMetricsSummary:
 class ServerMetricsAccumulator(BaseMetricsProcessor):
     """Process individual ServerMetricsRecord objects into hierarchical storage.
 
-    Results processor that accumulates server metrics from Prometheus endpoints
+    Accumulator that ingests server metrics from Prometheus endpoints
     and computes comprehensive statistics. Organizes data hierarchically by
     endpoint → metric → time series, supporting multi-endpoint profiling.
 
@@ -80,7 +80,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         **kwargs: Additional arguments passed to base class
 
     Raises:
-        PostProcessorDisabled: If --no-server-metrics flag is set
+        PluginDisabled: If --no-server-metrics flag is set
 
     Example:
         >>> from aiperf.common.config import UserConfig
@@ -101,12 +101,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         ...         )
         ...     }
         ... )
-        >>> await accumulator.process_server_metrics_record(record)
+        >>> await accumulator.process_record(record)
         >>>
         >>> # Export results after profiling
-        >>> results = accumulator.export_results(
-        ...     start_ns=1_000_000_000,  # Profiling start
-        ...     end_ns=10_000_000_000    # Profiling end
+        >>> results = await accumulator.export_results(
+        ...     ExportContext(start_ns=1_000_000_000, end_ns=10_000_000_000)
         ... )
         >>> results.endpoint_summaries["localhost:8081"].metrics["http_requests_total"]
         CounterMetricData(description="Total HTTP requests", series=[...])
@@ -114,8 +113,8 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
     def __init__(self, user_config: UserConfig, **kwargs: Any):
         if user_config.server_metrics_disabled:
-            raise PostProcessorDisabled(
-                "Server metrics results processor is disabled via --no-server-metrics"
+            raise PluginDisabled(
+                "Server metrics accumulator is disabled via --no-server-metrics"
             )
 
         super().__init__(user_config=user_config, **kwargs)
@@ -145,14 +144,6 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self._raw_timestamps_ns.append(record.timestamp_ns)
         self._server_metrics_hierarchy.add_record(record)
 
-    async def process_server_metrics_record(self, record: ServerMetricsRecord) -> None:
-        """Process individual server metrics record into hierarchical storage.
-
-        Args:
-            record: ServerMetricsRecord containing Prometheus metrics and metadata
-        """
-        await self.process_record(record)
-
     def query_time_range(self, start_ns: int, end_ns: int) -> list[ServerMetricsRecord]:
         """Return records whose timestamp_ns falls within [start_ns, end_ns)."""
         lo = bisect_left(self._raw_timestamps_ns, start_ns)
@@ -163,12 +154,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         )
         return self._raw_records[lo:hi]
 
-    async def export_results(
-        self,
-        start_ns: int,
-        end_ns: int,
-        error_summary: list[ErrorDetailsCount] | None = None,
-    ) -> ServerMetricsResults | None:
+    async def export_results(self, ctx: ExportContext) -> ServerMetricsResults | None:
         """Export accumulated server metrics as results for final reporting.
 
         Called at the end of profiling to generate the final ServerMetricsResults
@@ -180,9 +166,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         and histogram delta calculations.
 
         Args:
-            start_ns: Profiling phase start time in nanoseconds (excludes warmup period)
-            end_ns: Profiling phase end time in nanoseconds (may extend beyond last collection)
-            error_summary: Optional list of error counts from collection failures
+            ctx: ExportContext with profiling time window and error summary.
 
         Returns:
             ServerMetricsResults containing endpoint summaries with computed statistics,
@@ -190,6 +174,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         """
         if not self._server_metrics_hierarchy.endpoints:
             return None
+
+        start_ns = ctx.start_ns or 0
+        end_ns = ctx.end_ns or 0
 
         endpoint_summaries = self._compute_endpoint_summaries(
             start_ns, end_ns, self._slice_duration
@@ -203,7 +190,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             end_ns=end_ns,
             endpoints_configured=endpoint_list,
             endpoints_successful=endpoint_list,
-            error_summary=error_summary or [],
+            error_summary=ctx.error_summary or [],
         )
 
         # Export Parquet file directly from accumulator if format is enabled

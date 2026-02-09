@@ -20,6 +20,7 @@ import pytest
 from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
     AccumulatorResult,
+    ExportContext,
     StreamExporterProtocol,
     SummaryContext,
 )
@@ -90,6 +91,9 @@ class StubAccumulatorA:
     def query_time_range(self, start_ns: int, end_ns: int) -> list[Any]:
         return []
 
+    async def export_results(self, ctx: ExportContext) -> StubAccumulatorResult:
+        return StubAccumulatorResult()
+
 
 class StubAccumulatorB:
     """Accumulator that handles FakeRecordB."""
@@ -104,6 +108,9 @@ class StubAccumulatorB:
 
     def query_time_range(self, start_ns: int, end_ns: int) -> list[Any]:
         return []
+
+    async def export_results(self, ctx: ExportContext) -> StubAccumulatorResult:
+        return StubAccumulatorResult()
 
 
 class StubStreamExporter:

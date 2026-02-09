@@ -192,14 +192,14 @@ class TestGPUTelemetryJSONLWriterProcessing:
     """Test GPUTelemetryJSONLWriter processing methods."""
 
     @pytest.mark.asyncio
-    async def test_process_telemetry_record_writes_to_buffer(
+    async def test_process_record_writes_to_buffer(
         self,
         user_config_telemetry_export: UserConfig,
         service_config: ServiceConfig,
         sample_telemetry_record: TelemetryRecord,
         mock_metric_registry: Mock,
     ):
-        """Test that process_telemetry_record buffers the record correctly."""
+        """Test that process_record buffers the record correctly."""
         processor = GPUTelemetryJSONLWriter(
             service_id="records-manager",
             service_config=service_config,
@@ -207,14 +207,14 @@ class TestGPUTelemetryJSONLWriterProcessing:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.process_record(sample_telemetry_record)
 
         assert processor.lines_written == 1
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 1
 
     @pytest.mark.asyncio
-    async def test_process_telemetry_record_with_complete_data(
+    async def test_process_record_with_complete_data(
         self,
         user_config_telemetry_export: UserConfig,
         service_config: ServiceConfig,
@@ -229,7 +229,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.process_record(sample_telemetry_record)
 
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
@@ -244,7 +244,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
         assert record.telemetry_data.gpu_utilization == 85.0
 
     @pytest.mark.asyncio
-    async def test_process_telemetry_record_with_partial_data(
+    async def test_process_record_with_partial_data(
         self,
         user_config_telemetry_export: UserConfig,
         service_config: ServiceConfig,
@@ -259,7 +259,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record_partial)
+            await processor.process_record(sample_telemetry_record_partial)
 
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
@@ -297,14 +297,14 @@ class TestGPUTelemetryJSONLWriterProcessing:
 
         async with aiperf_lifecycle(processor):
             for record in records:
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
         assert processor.lines_written == 5
         lines = processor.output_file.read_text().splitlines()
         assert len(lines) == 5
 
     @pytest.mark.asyncio
-    async def test_process_telemetry_record_handles_exceptions(
+    async def test_process_record_handles_exceptions(
         self,
         user_config_telemetry_export: UserConfig,
         service_config: ServiceConfig,
@@ -324,7 +324,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
             ),
             patch.object(processor, "error") as mock_error,
         ):
-            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.process_record(sample_telemetry_record)
             assert mock_error.call_count >= 1
             call_args = str(mock_error.call_args_list[0])
             assert "Failed to write GPU telemetry record" in call_args
@@ -354,7 +354,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
                     timestamp_ns=1_000_000_000 + i,
                     gpu_power_usage=100.0 + i,
                 )
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
             await processor.wait_for_tasks()
 
@@ -386,7 +386,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
 
         async with aiperf_lifecycle(processor):
             for record in records:
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
         assert processor.lines_written == 4
         lines = processor.output_file.read_text().splitlines()
@@ -420,7 +420,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
 
         async with aiperf_lifecycle(processor):
             for record in records:
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
         lines = processor.output_file.read_text().splitlines()
         dcgm_urls = [orjson.loads(line)["dcgm_url"] for line in lines]
@@ -451,7 +451,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
                     timestamp_ns=1_000_000_000 + i,
                     gpu_power_usage=100.0 + i,
                 )
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
             await processor.wait_for_tasks()
 
@@ -477,7 +477,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.process_record(sample_telemetry_record)
 
         lines = processor.output_file.read_text().splitlines()
 
@@ -504,7 +504,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.process_record(sample_telemetry_record)
 
         lines = processor.output_file.read_text().splitlines()
 
@@ -535,7 +535,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.process_record(sample_telemetry_record)
 
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
@@ -581,7 +581,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record_partial)
+            await processor.process_record(sample_telemetry_record_partial)
 
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
@@ -610,7 +610,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         record = make_telemetry_record(timestamp_ns=precise_timestamp)
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(record)
+            await processor.process_record(record)
 
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
@@ -633,7 +633,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.process_record(sample_telemetry_record)
 
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
@@ -663,7 +663,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.process_record(sample_telemetry_record)
 
         lines = processor.output_file.read_text().splitlines()
         record_dict = orjson.loads(lines[0])
@@ -672,51 +672,6 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         assert record_dict["dcgm_url"] == "http://node1:9401/metrics"
         assert record_dict["gpu_uuid"] == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
         assert record_dict["timestamp_ns"] == 1_000_000_000
-
-
-class TestGPUTelemetryJSONLWriterSummarize:
-    """Test GPUTelemetryJSONLWriter summarize method."""
-
-    @pytest.mark.asyncio
-    async def test_summarize_returns_empty_list(
-        self,
-        user_config_telemetry_export: UserConfig,
-        service_config: ServiceConfig,
-    ):
-        """Test that summarize returns an empty list (no aggregation needed)."""
-        processor = GPUTelemetryJSONLWriter(
-            service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_telemetry_export,
-        )
-
-        result = await processor.summarize()
-
-        assert result == []
-        assert isinstance(result, list)
-
-    @pytest.mark.asyncio
-    async def test_summarize_after_processing_records(
-        self,
-        user_config_telemetry_export: UserConfig,
-        service_config: ServiceConfig,
-        sample_telemetry_record: TelemetryRecord,
-        mock_metric_registry: Mock,
-    ):
-        """Test that summarize returns empty list even after processing records."""
-        processor = GPUTelemetryJSONLWriter(
-            service_id="records-manager",
-            service_config=service_config,
-            user_config=user_config_telemetry_export,
-        )
-
-        async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record)
-
-        result = await processor.summarize()
-
-        assert result == []
-        assert isinstance(result, list)
 
 
 class TestGPUTelemetryJSONLWriterLifecycle:
@@ -749,7 +704,7 @@ class TestGPUTelemetryJSONLWriterLifecycle:
                     gpu_power_usage=100.0 + i,
                     gpu_utilization=80.0,
                 )
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
             await processor.wait_for_tasks()
         finally:
@@ -818,7 +773,7 @@ class TestGPUTelemetryJSONLWriterLifecycle:
                     timestamp_ns=1_000_000_000 + i,
                     gpu_power_usage=100.0 + i,
                 )
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
         assert processor.lines_written == num_records
         lines = processor.output_file.read_text().splitlines()
@@ -844,7 +799,7 @@ class TestGPUTelemetryJSONLWriterLifecycle:
                     timestamp_ns=1_000_000_000 + i,
                     gpu_power_usage=100.0 + i,
                 )
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
             await processor.wait_for_tasks()
 
@@ -874,7 +829,7 @@ class TestGPUTelemetryJSONLWriterLifecycle:
                     timestamp_ns=1_000_000_000 + i,
                     gpu_power_usage=100.0 + i,
                 )
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
             await processor.wait_for_tasks()
             await processor.stop()
@@ -904,7 +859,7 @@ class TestGPUTelemetryJSONLWriterIntegration:
         )
 
         async with aiperf_lifecycle(processor):
-            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.process_record(sample_telemetry_record)
 
         # Verify file exists and is readable
         assert processor.output_file.exists()
@@ -948,7 +903,7 @@ class TestGPUTelemetryJSONLWriterIntegration:
                     gpu_power_usage=100.0 + i,
                     gpu_utilization=80.0,
                 )
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
             await processor.wait_for_tasks()
 
@@ -979,7 +934,7 @@ class TestGPUTelemetryJSONLWriterIntegration:
                     timestamp_ns=1_000_000_000 + i,
                     gpu_power_usage=100.0 + i,
                 )
-                await processor.process_telemetry_record(record)
+                await processor.process_record(record)
 
             await processor.wait_for_tasks()
 
@@ -1013,7 +968,7 @@ class TestGPUTelemetryJSONLWriterIntegration:
                         gpu_power_usage=100.0 + gpu_idx,
                         gpu_utilization=80.0 + cycle,
                     )
-                    await processor.process_telemetry_record(record)
+                    await processor.process_record(record)
 
             await processor.wait_for_tasks()
 
@@ -1047,7 +1002,7 @@ class TestGPUTelemetryJSONLWriterErrorHandling:
             patch.object(processor, "buffered_write", side_effect=OSError("Disk full")),
             patch.object(processor, "error") as mock_error,
         ):
-            await processor.process_telemetry_record(sample_telemetry_record)
+            await processor.process_record(sample_telemetry_record)
             assert mock_error.call_count >= 1
 
     @pytest.mark.asyncio
@@ -1080,6 +1035,6 @@ class TestGPUTelemetryJSONLWriterErrorHandling:
                 with patch.object(processor, "error"):
                     for i in range(3):
                         record = make_telemetry_record(timestamp_ns=1_000_000_000 + i)
-                        await processor.process_telemetry_record(record)
+                        await processor.process_record(record)
 
         assert call_count == 3

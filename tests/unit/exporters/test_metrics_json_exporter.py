@@ -20,25 +20,24 @@ from aiperf.plugin.enums import EndpointType
 
 @pytest.fixture
 def sample_records():
-    return [
-        MetricResult(
-            tag="time_to_first_token",
-            header="Time to First Token",
-            unit="ns",
-            avg=123.0 * NANOS_PER_MILLIS,
-            min=100.0 * NANOS_PER_MILLIS,
-            max=150.0 * NANOS_PER_MILLIS,
-            p1=101.0 * NANOS_PER_MILLIS,
-            p5=105.0 * NANOS_PER_MILLIS,
-            p25=110.0 * NANOS_PER_MILLIS,
-            p50=120.0 * NANOS_PER_MILLIS,
-            p75=130.0 * NANOS_PER_MILLIS,
-            p90=140.0 * NANOS_PER_MILLIS,
-            p95=None,
-            p99=149.0 * NANOS_PER_MILLIS,
-            std=10.0 * NANOS_PER_MILLIS,
-        )
-    ]
+    _r = MetricResult(
+        tag="time_to_first_token",
+        header="Time to First Token",
+        unit="ns",
+        avg=123.0 * NANOS_PER_MILLIS,
+        min=100.0 * NANOS_PER_MILLIS,
+        max=150.0 * NANOS_PER_MILLIS,
+        p1=101.0 * NANOS_PER_MILLIS,
+        p5=105.0 * NANOS_PER_MILLIS,
+        p25=110.0 * NANOS_PER_MILLIS,
+        p50=120.0 * NANOS_PER_MILLIS,
+        p75=130.0 * NANOS_PER_MILLIS,
+        p90=140.0 * NANOS_PER_MILLIS,
+        p95=None,
+        p99=149.0 * NANOS_PER_MILLIS,
+        std=10.0 * NANOS_PER_MILLIS,
+    )
+    return {_r.tag: _r}
 
 
 @pytest.fixture
