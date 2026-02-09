@@ -5,7 +5,14 @@ Shared fixtures for testing AIPerf metrics.
 
 """
 
-from aiperf.common.enums import CreditPhase, MetricType, ModelSelectionStrategy
+import numpy as np
+
+from aiperf.common.enums import (
+    AggregationKind,
+    CreditPhase,
+    MetricType,
+    ModelSelectionStrategy,
+)
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
     ErrorDetails,
@@ -25,6 +32,7 @@ from aiperf.common.types import MetricTagT
 from aiperf.metrics.metric_dicts import MetricArray, MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.plugin.enums import EndpointType
+from aiperf.post_processors.metrics_accumulator import _AGGREGATE_FUNCS
 
 
 def _create_test_request_info(model_name: str = "test-model") -> RequestInfo:
@@ -118,9 +126,12 @@ def run_simple_metrics_pipeline(
         for tag in MetricRegistry.create_dependency_order_for(metrics_to_test)
     ]
 
+    # Collect per-record values
+    aggregate_values: dict[MetricTagT, list] = {}
     metric_results = MetricResultsDict()
+
     for record in records:
-        # STAGE 1: Parse the metrics for each record, and store the values in a dict
+        # STAGE 1: Parse the metrics for each record
         metric_dict = MetricRecordDict()
         for metric in metrics:
             if metric.type in [MetricType.RECORD, MetricType.AGGREGATE]:
@@ -128,19 +139,26 @@ def run_simple_metrics_pipeline(
                     value = metric.parse_record(record, metric_dict)
                     metric_dict[metric.tag] = value
                 except NoMetricValue:
-                    # If a metric can't be calculated, skip it for this record
                     pass
 
-        # STAGE 2: Aggregate the values of the aggregate metrics, and append new values for record metrics
+        # Collect values for aggregation / record lists
         for metric in metrics:
-            if metric.type == MetricType.AGGREGATE:
-                if metric.tag in metric_dict:
-                    metric.aggregate_value(metric_dict[metric.tag])
-                    metric_results[metric.tag] = metric.current_value
+            if metric.type == MetricType.AGGREGATE and metric.tag in metric_dict:
+                aggregate_values.setdefault(metric.tag, []).append(
+                    metric_dict[metric.tag]
+                )
             elif metric.type == MetricType.RECORD and metric.tag in metric_dict:
                 metric_results.setdefault(metric.tag, []).append(
                     metric_dict[metric.tag]
                 )
+
+    # STAGE 2: Vectorized aggregation
+    for metric in metrics:
+        if metric.type == MetricType.AGGREGATE and metric.tag in aggregate_values:
+            kind: AggregationKind = metric.aggregation_kind
+            metric_results[metric.tag] = _AGGREGATE_FUNCS[kind](
+                np.array(aggregate_values[metric.tag])
+            )
 
     # STAGE 3: Compute all of the derived metrics
     for metric in metrics:

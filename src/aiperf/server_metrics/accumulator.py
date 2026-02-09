@@ -1,7 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from __future__ import annotations
+
+from bisect import bisect_left, bisect_right
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -13,7 +17,6 @@ from aiperf.common.constants import (
 )
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
-from aiperf.common.models import MetricResult
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
@@ -30,6 +33,20 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.server_metrics.export_stats import compute_stats
 from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
 from aiperf.server_metrics.storage import ServerMetricsHierarchy
+
+if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import SummaryContext
+
+
+@dataclass
+class ServerMetricsSummary:
+    """Server metrics are exported separately via export_results(); summarize is a no-op."""
+
+    def to_json(self) -> dict[str, Any]:
+        return {}
+
+    def to_csv(self) -> list[dict[str, Any]]:
+        return []
 
 
 class ServerMetricsAccumulator(BaseMetricsProcessor):
@@ -107,6 +124,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # Use slice_duration from config for windowed stats
         self._slice_duration: float | None = user_config.output.slice_duration
 
+        # Raw record storage for process_record() / query_time_range()
+        self._raw_records: list[ServerMetricsRecord] = []
+        self._raw_timestamps_ns: list[int] = []
+
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
 
@@ -118,13 +139,29 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         """
         return self._server_metrics_hierarchy
 
+    async def process_record(self, record: ServerMetricsRecord) -> None:
+        """Ingest a ServerMetricsRecord into raw storage and hierarchical storage."""
+        self._raw_records.append(record)
+        self._raw_timestamps_ns.append(record.timestamp_ns)
+        self._server_metrics_hierarchy.add_record(record)
+
     async def process_server_metrics_record(self, record: ServerMetricsRecord) -> None:
         """Process individual server metrics record into hierarchical storage.
 
         Args:
             record: ServerMetricsRecord containing Prometheus metrics and metadata
         """
-        self._server_metrics_hierarchy.add_record(record)
+        await self.process_record(record)
+
+    def query_time_range(self, start_ns: int, end_ns: int) -> list[ServerMetricsRecord]:
+        """Return records whose timestamp_ns falls within [start_ns, end_ns)."""
+        lo = bisect_left(self._raw_timestamps_ns, start_ns)
+        hi = (
+            bisect_right(self._raw_timestamps_ns, end_ns - 1)
+            if end_ns > start_ns
+            else lo
+        )
+        return self._raw_records[lo:hi]
 
     async def export_results(
         self,
@@ -345,14 +382,19 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         except Exception as e:
             self.error(f"Failed to export server metrics to Parquet: {e!r}")
 
-    async def summarize(self) -> list[MetricResult]:
-        """Summarize accumulated metrics into MetricResult list.
+    async def summarize(
+        self, ctx: SummaryContext | None = None
+    ) -> ServerMetricsSummary:
+        """Summarize accumulated metrics.
 
         Server metrics are exported separately via export_results() rather than
-        through the standard summarize() pipeline. This method returns empty list
-        to satisfy the BaseMetricsProcessor interface.
+        through the standard summarize() pipeline. This method returns an empty
+        summary to satisfy the AccumulatorProtocol interface.
+
+        Args:
+            ctx: Optional SummaryContext (unused by this accumulator, accepted for protocol compatibility).
 
         Returns:
-            Empty list (server metrics exported via export_results instead)
+            Empty ServerMetricsSummary (server metrics exported via export_results instead)
         """
-        return []
+        return ServerMetricsSummary()

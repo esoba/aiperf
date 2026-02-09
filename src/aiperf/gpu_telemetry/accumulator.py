@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import asyncio
+from bisect import bisect_left, bisect_right
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -30,6 +34,22 @@ from aiperf.gpu_telemetry.constants import (
 )
 from aiperf.plugin.enums import UIType
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
+
+if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import SummaryContext
+
+
+@dataclass
+class TelemetryMetricsSummary:
+    """Typed result from GPUTelemetryAccumulator.summarize()."""
+
+    results: list[MetricResult]
+
+    def to_json(self) -> list[dict[str, Any]]:
+        return [r.to_json_result().model_dump() for r in self.results]
+
+    def to_csv(self) -> list[dict[str, Any]]:
+        return [r.model_dump(exclude={"current"}) for r in self.results]
 
 
 class GPUTelemetryAccumulator(BaseMetricsProcessor):
@@ -77,13 +97,33 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         self._last_metric_values: dict[str, float | None] | None = None
         self._total_metrics_generated = 0
 
+        # Raw record storage for process_record() / query_time_range()
+        self._raw_records: list[TelemetryRecord] = []
+        self._raw_timestamps_ns: list[int] = []
+
+    async def process_record(self, record: TelemetryRecord) -> None:
+        """Ingest a TelemetryRecord into raw storage and hierarchical storage."""
+        self._raw_records.append(record)
+        self._raw_timestamps_ns.append(record.timestamp_ns)
+        self._hierarchy.add_record(record)
+
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
         """Process individual GPU telemetry record into hierarchical storage.
 
         Args:
             record: GPU TelemetryRecord containing GPU metrics and hierarchical metadata
         """
-        self._hierarchy.add_record(record)
+        await self.process_record(record)
+
+    def query_time_range(self, start_ns: int, end_ns: int) -> list[TelemetryRecord]:
+        """Return records whose timestamp_ns falls within [start_ns, end_ns)."""
+        lo = bisect_left(self._raw_timestamps_ns, start_ns)
+        hi = (
+            bisect_right(self._raw_timestamps_ns, end_ns - 1)
+            if end_ns > start_ns
+            else lo
+        )
+        return self._raw_records[lo:hi]
 
     def start_realtime_telemetry(self) -> None:
         """Start the realtime telemetry background task.
@@ -124,7 +164,8 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         # TODO: This can keep track of the last update time and only publish
         # if the time has elapsed. (and avoid summarizing the metrics again)
 
-        telemetry_metrics = await self.summarize()
+        summary = await self.summarize()
+        telemetry_metrics = summary.results
         self._total_metrics_generated += len(telemetry_metrics)
 
         if telemetry_metrics:
@@ -142,15 +183,20 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                 )
                 self._last_metric_values = new_values
 
-    async def summarize(self) -> list[MetricResult]:
+    async def summarize(
+        self, ctx: SummaryContext | None = None
+    ) -> TelemetryMetricsSummary:
         """Generate GPU MetricResult list for real-time display and final export.
 
         This method is called by RecordsManager for:
         1. Final results generation when profiling completes
         2. Real-time dashboard updates when --gpu-telemetry dashboard is enabled
 
+        Args:
+            ctx: Optional SummaryContext (unused by this accumulator, accepted for protocol compatibility).
+
         Returns:
-            List of MetricResult objects, one per GPU per metric type.
+            TelemetryMetricsSummary containing MetricResult objects, one per GPU per metric type.
             Tags follow hierarchical naming pattern for dashboard filtering.
         """
         results: list[MetricResult] = []
@@ -192,14 +238,14 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                         )
                         continue
 
-        return results
+        return TelemetryMetricsSummary(results=results)
 
     def export_results(
         self,
         start_ns: int | None = None,
         end_ns: int | None = None,
         error_summary: list[ErrorDetailsCount] | None = None,
-    ) -> "TelemetryExportData | None":
+    ) -> TelemetryExportData | None:
         """Export accumulated telemetry data as a TelemetryExportData object.
 
         Transforms the internal numpy-backed telemetry hierarchy into a serializable

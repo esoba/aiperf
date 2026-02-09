@@ -58,6 +58,10 @@ class ServerMetricsJSONLWriter(
 
         self.info(f"Server metrics JSONL export enabled: {self.output_file}")
 
+    async def process_record(self, record: ServerMetricsRecord) -> None:
+        """Alias for process_server_metrics_record (StreamExporterProtocol compatibility)."""
+        await self.process_server_metrics_record(record)
+
     async def process_server_metrics_record(self, record: ServerMetricsRecord) -> None:
         """Process individual server metrics record by converting to slim and writing to JSONL.
 
@@ -74,6 +78,10 @@ class ServerMetricsJSONLWriter(
         # Convert to slim format before writing to reduce file size
         slim_record = record.to_slim()
         await self.buffered_write(slim_record)
+
+    async def finalize(self) -> None:
+        """Flush any buffered data (StreamExporterProtocol)."""
+        await self.flush_buffer()
 
     async def summarize(self) -> list[MetricResult]:
         """Summarize result. Not used for this processor"""

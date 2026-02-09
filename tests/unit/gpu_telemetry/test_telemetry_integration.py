@@ -193,7 +193,8 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
             for record in self.collected_records:
                 await processor.process_telemetry_record(record)
-            metric_results = await processor.summarize()
+            summary = await processor.summarize()
+            metric_results = summary.results
 
             assert len(processor._hierarchy.dcgm_endpoints) == 2
 
@@ -381,7 +382,8 @@ DCGM_FI_DEV_FB_TOTAL{gpu="1",UUID="GPU-9876fedc-ba09-8765-4321-fedcba098765",dev
 
             for record in self.collected_records:
                 await processor.process_telemetry_record(record)
-            metric_results = await processor.summarize()
+            summary = await processor.summarize()
+            metric_results = summary.results
 
             assert len(self.collected_records) == 0
             assert len(metric_results) == 0
@@ -430,7 +432,8 @@ DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION{gpu="0",UUID="GPU-test-1234",device="nvidia
 
             for record in self.collected_records:
                 await processor.process_telemetry_record(record)
-            metric_results = await processor.summarize()
+            summary = await processor.summarize()
+            metric_results = summary.results
 
             memory_metrics = [r for r in metric_results if "gpu_memory_used" in r.tag]
             energy_metrics = [

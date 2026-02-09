@@ -429,6 +429,23 @@ class MetricType(CaseInsensitiveStrEnum):
     Examples: request throughput, output token throughput, etc."""
 
 
+class AggregationKind(CaseInsensitiveStrEnum):
+    """Defines how an aggregate metric combines per-record values.
+
+    Used by MetricsAccumulator for vectorized windowed aggregation
+    instead of replaying records through metric instances.
+    """
+
+    SUM = "sum"
+    """Sum all values. Used by counter metrics (request count, error count, etc.)."""
+
+    MAX = "max"
+    """Take the maximum value. Used by max timestamp metrics."""
+
+    MIN = "min"
+    """Take the minimum value. Used by min timestamp metrics."""
+
+
 class PlotMetricDirection(CaseInsensitiveStrEnum):
     """Direction indicating whether higher or lower metric values are better for plotting purposes."""
 

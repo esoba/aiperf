@@ -19,9 +19,8 @@ if TYPE_CHECKING:
 class ServerMetricsProcessorProtocol(Protocol):
     """Protocol for server metrics results processors that handle ServerMetricsRecord objects.
 
-    This protocol is separate from ResultsProcessorProtocol because server metrics data
-    has fundamentally different structure (hierarchical Prometheus snapshots) compared
-    to inference metrics (flat key-value pairs).
+    Server metrics data has fundamentally different structure (hierarchical Prometheus snapshots)
+    compared to inference metrics (flat key-value pairs).
     """
 
     async def process_server_metrics_record(self, record: ServerMetricsRecord) -> None:

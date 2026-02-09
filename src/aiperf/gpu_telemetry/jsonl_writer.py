@@ -52,6 +52,10 @@ class GPUTelemetryJSONLWriter(
 
         self.info(f"GPU telemetry export enabled: {self.output_file}")
 
+    async def process_record(self, record: TelemetryRecord) -> None:
+        """Alias for process_telemetry_record (StreamExporterProtocol compatibility)."""
+        await self.process_telemetry_record(record)
+
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:
         """Process individual telemetry record by writing it to JSONL.
 
@@ -62,6 +66,10 @@ class GPUTelemetryJSONLWriter(
             await self.buffered_write(record)
         except Exception as e:
             self.error(f"Failed to write GPU telemetry record: {e}")
+
+    async def finalize(self) -> None:
+        """Flush any buffered data (StreamExporterProtocol)."""
+        await self.flush_buffer()
 
     async def summarize(self) -> list[MetricResult]:
         """Summarize the results. For this processor, we don't need to summarize anything."""

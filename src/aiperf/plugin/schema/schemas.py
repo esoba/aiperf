@@ -311,6 +311,28 @@ class PlotMetadata(BaseModel):
     )
 
 
+class RecordRoutingMetadata(BaseModel):
+    """Metadata schema for record routing in accumulator and stream exporter plugins.
+
+    Defines which record types a processor accepts. Used by RecordsManager to
+    build a routing table: incoming records are dispatched to all processors
+    whose record_types include the matching type. The processor role (accumulator
+    vs stream_exporter) is determined by the plugin category itself.
+
+    Referenced by: categories.yaml accumulator.metadata_class, stream_exporter.metadata_class
+    Used in: plugins.yaml accumulator and stream_exporter entries
+    """
+
+    record_types: list[str] = Field(
+        description=(
+            "Record type identifiers this processor accepts for routing. "
+            "RecordsManager dispatches incoming records to all processors "
+            "whose record_types include the matching type. "
+            "Values: 'metric_records', 'telemetry', 'server_metrics'."
+        ),
+    )
+
+
 class ServiceMetadata(BaseModel):
     """Metadata schema for service plugins.
 

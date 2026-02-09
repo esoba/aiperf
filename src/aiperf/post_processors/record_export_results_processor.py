@@ -54,6 +54,10 @@ class RecordExportResultsProcessor(
         if self.export_http_trace:
             self.info("HTTP trace export enabled (--export-http-trace)")
 
+    async def process_record(self, record: MetricRecordsData) -> None:
+        """Alias for process_result (AccumulatorProtocol compatibility)."""
+        await self.process_result(record)
+
     async def process_result(self, record_data: MetricRecordsData) -> None:
         try:
             metric_dict = MetricRecordDict(record_data.metrics)
@@ -82,6 +86,10 @@ class RecordExportResultsProcessor(
 
         except Exception as e:
             self.error(f"Failed to write record metrics: {e}")
+
+    async def finalize(self) -> None:
+        """Flush any buffered data (StreamExporterProtocol)."""
+        await self.flush_buffer()
 
     async def summarize(self) -> list[MetricResult]:
         """Summarize the results. For this processor, we don't need to summarize anything."""

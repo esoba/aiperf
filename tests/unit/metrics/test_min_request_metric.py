@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import sys
+import numpy as np
 
+from aiperf.common.enums import AggregationKind
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
+from aiperf.post_processors.metrics_accumulator import _AGGREGATE_FUNCS
 from tests.unit.metrics.conftest import create_record
 
 
@@ -26,16 +28,7 @@ class TestMinRequestTimestampMetric:
         ]
 
         metric = MinRequestTimestampMetric()
+        values = [metric.parse_record(record, MetricRecordDict()) for record in records]
 
-        # Process each record and aggregate
-        for record in records:
-            timestamp = metric.parse_record(record, MetricRecordDict())
-            metric.aggregate_value(timestamp)
-
-        # Should have the minimum timestamp
-        assert metric.current_value == 1000
-
-    def test_min_request_default_value(self):
-        """Test that default value is max int size"""
-        metric = MinRequestTimestampMetric()
-        assert metric.current_value == sys.maxsize
+        result = _AGGREGATE_FUNCS[AggregationKind.MIN](np.array(values))
+        assert result == 1000

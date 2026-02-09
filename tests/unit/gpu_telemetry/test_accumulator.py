@@ -167,7 +167,8 @@ class TestGPUTelemetryAccumulator:
             )
             await processor.process_telemetry_record(record)
 
-        results = await processor.summarize()
+        summary = await processor.summarize()
+        results = summary.results
 
         # Should have results for all metrics that had data
         assert len(results) > 0
@@ -205,15 +206,15 @@ class TestGPUTelemetryAccumulator:
         }
 
         with patch.object(processor, "debug") as mock_debug:
-            results = await processor.summarize()
+            summary = await processor.summarize()
 
             # Should have logged debug messages for missing metrics
             assert mock_debug.call_count > 0
             debug_messages = [call[0][0] for call in mock_debug.call_args_list]
             assert any("No data available" in msg for msg in debug_messages)
 
-            # Should return empty list when no data available
-            assert results == []
+            # Should return empty results when no data available
+            assert summary.results == []
 
     @pytest.mark.asyncio
     async def test_summarize_handles_unexpected_exception(
@@ -247,7 +248,7 @@ class TestGPUTelemetryAccumulator:
         }
 
         with patch.object(processor, "exception") as mock_exception:
-            results = await processor.summarize()
+            summary = await processor.summarize()
 
             # Should have logged exception with context
             assert mock_exception.call_count > 0
@@ -260,8 +261,8 @@ class TestGPUTelemetryAccumulator:
                 "GPU-87654321" in msg for msg in exception_messages
             )  # First 12 chars
 
-            # Should return empty list when all metrics fail
-            assert results == []
+            # Should return empty results when all metrics fail
+            assert summary.results == []
 
     @pytest.mark.asyncio
     async def test_summarize_continues_after_errors(
@@ -313,15 +314,15 @@ class TestGPUTelemetryAccumulator:
             patch.object(processor, "debug") as mock_debug,
             patch.object(processor, "exception") as mock_exception,
         ):
-            results = await processor.summarize()
+            summary = await processor.summarize()
 
             # Should have logged both types of errors
             assert mock_debug.call_count > 0
             assert mock_exception.call_count > 0
 
             # Should have one successful result despite errors
-            assert len(results) == 1
-            assert results[0].avg == 50.0
+            assert len(summary.results) == 1
+            assert summary.results[0].avg == 50.0
 
     @pytest.mark.asyncio
     async def test_summarize_generates_correct_tags(
@@ -347,7 +348,8 @@ class TestGPUTelemetryAccumulator:
             )
             await processor.process_telemetry_record(record)
 
-        results = await processor.summarize()
+        summary = await processor.summarize()
+        results = summary.results
 
         # Check tag format: metric_name_dcgm_TAG_gpuINDEX_UUID
         power_results = [r for r in results if "gpu_power_usage" in r.tag]
@@ -385,7 +387,8 @@ class TestGPUTelemetryAccumulator:
                 )
                 await processor.process_telemetry_record(record)
 
-        results = await processor.summarize()
+        summary = await processor.summarize()
+        results = summary.results
 
         # Should have results for both GPUs
         gpu0_results = [r for r in results if "gpu0" in r.tag]

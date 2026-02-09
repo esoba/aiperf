@@ -44,7 +44,7 @@ from aiperf.common.types import MetricTagT
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
+from aiperf.post_processors.metrics_accumulator import MetricsAccumulator
 from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
 from tests.unit.conftest import (
     DEFAULT_FIRST_RESPONSE_NS,
@@ -318,20 +318,25 @@ def setup_mock_registry_sequences(
 
 def create_results_processor_with_metrics(
     user_config: UserConfig, *metrics: type[BaseMetric]
-) -> MetricResultsProcessor:
-    """Create a MetricResultsProcessor with pre-configured metrics.
+) -> MetricsAccumulator:
+    """Create a MetricsAccumulator with pre-configured metrics.
 
     Args:
         user_config: User configuration for the processor
         metrics: list of metric classes
 
     Returns:
-        Configured MetricResultsProcessor instance
+        Configured MetricsAccumulator instance
     """
 
-    processor = MetricResultsProcessor(user_config)
+    processor = MetricsAccumulator(user_config)
     processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
-    processor._instances_map = {metric.tag: metric() for metric in metrics}
+    processor._metric_classes = {metric.tag: metric() for metric in metrics}
+    processor._aggregation_kinds = {
+        metric.tag: metric.aggregation_kind
+        for metric in metrics
+        if hasattr(metric, "aggregation_kind")
+    }
     return processor
 
 
@@ -354,7 +359,7 @@ def mock_metric_registry(monkeypatch):
         "aiperf.post_processors.base_metrics_processor.MetricRegistry", mock_registry
     )
     monkeypatch.setattr(
-        "aiperf.post_processors.metric_results_processor.MetricRegistry", mock_registry
+        "aiperf.post_processors.metrics_accumulator.MetricRegistry", mock_registry
     )
 
     return mock_registry

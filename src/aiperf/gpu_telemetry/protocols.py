@@ -67,9 +67,8 @@ TErrorCallback = Callable[[ErrorDetails, str], Awaitable[None]]
 class GPUTelemetryProcessorProtocol(Protocol):
     """Protocol for GPU telemetry results processors that handle TelemetryRecord objects.
 
-    This protocol is separate from ResultsProcessorProtocol because GPU telemetry data
-    has fundamentally different structure (hierarchical with metadata) compared
-    to inference metrics (flat key-value pairs).
+    GPU telemetry data has fundamentally different structure (hierarchical with metadata)
+    compared to inference metrics (flat key-value pairs).
     """
 
     async def process_telemetry_record(self, record: TelemetryRecord) -> None:

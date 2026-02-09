@@ -35,6 +35,7 @@ from aiperf.common.enums.enums import (
     WorkerStatus,
 )
 from aiperf.common.enums.metric_enums import (
+    AggregationKind,
     BaseMetricUnit,
     BaseMetricUnitInfo,
     EnergyMetricUnit,
@@ -64,6 +65,7 @@ from aiperf.common.enums.metric_enums import (
 )
 
 __all__ = [
+    "AggregationKind",
     "AIPerfLogLevel",
     "AudioFormat",
     "BaseMetricUnit",
