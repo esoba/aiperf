@@ -11,6 +11,7 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
+from aiperf.metrics.metric_dicts import metric_result_from_array
 
 
 class TelemetryMetrics(AIPerfBaseModel):
@@ -236,7 +237,7 @@ class GpuMetricTimeSeries:
     def to_metric_result(
         self, metric_name: str, tag: str, header: str, unit: str
     ) -> MetricResult:
-        """Compute stats for a metric using vectorized NumPy operations.
+        """Compute stats for a metric using single-sort vectorized computation.
 
         Args:
             metric_name: Name of the metric to analyze
@@ -256,34 +257,12 @@ class GpuMetricTimeSeries:
                 f"No telemetry data available for metric '{metric_name}'"
             )
 
-        # Vectorized stats computation
-        p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
-            arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
+        # arr is a view into stored data — copy before in-place sort
+        result = metric_result_from_array(
+            tag, header, unit, arr.copy(), float(np.sum(arr))
         )
-
-        # Use sample std (ddof=1) for unbiased estimate; 0 for single sample
-        std_dev = float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0
-
-        return MetricResult(
-            tag=tag,
-            header=header,
-            unit=unit,
-            min=float(np.min(arr)),
-            max=float(np.max(arr)),
-            avg=float(np.mean(arr)),
-            std=std_dev,
-            count=len(arr),
-            current=float(arr[-1]),
-            p1=p1,
-            p5=p5,
-            p10=p10,
-            p25=p25,
-            p50=p50,
-            p75=p75,
-            p90=p90,
-            p95=p95,
-            p99=p99,
-        )
+        result.current = float(arr[-1])
+        return result
 
     def get_time_mask(self, time_filter: TimeRangeFilter | None) -> NDArray[np.bool_]:
         """Get boolean mask for points within time range.
