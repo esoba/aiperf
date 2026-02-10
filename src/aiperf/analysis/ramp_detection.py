@@ -131,7 +131,7 @@ def mser5_truncation_point(
 
     counts = np.arange(m, 0, -1, dtype=np.float64)  # counts[d] = m - d
     means = sum_x / counts
-    variances = sum_x2 / counts - means**2
+    variances = np.maximum(sum_x2 / counts - means**2, 0.0)
     mser = variances / counts  # MSER(d) = var / count
 
     d_star = int(np.argmin(mser[: max_d + 1]))

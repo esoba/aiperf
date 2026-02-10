@@ -27,6 +27,7 @@ from aiperf.common.types import MetricTagT
 
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import SummaryContext
+    from aiperf.plugin.enums import AccumulatorType
     from aiperf.post_processors.metrics_accumulator import MetricsAccumulator
 
 logger = logging.getLogger(__name__)
@@ -191,8 +192,8 @@ class SteadyStateAnalyzer:
     arrays from MetricsAccumulator at summarize time.
     """
 
-    required_accumulators: ClassVar[set[str]] = {"metric_results"}
-    summary_dependencies: ClassVar[list[str]] = ["metric_results"]
+    required_accumulators: ClassVar[set[AccumulatorType]] = {"metric_results"}
+    summary_dependencies: ClassVar[list[AccumulatorType]] = ["metric_results"]
 
     def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
         ss_config = user_config.output.steady_state

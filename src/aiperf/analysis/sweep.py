@@ -17,12 +17,10 @@ def _sweep_cumsum(
     deltas: NDArray[np.float64],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Sort events by timestamp (ends before starts at ties) and cumsum deltas."""
-    # Composite sort key: ts*2 + (1 if start else 0).
-    # Ends (delta<0) get key 2*ts, starts (delta>0) get 2*ts+1,
-    # so ends sort before starts at the same timestamp.
-    # Safe for nanosecond timestamps up to ~52 days (2^52 ns).
-    event_type = (deltas > 0).astype(np.float64)
-    order = np.argsort(timestamps * 2.0 + event_type)
+    # lexsort: primary key = timestamps, secondary key = event_type (0=end, 1=start).
+    # Ends sort before starts at the same timestamp.
+    event_type = (deltas > 0).astype(np.int8)
+    order = np.lexsort((event_type, timestamps))
     return timestamps[order], np.cumsum(deltas[order])
 
 
@@ -170,7 +168,9 @@ def compute_time_weighted_stats(
     # Narrow to events relevant to [window_start, window_end] via searchsorted,
     # avoiding full-array operations on events entirely outside the window.
     lo = max(0, int(np.searchsorted(sorted_ts, window_start, side="right")) - 1)
-    hi = min(len(sorted_ts), int(np.searchsorted(sorted_ts, window_end, side="left")) + 1)
+    hi = min(
+        len(sorted_ts), int(np.searchsorted(sorted_ts, window_end, side="left")) + 1
+    )
     ts_slice = sorted_ts[lo:hi]
     val_slice = values[lo:hi]
 

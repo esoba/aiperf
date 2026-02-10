@@ -24,6 +24,22 @@ class BootstrapResult:
     n_iterations: int
 
 
+def _circular_block_indices(
+    n: int,
+    block_size: int,
+    rng: np.random.Generator,
+) -> NDArray[np.int64]:
+    """Circular block bootstrap: sample blocks of consecutive indices.
+
+    Preserves temporal adjacency within each block. Used with a
+    time-sorted index to maintain local correlation structure.
+    """
+    n_blocks = -(-n // block_size)  # ceil division
+    starts = rng.integers(0, n, size=n_blocks)
+    offsets = np.arange(block_size)
+    return ((starts[:, np.newaxis] + offsets) % n).ravel()[:n]
+
+
 def bootstrap_detection(
     start_ns: NDArray[np.float64],
     end_ns: NDArray[np.float64],
@@ -34,7 +50,12 @@ def bootstrap_detection(
     min_window_pct: float = 5.0,
     rng: np.random.Generator | None = None,
 ) -> BootstrapResult:
-    """Resample records with replacement, rerun detection, report CIs.
+    """Circular block bootstrap: resample time-ordered blocks, rerun detection, report CIs.
+
+    Uses block resampling (block_size = sqrt(n)) on records sorted by start_ns
+    to preserve local temporal correlation. Individual-record resampling would
+    duplicate intervals and create artificial concurrency spikes; block
+    resampling keeps within-block temporal structure intact.
 
     Args:
         start_ns: Per-record start timestamps.
@@ -55,13 +76,19 @@ def bootstrap_detection(
     n = len(start_ns)
     alpha = (1 - confidence) / 2
 
+    # Sort records by start_ns so block resampling preserves temporal adjacency.
+    # NaN entries (sparse session_num gaps) sort to the end.
+    time_order = np.argsort(np.where(~np.isnan(start_ns), start_ns, np.inf))
+    block_size = max(1, int(np.sqrt(n)))
+
     ramp_ups: list[float] = []
     ramp_downs: list[float] = []
     mean_lats: list[float] = []
     p99_lats: list[float] = []
 
     for _ in range(n_iterations):
-        idx = rng.integers(0, n, size=n)
+        boot_positions = _circular_block_indices(n, block_size, rng)
+        idx = time_order[boot_positions]
         s_ns = start_ns[idx]
         e_ns = end_ns[idx]
         lat = latency[idx]
