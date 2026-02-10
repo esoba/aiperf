@@ -167,6 +167,87 @@ class TestMetricsAccumulator:
         assert processor.record_count == 2
 
 
+class TestComputeResultsWindowBounds:
+    """Test that _compute_results propagates window bounds to derived metrics."""
+
+    @pytest.mark.asyncio
+    async def test_window_bounds_set_on_scalar_dict(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Window bounds passed to _compute_results reach the derived-metric scalar dict."""
+        processor = MetricsAccumulator(mock_user_config)
+        processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
+        processor._aggregation_kinds = {
+            RequestCountMetric.tag: AggregationKind.SUM,
+        }
+        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric()}
+
+        captured: list[MetricResultsDict] = []
+
+        def spy_derive(results_dict: MetricResultsDict) -> float:
+            captured.append(results_dict)
+            return 42.0
+
+        processor._derive_funcs = {RequestThroughputMetric.tag: spy_derive}
+        processor._metric_classes[RequestThroughputMetric.tag] = (
+            RequestThroughputMetric()
+        )
+
+        msg = create_metric_records_message(
+            x_request_id="test-1",
+            session_num=0,
+            results=[{RequestCountMetric.tag: 10}],
+        )
+        await processor.process_record(msg.to_data())
+
+        processor._compute_results(
+            window_start_ns=1_000_000_000, window_end_ns=5_000_000_000
+        )
+
+        assert len(captured) == 1
+        assert captured[0].window_start_ns == 1_000_000_000
+        assert captured[0].window_end_ns == 5_000_000_000
+
+    @pytest.mark.asyncio
+    async def test_compute_results_for_mask_forwards_window_bounds(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """compute_results_for_mask forwards window bounds to _compute_results."""
+        processor = MetricsAccumulator(mock_user_config)
+        processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
+        processor._aggregation_kinds = {
+            RequestCountMetric.tag: AggregationKind.SUM,
+        }
+        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric()}
+
+        captured: list[MetricResultsDict] = []
+
+        def spy_derive(results_dict: MetricResultsDict) -> float:
+            captured.append(results_dict)
+            return 42.0
+
+        processor._derive_funcs = {RequestThroughputMetric.tag: spy_derive}
+        processor._metric_classes[RequestThroughputMetric.tag] = (
+            RequestThroughputMetric()
+        )
+
+        msg = create_metric_records_message(
+            x_request_id="test-1",
+            session_num=0,
+            results=[{RequestCountMetric.tag: 10}],
+        )
+        await processor.process_record(msg.to_data())
+
+        mask = np.ones(processor._column_store.count, dtype=bool)
+        processor.compute_results_for_mask(
+            mask, window_start_ns=2_000_000_000, window_end_ns=8_000_000_000
+        )
+
+        assert len(captured) == 1
+        assert captured[0].window_start_ns == 2_000_000_000
+        assert captured[0].window_end_ns == 8_000_000_000
+
+
 class TestAggregationKind:
     """Test AggregationKind enum and vectorized aggregate functions."""
 

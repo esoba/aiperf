@@ -192,7 +192,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
         return _AGGREGATE_FUNCS[kind](values)
 
     def _compute_results(
-        self, mask: NDArray[np.bool_] | None = None
+        self,
+        mask: NDArray[np.bool_] | None = None,
+        *,
+        window_start_ns: int | None = None,
+        window_end_ns: int | None = None,
     ) -> dict[MetricTagT, MetricResult]:
         """Compute MetricResults directly from ColumnStore columns.
 
@@ -205,6 +209,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
         # Phase 1 — collect scalars for derived metrics + stash record arrays
         scalar_dict: MetricResultsDict = MetricResultsDict()
+        scalar_dict.window_start_ns = window_start_ns
+        scalar_dict.window_end_ns = window_end_ns
         record_arrays: dict[MetricTagT, tuple[NDArray[np.float64], float]] = {}
 
         full_dataset = mask is None
@@ -270,14 +276,20 @@ class MetricsAccumulator(BaseMetricsProcessor):
         return output
 
     def compute_results_for_mask(
-        self, mask: NDArray[np.bool_]
+        self,
+        mask: NDArray[np.bool_],
+        *,
+        window_start_ns: int | None = None,
+        window_end_ns: int | None = None,
     ) -> dict[MetricTagT, MetricResult]:
         """Build, derive, and convert metric results for an arbitrary boolean mask.
 
         Public interface for analyzers (e.g. SteadyStateAnalyzer) that
         need windowed metric computation without accessing private methods.
         """
-        return self._compute_results(mask)
+        return self._compute_results(
+            mask, window_start_ns=window_start_ns, window_end_ns=window_end_ns
+        )
 
     async def summarize(self, ctx: SummaryContext | None = None) -> MetricsSummary:
         """Compute and return aggregated metric results.
@@ -335,7 +347,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
             full_mask = np.zeros(n, dtype=bool)
             full_mask[filled_indices[bin_mask_local]] = True
 
-            results = self._compute_results(full_mask)
+            results = self._compute_results(
+                full_mask,
+                window_start_ns=int(edges[bin_idx]),
+                window_end_ns=int(edges[bin_idx + 1]),
+            )
             if len(results) > 0:
                 timeslice_results[bin_idx] = results
 

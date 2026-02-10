@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     MetricDictValueTypeT,
+    MetricTimeUnit,
     MetricType,
     MetricUnitT,
     MetricValueTypeT,
@@ -180,6 +181,31 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     - The aggregated value of each `BaseAggregateMetric`.
     - The value of any `BaseDerivedMetric` that has already been computed.
     """
+
+    def __init__(self, *args: ..., **kwargs: ...) -> None:
+        super().__init__(*args, **kwargs)
+        self.window_start_ns: int | None = None
+        self.window_end_ns: int | None = None
+
+    def observation_duration(self, target_unit: MetricUnitT) -> float:
+        """Return the observation duration converted to *target_unit*.
+
+        If explicit window bounds are set, uses (window_end_ns - window_start_ns).
+        Otherwise falls back to BenchmarkDurationMetric.
+        Raises NoMetricValue when the duration is zero.
+        """
+        from aiperf.metrics.types.benchmark_duration_metric import (
+            BenchmarkDurationMetric,
+        )
+
+        if self.window_start_ns is not None and self.window_end_ns is not None:
+            duration_ns = self.window_end_ns - self.window_start_ns
+            duration = MetricTimeUnit.NANOSECONDS.convert_to(target_unit, duration_ns)
+        else:
+            duration = self.get_converted_or_raise(BenchmarkDurationMetric, target_unit)
+        if duration == 0:
+            raise NoMetricValue("Observation duration is zero")
+        return duration
 
     def get_converted_or_raise(
         self, metric: type["BaseMetric"], other_unit: MetricUnitT

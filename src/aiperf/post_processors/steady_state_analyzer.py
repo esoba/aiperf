@@ -368,7 +368,11 @@ class SteadyStateAnalyzer:
             boot_ci_p99_lat = boot.ci_p99_latency
             boot_n = boot.n_iterations
 
-        windowed_results = metrics_acc.compute_results_for_mask(ss_mask)
+        windowed_results = metrics_acc.compute_results_for_mask(
+            ss_mask,
+            window_start_ns=int(window_start),
+            window_end_ns=int(window_end),
+        )
 
         return SteadyStateSummary(
             results=windowed_results,

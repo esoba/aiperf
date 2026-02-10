@@ -64,3 +64,18 @@ class TestOutputTokenThroughputMetric:
 
         with pytest.raises(NoMetricValue):
             metric.derive_value(metric_results)
+
+    def test_uses_window_duration_over_benchmark(self):
+        """Window bounds should override BenchmarkDurationMetric for throughput."""
+        metric = OutputTokenThroughputMetric()
+
+        metric_results = MetricResultsDict()
+        metric_results[TotalOutputSequenceLengthMetric.tag] = 1000
+        # BenchmarkDurationMetric says 1s, but window is 10s
+        metric_results[BenchmarkDurationMetric.tag] = 1_000_000_000
+        metric_results.window_start_ns = 0
+        metric_results.window_end_ns = 10_000_000_000  # 10 seconds
+
+        result = metric.derive_value(metric_results)
+        # 1000 tokens / 10 seconds = 100 tokens/sec
+        assert result == 100.0

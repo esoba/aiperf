@@ -45,3 +45,18 @@ class TestRequestThroughputMetric:
 
         with pytest.raises(NoMetricValue):
             metric.derive_value(metric_results)
+
+    def test_uses_window_duration_over_benchmark(self):
+        """Window bounds should override BenchmarkDurationMetric for throughput."""
+        metric = RequestThroughputMetric()
+
+        metric_results = MetricResultsDict()
+        metric_results[RequestCountMetric.tag] = 100
+        # BenchmarkDurationMetric says 2s, but window is 10s
+        metric_results[BenchmarkDurationMetric.tag] = 2_000_000_000
+        metric_results.window_start_ns = 0
+        metric_results.window_end_ns = 10_000_000_000  # 10 seconds
+
+        result = metric.derive_value(metric_results)
+        # 100 requests / 10 seconds = 10 req/sec
+        assert result == approx(10.0)
