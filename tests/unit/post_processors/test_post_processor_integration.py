@@ -10,7 +10,7 @@ import pytest
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import AggregationKind, MetricType
-from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.models import MetricResult, ParsedResponseRecord
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
@@ -129,6 +129,11 @@ class TestPostProcessorIntegration:
         accumulator._aggregation_kinds = {
             RequestCountMetric.tag: AggregationKind.SUM,
         }
+        accumulator._metric_classes = {
+            RequestCountMetric.tag: RequestCountMetric(),
+            RequestThroughputMetric.tag: RequestThroughputMetric(),
+            BenchmarkDurationMetric.tag: BenchmarkDurationMetric(),
+        }
         accumulator._column_store.ingest(
             idx=0,
             record_metrics={RequestCountMetric.tag: float(TEST_REQUEST_COUNT)},
@@ -153,7 +158,8 @@ class TestPostProcessorIntegration:
         full_results = await accumulator.full_metrics()
 
         assert RequestThroughputMetric.tag in full_results
-        assert full_results[RequestThroughputMetric.tag] == EXPECTED_THROUGHPUT
+        assert isinstance(full_results[RequestThroughputMetric.tag], MetricResult)
+        assert full_results[RequestThroughputMetric.tag].avg == EXPECTED_THROUGHPUT
 
     async def test_complete_pipeline_summary(
         self,

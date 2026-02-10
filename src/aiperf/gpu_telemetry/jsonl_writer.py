@@ -8,6 +8,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PluginDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.exporters.exporter_config import FileExportInfo
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 
@@ -61,6 +62,12 @@ class GPUTelemetryJSONLWriter(
             await self.buffered_write(record)
         except Exception as e:
             self.error(f"Failed to write GPU telemetry record: {e}")
+
+    def get_export_info(self) -> FileExportInfo:
+        """Return metadata about the JSONL file this exporter writes to."""
+        return FileExportInfo(
+            export_type="GPU Telemetry JSONL Export", file_path=self.output_file
+        )
 
     async def finalize(self) -> None:
         """Flush any buffered data (StreamExporterProtocol)."""

@@ -208,23 +208,24 @@ def compute_time_weighted_stats(
     # Time-weighted standard deviation
     std = float(np.sqrt(np.sum(dur * (val - avg) ** 2) / total_dur))
 
-    # Duration-weighted percentiles: sort by value, build CDF, interpolate
+    # Duration-weighted percentiles: sort by value, build CDF, single batched lookup
     order = np.argsort(val)
     sorted_val = val[order]
     sorted_dur = dur[order]
     cum_dur = np.cumsum(sorted_dur)
     cum_frac = cum_dur / cum_dur[-1]
 
-    percentiles: dict[str, float] = {}
-    for label, q in [("p50", 0.50), ("p90", 0.90), ("p95", 0.95), ("p99", 0.99)]:
-        idx = int(np.searchsorted(cum_frac, q))
-        idx = min(idx, len(sorted_val) - 1)
-        percentiles[label] = float(sorted_val[idx])
+    indices = np.searchsorted(cum_frac, [0.50, 0.90, 0.95, 0.99])
+    np.minimum(indices, len(sorted_val) - 1, out=indices)
+    p50, p90, p95, p99 = sorted_val[indices].tolist()
 
     return {
         "avg": avg,
         "min": mn,
         "max": mx,
-        **percentiles,
+        "p50": p50,
+        "p90": p90,
+        "p95": p95,
+        "p99": p99,
         "std": std,
     }

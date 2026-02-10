@@ -58,6 +58,7 @@ from aiperf.controller.protocols import ServiceManagerProtocol
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
+from aiperf.exporters.exporter_config import FileExportInfo
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceType
@@ -135,6 +136,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._telemetry_results: TelemetryExportData | None = None
         self._server_metrics_results: ServerMetricsResults | None = None
         self._steady_state_results: SteadyStateSummary | None = None
+        self._exported_artifacts: dict[str, FileExportInfo] = {}
         self._profile_results_received = False
 
         self._shutdown_triggered = False
@@ -541,6 +543,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
         self._server_metrics_results = message.server_metrics_results
         self._steady_state_results = message.steady_state_results
+        self._exported_artifacts = message.exported_artifacts
 
         # Trigger shutdown (lock still needed for cancel race)
         should_stop = False
@@ -773,7 +776,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.print()
         self._print_cli_command(console)
         self._print_benchmark_duration(console)
-        self._print_exported_file_infos(exporter_manager, console)
+        self._print_exported_file_infos(console)
         self._print_log_file_info(console)
         if self._was_cancelled:
             console.print(
@@ -794,14 +797,11 @@ class SystemController(SignalHandlerMixin, BaseService):
             f"[bold green]Log File:[/bold green] [cyan]{log_file.resolve()}[/cyan]"
         )
 
-    def _print_exported_file_infos(
-        self, exporter_manager: ExporterManager, console: Console
-    ) -> None:
-        """Print the exported file infos."""
-        file_infos = exporter_manager.get_exported_file_infos()
-        for file_info in file_infos:
+    def _print_exported_file_infos(self, console: Console) -> None:
+        """Print the exported file infos received from RecordsManager over ZMQ."""
+        for info in self._exported_artifacts.values():
             console.print(
-                f"[bold green]{file_info.export_type}[/bold green]: [cyan]{file_info.file_path.resolve()}[/cyan]"
+                f"[bold green]{info.export_type}[/bold green]: [cyan]{info.file_path.resolve()}[/cyan]"
             )
 
     def _print_cli_command(self, console: Console) -> None:

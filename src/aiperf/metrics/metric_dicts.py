@@ -11,11 +11,8 @@ from aiperf.common.enums import (
     MetricType,
     MetricUnitT,
     MetricValueTypeT,
-    MetricValueTypeVarT,
 )
-from aiperf.common.environment import Environment
 from aiperf.common.exceptions import MetricTypeError, MetricUnitError, NoMetricValue
-from aiperf.common.growable_array import GrowableArray
 from aiperf.common.models.record_models import MetricResult, MetricValue
 from aiperf.common.types import MetricTagT
 
@@ -27,6 +24,52 @@ if TYPE_CHECKING:
 MetricDictValueTypeVarT = TypeVar(
     "MetricDictValueTypeVarT", bound="MetricValueTypeT | MetricDictValueTypeT"
 )
+
+_PERCENTILE_QS = np.array([1, 5, 10, 25, 50, 75, 90, 95, 99], dtype=np.float64)
+
+
+def metric_result_from_array(
+    tag: MetricTagT,
+    header: str,
+    unit: str,
+    clean: NDArray[np.float64],
+    arr_sum: float,
+) -> MetricResult:
+    """Compute MetricResult directly from a clean (no-NaN) numpy array.
+
+    Sorts `clean` in-place (safe — callers always pass a fresh copy from fancy indexing).
+    Extracts min/max from sorted endpoints, avg from arr_sum / n, std from np.std.
+    Vectorized linear interpolation for 9 percentiles.
+    """
+    n = len(clean)
+    clean.sort()  # in-place sort
+
+    virtual_idx = _PERCENTILE_QS / 100.0 * (n - 1)
+    lo = virtual_idx.astype(int)
+    hi = np.minimum(lo + 1, n - 1)
+    frac = virtual_idx - lo
+    pcts = clean[lo] + frac * (clean[hi] - clean[lo])
+
+    return MetricResult(
+        tag=tag,
+        header=header,
+        unit=unit,
+        min=clean[0],
+        max=clean[-1],
+        avg=arr_sum / n,
+        std=float(np.std(clean)),
+        p1=pcts[0],
+        p5=pcts[1],
+        p10=pcts[2],
+        p25=pcts[3],
+        p50=pcts[4],
+        p75=pcts[5],
+        p90=pcts[6],
+        p95=pcts[7],
+        p99=pcts[8],
+        count=n,
+    )
+
 
 _logger = AIPerfLogger(__name__)
 
@@ -125,8 +168,8 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     of all metrics that have been computed for an entire run.
 
     This will include:
-    - All `BaseRecordMetric`s as a MetricArray of their values.
-    - The most recent value of each `BaseAggregateMetric`.
+    - All `BaseRecordMetric`s as scalar sums (float).
+    - The aggregated value of each `BaseAggregateMetric`.
     - The value of any `BaseDerivedMetric` that has already been computed.
     """
 
@@ -135,83 +178,7 @@ class MetricResultsDict(BaseMetricDict[MetricDictValueTypeT]):
     ) -> float:
         """Get the value of a metric, but converted to a different unit, or raise NoMetricValue if it is not available."""
         if metric.type == MetricType.RECORD:
-            # Record metrics are a MetricArray of values, so we can't convert them directly.
             raise ValueError(
                 f"Cannot convert a record metric to a different unit: {metric.tag}"
             )
         return super().get_converted_or_raise(metric, other_unit)
-
-
-class MetricArray(Generic[MetricValueTypeVarT]):
-    """NumPy backed array for metric data.
-
-    This is used to store the values of a metric over time.
-    Uses GrowableArray internally for efficient storage with automatic growth.
-    """
-
-    def __init__(
-        self, initial_capacity: int = Environment.METRICS.ARRAY_INITIAL_CAPACITY
-    ):
-        """Initialize the array with the given initial capacity."""
-        self._array = GrowableArray(
-            initial_capacity=initial_capacity,
-            dtype=np.float64,
-            track_sum=True,
-        )
-
-    def extend(self, values: list[MetricValueTypeVarT] | NDArray[np.float64]) -> None:
-        """Extend the array with values (list or ndarray)."""
-        if isinstance(values, np.ndarray):
-            self._array.extend(values)
-        else:
-            self._array.extend(np.asarray(values, dtype=np.float64))
-
-    def append(self, value: MetricValueTypeVarT) -> None:
-        """Append a value to the array."""
-        self._array.append(value)
-
-    @property
-    def sum(self) -> MetricValueTypeVarT:
-        """Get the sum of the array."""
-        return self._array.sum  # type: ignore
-
-    @property
-    def data(self) -> np.ndarray:
-        """Return view of actual data."""
-        return self._array.data
-
-    @property
-    def capacity(self) -> int:
-        """Return current capacity."""
-        return self._array.capacity
-
-    def __len__(self) -> int:
-        """Return number of elements."""
-        return len(self._array)
-
-    def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
-        """Compute metric stats with zero-copy"""
-
-        arr = self.data
-        p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
-            arr, [1, 5, 10, 25, 50, 75, 90, 95, 99]
-        )
-        return MetricResult(
-            tag=tag,
-            header=header,
-            unit=unit,
-            min=np.min(arr),
-            max=np.max(arr),
-            avg=float(np.mean(arr)),
-            std=float(np.std(arr)),
-            p1=p1,
-            p5=p5,
-            p10=p10,
-            p25=p25,
-            p50=p50,
-            p75=p75,
-            p90=p90,
-            p95=p95,
-            p99=p99,
-            count=len(self._array),
-        )

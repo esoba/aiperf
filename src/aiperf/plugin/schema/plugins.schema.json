@@ -138,6 +138,14 @@
         "$ref": "#/$defs/ConsoleExporterPlugin"
       }
     },
+    "artifact_publisher": {
+      "title": "Artifact Publisher Plugins",
+      "type": "object",
+      "description": "Artifact publishers upload exported benchmark files to remote storage backends.\nRuns after all data and stream exporters have completed. Receives the full list\nof exported file paths. Supports S3, GCS, Azure Blob, and custom backends.\nOne-to-many mapping: multiple publishers can be loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ArtifactPublisherPlugin"
+      }
+    },
     "ui": {
       "title": "UI Plugins",
       "type": "object",
@@ -980,6 +988,47 @@
       ],
       "title": "Console Exporter Plugin",
       "description": "Console exporters display benchmark results and diagnostics to stdout.\nProvides formatted output for metrics, errors, telemetry, and traces.\nOne-to-many mapping: multiple console exporters can be loaded simultaneously."
+    },
+    "ArtifactPublisherPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Artifact Publisher Plugin",
+      "description": "Artifact publishers upload exported benchmark files to remote storage backends.\nRuns after all data and stream exporters have completed. Receives the full list\nof exported file paths. Supports S3, GCS, Azure Blob, and custom backends.\nOne-to-many mapping: multiple publishers can be loaded simultaneously."
     },
     "UiPlugin": {
       "type": "object",

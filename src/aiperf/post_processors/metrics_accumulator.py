@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Numpy-backed metrics accumulator replacing MetricResultsProcessor + TimesliceMetricResultsProcessor."""
+"""Numpy-backed metrics accumulator with columnar storage and dynamic timeslicing."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     AggregationKind,
-    MetricDictValueTypeT,
     MetricType,
     MetricValueTypeT,
 )
@@ -24,7 +23,7 @@ from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.common.types import MetricTagT, TimeSliceT
 from aiperf.metrics.base_metric import BaseMetric
-from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.post_processors.column_store import ColumnStore
@@ -78,7 +77,6 @@ class MetricsSummary:
 class MetricsAccumulator(BaseMetricsProcessor):
     """Numpy-backed accumulator for inference metrics.
 
-    Replaces both MetricResultsProcessor and TimesliceMetricResultsProcessor.
     Uses session_num-indexed ColumnStore for NaN-sparse columnar storage,
     vectorized aggregation, and dynamic timeslicing at summarize time.
 
@@ -190,39 +188,83 @@ class MetricsAccumulator(BaseMetricsProcessor):
         kind = self._aggregation_kinds.get(tag, AggregationKind.SUM)
         return _AGGREGATE_FUNCS[kind](values)
 
-    def build_results_for_mask(self, mask: NDArray[np.bool_]) -> MetricResultsDict:
-        """Build MetricResultsDict from an arbitrary boolean mask over records.
+    def _compute_results(
+        self, mask: NDArray[np.bool_] | None = None
+    ) -> dict[MetricTagT, MetricResult]:
+        """Compute MetricResults directly from ColumnStore columns.
 
-        Works with any mask: time-range, steady-state, custom filters.
+        Three phases in one method:
+        1. Build scalar dict for derived computation + stash record arrays
+        2. Compute derived metrics
+        3. Build MetricResults from scalars and record arrays
         """
-        results = MetricResultsDict()
         store = self._column_store
 
+        # Phase 1 — collect scalars for derived metrics + stash record arrays
+        scalar_dict: MetricResultsDict = MetricResultsDict()
+        record_arrays: dict[MetricTagT, tuple[NDArray[np.float64], float]] = {}
+
+        full_dataset = mask is None
+
         for tag in store.numeric_tags():
-            values = store.numeric(tag)[mask]
-            # Drop NaN — these are records that don't have this metric
-            clean = values[~np.isnan(values)]
+            if full_dataset:
+                col = store.numeric(tag)
+                clean = col[~np.isnan(col)]
+            else:
+                values = store.numeric(tag)[mask]
+                clean = values[~np.isnan(values)]
             if len(clean) == 0:
                 continue
 
             metric_type = self._tags_to_types.get(tag)
             if metric_type == MetricType.RECORD:
-                ma = MetricArray()
-                ma.extend(clean)
-                results[tag] = ma
+                # O(1) running sum for the full dataset; np.sum for windowed
+                s = store.numeric_sum(tag) if full_dataset else float(np.sum(clean))
+                scalar_dict[tag] = s
+                record_arrays[tag] = (clean, s)
             elif metric_type == MetricType.AGGREGATE:
-                results[tag] = self._aggregate_values(tag, clean)
+                scalar_dict[tag] = self._aggregate_values(tag, clean)
 
         for tag in store.ragged_tags():
             ragged = store.ragged(tag)
-            filtered = ragged.get_values_for_mask(mask)
+            filtered = (
+                ragged.values if full_dataset else ragged.get_values_for_mask(mask)
+            )
             if len(filtered) == 0:
                 continue
-            ma = MetricArray()
-            ma.extend(filtered)
-            results[tag] = ma
+            s = float(np.sum(filtered))
+            scalar_dict[tag] = s
+            record_arrays[tag] = (filtered, s)
 
-        return results
+        # Phase 2 — compute derived metrics
+        for tag, derive_func in self._derive_funcs.items():
+            try:
+                scalar_dict[tag] = derive_func(scalar_dict)
+            except NoMetricValue as e:
+                self.debug(f"No metric value for derived metric '{tag}': {e!r}")
+            except Exception as e:
+                self.warning(f"Error deriving metric '{tag}': {e!r}")
+
+        # Phase 3 — build MetricResults
+        output: dict[MetricTagT, MetricResult] = {}
+        for tag, value in scalar_dict.items():
+            mc = self._metric_classes.get(tag)
+            if mc is None:
+                continue
+            if tag in record_arrays:
+                arr, arr_sum = record_arrays[tag]
+                output[tag] = metric_result_from_array(
+                    tag, mc.header, str(mc.unit), arr, arr_sum
+                )
+            elif isinstance(value, int | float):
+                output[tag] = MetricResult(
+                    tag=tag,
+                    header=mc.header,
+                    unit=str(mc.unit),
+                    avg=value,
+                    count=1,
+                )
+        return output
 
     def compute_results_for_mask(
         self, mask: NDArray[np.bool_]
@@ -232,70 +274,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         Public interface for analyzers (e.g. SteadyStateAnalyzer) that
         need windowed metric computation without accessing private methods.
         """
-        results = self.build_results_for_mask(mask)
-        self._compute_derived(results)
-        return self._build_metric_results(results)
-
-    def _build_results_dict(self) -> MetricResultsDict:
-        """Build a MetricResultsDict from all ingested data."""
-        n = self._column_store.count
-        if n == 0:
-            return MetricResultsDict()
-        ts = self._column_store.start_ns[:n]
-        mask = ~np.isnan(ts)
-        return self.build_results_for_mask(mask)
-
-    def _build_results_dict_for_window(
-        self, start_ns: int, end_ns: int
-    ) -> MetricResultsDict:
-        """Build a MetricResultsDict for a specific time window."""
-        n = self._column_store.count
-        if n == 0:
-            return MetricResultsDict()
-        ts = self._column_store.start_ns[:n]
-        mask = ~np.isnan(ts) & (ts >= start_ns) & (ts < end_ns)
-        return self.build_results_for_mask(mask)
-
-    def _compute_derived(self, results: MetricResultsDict) -> None:
-        """Compute derived metrics in-place on a MetricResultsDict."""
-        for tag, derive_func in self._derive_funcs.items():
-            try:
-                results[tag] = derive_func(results)
-            except NoMetricValue as e:
-                self.debug(f"No metric value for derived metric '{tag}': {e!r}")
-            except Exception as e:
-                self.warning(f"Error deriving metric '{tag}': {e!r}")
-
-    def _create_metric_result(
-        self, tag: MetricTagT, values: MetricDictValueTypeT
-    ) -> MetricResult:
-        """Create a MetricResult from current values of a metric."""
-        metric_class = self._metric_classes.get(tag)
-        if metric_class is None:
-            raise ValueError(f"Unknown metric tag: {tag}")
-
-        if isinstance(values, MetricArray):
-            return values.to_result(tag, metric_class.header, str(metric_class.unit))
-
-        if isinstance(values, int | float):
-            return MetricResult(
-                tag=tag,
-                header=metric_class.header,
-                unit=str(metric_class.unit),
-                avg=values,
-                count=1,
-            )
-
-        raise ValueError(f"Unexpected values type: {type(values)}")
-
-    def _build_metric_results(
-        self, results: MetricResultsDict
-    ) -> dict[MetricTagT, MetricResult]:
-        """Convert a MetricResultsDict to a dict of MetricResult objects keyed by tag."""
-        return {
-            tag: self._create_metric_result(tag, values)
-            for tag, values in results.items()
-        }
+        return self._compute_results(mask)
 
     async def summarize(self, ctx: SummaryContext | None = None) -> MetricsSummary:
         """Compute and return aggregated metric results.
@@ -303,10 +282,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         If slice_duration is configured, also computes per-timeslice results
         by partitioning the data into time windows.
         """
-        # Build overall results
-        results_dict = self._build_results_dict()
-        self._compute_derived(results_dict)
-        overall_results = self._build_metric_results(results_dict)
+        overall_results = self._compute_results()
 
         timeslices: dict[TimeSliceT, dict[MetricTagT, MetricResult]] | None = None
 
@@ -356,15 +332,12 @@ class MetricsAccumulator(BaseMetricsProcessor):
             full_mask = np.zeros(n, dtype=bool)
             full_mask[filled_indices[bin_mask_local]] = True
 
-            window_results = self.build_results_for_mask(full_mask)
-            if len(window_results) > 0:
-                self._compute_derived(window_results)
-                timeslice_results[bin_idx] = self._build_metric_results(window_results)
+            results = self._compute_results(full_mask)
+            if len(results) > 0:
+                timeslice_results[bin_idx] = results
 
         return timeslice_results
 
-    async def full_metrics(self) -> MetricResultsDict:
-        """Returns the full metrics dict, including derived metrics."""
-        results = self._build_results_dict()
-        self._compute_derived(results)
-        return results
+    async def full_metrics(self) -> dict[MetricTagT, MetricResult]:
+        """Returns the full metrics results, including derived metrics."""
+        return self._compute_results()

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from aiperf.common.models.error_models import ErrorDetailsCount
+    from aiperf.exporters.exporter_config import FileExportInfo
     from aiperf.plugin.enums import AccumulatorType
 
 
@@ -136,4 +137,8 @@ class StreamExporterProtocol(Protocol):
 
     async def finalize(self) -> None:
         """Flush any buffered data. Called once after all records are processed."""
+        ...
+
+    def get_export_info(self) -> FileExportInfo:
+        """Return metadata about the file this exporter writes to."""
         ...

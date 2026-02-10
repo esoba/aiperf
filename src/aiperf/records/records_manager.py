@@ -60,6 +60,7 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
+from aiperf.exporters.exporter_config import FileExportInfo
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.gpu_telemetry.protocols import GPUTelemetryAccumulatorProtocol
 from aiperf.plugin import plugins
@@ -615,7 +616,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Each accumulator type needs different time windows and error sources:
         # - GPU_TELEMETRY: no end_ns (includes post-profiling final scrape), own error state
         # - SERVER_METRICS: fallback timestamps (needs valid range for stats), own error state
-        # - Others (METRIC_RESULTS, TIMESLICE): standard phase window, error tracker
+        # - Others (METRIC_RESULTS): standard phase window, error tracker
         export_contexts: dict[AccumulatorType, ExportContext] = {}
         for acc_type in self._accumulators:
             if acc_type == AccumulatorType.GPU_TELEMETRY:
@@ -737,16 +738,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             AccumulatorType.SERVER_METRICS
         )
 
-        # Export data files (CSV, JSON) — RecordsManager owns file export
+        # Export data files and publish artifacts — single ExporterManager instance
         steady_state = analyzer_outputs.get(AnalyzerType.STEADY_STATE)
-        await self._export_data_files(
+        exported_artifacts = await self._export_and_publish(
             process_records_result.results,
             telemetry_results,
             server_metrics_results,
             steady_state_results=steady_state,
         )
 
-        # Publish unified results message
+        # Publish unified results message (includes artifact paths for SystemController display)
         self.debug("Publishing ProcessAllResultsMessage...")
         await self.publish(
             ProcessAllResultsMessage(
@@ -755,21 +756,29 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 telemetry_results=telemetry_results,
                 server_metrics_results=server_metrics_results,
                 steady_state_results=analyzer_outputs.get(AnalyzerType.STEADY_STATE),
+                exported_artifacts=exported_artifacts,
             )
         )
         self.debug("ProcessAllResultsMessage published")
         return process_records_result
 
-    async def _export_data_files(
+    async def _export_and_publish(
         self,
         profile_results: ProfileResults,
         telemetry_results: TelemetryExportData | None,
         server_metrics_results: ServerMetricsResults | None,
         steady_state_results: SteadyStateSummary | None = None,
-    ) -> None:
-        """Export data files (CSV, JSON) using the ExporterManager.
+    ) -> dict[str, FileExportInfo]:
+        """Export data files, collect all artifact paths, and publish to remote storage.
 
+        Single ExporterManager instance handles data export and artifact publishing.
+        Stream exporter file infos are collected from already-finalized instances.
         Console export remains on the SystemController side.
+
+        Returns:
+            Dict mapping exporter class name to FileExportInfo.
+            Sent over ZMQ on ProcessAllResultsMessage so SystemController
+            can display file paths without creating its own ExporterManager.
         """
         try:
             exporter_manager = ExporterManager(
@@ -783,6 +792,31 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await exporter_manager.export_data()
         except Exception as e:
             self.exception(f"Failed to export data files: {e!r}")
+            return {}
+
+        # Collect all artifact file infos: stream exporters + data exporters
+        artifacts: dict[str, FileExportInfo] = {}
+
+        for exporter in self._stream_exporters.values():
+            try:
+                info = exporter.get_export_info()
+                if info.file_path.exists():
+                    artifacts[exporter.__class__.__name__] = info
+            except Exception as e:
+                self.debug(f"Could not get export info from stream exporter: {e!r}")
+
+        artifacts.update(exporter_manager.exported_file_infos)
+
+        if not artifacts:
+            return {}
+
+        # Publish to remote storage (S3, GCS, etc.) — no-op when no publishers registered
+        try:
+            await exporter_manager.publish_artifacts(list(artifacts.values()))
+        except Exception as e:
+            self.exception(f"Failed to publish artifacts: {e!r}")
+
+        return artifacts
 
     async def _finalize_stream_exporters(self) -> None:
         """Finalize all stream exporters to flush buffered data.

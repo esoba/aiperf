@@ -173,6 +173,15 @@ console_exporter:
     Provides formatted output for metrics, errors, telemetry, and traces.
     One-to-many mapping: multiple console exporters can be loaded simultaneously.
 
+artifact_publisher:
+  protocol: aiperf.exporters.protocols:ArtifactPublisherProtocol
+  enum: ArtifactPublisherType
+  description: |
+    Artifact publishers upload exported benchmark files to remote storage backends.
+    Runs after all data and stream exporters have completed. Receives the full list
+    of exported file paths. Supports S3, GCS, Azure Blob, and custom backends.
+    One-to-many mapping: multiple publishers can be loaded simultaneously.
+
 # =============================================================================
 # UI Category
 # =============================================================================

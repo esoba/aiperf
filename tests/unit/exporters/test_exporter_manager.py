@@ -48,7 +48,7 @@ class TestExporterManager:
         # Create a mock exporter instance
         mock_instance = MagicMock()
         mock_instance.export = AsyncMock()
-        mock_class = MagicMock(return_value=mock_instance)
+        mock_class = MagicMock(return_value=mock_instance, __name__="MockDataExporter")
 
         # Create a mock PluginEntry for iter_all
         mock_entry = MagicMock()

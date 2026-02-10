@@ -470,17 +470,10 @@ class _SteadyStateSettings(BaseSettings):
         env_prefix="AIPERF_STEADY_STATE_",
     )
 
-    STABILITY_FRACTION: float = Field(
-        gt=0.0,
-        le=1.0,
-        default=0.90,
-        description="Fraction of peak concurrency used as the stability threshold for ramp detection",
-    )
-    SUSTAINED_WINDOW_PCT: float = Field(
-        gt=0.0,
-        le=50.0,
-        default=5.0,
-        description="Minimum sustained duration as percentage of total benchmark duration for ramp boundary detection",
+    BOOTSTRAP_ITERATIONS: int | None = Field(
+        default=None,
+        gt=0,
+        description="Number of bootstrap iterations for boundary confidence intervals. None disables bootstrap.",
     )
     MIN_WINDOW_PCT: float = Field(
         gt=0.0,

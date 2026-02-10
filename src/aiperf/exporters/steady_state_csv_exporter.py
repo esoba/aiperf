@@ -51,6 +51,53 @@ class SteadyStateCsvExporter(MetricsBaseExporter):
         )
         writer.writerow(["total_requests", meta.total_requests])
         writer.writerow(["steady_state_requests", meta.steady_state_requests])
+        writer.writerow(["fraction_retained", f"{meta.fraction_retained:.4f}"])
+        writer.writerow(
+            [
+                "trend_correlation",
+                f"{meta.trend_correlation:.4f}"
+                if meta.trend_correlation is not None
+                else "",
+            ]
+        )
+        writer.writerow(
+            [
+                "trend_p_value",
+                f"{meta.trend_p_value:.4f}" if meta.trend_p_value is not None else "",
+            ]
+        )
+        writer.writerow(["stationarity_warning", meta.stationarity_warning])
+        writer.writerow(
+            ["variance_inflation_factor", f"{meta.variance_inflation_factor:.4f}"]
+        )
+        writer.writerow(["effective_p99_sample_size", meta.effective_p99_sample_size])
+        writer.writerow(["sample_size_warning", meta.sample_size_warning])
+        if meta.bootstrap_n_iterations is not None:
+            writer.writerow(["bootstrap_n_iterations", meta.bootstrap_n_iterations])
+            writer.writerow(
+                [
+                    "bootstrap_ci_ramp_up_ns",
+                    meta.bootstrap_ci_ramp_up_ns,
+                ]
+            )
+            writer.writerow(
+                [
+                    "bootstrap_ci_ramp_down_ns",
+                    meta.bootstrap_ci_ramp_down_ns,
+                ]
+            )
+            writer.writerow(
+                [
+                    "bootstrap_ci_mean_latency",
+                    meta.bootstrap_ci_mean_latency,
+                ]
+            )
+            writer.writerow(
+                [
+                    "bootstrap_ci_p99_latency",
+                    meta.bootstrap_ci_p99_latency,
+                ]
+            )
         writer.writerow([])
 
         # Metrics table

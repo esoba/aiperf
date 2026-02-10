@@ -14,7 +14,7 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import AggregationKind, MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
-from aiperf.metrics.metric_dicts import MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
@@ -146,8 +146,8 @@ class TestMetricsAccumulator:
             )
             await processor.process_record(msg.to_data())
 
-        results = processor._build_results_dict()
-        assert results[RequestCountMetric.tag] == 15.0
+        results = processor._compute_results()
+        assert results[RequestCountMetric.tag].avg == 15.0
 
     @pytest.mark.asyncio
     async def test_record_count_and_iter_requests(
@@ -645,8 +645,59 @@ class TestFullMetrics:
 
         processor = MetricsAccumulator(mock_user_config)
         processor._derive_funcs = {RequestThroughputMetric.tag: mock_derive_func}
-        processor._metric_classes = {}
+        processor._metric_classes = {
+            RequestThroughputMetric.tag: RequestThroughputMetric()
+        }
 
         full_results = await processor.full_metrics()
         assert RequestThroughputMetric.tag in full_results
-        assert full_results[RequestThroughputMetric.tag] == 200.0
+        assert isinstance(full_results[RequestThroughputMetric.tag], MetricResult)
+        assert full_results[RequestThroughputMetric.tag].avg == 200.0
+
+
+class TestMetricResultFromArray:
+    """Test metric_result_from_array computes correct statistics."""
+
+    def test_single_value(self) -> None:
+        """Single-element array: all stats equal the value."""
+        arr = np.array([5.0], dtype=np.float64)
+        r = metric_result_from_array("test", "Test", "ms", arr, 5.0)
+        assert r.tag == "test"
+        assert r.header == "Test"
+        assert r.unit == "ms"
+        assert r.count == 1
+        assert r.min == 5.0
+        assert r.max == 5.0
+        assert r.avg == 5.0
+        assert r.std == 0.0
+        assert r.p50 == 5.0
+
+    def test_five_values(self) -> None:
+        """Five evenly-spaced values: known min/max/avg/p50."""
+        arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
+        r = metric_result_from_array("t", "T", "u", arr, 15.0)
+        assert r.count == 5
+        assert r.min == 1.0
+        assert r.max == 5.0
+        assert r.avg == 3.0
+        assert r.p50 == 3.0
+        np.testing.assert_allclose(r.std, np.std([1.0, 2.0, 3.0, 4.0, 5.0]))
+
+    def test_hundred_values(self) -> None:
+        """1..100: verify percentile interpolation on a larger dataset."""
+        values = list(range(1, 101))
+        arr = np.array(values, dtype=np.float64)
+        r = metric_result_from_array("t", "T", "u", arr, float(sum(values)))
+        assert r.count == 100
+        assert r.min == 1.0
+        assert r.max == 100.0
+        assert r.avg == 50.5
+        assert r.p50 == 50.5
+        np.testing.assert_allclose(r.p1, 1.99)
+        np.testing.assert_allclose(r.p99, 99.01)
+
+    def test_sorts_in_place(self) -> None:
+        """Verify the function sorts the input array in-place."""
+        arr = np.array([5.0, 1.0, 3.0], dtype=np.float64)
+        metric_result_from_array("t", "T", "u", arr, 9.0)
+        np.testing.assert_array_equal(arr, [1.0, 3.0, 5.0])

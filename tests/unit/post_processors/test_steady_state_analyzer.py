@@ -28,8 +28,6 @@ from tests.unit.post_processors.conftest import (
 
 def _make_user_config(
     enabled: bool = True,
-    stability_fraction: float = 0.90,
-    sustained_window_pct: float = 5.0,
     min_window_pct: float = 10.0,
     start_pct: float | None = None,
     end_pct: float | None = None,
@@ -40,8 +38,6 @@ def _make_user_config(
 
     ss_kwargs: dict[str, object] = {
         "enabled": enabled,
-        "stability_fraction": stability_fraction,
-        "sustained_window_pct": sustained_window_pct,
         "min_window_pct": min_window_pct,
     }
     if start_pct is not None:
@@ -165,10 +161,13 @@ class TestSteadyStateAnalyzerConstantConcurrency:
         result = await ss.summarize(ctx)
 
         assert isinstance(result, SteadyStateSummary)
-        assert result.window_metadata.detection_method == "concurrency_threshold"
+        # Detection method should be cusum-based (not old "concurrency_threshold")
+        assert "cusum" in result.window_metadata.detection_method
         assert result.window_metadata.total_requests == 50
         # All requests should be in steady state (constant concurrency)
         assert result.window_metadata.steady_state_requests == 50
+        # fraction_retained should be 1.0
+        assert result.window_metadata.fraction_retained == pytest.approx(1.0)
         # Effective concurrency metric: constant 50 → all stats ≈ 50, std ≈ 0
         conc = result.effective_concurrency
         assert conc.avg == pytest.approx(50.0, rel=0.01)
@@ -183,9 +182,6 @@ class TestSteadyStateAnalyzerRamp:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Linear ramp → steady → drain. Verify window excludes ramp regions."""
-        # Phase 1 (ramp up): 10 requests starting staggered 0-100
-        # Phase 2 (steady): 40 requests all starting at ~100, ending at ~900
-        # Phase 3 (ramp down): 10 requests ending staggered 900-1000
         records = []
         session = 0
 
@@ -211,11 +207,7 @@ class TestSteadyStateAnalyzerRamp:
         )
         ctx = _make_summary_ctx(acc)
 
-        config = _make_user_config(
-            stability_fraction=0.90,
-            sustained_window_pct=5.0,
-            min_window_pct=10.0,
-        )
+        config = _make_user_config(min_window_pct=10.0)
         ss = SteadyStateAnalyzer(user_config=config)
         result = await ss.summarize(ctx)
 
@@ -224,6 +216,8 @@ class TestSteadyStateAnalyzerRamp:
         assert result.window_metadata.steady_state_requests <= 60
         # Should still have a meaningful window
         assert result.window_metadata.steady_state_duration_ns > 0
+        # Detection method should be cusum-based
+        assert "cusum" in result.window_metadata.detection_method
 
 
 class TestSteadyStateAnalyzerUserOverride:
@@ -247,6 +241,9 @@ class TestSteadyStateAnalyzerUserOverride:
         # Window should be 10%-90% of [0, 1000] = [100, 900]
         assert result.window_metadata.ramp_up_end_ns == pytest.approx(100.0)
         assert result.window_metadata.ramp_down_start_ns == pytest.approx(900.0)
+        # Per-signal diagnostics should be None for user_override
+        assert result.window_metadata.cusum_ramp_up_end_ns is None
+        assert result.window_metadata.mser5_latency_ramp_up_end_ns is None
         # Effective concurrency metric should be populated
         conc = result.effective_concurrency
         assert conc.avg >= 0.0
@@ -270,10 +267,6 @@ class TestSteadyStateAnalyzerUserOverride:
         ss = SteadyStateAnalyzer(user_config=config)
         result = await ss.summarize(ctx)
 
-        # Requests 2-7: start >= 200 and end <= 800
-        # Request 2: start=200, end=300 → in
-        # Request 7: start=700, end=800 → in
-        # Request 8: start=800, end=900 → start=800 is >=200, but end=900>800 → out
         assert result.window_metadata.steady_state_requests == 6
 
 
@@ -337,7 +330,20 @@ class TestSteadyStateSummarySerialize:
                 steady_state_duration_ns=800.0,
                 total_requests=10,
                 steady_state_requests=8,
-                detection_method="concurrency_threshold",
+                detection_method="cusum_mser5_latency",
+                fraction_retained=0.8,
+                variance_inflation_factor=1.25,
+                effective_p99_sample_size=0,
+                sample_size_warning=True,
+                trend_correlation=-0.23,
+                trend_p_value=0.42,
+                stationarity_warning=False,
+                cusum_ramp_up_end_ns=90.0,
+                cusum_ramp_down_start_ns=910.0,
+                mser5_latency_ramp_up_end_ns=100.0,
+                mser5_latency_ramp_down_start_ns=900.0,
+                mser5_ttft_ramp_up_end_ns=None,
+                mser5_ttft_ramp_down_start_ns=None,
             ),
         )
 
@@ -346,8 +352,25 @@ class TestSteadyStateSummarySerialize:
         data = summary.to_json()
         assert "results" in data
         assert "window_metadata" in data
-        assert data["window_metadata"]["detection_method"] == "concurrency_threshold"
-        assert data["window_metadata"]["total_requests"] == 10
+        meta = data["window_metadata"]
+        assert meta["detection_method"] == "cusum_mser5_latency"
+        assert meta["total_requests"] == 10
+        # Nested quality group
+        quality = meta["quality"]
+        assert quality["fraction_retained"] == 0.8
+        assert quality["variance_inflation_factor"] == pytest.approx(1.25)
+        assert quality["effective_p99_sample_size"] == 0
+        assert quality["sample_size_warning"] is True
+        # Nested stationarity group
+        stationarity = meta["stationarity"]
+        assert stationarity["trend_correlation"] == pytest.approx(-0.23)
+        assert stationarity["trend_p_value"] == pytest.approx(0.42)
+        assert stationarity["stationarity_warning"] is False
+        # Nested cross_validation group
+        cv = meta["cross_validation"]
+        assert cv["cusum_ramp_up_end_ns"] == 90.0
+        assert cv["mser5_latency_ramp_up_end_ns"] == 100.0
+        assert cv["mser5_ttft_ramp_up_end_ns"] is None
         assert data["effective_concurrency"]["avg"] == 5.0
         assert data["effective_concurrency"]["p99"] == 8.0
 
@@ -356,3 +379,90 @@ class TestSteadyStateSummarySerialize:
         rows = summary.to_csv()
         assert len(rows) == 1
         assert rows[0]["tag"] == "test_tag"
+
+
+class TestSteadyStateAnalyzerStationarityWarning:
+    @pytest.mark.asyncio
+    async def test_trending_data_fires_warning(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Monotonically increasing latency in window → stationarity_warning=True."""
+        # Use user_override to control the window, with trending latency inside
+        # 100 requests with monotonically increasing latency
+        records = [(i, i * 100, (i + 1) * 100, float(i * 10)) for i in range(100)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        # Use full range so all trending data is included
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        assert result.window_metadata.stationarity_warning is True
+        assert result.window_metadata.trend_correlation is not None
+        assert abs(result.window_metadata.trend_correlation) > 0.6
+        assert result.window_metadata.trend_p_value is not None
+        assert result.window_metadata.trend_p_value < 0.05
+
+
+class TestSteadyStateAnalyzerSampleQuality:
+    @pytest.mark.asyncio
+    async def test_variance_inflation_computed(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """VIF = total_requests / steady_state_requests."""
+        # 10 sequential requests, user override keeps requests [2..7] (6 of 10)
+        records = [(i, i * 100, (i + 1) * 100, float(i)) for i in range(10)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=20.0, end_pct=80.0)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        meta = result.window_metadata
+        assert meta.variance_inflation_factor == pytest.approx(10 / 6)
+
+    @pytest.mark.asyncio
+    async def test_sample_size_warning_fires_for_small_dataset(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """50 records with narrow window → effective_p99_sample_size < 10 → warning."""
+        records = [(i, i * 100, (i + 1) * 100, float(i)) for i in range(50)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        meta = result.window_metadata
+        # 50 * 0.01 = 0, so warning should fire
+        assert meta.effective_p99_sample_size < 10
+        assert meta.sample_size_warning is True
+
+    @pytest.mark.asyncio
+    async def test_sample_size_warning_not_fires_for_large_dataset(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """10K+ records → effective_p99_sample_size >= 10 → no warning."""
+        records = [(i, i * 10, (i + 1) * 10, float(i % 100)) for i in range(2000)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        meta = result.window_metadata
+        # 2000 * 0.01 = 20, so warning should not fire
+        assert meta.effective_p99_sample_size >= 10
+        assert meta.sample_size_warning is False

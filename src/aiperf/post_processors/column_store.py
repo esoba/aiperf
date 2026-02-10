@@ -25,6 +25,8 @@ class ColumnStore:
         "_numeric",
         "_string",
         "_ragged",
+        "_sums",
+        "_counts",
         "start_ns",
         "end_ns",
         "generation_start_ns",
@@ -36,6 +38,8 @@ class ColumnStore:
         self._numeric: dict[str, NDArray[np.float64]] = {}
         self._string: dict[str, list[str | None]] = {}
         self._ragged: dict[str, RaggedSeries] = {}
+        self._sums: dict[str, float] = {}
+        self._counts: dict[str, int] = {}
         # Timestamp columns — float64 for NaN support
         self.start_ns = np.full(initial_capacity, np.nan, dtype=np.float64)
         self.end_ns = np.full(initial_capacity, np.nan, dtype=np.float64)
@@ -74,6 +78,14 @@ class ColumnStore:
         """Return all ragged column tags."""
         return list(self._ragged.keys())
 
+    def numeric_sum(self, tag: str) -> float:
+        """Return the running sum for a numeric column (O(1))."""
+        return self._sums.get(tag, 0.0)
+
+    def numeric_count(self, tag: str) -> int:
+        """Return the count of values ingested for a numeric column (O(1))."""
+        return self._counts.get(tag, 0)
+
     # --- Write API (called from MetricsAccumulator.process_record) ---
 
     def ingest(
@@ -109,7 +121,10 @@ class ColumnStore:
                 col[idx] = value
             elif isinstance(value, int | float):
                 col = self._ensure_numeric_column(tag)
-                col[idx] = float(value)
+                fval = float(value)
+                col[idx] = fval
+                self._sums[tag] += fval
+                self._counts[tag] += 1
 
     # --- Internal ---
 
@@ -145,6 +160,8 @@ class ColumnStore:
         if col is None:
             col = np.full(self._capacity, np.nan, dtype=np.float64)
             self._numeric[tag] = col
+            self._sums[tag] = 0.0
+            self._counts[tag] = 0
         return col
 
     def _ensure_string_column(self, tag: str) -> list[str | None]:

@@ -119,6 +119,7 @@ class StubStreamExporter:
     def __init__(self) -> None:
         self.process_record = AsyncMock()
         self.finalize = AsyncMock()
+        self.get_export_info = MagicMock()
 
 
 # ---------------------------------------------------------------------------

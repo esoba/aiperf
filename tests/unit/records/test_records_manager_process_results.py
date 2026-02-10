@@ -106,7 +106,7 @@ def _make_manager_mock(
     mgr._finalize_stream_exporters = RecordsManager._finalize_stream_exporters.__get__(
         mgr
     )
-    mgr._export_data_files = RecordsManager._export_data_files.__get__(mgr)
+    mgr._export_and_publish = RecordsManager._export_and_publish.__get__(mgr)
 
     # Mock user_config/service_config for ExporterManager
     mgr.user_config = MagicMock()
@@ -173,6 +173,79 @@ class TestProcessResults:
         mgr.publish.assert_called_once()
         msg = mgr.publish.call_args[0][0]
         assert isinstance(msg, ProcessAllResultsMessage)
+
+    @pytest.mark.asyncio
+    async def test_message_contains_exported_artifacts(self) -> None:
+        """ProcessAllResultsMessage carries exported_artifacts dict keyed by class name."""
+        from pathlib import Path
+
+        from aiperf.common.messages import ProcessAllResultsMessage
+        from aiperf.exporters.exporter_config import FileExportInfo
+
+        csv_info = FileExportInfo(
+            export_type="CSV Results", file_path=Path("/tmp/results.csv")
+        )
+        acc = _make_stub_accumulator(_make_metrics_summary())
+        mgr = _make_manager_mock(
+            accumulators={AccumulatorType.METRIC_RESULTS: acc},
+        )
+
+        with patch(
+            "aiperf.records.records_manager.ExporterManager"
+        ) as MockExporterManager:
+            mock_instance = MagicMock()
+            mock_instance.export_data = AsyncMock()
+            mock_instance.publish_artifacts = AsyncMock()
+            mock_instance.exported_file_infos = {"CsvDataExporter": csv_info}
+            MockExporterManager.return_value = mock_instance
+
+            await mgr._process_results(phase=CreditPhase.PROFILING, cancelled=False)
+
+        msg: ProcessAllResultsMessage = mgr.publish.call_args[0][0]
+        assert isinstance(msg.exported_artifacts, dict)
+        assert "CsvDataExporter" in msg.exported_artifacts
+        assert msg.exported_artifacts["CsvDataExporter"] is csv_info
+
+    @pytest.mark.asyncio
+    async def test_stream_exporter_artifacts_included(self) -> None:
+        """Stream exporter file infos appear in exported_artifacts keyed by class name."""
+        from pathlib import Path
+
+        from aiperf.common.messages import ProcessAllResultsMessage
+        from aiperf.exporters.exporter_config import FileExportInfo
+
+        # Stream exporter with a file that "exists"
+        exp = _make_stub_stream_exporter()
+        exp.__class__ = type("RecordExportJSONLWriter", (), {})
+        mock_path = MagicMock(spec=Path)
+        mock_path.exists.return_value = True
+        exp.get_export_info.return_value = FileExportInfo(
+            export_type="Record Export JSONL", file_path=mock_path
+        )
+
+        acc = _make_stub_accumulator(_make_metrics_summary())
+        mgr = _make_manager_mock(
+            accumulators={AccumulatorType.METRIC_RESULTS: acc},
+            stream_exporters={StreamExporterType.RECORD_EXPORT: exp},
+        )
+
+        with patch(
+            "aiperf.records.records_manager.ExporterManager"
+        ) as MockExporterManager:
+            mock_instance = MagicMock()
+            mock_instance.export_data = AsyncMock()
+            mock_instance.publish_artifacts = AsyncMock()
+            mock_instance.exported_file_infos = {}
+            MockExporterManager.return_value = mock_instance
+
+            await mgr._process_results(phase=CreditPhase.PROFILING, cancelled=False)
+
+        msg: ProcessAllResultsMessage = mgr.publish.call_args[0][0]
+        assert "RecordExportJSONLWriter" in msg.exported_artifacts
+        assert (
+            msg.exported_artifacts["RecordExportJSONLWriter"].export_type
+            == "Record Export JSONL"
+        )
 
     @pytest.mark.asyncio
     async def test_message_contains_typed_results(self) -> None:
@@ -299,6 +372,8 @@ class TestProcessResults:
         ) as MockExporterManager:
             mock_instance = MagicMock()
             mock_instance.export_data = AsyncMock()
+            mock_instance.publish_artifacts = AsyncMock()
+            mock_instance.exported_file_infos = {}
             MockExporterManager.return_value = mock_instance
 
             await mgr._process_results(phase=CreditPhase.PROFILING, cancelled=False)
@@ -309,6 +384,8 @@ class TestProcessResults:
     @pytest.mark.asyncio
     async def test_data_export_failure_logged_not_raised(self) -> None:
         """ExporterManager failure is logged but doesn't crash _process_results."""
+        from aiperf.common.messages import ProcessAllResultsMessage
+
         mgr = _make_manager_mock(
             accumulators={
                 AccumulatorType.METRIC_RESULTS: _make_stub_accumulator(
@@ -330,6 +407,9 @@ class TestProcessResults:
         assert result.results.records is not None
         # Exception logged
         mgr.exception.assert_called_once()
+        # exported_artifacts should be empty on failure
+        msg: ProcessAllResultsMessage = mgr.publish.call_args[0][0]
+        assert msg.exported_artifacts == {}
 
     @pytest.mark.asyncio
     async def test_empty_accumulators_produces_empty_results(self) -> None:

@@ -68,6 +68,9 @@ class StubStreamExporter:
     async def finalize(self) -> None:
         pass
 
+    def get_export_info(self) -> Any:
+        return None
+
 
 class NotAnAccumulator:
     """Missing required methods — should NOT satisfy any protocol."""

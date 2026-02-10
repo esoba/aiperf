@@ -36,7 +36,8 @@ class ConsoleSteadyStateExporter(AIPerfLoggerMixin):
         info = Table.grid(padding=(0, 1))
         info.add_row(
             f"[bold]Window:[/bold] {meta.detection_method}",
-            f"[bold]Requests:[/bold] {meta.steady_state_requests}/{meta.total_requests}",
+            f"[bold]Requests:[/bold] {meta.steady_state_requests}/{meta.total_requests}"
+            f" ({meta.fraction_retained:.1%})",
             f"[bold]Duration:[/bold] {meta.steady_state_duration_ns:,.0f} ns",
         )
         info.add_row(
@@ -44,6 +45,44 @@ class ConsoleSteadyStateExporter(AIPerfLoggerMixin):
             f"p50={conc.p50:.1f} p90={conc.p90:.1f}",
             f"min={conc.min:.0f} max={conc.max:.0f}",
         )
+
+        # Stationarity status
+        if meta.stationarity_warning:
+            rho = meta.trend_correlation or 0.0
+            p = meta.trend_p_value or 1.0
+            info.add_row(
+                f"[bold yellow]Status:[/bold yellow] Latency trend detected "
+                f"(\u03c1={rho:.2f}, p={p:.3f})",
+                "",
+                "",
+            )
+        else:
+            info.add_row("[bold green]Status:[/bold green] Stationary", "", "")
+
+        if meta.sample_size_warning:
+            info.add_row(
+                f"[bold yellow]Warning:[/bold yellow] Small sample "
+                f"(p99 from ~{meta.effective_p99_sample_size} observations)",
+                "",
+                "",
+            )
+
+        if meta.bootstrap_n_iterations is not None:
+            ci_up = meta.bootstrap_ci_ramp_up_ns
+            ci_down = meta.bootstrap_ci_ramp_down_ns
+            ci_mean = meta.bootstrap_ci_mean_latency
+            parts = [
+                f"[bold]Bootstrap 95% CI[/bold] ({meta.bootstrap_n_iterations} iter)"
+            ]
+            if ci_up:
+                parts.append(f"ramp-up: [{ci_up[0]:,.0f}, {ci_up[1]:,.0f}] ns")
+            if ci_down:
+                parts.append(f"ramp-down: [{ci_down[0]:,.0f}, {ci_down[1]:,.0f}] ns")
+            if ci_mean:
+                parts.append(f"mean: [{ci_mean[0]:,.2f}, {ci_mean[1]:,.2f}]")
+            info.add_row(
+                parts[0], " ".join(parts[1:3]), parts[3] if len(parts) > 3 else ""
+            )
 
         # Reuse ConsoleMetricsExporter's table rendering
         metrics_exporter = ConsoleMetricsExporter(exporter_config=self._exporter_config)

@@ -95,6 +95,10 @@ class DataExporterDisabled(AIPerfError):
     """Raised when initializing a data exporter to indicate to the caller that it is disabled and should not be used."""
 
 
+class ArtifactPublisherDisabled(AIPerfError):
+    """Raised when initializing an artifact publisher to indicate it is disabled and should not be used."""
+
+
 class DatasetError(AIPerfError):
     """Generic dataset error."""
 

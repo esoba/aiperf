@@ -62,36 +62,6 @@ class SteadyStateConfig(BaseConfig):
         ),
     ] = None
 
-    stability_fraction: Annotated[
-        float,
-        Field(
-            gt=0.0,
-            le=1.0,
-            description="Fraction of peak concurrency used as the stability threshold. "
-            "A value of 0.90 means concurrency must reach 90% of the 95th-percentile peak "
-            "before the region is considered steady state.",
-        ),
-        CLIParameter(
-            name="--steady-state-stability-fraction",
-            group=_CLI_GROUP,
-        ),
-    ] = 0.90
-
-    sustained_window_pct: Annotated[
-        float,
-        Field(
-            gt=0.0,
-            le=50.0,
-            description="Minimum sustained duration as a percentage of total benchmark duration "
-            "for ramp boundary detection. Higher values require concurrency to remain above "
-            "the threshold for longer before it is considered steady.",
-        ),
-        CLIParameter(
-            name="--steady-state-sustained-window-pct",
-            group=_CLI_GROUP,
-        ),
-    ] = 5.0
-
     min_window_pct: Annotated[
         float,
         Field(
@@ -105,3 +75,17 @@ class SteadyStateConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = 10.0
+
+    bootstrap_iterations: Annotated[
+        int | None,
+        Field(
+            default=None,
+            gt=0,
+            description="Number of bootstrap iterations for confidence intervals on boundaries. "
+            "Set to 50+ to enable. Increases summarize time proportionally.",
+        ),
+        CLIParameter(
+            name="--steady-state-bootstrap-iterations",
+            group=_CLI_GROUP,
+        ),
+    ] = None

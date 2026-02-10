@@ -25,9 +25,8 @@ class TestSteadyStateConfigDefaults:
         assert config.enabled is False
         assert config.start_pct is None
         assert config.end_pct is None
-        assert config.stability_fraction == 0.90
-        assert config.sustained_window_pct == 5.0
         assert config.min_window_pct == 10.0
+        assert config.bootstrap_iterations is None
 
     def test_enabled(self) -> None:
         config = SteadyStateConfig(enabled=True)
@@ -40,12 +39,6 @@ class TestSteadyStateConfigDefaults:
 
 
 class TestSteadyStateConfigValidation:
-    def test_stability_fraction_bounds(self) -> None:
-        with pytest.raises(ValidationError):
-            SteadyStateConfig(stability_fraction=0.0)  # gt=0.0
-        with pytest.raises(ValidationError):
-            SteadyStateConfig(stability_fraction=1.1)  # le=1.0
-
     def test_start_pct_bounds(self) -> None:
         with pytest.raises(ValidationError):
             SteadyStateConfig(start_pct=-1.0)  # ge=0.0
@@ -58,17 +51,17 @@ class TestSteadyStateConfigValidation:
         with pytest.raises(ValidationError):
             SteadyStateConfig(end_pct=101.0)  # le=100.0
 
-    def test_sustained_window_pct_bounds(self) -> None:
-        with pytest.raises(ValidationError):
-            SteadyStateConfig(sustained_window_pct=0.0)  # gt=0.0
-        with pytest.raises(ValidationError):
-            SteadyStateConfig(sustained_window_pct=51.0)  # le=50.0
-
     def test_min_window_pct_bounds(self) -> None:
         with pytest.raises(ValidationError):
             SteadyStateConfig(min_window_pct=0.0)  # gt=0.0
         with pytest.raises(ValidationError):
             SteadyStateConfig(min_window_pct=101.0)  # le=100.0
+
+    def test_bootstrap_iterations_bounds(self) -> None:
+        with pytest.raises(ValidationError):
+            SteadyStateConfig(bootstrap_iterations=0)  # gt=0
+        config = SteadyStateConfig(bootstrap_iterations=50)
+        assert config.bootstrap_iterations == 50
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +134,7 @@ class TestSteadyStateConfigInOutputConfig:
 
     def test_output_config_custom_steady_state(self) -> None:
         output = OutputConfig(
-            steady_state=SteadyStateConfig(enabled=True, stability_fraction=0.85)
+            steady_state=SteadyStateConfig(enabled=True, min_window_pct=15.0)
         )
         assert output.steady_state.enabled is True
-        assert output.steady_state.stability_fraction == 0.85
+        assert output.steady_state.min_window_pct == 15.0

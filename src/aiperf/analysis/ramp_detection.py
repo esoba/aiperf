@@ -12,25 +12,24 @@ from numpy.typing import NDArray
 logger = logging.getLogger(__name__)
 
 
-def detect_steady_state_window(
+def cusum_steady_state_window(
     sorted_ts: NDArray[np.float64],
     concurrency: NDArray[np.float64],
-    stability_fraction: float = 0.90,
-    sustained_window_pct: float = 5.0,
     min_window_pct: float = 10.0,
 ) -> tuple[float, float]:
-    """Detect ramp-up end and ramp-down start from a concurrency curve.
+    """Detect ramp boundaries using retrospective CUSUM on the concurrency curve.
+
+    The CUSUM statistic accumulates the deviation of concurrency from its
+    target (p95). The ramp-up end is where the cumulative deficit is maximized
+    (argmin of CUSUM). The ramp-down start is the mirror from the right.
 
     Args:
         sorted_ts: Sorted event timestamps from concurrency_sweep().
         concurrency: Concurrency values at each event boundary.
-        stability_fraction: Fraction of target concurrency for "at steady state".
-        sustained_window_pct: Min sustained duration as % of total for ramp detection.
-        min_window_pct: Min window size as % of total; below this, fall back to full.
+        min_window_pct: Minimum window size as % of total; below this, fall back to full.
 
     Returns:
         (window_start, window_end) — wall-clock timestamps.
-        Falls back to (min_ts, max_ts) if steady state cannot be detected.
     """
     if len(sorted_ts) == 0:
         return 0.0, 0.0
@@ -38,63 +37,226 @@ def detect_steady_state_window(
     min_ts = float(sorted_ts[0])
     max_ts = float(sorted_ts[-1])
     total_duration = max_ts - min_ts
-
     if total_duration <= 0:
         return min_ts, max_ts
 
-    # Target concurrency from the 95th percentile of the curve
+    # Target = p95 of concurrency (robust to brief overshoots)
     target = float(np.percentile(concurrency, 95))
-    threshold = target * stability_fraction
 
-    sustained_window_ns = total_duration * sustained_window_pct / 100.0
+    # Forward CUSUM: cumulative deficit from target
+    # argmin = point of maximum cumulative deviation below target = ramp-up end
+    deviations = concurrency - target
+    forward_cusum = np.cumsum(deviations)
+    ramp_up_idx = int(np.argmin(forward_cusum))
 
-    # Find contiguous runs where concurrency >= threshold
-    above = (concurrency >= threshold).astype(np.int8)
-    padded = np.empty(len(above) + 2, dtype=np.int8)
-    padded[0] = 0
-    padded[1:-1] = above
-    padded[-1] = 0
-    edges = np.diff(padded)
+    # Backward CUSUM: reverse the series, find ramp-down start
+    backward_cusum = np.cumsum(deviations[::-1])
+    ramp_down_offset = int(np.argmin(backward_cusum))
+    ramp_down_idx = len(concurrency) - 1 - ramp_down_offset
 
-    run_starts = np.where(edges == 1)[0]  # original indices where runs begin
-    run_ends = np.where(edges == -1)[0]  # one-past-end original indices
-
-    if len(run_starts) == 0:
-        # No concurrency above threshold — fall back to full range
+    # Ensure valid ordering
+    if ramp_up_idx >= ramp_down_idx:
         return min_ts, max_ts
 
-    n = len(sorted_ts)
-    run_start_ts = sorted_ts[run_starts]
+    window_start = float(sorted_ts[ramp_up_idx])
+    window_end = float(sorted_ts[ramp_down_idx])
 
-    # Duration check: time from run start to the first below-threshold event.
-    # Runs extending to the array end are always sustained (use inf).
-    run_check_ts = np.where(run_ends < n, sorted_ts[run_ends], np.inf)
-    qualifying = (run_check_ts - run_start_ts) >= sustained_window_ns
-
-    if not qualifying.any():
-        window_start = min_ts
-        window_end = max_ts
-    else:
-        qual_idx = np.where(qualifying)[0]
-        # Forward: first qualifying run's start
-        window_start = float(run_start_ts[qual_idx[0]])
-        # Backward: last above-threshold timestamp in the last qualifying run
-        window_end = float(sorted_ts[run_ends[qual_idx[-1]] - 1])
-
-    # Validate window size
-    window_duration = window_end - window_start
-    min_window_ns = total_duration * min_window_pct / 100.0
-
-    if window_duration < min_window_ns:
+    # min_window_pct safety guard
+    if (window_end - window_start) < total_duration * min_window_pct / 100.0:
         logger.warning(
-            "Steady-state window (%.1f%% of total) below minimum (%.1f%%), "
+            "CUSUM steady-state window (%.1f%%) below minimum (%.1f%%), "
             "falling back to full range",
-            window_duration / total_duration * 100,
+            (window_end - window_start) / total_duration * 100,
             min_window_pct,
         )
         return min_ts, max_ts
 
     return window_start, window_end
+
+
+def mser5_truncation_point(
+    values: NDArray[np.float64],
+) -> int:
+    """Find the optimal truncation point using MSER-5.
+
+    Batches observations into groups of 5, computes the MSER statistic
+    for each candidate truncation point, and returns the point that
+    minimizes it. MSER = MSE of the truncated mean.
+
+    Args:
+        values: Time-ordered metric observations (NaN-free).
+
+    Returns:
+        Truncation index into the original (unbatched) array.
+        0 means no truncation needed (already stationary).
+    """
+    if len(values) < 10:
+        return 0
+
+    # Batch into groups of 5
+    batch_size = 5
+    n_full = (len(values) // batch_size) * batch_size
+    batched = values[:n_full].reshape(-1, batch_size).mean(axis=1)
+    m = len(batched)
+
+    if m < 4:
+        return 0
+
+    # Reverse cumulative sums for O(m) total
+    # MSER(d) = variance(batched[d:]) / (m - d)
+    max_d = m // 2  # constraint: cannot delete more than half
+
+    sum_x = np.cumsum(batched[::-1])[::-1]  # sum_x[d] = sum(batched[d:])
+    sum_x2 = np.cumsum((batched**2)[::-1])[::-1]
+
+    counts = np.arange(m, 0, -1, dtype=np.float64)  # counts[d] = m - d
+    means = sum_x / counts
+    variances = sum_x2 / counts - means**2
+    mser = variances / counts  # MSER(d) = var / count
+
+    d_star = int(np.argmin(mser[: max_d + 1]))
+    return d_star * batch_size
+
+
+def mser5_boundary_ns(
+    metric_values: NDArray[np.float64],
+    start_ns: NDArray[np.float64],
+    end_ns: NDArray[np.float64],
+    filled: NDArray[np.bool_],
+) -> tuple[float | None, float | None]:
+    """Run forward and backward MSER-5 on a metric, returning wall-clock boundaries.
+
+    Args:
+        metric_values: Per-record metric values (session-indexed, may contain NaN).
+        start_ns: Per-record start timestamps (session-indexed).
+        end_ns: Per-record end timestamps (session-indexed).
+        filled: Boolean mask of records with valid start/end timestamps.
+
+    Returns:
+        (ramp_up_end_ns, ramp_down_start_ns) or (None, None) if insufficient data.
+    """
+    metric_valid = filled & ~np.isnan(metric_values)
+    if metric_valid.sum() < 20:
+        return None, None
+
+    valid_indices = np.where(metric_valid)[0]
+    sort_order = np.argsort(start_ns[valid_indices])
+    sorted_indices = valid_indices[sort_order]
+
+    sorted_metric = metric_values[sorted_indices]
+    sorted_start = start_ns[sorted_indices]
+    sorted_end = end_ns[sorted_indices]
+
+    # Forward: ramp-up truncation
+    fwd_trunc = mser5_truncation_point(sorted_metric)
+    ramp_up_ns = (
+        float(sorted_start[fwd_trunc]) if fwd_trunc < len(sorted_start) else None
+    )
+
+    # Backward: ramp-down truncation
+    bwd_trunc = mser5_truncation_point(sorted_metric[::-1])
+    if bwd_trunc > 0:
+        ramp_down_idx = len(sorted_end) - bwd_trunc - 1
+        ramp_down_ns = float(sorted_end[ramp_down_idx])
+    else:
+        ramp_down_ns = None
+
+    return ramp_up_ns, ramp_down_ns
+
+
+def detect_steady_state_window(
+    sorted_ts: NDArray[np.float64],
+    concurrency: NDArray[np.float64],
+    start_ns: NDArray[np.float64],
+    end_ns: NDArray[np.float64],
+    latency: NDArray[np.float64],
+    ttft: NDArray[np.float64],
+    min_window_pct: float = 10.0,
+) -> tuple[float, float, str]:
+    """Detect steady-state window using CUSUM + MSER-5(latency) + MSER-5(TTFT).
+
+    Combines concurrency-based CUSUM (load perspective) with metric-based
+    MSER-5 on both latency and TTFT (performance perspective). The effective
+    boundary is the most conservative across all signals:
+      ramp_up_end   = max(CUSUM, MSER-5 latency, MSER-5 TTFT)
+      ramp_down_start = min(CUSUM, MSER-5 latency, MSER-5 TTFT)
+
+    Args:
+        sorted_ts: Sorted event timestamps from concurrency_sweep().
+        concurrency: Concurrency values at each event boundary.
+        start_ns: Per-record start timestamps (session-indexed).
+        end_ns: Per-record end timestamps (session-indexed).
+        latency: Per-record request_latency values (session-indexed).
+        ttft: Per-record time_to_first_token values (session-indexed, may be all-NaN).
+        min_window_pct: Minimum window size as % of total duration.
+
+    Returns:
+        (window_start, window_end, detection_method) tuple.
+    """
+    if len(sorted_ts) == 0:
+        return 0.0, 0.0, "empty"
+
+    min_ts = float(sorted_ts[0])
+    max_ts = float(sorted_ts[-1])
+    total_duration = max_ts - min_ts
+    if total_duration <= 0:
+        return min_ts, max_ts, "zero_duration"
+
+    filled = ~np.isnan(start_ns) & ~np.isnan(end_ns)
+
+    # --- Signal 1: CUSUM on concurrency curve ---
+    cusum_start, cusum_end = cusum_steady_state_window(
+        sorted_ts,
+        concurrency,
+        min_window_pct=0.0,  # no guard here, apply at the end
+    )
+
+    # Collect all candidate boundaries
+    starts: list[float] = [cusum_start]
+    ends: list[float] = [cusum_end]
+    signals_used: list[str] = ["cusum"]
+
+    # --- Signal 2: MSER-5 on latency ---
+    lat_start, lat_end = mser5_boundary_ns(latency, start_ns, end_ns, filled)
+    if lat_start is not None:
+        starts.append(lat_start)
+        signals_used.append("mser5_latency")
+    if lat_end is not None:
+        ends.append(lat_end)
+
+    # --- Signal 3: MSER-5 on TTFT ---
+    ttft_start, ttft_end = mser5_boundary_ns(ttft, start_ns, end_ns, filled)
+    if ttft_start is not None:
+        starts.append(ttft_start)
+        signals_used.append("mser5_ttft")
+    if ttft_end is not None:
+        ends.append(ttft_end)
+
+    # --- Combine: most conservative boundary across all signals ---
+    window_start = max(starts)
+    window_end = min(ends)
+    method = "_".join(signals_used)
+
+    # Ensure valid ordering
+    if window_start >= window_end:
+        logger.warning(
+            "Detection signals do not agree on a valid window (%s), "
+            "falling back to full range",
+            method,
+        )
+        return min_ts, max_ts, "fallback_no_overlap"
+
+    # min_window_pct safety guard
+    if (window_end - window_start) < total_duration * min_window_pct / 100.0:
+        logger.warning(
+            "Steady-state window (%.1f%%) below minimum (%.1f%%), "
+            "falling back to full range",
+            (window_end - window_start) / total_duration * 100,
+            min_window_pct,
+        )
+        return min_ts, max_ts, "fallback_min_window"
+
+    return window_start, window_end, method
 
 
 def manual_steady_state_window(

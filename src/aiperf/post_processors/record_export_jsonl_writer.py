@@ -8,6 +8,7 @@ from aiperf.common.exceptions import PluginDisabled
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import BufferedJSONLWriterMixin
 from aiperf.common.models.record_models import MetricRecordInfo
+from aiperf.exporters.exporter_config import FileExportInfo
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
@@ -82,6 +83,12 @@ class RecordExportJSONLWriter(
 
         except Exception as e:
             self.error(f"Failed to write record metrics: {e}")
+
+    def get_export_info(self) -> FileExportInfo:
+        """Return metadata about the JSONL file this exporter writes to."""
+        return FileExportInfo(
+            export_type="Record Export JSONL", file_path=self.output_file
+        )
 
     async def finalize(self) -> None:
         """Flush any buffered data (StreamExporterProtocol)."""

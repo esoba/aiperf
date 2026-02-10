@@ -16,6 +16,7 @@ from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.types import MessageTypeT
+from aiperf.exporters.exporter_config import FileExportInfo
 from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
 
 
@@ -66,4 +67,8 @@ class ProcessAllResultsMessage(BaseServiceMessage):
     )
     steady_state_results: SteadyStateSummary | None = Field(
         default=None, description="Steady-state windowed metric results"
+    )
+    exported_artifacts: dict[str, FileExportInfo] = Field(
+        default_factory=dict,
+        description="Map of exporter class name to file export info, populated by RecordsManager",
     )

@@ -561,8 +561,7 @@ accumulator:
     description: |
       Numpy-backed metrics accumulator that ingests inference metric records,
       stores per-tag time series with timestamps, and produces summaries with
-      optional timeslicing. Replaces MetricResultsProcessor and
-      TimesliceMetricResultsProcessor. Always loaded.
+      optional timeslicing. Always loaded.
     metadata:
       record_types: [metric_records]
 

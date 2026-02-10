@@ -47,6 +47,25 @@ class SteadyStateJsonExporter(MetricsBaseExporter):
                 "steady_state_duration_ns": meta.steady_state_duration_ns,
                 "total_requests": meta.total_requests,
                 "steady_state_requests": meta.steady_state_requests,
+                "quality": {
+                    "fraction_retained": meta.fraction_retained,
+                    "variance_inflation_factor": meta.variance_inflation_factor,
+                    "effective_p99_sample_size": meta.effective_p99_sample_size,
+                    "sample_size_warning": meta.sample_size_warning,
+                },
+                "stationarity": {
+                    "trend_correlation": meta.trend_correlation,
+                    "trend_p_value": meta.trend_p_value,
+                    "stationarity_warning": meta.stationarity_warning,
+                },
+                "cross_validation": {
+                    "cusum_ramp_up_end_ns": meta.cusum_ramp_up_end_ns,
+                    "cusum_ramp_down_start_ns": meta.cusum_ramp_down_start_ns,
+                    "mser5_latency_ramp_up_end_ns": meta.mser5_latency_ramp_up_end_ns,
+                    "mser5_latency_ramp_down_start_ns": meta.mser5_latency_ramp_down_start_ns,
+                    "mser5_ttft_ramp_up_end_ns": meta.mser5_ttft_ramp_up_end_ns,
+                    "mser5_ttft_ramp_down_start_ns": meta.mser5_ttft_ramp_down_start_ns,
+                },
             },
             "metrics": {},
         }

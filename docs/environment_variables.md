@@ -143,8 +143,7 @@ Steady-state detection configuration. Controls the automatic ramp detection algo
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_STEADY_STATE_STABILITY_FRACTION` | `0.9` | > 0.0, ≤ 1.0 | Fraction of peak concurrency used as the stability threshold for ramp detection |
-| `AIPERF_STEADY_STATE_SUSTAINED_WINDOW_PCT` | `5.0` | > 0.0, ≤ 50.0 | Minimum sustained duration as percentage of total benchmark duration for ramp boundary detection |
+| `AIPERF_STEADY_STATE_BOOTSTRAP_ITERATIONS` | `None` | > 0 | Number of bootstrap iterations for boundary confidence intervals. None disables bootstrap. |
 | `AIPERF_STEADY_STATE_MIN_WINDOW_PCT` | `10.0` | > 0.0, ≤ 100.0 | Minimum steady-state window size as percentage of total duration; below this, falls back to full range |
 
 ## TIMING

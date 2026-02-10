@@ -11,9 +11,12 @@ import numpy as np
 from pydantic import Field
 
 from aiperf.analysis.ramp_detection import (
+    cusum_steady_state_window,
     detect_steady_state_window,
     manual_steady_state_window,
+    mser5_boundary_ns,
 )
+from aiperf.analysis.stationarity import batch_means_trend_test
 from aiperf.analysis.sweep import compute_time_weighted_stats, concurrency_sweep
 from aiperf.common.config import UserConfig
 from aiperf.common.environment import Environment
@@ -44,6 +47,81 @@ class SteadyStateWindowMetadata(AIPerfBaseModel, frozen=True):
         description="Requests within the steady-state window"
     )
     detection_method: str = Field(description="Method used to detect steady state")
+    fraction_retained: float = Field(
+        description="Fraction of total requests retained in the steady-state window"
+    )
+
+    # Sample quality
+    variance_inflation_factor: float = Field(
+        description="Approximate variance inflation from truncation: total_requests / steady_state_requests",
+    )
+    effective_p99_sample_size: int = Field(
+        description="Approximate observations contributing to p99: int(steady_state_requests * 0.01)",
+    )
+    sample_size_warning: bool = Field(
+        default=False,
+        description="True if effective p99 sample size < 10 (p99 estimate unreliable)",
+    )
+
+    # Stationarity validation
+    trend_correlation: float | None = Field(
+        default=None,
+        description="Spearman rank correlation of batch means (latency trend test)",
+    )
+    trend_p_value: float | None = Field(
+        default=None,
+        description="P-value of the batch means trend test",
+    )
+    stationarity_warning: bool = Field(
+        default=False,
+        description="True if windowed latency shows a statistically significant trend",
+    )
+
+    # Per-signal boundaries (diagnostic)
+    cusum_ramp_up_end_ns: float | None = Field(
+        default=None, description="CUSUM-detected ramp-up end timestamp (ns)"
+    )
+    cusum_ramp_down_start_ns: float | None = Field(
+        default=None, description="CUSUM-detected ramp-down start timestamp (ns)"
+    )
+    mser5_latency_ramp_up_end_ns: float | None = Field(
+        default=None,
+        description="MSER-5 latency-detected ramp-up end timestamp (ns)",
+    )
+    mser5_latency_ramp_down_start_ns: float | None = Field(
+        default=None,
+        description="MSER-5 latency-detected ramp-down start timestamp (ns)",
+    )
+    mser5_ttft_ramp_up_end_ns: float | None = Field(
+        default=None,
+        description="MSER-5 TTFT-detected ramp-up end timestamp (ns)",
+    )
+    mser5_ttft_ramp_down_start_ns: float | None = Field(
+        default=None,
+        description="MSER-5 TTFT-detected ramp-down start timestamp (ns)",
+    )
+
+    # Bootstrap confidence intervals (optional, only when bootstrap_iterations is set)
+    bootstrap_ci_ramp_up_ns: tuple[float, float] | None = Field(
+        default=None,
+        description="Bootstrap confidence interval for ramp-up boundary (ns)",
+    )
+    bootstrap_ci_ramp_down_ns: tuple[float, float] | None = Field(
+        default=None,
+        description="Bootstrap confidence interval for ramp-down boundary (ns)",
+    )
+    bootstrap_ci_mean_latency: tuple[float, float] | None = Field(
+        default=None,
+        description="Bootstrap confidence interval for mean latency within window",
+    )
+    bootstrap_ci_p99_latency: tuple[float, float] | None = Field(
+        default=None,
+        description="Bootstrap confidence interval for p99 latency within window",
+    )
+    bootstrap_n_iterations: int | None = Field(
+        default=None,
+        description="Number of bootstrap iterations performed",
+    )
 
 
 class SteadyStateSummary(AIPerfBaseModel):
@@ -60,18 +138,47 @@ class SteadyStateSummary(AIPerfBaseModel):
     )
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        meta = self.window_metadata
+        data: dict[str, Any] = {
             "results": [r.to_json_result().model_dump() for r in self.results.values()],
             "effective_concurrency": self.effective_concurrency.to_json_result().model_dump(),
             "window_metadata": {
-                "ramp_up_end_ns": self.window_metadata.ramp_up_end_ns,
-                "ramp_down_start_ns": self.window_metadata.ramp_down_start_ns,
-                "steady_state_duration_ns": self.window_metadata.steady_state_duration_ns,
-                "total_requests": self.window_metadata.total_requests,
-                "steady_state_requests": self.window_metadata.steady_state_requests,
-                "detection_method": self.window_metadata.detection_method,
+                "detection_method": meta.detection_method,
+                "ramp_up_end_ns": meta.ramp_up_end_ns,
+                "ramp_down_start_ns": meta.ramp_down_start_ns,
+                "steady_state_duration_ns": meta.steady_state_duration_ns,
+                "total_requests": meta.total_requests,
+                "steady_state_requests": meta.steady_state_requests,
+                "quality": {
+                    "fraction_retained": meta.fraction_retained,
+                    "variance_inflation_factor": meta.variance_inflation_factor,
+                    "effective_p99_sample_size": meta.effective_p99_sample_size,
+                    "sample_size_warning": meta.sample_size_warning,
+                },
+                "stationarity": {
+                    "trend_correlation": meta.trend_correlation,
+                    "trend_p_value": meta.trend_p_value,
+                    "stationarity_warning": meta.stationarity_warning,
+                },
+                "cross_validation": {
+                    "cusum_ramp_up_end_ns": meta.cusum_ramp_up_end_ns,
+                    "cusum_ramp_down_start_ns": meta.cusum_ramp_down_start_ns,
+                    "mser5_latency_ramp_up_end_ns": meta.mser5_latency_ramp_up_end_ns,
+                    "mser5_latency_ramp_down_start_ns": meta.mser5_latency_ramp_down_start_ns,
+                    "mser5_ttft_ramp_up_end_ns": meta.mser5_ttft_ramp_up_end_ns,
+                    "mser5_ttft_ramp_down_start_ns": meta.mser5_ttft_ramp_down_start_ns,
+                },
             },
         }
+        if meta.bootstrap_n_iterations is not None:
+            data["window_metadata"]["bootstrap"] = {
+                "n_iterations": meta.bootstrap_n_iterations,
+                "ci_ramp_up_ns": meta.bootstrap_ci_ramp_up_ns,
+                "ci_ramp_down_ns": meta.bootstrap_ci_ramp_down_ns,
+                "ci_mean_latency": meta.bootstrap_ci_mean_latency,
+                "ci_p99_latency": meta.bootstrap_ci_p99_latency,
+            }
+        return data
 
     def to_csv(self) -> list[dict[str, Any]]:
         return [r.model_dump(exclude={"current"}) for r in self.results.values()]
@@ -93,16 +200,6 @@ class SteadyStateAnalyzer:
             raise PluginDisabled("Steady-state analysis is disabled")
 
         env_ss = Environment.STEADY_STATE
-        self._stability_fraction = (
-            ss_config.stability_fraction
-            if "stability_fraction" in ss_config.model_fields_set
-            else env_ss.STABILITY_FRACTION
-        )
-        self._sustained_window_pct = (
-            ss_config.sustained_window_pct
-            if "sustained_window_pct" in ss_config.model_fields_set
-            else env_ss.SUSTAINED_WINDOW_PCT
-        )
         self._min_window_pct = (
             ss_config.min_window_pct
             if "min_window_pct" in ss_config.model_fields_set
@@ -110,6 +207,11 @@ class SteadyStateAnalyzer:
         )
         self._start_pct = ss_config.start_pct
         self._end_pct = ss_config.end_pct
+        self._bootstrap_iterations = (
+            ss_config.bootstrap_iterations
+            if "bootstrap_iterations" in ss_config.model_fields_set
+            else env_ss.BOOTSTRAP_ITERATIONS
+        )
 
     async def summarize(self, ctx: SummaryContext) -> SteadyStateSummary:
         """Detect steady-state window and compute windowed metrics."""
@@ -134,8 +236,20 @@ class SteadyStateAnalyzer:
         if not filled.any():
             raise PluginDisabled("No valid records for steady-state detection")
 
+        # Metric columns for MSER-5
+        latency = store.numeric("request_latency")
+        ttft = store.numeric("time_to_first_token")
+
         # Concurrency curve (needed for both detection and stats)
         sorted_c_ts, concurrency = concurrency_sweep(start_ns, end_ns)
+
+        # Per-signal diagnostics
+        cusum_start_ns: float | None = None
+        cusum_end_ns: float | None = None
+        lat_start_ns: float | None = None
+        lat_end_ns: float | None = None
+        ttft_start_ns: float | None = None
+        ttft_end_ns: float | None = None
 
         # User override or automatic detection
         if self._start_pct is not None and self._end_pct is not None:
@@ -146,14 +260,25 @@ class SteadyStateAnalyzer:
             )
             detection_method = "user_override"
         else:
-            window_start, window_end = detect_steady_state_window(
+            window_start, window_end, detection_method = detect_steady_state_window(
                 sorted_c_ts,
                 concurrency,
-                stability_fraction=self._stability_fraction,
-                sustained_window_pct=self._sustained_window_pct,
+                start_ns,
+                end_ns,
+                latency,
+                ttft,
                 min_window_pct=self._min_window_pct,
             )
-            detection_method = "concurrency_threshold"
+            # Collect per-signal boundaries for diagnostics
+            cusum_start_ns, cusum_end_ns = cusum_steady_state_window(
+                sorted_c_ts, concurrency, min_window_pct=0.0
+            )
+            lat_start_ns, lat_end_ns = mser5_boundary_ns(
+                latency, start_ns, end_ns, filled
+            )
+            ttft_start_ns, ttft_end_ns = mser5_boundary_ns(
+                ttft, start_ns, end_ns, filled
+            )
 
         # Time-weighted concurrency statistics within the window
         conc_stats = compute_time_weighted_stats(
@@ -162,6 +287,56 @@ class SteadyStateAnalyzer:
 
         # Steady-state mask: request started AND ended within window
         ss_mask = filled & (start_ns >= window_start) & (end_ns <= window_end)
+
+        total_requests = int(filled.sum())
+        steady_state_requests = int(ss_mask.sum())
+        fraction_retained = (
+            steady_state_requests / total_requests if total_requests > 0 else 0.0
+        )
+
+        # Sample quality
+        variance_inflation_factor = (
+            total_requests / steady_state_requests
+            if steady_state_requests > 0
+            else float("inf")
+        )
+        effective_p99_sample_size = int(steady_state_requests * 0.01)
+        sample_size_warning = effective_p99_sample_size < 10
+
+        # Stationarity validation on windowed latency
+        trend_rho: float | None = None
+        trend_p: float | None = None
+        stationarity_warning = False
+
+        windowed_latency = latency[ss_mask]
+        valid_latency = windowed_latency[~np.isnan(windowed_latency)]
+        if len(valid_latency) >= 10:
+            trend_rho, trend_p = batch_means_trend_test(valid_latency)
+            stationarity_warning = abs(trend_rho) > 0.6 and trend_p < 0.05
+
+        # Optional bootstrap confidence intervals
+        boot_ci_ramp_up: tuple[float, float] | None = None
+        boot_ci_ramp_down: tuple[float, float] | None = None
+        boot_ci_mean_lat: tuple[float, float] | None = None
+        boot_ci_p99_lat: tuple[float, float] | None = None
+        boot_n: int | None = None
+
+        if self._bootstrap_iterations is not None and self._bootstrap_iterations > 0:
+            from aiperf.analysis.bootstrap import bootstrap_detection
+
+            boot = bootstrap_detection(
+                start_ns,
+                end_ns,
+                latency,
+                ttft,
+                n_iterations=self._bootstrap_iterations,
+                min_window_pct=self._min_window_pct,
+            )
+            boot_ci_ramp_up = boot.ci_ramp_up_ns
+            boot_ci_ramp_down = boot.ci_ramp_down_ns
+            boot_ci_mean_lat = boot.ci_mean_latency
+            boot_ci_p99_lat = boot.ci_p99_latency
+            boot_n = boot.n_iterations
 
         windowed_results = metrics_acc.compute_results_for_mask(ss_mask)
 
@@ -184,8 +359,26 @@ class SteadyStateAnalyzer:
                 ramp_up_end_ns=window_start,
                 ramp_down_start_ns=window_end,
                 steady_state_duration_ns=window_end - window_start,
-                total_requests=int(filled.sum()),
-                steady_state_requests=int(ss_mask.sum()),
+                total_requests=total_requests,
+                steady_state_requests=steady_state_requests,
                 detection_method=detection_method,
+                fraction_retained=fraction_retained,
+                variance_inflation_factor=variance_inflation_factor,
+                effective_p99_sample_size=effective_p99_sample_size,
+                sample_size_warning=sample_size_warning,
+                trend_correlation=trend_rho,
+                trend_p_value=trend_p,
+                stationarity_warning=stationarity_warning,
+                cusum_ramp_up_end_ns=cusum_start_ns,
+                cusum_ramp_down_start_ns=cusum_end_ns,
+                mser5_latency_ramp_up_end_ns=lat_start_ns,
+                mser5_latency_ramp_down_start_ns=lat_end_ns,
+                mser5_ttft_ramp_up_end_ns=ttft_start_ns,
+                mser5_ttft_ramp_down_start_ns=ttft_end_ns,
+                bootstrap_ci_ramp_up_ns=boot_ci_ramp_up,
+                bootstrap_ci_ramp_down_ns=boot_ci_ramp_down,
+                bootstrap_ci_mean_latency=boot_ci_mean_lat,
+                bootstrap_ci_p99_latency=boot_ci_p99_lat,
+                bootstrap_n_iterations=boot_n,
             ),
         )
