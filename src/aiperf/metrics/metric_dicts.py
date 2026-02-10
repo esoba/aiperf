@@ -34,12 +34,18 @@ def metric_result_from_array(
     unit: str,
     clean: NDArray[np.float64],
     arr_sum: float,
+    *,
+    ddof: int = 0,
 ) -> MetricResult:
     """Compute MetricResult directly from a clean (no-NaN) numpy array.
 
     Sorts `clean` in-place (safe — callers always pass a fresh copy from fancy indexing).
     Extracts min/max from sorted endpoints, avg from arr_sum / n, std from np.std.
     Vectorized linear interpolation for 9 percentiles.
+
+    Args:
+        ddof: Delta degrees of freedom for std. 0 = population (inference metrics),
+              1 = sample with Bessel's correction (telemetry time-series).
     """
     n = len(clean)
     clean.sort()  # in-place sort
@@ -50,6 +56,8 @@ def metric_result_from_array(
     frac = virtual_idx - lo
     pcts = clean[lo] + frac * (clean[hi] - clean[lo])
 
+    std = float(np.std(clean, ddof=ddof)) if n > ddof else 0.0
+
     return MetricResult(
         tag=tag,
         header=header,
@@ -57,7 +65,7 @@ def metric_result_from_array(
         min=clean[0],
         max=clean[-1],
         avg=arr_sum / n,
-        std=float(np.std(clean)),
+        std=std,
         p1=pcts[0],
         p5=pcts[1],
         p10=pcts[2],

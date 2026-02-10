@@ -363,7 +363,7 @@ class TestGpuMetricTimeSeries:
         ],
     )
     def test_stats_uses_sample_std(self, values: list[float], expected_std: float):
-        """Test std uses sample std (ddof=1) with edge case handling."""
+        """Test std uses sample std (ddof=1) — telemetry scrapes are samples from a continuous signal."""
         time_series = GpuMetricTimeSeries()
         for i, val in enumerate(values):
             time_series.append_snapshot({"power": val}, (i + 1) * 1_000_000_000)

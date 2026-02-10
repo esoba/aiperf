@@ -17,11 +17,17 @@ def cusum_steady_state_window(
     concurrency: NDArray[np.float64],
     min_window_pct: float = 10.0,
 ) -> tuple[float, float]:
-    """Detect ramp boundaries using retrospective CUSUM on the concurrency curve.
+    """Detect ramp boundaries using time-weighted retrospective CUSUM.
 
-    The CUSUM statistic accumulates the deviation of concurrency from its
-    target (p95). The ramp-up end is where the cumulative deficit is maximized
-    (argmin of CUSUM). The ramp-down start is the mirror from the right.
+    The concurrency sweep output is a step function: concurrency[i] is held
+    from sorted_ts[i] to sorted_ts[i+1]. Each deviation from the target is
+    weighted by its segment duration so that concurrency levels held for
+    longer periods contribute proportionally more to the CUSUM statistic.
+
+    The target is the time-weighted p95 of concurrency (robust to brief
+    overshoots). The ramp-up end is where the time-weighted cumulative
+    deficit is maximized (argmin of CUSUM). The ramp-down start is the
+    mirror from the right.
 
     Args:
         sorted_ts: Sorted event timestamps from concurrency_sweep().
@@ -40,16 +46,30 @@ def cusum_steady_state_window(
     if total_duration <= 0:
         return min_ts, max_ts
 
-    # Target = p95 of concurrency (robust to brief overshoots)
-    target = float(np.percentile(concurrency, 95))
+    # Segment durations: concurrency[i] is held from sorted_ts[i] to sorted_ts[i+1]
+    durations = np.empty(len(sorted_ts), dtype=np.float64)
+    durations[:-1] = sorted_ts[1:] - sorted_ts[:-1]
+    durations[-1] = 0.0  # terminal event has no forward duration
 
-    # Forward CUSUM: cumulative deficit from target
-    # argmin = point of maximum cumulative deviation below target = ramp-up end
-    deviations = concurrency - target
+    # Time-weighted p95 target (concurrency below which 95% of time is spent)
+    positive_mask = durations > 0
+    if not positive_mask.any():
+        return min_ts, max_ts
+
+    tw_order = np.argsort(concurrency[positive_mask])
+    tw_conc = concurrency[positive_mask][tw_order]
+    tw_dur = durations[positive_mask][tw_order]
+    cum_frac = np.cumsum(tw_dur) / tw_dur.sum()
+    p95_idx = int(np.searchsorted(cum_frac, 0.95))
+    target = float(tw_conc[min(p95_idx, len(tw_conc) - 1)])
+
+    # Time-weighted CUSUM: deviation × segment duration
+    # argmin of forward cumsum = point of maximum cumulative time-deficit = ramp-up end
+    deviations = (concurrency - target) * durations
     forward_cusum = np.cumsum(deviations)
     ramp_up_idx = int(np.argmin(forward_cusum))
 
-    # Backward CUSUM: reverse the series, find ramp-down start
+    # Backward CUSUM: reverse the time-weighted deviations, find ramp-down start
     backward_cusum = np.cumsum(deviations[::-1])
     ramp_down_offset = int(np.argmin(backward_cusum))
     ramp_down_idx = len(concurrency) - 1 - ramp_down_offset

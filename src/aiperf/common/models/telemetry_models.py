@@ -11,7 +11,6 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.record_models import MetricResult
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
-from aiperf.metrics.metric_dicts import metric_result_from_array
 
 
 class TelemetryMetrics(AIPerfBaseModel):
@@ -251,6 +250,8 @@ class GpuMetricTimeSeries:
         Raises:
             NoMetricValue: If no data for this metric
         """
+        from aiperf.metrics.metric_dicts import metric_result_from_array
+
         arr = self.get_metric_array(metric_name)
         if arr is None or len(arr) == 0:
             raise NoMetricValue(
@@ -258,8 +259,9 @@ class GpuMetricTimeSeries:
             )
 
         # arr is a view into stored data — copy before in-place sort
+        # ddof=1: telemetry scrapes are samples from a continuous signal
         result = metric_result_from_array(
-            tag, header, unit, arr.copy(), float(np.sum(arr))
+            tag, header, unit, arr.copy(), float(np.sum(arr)), ddof=1
         )
         result.current = float(arr[-1])
         return result
@@ -378,32 +380,12 @@ class GpuMetricTimeSeries:
                 avg=delta,
             )
 
-        # Gauge: vectorized stats on filtered data
-        p1, p5, p10, p25, p50, p75, p90, p95, p99 = np.percentile(
-            filtered, [1, 5, 10, 25, 50, 75, 90, 95, 99]
-        )
+        # Gauge: single-sort stats (filtered is already a copy from fancy indexing)
+        # ddof=1: telemetry scrapes are samples from a continuous signal
+        from aiperf.metrics.metric_dicts import metric_result_from_array
 
-        # Use sample std (ddof=1) for unbiased estimate; 0 for single sample
-        std_dev = float(np.std(filtered, ddof=1)) if len(filtered) > 1 else 0.0
-
-        return MetricResult(
-            tag=tag,
-            header=header,
-            unit=unit,
-            min=float(np.min(filtered)),
-            max=float(np.max(filtered)),
-            avg=float(np.mean(filtered)),
-            std=std_dev,
-            count=len(filtered),
-            p1=p1,
-            p5=p5,
-            p10=p10,
-            p25=p25,
-            p50=p50,
-            p75=p75,
-            p90=p90,
-            p95=p95,
-            p99=p99,
+        return metric_result_from_array(
+            tag, header, unit, filtered, float(np.sum(filtered)), ddof=1
         )
 
     def __len__(self) -> int:
