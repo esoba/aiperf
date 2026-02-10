@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
+from numpy.typing import NDArray
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
@@ -158,9 +159,12 @@ class MetricArray(Generic[MetricValueTypeVarT]):
             track_sum=True,
         )
 
-    def extend(self, values: list[MetricValueTypeVarT]) -> None:
-        """Extend the array with a list of values."""
-        self._array.extend(np.asarray(values, dtype=np.float64))
+    def extend(self, values: list[MetricValueTypeVarT] | NDArray[np.float64]) -> None:
+        """Extend the array with values (list or ndarray)."""
+        if isinstance(values, np.ndarray):
+            self._array.extend(values)
+        else:
+            self._array.extend(np.asarray(values, dtype=np.float64))
 
     def append(self, value: MetricValueTypeVarT) -> None:
         """Append a value to the array."""

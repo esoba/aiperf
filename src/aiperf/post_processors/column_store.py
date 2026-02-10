@@ -1,0 +1,164 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Session-indexed NaN-sparse columnar storage for per-record metrics."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
+
+from aiperf.post_processors.ragged_series import RaggedSeries
+
+
+class ColumnStore:
+    """Session-indexed NaN-sparse columnar storage for per-record metrics.
+
+    Uses session_num (credit issuance index) as the canonical array index.
+    Pre-filled with NaN/None; records write to their slot on arrival in any order.
+    """
+
+    __slots__ = (
+        "_capacity",
+        "_count",
+        "_numeric",
+        "_string",
+        "_ragged",
+        "start_ns",
+        "end_ns",
+        "generation_start_ns",
+    )
+
+    def __init__(self, initial_capacity: int = 1024) -> None:
+        self._capacity = initial_capacity
+        self._count = 0
+        self._numeric: dict[str, NDArray[np.float64]] = {}
+        self._string: dict[str, list[str | None]] = {}
+        self._ragged: dict[str, RaggedSeries] = {}
+        # Timestamp columns — float64 for NaN support
+        self.start_ns = np.full(initial_capacity, np.nan, dtype=np.float64)
+        self.end_ns = np.full(initial_capacity, np.nan, dtype=np.float64)
+        self.generation_start_ns = np.full(initial_capacity, np.nan, dtype=np.float64)
+
+    # --- Public read API ---
+
+    @property
+    def count(self) -> int:
+        """Number of records written (max session_num + 1)."""
+        return self._count
+
+    def numeric(self, tag: str) -> NDArray[np.float64]:
+        """Return the float64 column for `tag`, sliced to count. NaN where missing."""
+        col = self._numeric.get(tag)
+        if col is None:
+            return np.full(self._count, np.nan, dtype=np.float64)
+        return col[: self._count]
+
+    def numeric_tags(self) -> list[str]:
+        """Return all numeric column tags."""
+        return list(self._numeric.keys())
+
+    def string(self, tag: str) -> list[str | None]:
+        """Return the string column for `tag`, sliced to count. None where missing."""
+        col = self._string.get(tag)
+        if col is None:
+            return [None] * self._count
+        return col[: self._count]
+
+    def ragged(self, tag: str) -> RaggedSeries:
+        """Return the RaggedSeries for a list-valued metric."""
+        return self._ragged[tag]
+
+    def ragged_tags(self) -> list[str]:
+        """Return all ragged column tags."""
+        return list(self._ragged.keys())
+
+    # --- Write API (called from MetricsAccumulator.process_record) ---
+
+    def ingest(
+        self,
+        idx: int,
+        record_metrics: dict[str, Any],
+        start_ns: float,
+        end_ns: float,
+        generation_start_ns: float | None,
+    ) -> None:
+        """Write a record's data to slot `idx` (= session_num).
+
+        Grows capacity if idx >= _capacity. Dispatches metric values to the
+        correct column type (numeric, string, ragged) based on Python type.
+        """
+        if idx >= self._capacity:
+            self._grow(idx)
+
+        if idx >= self._count:
+            self._count = idx + 1
+
+        self.start_ns[idx] = start_ns
+        self.end_ns[idx] = end_ns
+        if generation_start_ns is not None:
+            self.generation_start_ns[idx] = generation_start_ns
+
+        for tag, value in record_metrics.items():
+            if isinstance(value, list):
+                ragged = self._ensure_ragged_column(tag)
+                ragged.extend(idx, value)
+            elif isinstance(value, str):
+                col = self._ensure_string_column(tag)
+                col[idx] = value
+            elif isinstance(value, int | float):
+                col = self._ensure_numeric_column(tag)
+                col[idx] = float(value)
+
+    # --- Internal ---
+
+    def _grow(self, min_idx: int) -> None:
+        """Double capacity until min_idx fits. New slots filled with NaN/None."""
+        new_cap = self._capacity
+        while new_cap <= min_idx:
+            new_cap *= 2
+
+        # Grow timestamp columns
+        for attr in ("start_ns", "end_ns", "generation_start_ns"):
+            old = getattr(self, attr)
+            new = np.full(new_cap, np.nan, dtype=np.float64)
+            new[: self._capacity] = old[: self._capacity]
+            setattr(self, attr, new)
+
+        # Grow numeric columns
+        for tag, old in self._numeric.items():
+            new = np.full(new_cap, np.nan, dtype=np.float64)
+            new[: self._capacity] = old[: self._capacity]
+            self._numeric[tag] = new
+
+        # Grow string columns
+        for tag, old in self._string.items():
+            old.extend([None] * (new_cap - self._capacity))
+            self._string[tag] = old
+
+        self._capacity = new_cap
+
+    def _ensure_numeric_column(self, tag: str) -> NDArray[np.float64]:
+        """Lazily create a NaN-filled float64 column for `tag`."""
+        col = self._numeric.get(tag)
+        if col is None:
+            col = np.full(self._capacity, np.nan, dtype=np.float64)
+            self._numeric[tag] = col
+        return col
+
+    def _ensure_string_column(self, tag: str) -> list[str | None]:
+        """Lazily create a None-filled string column for `tag`."""
+        col = self._string.get(tag)
+        if col is None:
+            col: list[str | None] = [None] * self._capacity
+            self._string[tag] = col
+        return col
+
+    def _ensure_ragged_column(self, tag: str) -> RaggedSeries:
+        """Lazily create a RaggedSeries for `tag`."""
+        ragged = self._ragged.get(tag)
+        if ragged is None:
+            ragged = RaggedSeries()
+            self._ragged[tag] = ragged
+        return ragged

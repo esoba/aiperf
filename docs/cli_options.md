@@ -34,7 +34,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br>_Choices: [`accumulator`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br>_Choices: [`accumulator`, `analyzer`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `service`, `service_manager`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -573,6 +573,34 @@ Include HTTP trace data (timestamps, chunks, headers, socket info) in profile_ex
 
 Display HTTP trace timing metrics in the console at the end of the benchmark. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration following k6 naming conventions.
 <br>_Flag (no value required)_
+
+#### `--steady-state`
+
+Enable steady-state metric computation. When enabled, AIPerf detects the steady-state region of a benchmark run and reports windowed metrics that exclude ramp-up and ramp-down periods.
+<br>_Flag (no value required)_
+
+#### `--steady-state-start-pct` `<float>`
+
+Manual override: start of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-end-pct. Overrides automatic detection.
+
+#### `--steady-state-end-pct` `<float>`
+
+Manual override: end of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-start-pct. Overrides automatic detection.
+
+#### `--steady-state-stability-fraction` `<float>`
+
+Fraction of peak concurrency used as the stability threshold. A value of 0.90 means concurrency must reach 90% of the 95th-percentile peak before the region is considered steady state.
+<br>_Default: `0.9`_
+
+#### `--steady-state-sustained-window-pct` `<float>`
+
+Minimum sustained duration as a percentage of total benchmark duration for ramp boundary detection. Higher values require concurrency to remain above the threshold for longer before it is considered steady.
+<br>_Default: `5.0`_
+
+#### `--steady-state-min-window-pct` `<float>`
+
+Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.
+<br>_Default: `10.0`_
 
 ### Tokenizer
 

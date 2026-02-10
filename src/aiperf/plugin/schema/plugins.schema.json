@@ -114,6 +114,14 @@
         "$ref": "#/$defs/StreamExporterPlugin"
       }
     },
+    "analyzer": {
+      "title": "Analyzer Plugins",
+      "type": "object",
+      "description": "Analyzers derive results from accumulators at summarization time.\nThey declare accumulator dependencies and receive a SummaryContext\nwith accumulator references and prior outputs. No record ingestion.\nOne-to-many mapping: multiple analyzers loaded simultaneously.",
+      "additionalProperties": {
+        "$ref": "#/$defs/AnalyzerPlugin"
+      }
+    },
     "data_exporter": {
       "title": "Data Exporter Plugins",
       "type": "object",
@@ -849,6 +857,47 @@
       ],
       "title": "Stream Exporter Plugin",
       "description": "Stream exporters write each record to an external sink (e.g. JSONL files) as it\narrives. No summarization dependencies. Finalized after all records are processed.\nOne-to-many mapping: multiple exporters loaded simultaneously."
+    },
+    "AnalyzerPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Analyzer Plugin",
+      "description": "Analyzers derive results from accumulators at summarization time.\nThey declare accumulator dependencies and receive a SummaryContext\nwith accumulator references and prior outputs. No record ingestion.\nOne-to-many mapping: multiple analyzers loaded simultaneously."
     },
     "DataExporterPlugin": {
       "type": "object",

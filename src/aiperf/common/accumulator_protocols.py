@@ -68,7 +68,7 @@ class AccumulatorProtocol(Protocol):
 
     Accumulators are the primary data stores in the records pipeline. Each accumulator
     owns exactly one record type and is fully self-contained — no cross-accumulator
-    dependencies. Derived computations belong on SubProcessorProtocol instead.
+    dependencies. Derived computations belong on AnalyzerProtocol instead.
     """
 
     async def process_record(self, record: Any) -> None:
@@ -105,11 +105,11 @@ class AccumulatorProtocol(Protocol):
 
 
 @runtime_checkable
-class SubProcessorProtocol(Protocol):
+class AnalyzerProtocol(Protocol):
     """Protocol for processors that don't ingest records directly but derive results
     from other accumulators at summarization time.
 
-    SubProcessors declare which accumulators they need via required_accumulators
+    Analyzers declare which accumulators they need via required_accumulators
     and which outputs they depend on via summary_dependencies. They receive
     accumulator references at construction and a SummaryContext at summarize time.
     """

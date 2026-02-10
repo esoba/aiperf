@@ -18,6 +18,7 @@ from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
+from aiperf.post_processors.column_store import ColumnStore
 from aiperf.post_processors.metrics_accumulator import (
     _AGGREGATE_FUNCS,
     MetricsAccumulator,
@@ -38,7 +39,7 @@ class TestMetricsAccumulator:
         processor = MetricsAccumulator(mock_user_config)
 
         assert isinstance(processor._derive_funcs, dict)
-        assert isinstance(processor._time_series, dict)
+        assert isinstance(processor._column_store, ColumnStore)
         assert isinstance(processor._tags_to_types, dict)
         assert isinstance(processor._aggregation_kinds, dict)
         assert isinstance(processor._records, list)
@@ -47,51 +48,56 @@ class TestMetricsAccumulator:
     async def test_process_record_record_metric(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Test processing record metric stores values in time series."""
+        """Test processing record metric stores values in column store."""
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         message = create_metric_records_message(
             x_request_id="test-1",
+            session_num=0,
             results=[{"test_record": 42.0}],
         )
         await processor.process_record(message.to_data())
 
-        assert "test_record" in processor._time_series
-        assert len(processor._time_series["test_record"]) == 1
-        assert list(processor._time_series["test_record"].values) == [42.0]
+        assert "test_record" in processor._column_store.numeric_tags()
+        values = processor._column_store.numeric("test_record")
+        assert list(values[~np.isnan(values)]) == [42.0]
 
-        # New data should expand the time series
+        # New data should expand the column store
         message2 = create_metric_records_message(
             x_request_id="test-2",
+            session_num=1,
             request_start_ns=1_000_000_001,
             results=[{"test_record": 84.0}],
         )
         await processor.process_record(message2.to_data())
-        assert list(processor._time_series["test_record"].values) == [42.0, 84.0]
+        values = processor._column_store.numeric("test_record")
+        assert list(values[~np.isnan(values)]) == [42.0, 84.0]
 
     @pytest.mark.asyncio
     async def test_process_record_record_metric_list_values(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Test processing record metric with list values extends the time series."""
+        """Test processing record metric with list values stores in ragged series."""
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
 
         message = create_metric_records_message(
             x_request_id="test-1",
+            session_num=0,
             results=[{"test_record": [10.0, 20.0, 30.0]}],
         )
         await processor.process_record(message.to_data())
 
-        assert "test_record" in processor._time_series
-        assert list(processor._time_series["test_record"].values) == [10.0, 20.0, 30.0]
+        assert "test_record" in processor._column_store.ragged_tags()
+        ragged = processor._column_store.ragged("test_record")
+        assert list(ragged.values) == [10.0, 20.0, 30.0]
 
     @pytest.mark.asyncio
     async def test_process_record_aggregate_metric(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Test processing aggregate metric stores values in time series."""
+        """Test processing aggregate metric stores values in column store."""
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {RequestCountMetric.tag: MetricType.AGGREGATE}
         processor._aggregation_kinds = {
@@ -100,21 +106,24 @@ class TestMetricsAccumulator:
 
         message1 = create_metric_records_message(
             x_request_id="test-1",
+            session_num=0,
             results=[{RequestCountMetric.tag: 5}],
         )
         await processor.process_record(message1.to_data())
 
-        # Values stored in time series, not in running instances
-        assert RequestCountMetric.tag in processor._time_series
-        assert list(processor._time_series[RequestCountMetric.tag].values) == [5.0]
+        assert RequestCountMetric.tag in processor._column_store.numeric_tags()
+        values = processor._column_store.numeric(RequestCountMetric.tag)
+        assert list(values[~np.isnan(values)]) == [5.0]
 
         message2 = create_metric_records_message(
             x_request_id="test-2",
+            session_num=1,
             request_start_ns=1_000_000_001,
             results=[{RequestCountMetric.tag: 3}],
         )
         await processor.process_record(message2.to_data())
-        assert list(processor._time_series[RequestCountMetric.tag].values) == [5.0, 3.0]
+        values = processor._column_store.numeric(RequestCountMetric.tag)
+        assert list(values[~np.isnan(values)]) == [5.0, 3.0]
 
     @pytest.mark.asyncio
     async def test_aggregate_sum_computed_at_summary_time(
@@ -131,6 +140,7 @@ class TestMetricsAccumulator:
         for i in range(3):
             msg = create_metric_records_message(
                 x_request_id=f"test-{i}",
+                session_num=i,
                 request_start_ns=1_000_000_000 + i,
                 results=[{RequestCountMetric.tag: 5}],
             )
@@ -147,9 +157,9 @@ class TestMetricsAccumulator:
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {}
 
-        msg1 = create_metric_records_message(x_request_id="test-1")
+        msg1 = create_metric_records_message(x_request_id="test-1", session_num=0)
         msg2 = create_metric_records_message(
-            x_request_id="test-2", request_start_ns=1_000_000_001
+            x_request_id="test-2", session_num=1, request_start_ns=1_000_000_001
         )
         data1 = msg1.to_data()
         data2 = msg2.to_data()
@@ -207,7 +217,7 @@ class TestQueryTimeRange:
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {}
         record = create_metric_records_message(
-            x_request_id="test-1", request_start_ns=5_000
+            x_request_id="test-1", session_num=0, request_start_ns=5_000
         ).to_data()
         await processor.process_record(record)
         assert processor.query_time_range(0, 10_000) == [record]
@@ -219,7 +229,7 @@ class TestQueryTimeRange:
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {}
         record = create_metric_records_message(
-            x_request_id="test-1", request_start_ns=15_000
+            x_request_id="test-1", session_num=0, request_start_ns=15_000
         ).to_data()
         await processor.process_record(record)
         assert processor.query_time_range(0, 10_000) == []
@@ -231,10 +241,10 @@ class TestQueryTimeRange:
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {}
         record1 = create_metric_records_message(
-            x_request_id="test-1", request_start_ns=1_000
+            x_request_id="test-1", session_num=0, request_start_ns=1_000
         ).to_data()
         record2 = create_metric_records_message(
-            x_request_id="test-2", request_start_ns=2_000
+            x_request_id="test-2", session_num=1, request_start_ns=2_000
         ).to_data()
         await processor.process_record(record1)
         await processor.process_record(record2)
@@ -250,7 +260,7 @@ class TestQueryTimeRange:
         records = []
         for i, ts in enumerate([100, 200, 300, 400, 500]):
             r = create_metric_records_message(
-                x_request_id=f"test-{i}", request_start_ns=ts
+                x_request_id=f"test-{i}", session_num=i, request_start_ns=ts
             ).to_data()
             records.append(r)
             await processor.process_record(r)
@@ -269,12 +279,13 @@ class TestSummarize:
         processor._tags_to_types = {RequestLatencyMetric.tag: MetricType.RECORD}
         processor._metric_classes = {RequestLatencyMetric.tag: RequestLatencyMetric()}
 
-        # Manually add data to time series
-        from aiperf.post_processors.inference_time_series import InferenceTimeSeries
-
-        ts = InferenceTimeSeries()
-        ts.append(0, 42.0)
-        processor._time_series[RequestLatencyMetric.tag] = ts
+        # Inject data via process_record
+        msg = create_metric_records_message(
+            x_request_id="test-1",
+            session_num=0,
+            results=[{RequestLatencyMetric.tag: 42.0}],
+        )
+        await processor.process_record(msg.to_data())
 
         summary = await processor.summarize()
 
@@ -355,6 +366,7 @@ class TestTimesliceSummarize:
         # Process records in two different 1-second windows
         msg1 = create_metric_records_message(
             x_request_id="test-1",
+            session_num=0,
             request_start_ns=int(0.5 * NANOS_PER_SECOND),
             results=[{"test_record": 42.0}],
         )
@@ -362,6 +374,7 @@ class TestTimesliceSummarize:
 
         msg2 = create_metric_records_message(
             x_request_id="test-2",
+            session_num=1,
             request_start_ns=int(1.5 * NANOS_PER_SECOND),
             results=[{"test_record": 84.0}],
         )
@@ -389,6 +402,7 @@ class TestTimesliceSummarize:
 
         msg = create_metric_records_message(
             x_request_id="test-1",
+            session_num=0,
             results=[{"test_record": 42.0}],
         )
         await processor.process_record(msg.to_data())
@@ -409,6 +423,7 @@ class TestTimesliceSummarize:
         # Two records in same 1-second window
         msg1 = create_metric_records_message(
             x_request_id="test-1",
+            session_num=0,
             request_start_ns=int(0.3 * NANOS_PER_SECOND),
             results=[{"test_record": 10.0}],
         )
@@ -416,6 +431,7 @@ class TestTimesliceSummarize:
 
         msg2 = create_metric_records_message(
             x_request_id="test-2",
+            session_num=1,
             request_start_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{"test_record": 20.0}],
         )
@@ -443,6 +459,7 @@ class TestTimesliceSummarize:
         # First timeslice: 5 + 3 = 8
         msg1 = create_metric_records_message(
             x_request_id="test-1",
+            session_num=0,
             request_start_ns=int(0.5 * NANOS_PER_SECOND),
             results=[{RequestCountMetric.tag: 5}],
         )
@@ -450,6 +467,7 @@ class TestTimesliceSummarize:
 
         msg2 = create_metric_records_message(
             x_request_id="test-2",
+            session_num=1,
             request_start_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{RequestCountMetric.tag: 3}],
         )
@@ -458,6 +476,7 @@ class TestTimesliceSummarize:
         # Second timeslice: 7
         msg3 = create_metric_records_message(
             x_request_id="test-3",
+            session_num=2,
             request_start_ns=int(1.5 * NANOS_PER_SECOND),
             results=[{RequestCountMetric.tag: 7}],
         )
@@ -486,6 +505,7 @@ class TestTimesliceSummarize:
 
         msg1 = create_metric_records_message(
             x_request_id="test-1",
+            session_num=0,
             request_start_ns=int(0.3 * NANOS_PER_SECOND),
             results=[{"max_ts": 100}],
         )
@@ -493,6 +513,7 @@ class TestTimesliceSummarize:
 
         msg2 = create_metric_records_message(
             x_request_id="test-2",
+            session_num=1,
             request_start_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{"max_ts": 300}],
         )
@@ -516,6 +537,7 @@ class TestTimesliceSummarize:
 
         msg1 = create_metric_records_message(
             x_request_id="test-1",
+            session_num=0,
             request_start_ns=int(0.3 * NANOS_PER_SECOND),
             results=[{"min_ts": 500}],
         )
@@ -523,6 +545,7 @@ class TestTimesliceSummarize:
 
         msg2 = create_metric_records_message(
             x_request_id="test-2",
+            session_num=1,
             request_start_ns=int(0.7 * NANOS_PER_SECOND),
             results=[{"min_ts": 200}],
         )

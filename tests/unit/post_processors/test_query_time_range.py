@@ -16,10 +16,11 @@ from tests.unit.post_processors.conftest import (
 )
 
 
-def _make_record(request_start_ns: int) -> MetricRecordsData:
+def _make_record(request_start_ns: int, session_num: int = 0) -> MetricRecordsData:
     """Create a minimal MetricRecordsData with a given timestamp."""
     return MetricRecordsData(
         metadata=create_metric_metadata(
+            session_num=session_num,
             request_start_ns=request_start_ns,
             request_end_ns=request_start_ns + 1_000_000,
         ),
@@ -44,14 +45,17 @@ class TestProcessRecord:
     async def test_process_record_stores_record(
         self, processor: MetricsAccumulator
     ) -> None:
-        record = _make_record(1_000)
+        record = _make_record(1_000, session_num=0)
         await processor.process_record(record)
         assert processor.record_count == 1
         assert list(processor.iter_requests()) == [record]
 
     @pytest.mark.asyncio
     async def test_process_record_multiple(self, processor: MetricsAccumulator) -> None:
-        records = [_make_record(ts) for ts in (1_000, 2_000, 3_000)]
+        records = [
+            _make_record(ts, session_num=i)
+            for i, ts in enumerate((1_000, 2_000, 3_000))
+        ]
         for r in records:
             await processor.process_record(r)
         assert processor.record_count == 3
@@ -65,27 +69,27 @@ class TestQueryTimeRange:
 
     @pytest.mark.asyncio
     async def test_single_record_inside(self, processor: MetricsAccumulator) -> None:
-        record = _make_record(5_000)
+        record = _make_record(5_000, session_num=0)
         await processor.process_record(record)
         assert processor.query_time_range(0, 10_000) == [record]
 
     @pytest.mark.asyncio
     async def test_single_record_outside(self, processor: MetricsAccumulator) -> None:
-        await processor.process_record(_make_record(15_000))
+        await processor.process_record(_make_record(15_000, session_num=0))
         assert processor.query_time_range(0, 10_000) == []
 
     @pytest.mark.asyncio
     async def test_boundary_inclusive_start(
         self, processor: MetricsAccumulator
     ) -> None:
-        record = _make_record(1_000)
+        record = _make_record(1_000, session_num=0)
         await processor.process_record(record)
         # [1_000, 2_000) should include 1_000
         assert processor.query_time_range(1_000, 2_000) == [record]
 
     @pytest.mark.asyncio
     async def test_boundary_exclusive_end(self, processor: MetricsAccumulator) -> None:
-        record = _make_record(2_000)
+        record = _make_record(2_000, session_num=0)
         await processor.process_record(record)
         # [1_000, 2_000) should NOT include 2_000
         assert processor.query_time_range(1_000, 2_000) == []
@@ -94,7 +98,8 @@ class TestQueryTimeRange:
     async def test_multiple_records_filtering(
         self, processor: MetricsAccumulator
     ) -> None:
-        records = [_make_record(ts) for ts in (100, 200, 300, 400, 500)]
+        timestamps = [100, 200, 300, 400, 500]
+        records = [_make_record(ts, session_num=i) for i, ts in enumerate(timestamps)]
         for r in records:
             await processor.process_record(r)
 
@@ -105,5 +110,5 @@ class TestQueryTimeRange:
     async def test_equal_start_end_returns_empty(
         self, processor: MetricsAccumulator
     ) -> None:
-        await processor.process_record(_make_record(100))
+        await processor.process_record(_make_record(100, session_num=0))
         assert processor.query_time_range(100, 100) == []

@@ -4,6 +4,7 @@
 
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 
 from aiperf.common.config import UserConfig
@@ -45,19 +46,21 @@ class TestPostProcessorIntegration:
         )
         message = create_metric_records_message(
             x_request_id="test-1",
+            session_num=0,
             results=[{RequestLatencyMetric.tag: 100.0, RequestCountMetric.tag: 1}],
         )
 
         await accumulator.process_record(message.to_data())
 
-        assert RequestLatencyMetric.tag in accumulator._time_series
-        assert list(accumulator._time_series[RequestLatencyMetric.tag].values) == [
-            100.0
-        ]
+        # RECORD metric stored in column store numeric column
+        assert RequestLatencyMetric.tag in accumulator._column_store.numeric_tags()
+        values = accumulator._column_store.numeric(RequestLatencyMetric.tag)
+        assert list(values[~np.isnan(values)]) == [100.0]
 
-        # Aggregate metrics also stored in time series
-        assert RequestCountMetric.tag in accumulator._time_series
-        assert list(accumulator._time_series[RequestCountMetric.tag].values) == [1.0]
+        # AGGREGATE metric also stored in column store
+        assert RequestCountMetric.tag in accumulator._column_store.numeric_tags()
+        agg_values = accumulator._column_store.numeric(RequestCountMetric.tag)
+        assert list(agg_values[~np.isnan(agg_values)]) == [1.0]
 
     async def test_multiple_batches_accumulation(
         self,
@@ -72,16 +75,16 @@ class TestPostProcessorIntegration:
         for idx, value in enumerate(TEST_LATENCY_VALUES):
             message = create_metric_records_message(
                 x_request_id=f"test-{idx}",
+                session_num=idx,
                 request_start_ns=1_000_000_000 + idx,
                 x_correlation_id=f"test-correlation-{idx}",
                 results=[{RequestLatencyMetric.tag: value}],
             )
             await accumulator.process_record(message.to_data())
 
-        assert RequestLatencyMetric.tag in accumulator._time_series
-        accumulated_data = list(
-            accumulator._time_series[RequestLatencyMetric.tag].values
-        )
+        assert RequestLatencyMetric.tag in accumulator._column_store.numeric_tags()
+        values = accumulator._column_store.numeric(RequestLatencyMetric.tag)
+        accumulated_data = list(values[~np.isnan(values)])
         assert accumulated_data == TEST_LATENCY_VALUES
 
     async def test_error_metrics_isolation(
@@ -119,18 +122,21 @@ class TestPostProcessorIntegration:
 
         accumulator = MetricsAccumulator(mock_user_config)
 
-        # Set up RequestCount as aggregate with values in time series
-        from aiperf.post_processors.inference_time_series import InferenceTimeSeries
-
+        # Set up RequestCount as aggregate with values in column store
         accumulator._tags_to_types = {
             RequestCountMetric.tag: MetricType.AGGREGATE,
         }
         accumulator._aggregation_kinds = {
             RequestCountMetric.tag: AggregationKind.SUM,
         }
-        ts = InferenceTimeSeries()
-        ts.append(0, float(TEST_REQUEST_COUNT))
-        accumulator._time_series[RequestCountMetric.tag] = ts
+        accumulator._column_store.ingest(
+            idx=0,
+            record_metrics={RequestCountMetric.tag: float(TEST_REQUEST_COUNT)},
+            start_ns=1_000_000_000.0,
+            end_ns=1_100_000_000.0,
+            generation_start_ns=None,
+        )
+        accumulator._ensure_records_capacity(0)
 
         # BenchmarkDuration is a DERIVED metric; add it as a derive func that
         # returns a constant, then let RequestThroughput compute from both.
@@ -159,13 +165,15 @@ class TestPostProcessorIntegration:
             mock_user_config, RequestLatencyMetric
         )
 
-        # Add data via the time series
-        from aiperf.post_processors.inference_time_series import InferenceTimeSeries
-
-        ts = InferenceTimeSeries()
+        # Add data via process_record
         for i, v in enumerate(TEST_LATENCY_VALUES):
-            ts.append(i, v)
-        accumulator._time_series[RequestLatencyMetric.tag] = ts
+            msg = create_metric_records_message(
+                x_request_id=f"test-{i}",
+                session_num=i,
+                request_start_ns=1_000_000_000 + i,
+                results=[{RequestLatencyMetric.tag: v}],
+            )
+            await accumulator.process_record(msg.to_data())
 
         summary = await accumulator.summarize()
 

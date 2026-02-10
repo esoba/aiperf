@@ -11,6 +11,7 @@ from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.config.groups import Groups
+from aiperf.common.config.steady_state_config import SteadyStateConfig
 from aiperf.common.enums import ExportLevel
 
 
@@ -105,6 +106,13 @@ class OutputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = OutputDefaults.SHOW_TRACE_TIMING
+
+    steady_state: Annotated[
+        SteadyStateConfig,
+        Field(
+            description="Steady-state detection and windowing configuration",
+        ),
+    ] = SteadyStateConfig()
 
     _profile_export_csv_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_CSV_FILE
     _profile_export_json_file: Path = OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE

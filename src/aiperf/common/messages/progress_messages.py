@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 from pydantic import Field
 
 from aiperf.common.enums import MessageType
@@ -14,6 +16,7 @@ from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.types import MessageTypeT
+from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
 
 
 class RecordsProcessingStatsMessage(BaseServiceMessage):
@@ -60,4 +63,7 @@ class ProcessAllResultsMessage(BaseServiceMessage):
     )
     server_metrics_results: ServerMetricsResults | None = Field(
         default=None, description="Server metrics results"
+    )
+    steady_state_results: SteadyStateSummary | None = Field(
+        default=None, description="Steady-state windowed metric results"
     )

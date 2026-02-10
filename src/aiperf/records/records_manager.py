@@ -9,8 +9,10 @@ from typing import Any
 
 from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
+    AnalyzerProtocol,
     ExportContext,
     StreamExporterProtocol,
+    SummaryContext,
 )
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -61,8 +63,15 @@ from aiperf.credit.messages import (
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.gpu_telemetry.protocols import GPUTelemetryAccumulatorProtocol
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import AccumulatorType, PluginType, StreamExporterType, UIType
+from aiperf.plugin.enums import (
+    AccumulatorType,
+    AnalyzerType,
+    PluginType,
+    StreamExporterType,
+    UIType,
+)
 from aiperf.post_processors.metrics_accumulator import MetricsSummary
+from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_tracker import RecordsTracker
 
@@ -152,6 +161,21 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
             except Exception as e:
                 self.error(f"Failed to create {entry.category} {entry.name}: {e}")
+
+        # Analyzers: derive results from accumulators at summarize time
+        self._analyzers: dict[AnalyzerType, AnalyzerProtocol] = {}
+        for entry in plugins.iter_entries(PluginType.ANALYZER):
+            try:
+                PluginClass = plugins.get_class(entry.category, entry.name)
+                analyzer = PluginClass(user_config=self.user_config)
+                self._analyzers[AnalyzerType(entry.name)] = analyzer
+                self.debug(
+                    f"Created analyzer plugin: {entry.name}: {analyzer.__class__.__name__}"
+                )
+            except PluginDisabled:
+                self.debug(f"Analyzer {entry.name} is disabled and will not be used")
+            except Exception as e:
+                self.error(f"Failed to create analyzer {entry.name}: {e}")
 
         # Build record_type string → handler routing table from plugin metadata
         self._routing_table = self._build_routing_table()
@@ -657,6 +681,25 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Finalize stream exporters — flush any buffered data (JSONL writers, etc.)
         await self._finalize_stream_exporters()
 
+        # Run analyzers with SummaryContext (dependency-ordered)
+        summary_ctx = SummaryContext(
+            accumulators=dict(self._accumulators),
+            accumulator_outputs={str(k): v for k, v in export_outputs.items()},
+            start_ns=phase_stats.start_ns or 0,
+            end_ns=phase_stats.requests_end_ns or 0,
+            cancelled=cancelled,
+        )
+        analyzer_outputs: dict[AnalyzerType, Any] = {}
+        for analyzer_name, analyzer in self._analyzers.items():
+            try:
+                result = await analyzer.summarize(summary_ctx)
+                analyzer_outputs[analyzer_name] = result
+                summary_ctx.accumulator_outputs[str(analyzer_name)] = result
+            except PluginDisabled as e:
+                self.debug(f"Analyzer {analyzer_name} disabled: {e}")
+            except Exception as e:
+                self.error(f"Analyzer {analyzer_name} failed: {e!r}")
+
         # Build ProcessRecordsResult from metric accumulator outputs
         records_results: dict[MetricTagT, MetricResult] = {}
         timeslice_metric_results: dict[str, dict[MetricTagT, MetricResult]] = {}
@@ -695,10 +738,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
 
         # Export data files (CSV, JSON) — RecordsManager owns file export
+        steady_state = analyzer_outputs.get(AnalyzerType.STEADY_STATE)
         await self._export_data_files(
             process_records_result.results,
             telemetry_results,
             server_metrics_results,
+            steady_state_results=steady_state,
         )
 
         # Publish unified results message
@@ -709,6 +754,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 results=process_records_result,
                 telemetry_results=telemetry_results,
                 server_metrics_results=server_metrics_results,
+                steady_state_results=analyzer_outputs.get(AnalyzerType.STEADY_STATE),
             )
         )
         self.debug("ProcessAllResultsMessage published")
@@ -719,6 +765,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         profile_results: ProfileResults,
         telemetry_results: TelemetryExportData | None,
         server_metrics_results: ServerMetricsResults | None,
+        steady_state_results: SteadyStateSummary | None = None,
     ) -> None:
         """Export data files (CSV, JSON) using the ExporterManager.
 
@@ -731,6 +778,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 service_config=self.service_config,
                 telemetry_results=telemetry_results,
                 server_metrics_results=server_metrics_results,
+                steady_state_results=steady_state_results,
             )
             await exporter_manager.export_data()
         except Exception as e:

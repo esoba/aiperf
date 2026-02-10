@@ -137,6 +137,16 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_INTERVAL` | `0.25` | ≥ 0.05, ≤ 10.0 | Interval in seconds between event loop health checks (default: 250ms). The monitor sleeps for this duration and measures actual elapsed time to detect blocking. |
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS` | `10.0` | > 1.0, ≤ 10000.0 | Warning threshold in milliseconds for event loop latency (default: 10ms). If the actual sleep duration exceeds the expected duration by this amount, a warning is logged. |
 
+## STEADYSTATE
+
+Steady-state detection configuration. Controls the automatic ramp detection algorithm parameters. CLI flags (--steady-state, --steady-state-start-pct, etc.) take precedence over these environment variables.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_STEADY_STATE_STABILITY_FRACTION` | `0.9` | > 0.0, ≤ 1.0 | Fraction of peak concurrency used as the stability threshold for ramp detection |
+| `AIPERF_STEADY_STATE_SUSTAINED_WINDOW_PCT` | `5.0` | > 0.0, ≤ 50.0 | Minimum sustained duration as percentage of total benchmark duration for ramp boundary detection |
+| `AIPERF_STEADY_STATE_MIN_WINDOW_PCT` | `10.0` | > 0.0, ≤ 100.0 | Minimum steady-state window size as percentage of total duration; below this, falls back to full range |
+
 ## TIMING
 
 Timing manager configuration. Controls timing-related settings for credit phase execution and scheduling.

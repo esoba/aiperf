@@ -458,6 +458,38 @@ class _TimingSettings(BaseSettings):
     )
 
 
+class _SteadyStateSettings(BaseSettings):
+    """Steady-state detection configuration.
+
+    Controls the automatic ramp detection algorithm parameters.
+    CLI flags (--steady-state, --steady-state-start-pct, etc.) take precedence
+    over these environment variables.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_STEADY_STATE_",
+    )
+
+    STABILITY_FRACTION: float = Field(
+        gt=0.0,
+        le=1.0,
+        default=0.90,
+        description="Fraction of peak concurrency used as the stability threshold for ramp detection",
+    )
+    SUSTAINED_WINDOW_PCT: float = Field(
+        gt=0.0,
+        le=50.0,
+        default=5.0,
+        description="Minimum sustained duration as percentage of total benchmark duration for ramp boundary detection",
+    )
+    MIN_WINDOW_PCT: float = Field(
+        gt=0.0,
+        le=100.0,
+        default=10.0,
+        description="Minimum steady-state window size as percentage of total duration; below this, falls back to full range",
+    )
+
+
 class _ServiceSettings(BaseSettings):
     """Service lifecycle and inter-service communication configuration.
 
@@ -875,6 +907,10 @@ class _Environment(BaseSettings):
     SERVICE: _ServiceSettings = Field(
         default_factory=_ServiceSettings,
         description="Service lifecycle and communication settings",
+    )
+    STEADY_STATE: _SteadyStateSettings = Field(
+        default_factory=_SteadyStateSettings,
+        description="Steady-state detection algorithm settings",
     )
     TIMING: _TimingSettings = Field(
         default_factory=_TimingSettings,

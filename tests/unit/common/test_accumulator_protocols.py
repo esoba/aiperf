@@ -11,9 +11,9 @@ import pytest
 from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
     AccumulatorResult,
+    AnalyzerProtocol,
     ExportContext,
     StreamExporterProtocol,
-    SubProcessorProtocol,
     SummaryContext,
 )
 from aiperf.plugin.enums import AccumulatorType
@@ -53,7 +53,7 @@ class StubAccumulator:
         return StubResult(values=[])
 
 
-class StubSubProcessor:
+class StubAnalyzer:
     required_accumulators: ClassVar[set[AccumulatorType]] = set()
     summary_dependencies: ClassVar[list[AccumulatorType]] = []
 
@@ -86,9 +86,7 @@ class NotAnAccumulator:
         pytest.param(
             StubAccumulator(), AccumulatorProtocol, True, id="accumulator-matches"
         ),
-        pytest.param(
-            StubSubProcessor(), SubProcessorProtocol, True, id="sub-processor-matches"
-        ),
+        pytest.param(StubAnalyzer(), AnalyzerProtocol, True, id="analyzer-matches"),
         pytest.param(
             StubStreamExporter(),
             StreamExporterProtocol,
@@ -98,9 +96,7 @@ class NotAnAccumulator:
         pytest.param(
             NotAnAccumulator(), AccumulatorProtocol, False, id="not-accumulator"
         ),
-        pytest.param(
-            NotAnAccumulator(), SubProcessorProtocol, False, id="not-sub-processor"
-        ),
+        pytest.param(NotAnAccumulator(), AnalyzerProtocol, False, id="not-analyzer"),
         pytest.param(
             NotAnAccumulator(), StreamExporterProtocol, False, id="not-stream-exporter"
         ),

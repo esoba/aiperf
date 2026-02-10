@@ -144,6 +144,15 @@ stream_exporter:
     arrives. No summarization dependencies. Finalized after all records are processed.
     One-to-many mapping: multiple exporters loaded simultaneously.
 
+analyzer:
+  protocol: aiperf.common.accumulator_protocols:AnalyzerProtocol
+  enum: AnalyzerType
+  description: |
+    Analyzers derive results from accumulators at summarization time.
+    They declare accumulator dependencies and receive a SummaryContext
+    with accumulator references and prior outputs. No record ingestion.
+    One-to-many mapping: multiple analyzers loaded simultaneously.
+
 # =============================================================================
 # Export Categories
 # =============================================================================

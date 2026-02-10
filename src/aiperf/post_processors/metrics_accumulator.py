@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -19,7 +20,6 @@ from aiperf.common.enums import (
     MetricValueTypeT,
 )
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.growable_array import GrowableArray
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.common.types import MetricTagT, TimeSliceT
@@ -27,7 +27,7 @@ from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
-from aiperf.post_processors.inference_time_series import InferenceTimeSeries
+from aiperf.post_processors.column_store import ColumnStore
 
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
@@ -79,7 +79,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
     """Numpy-backed accumulator for inference metrics.
 
     Replaces both MetricResultsProcessor and TimesliceMetricResultsProcessor.
-    Stores per-tag time series with record indices for O(log n) time queries,
+    Uses session_num-indexed ColumnStore for NaN-sparse columnar storage,
     vectorized aggregation, and dynamic timeslicing at summarize time.
 
     RECORD metrics: per-value stats (percentiles, mean, etc.)
@@ -90,12 +90,12 @@ class MetricsAccumulator(BaseMetricsProcessor):
     def __init__(self, user_config: UserConfig, **kwargs: Any) -> None:
         super().__init__(user_config=user_config, **kwargs)
 
-        # Raw record storage for query_time_range()
-        self._records: list[MetricRecordsData] = []
-        self._record_timestamps = GrowableArray(initial_capacity=256, dtype=np.int64)
+        # Session-indexed columnar storage
+        self._column_store = ColumnStore(initial_capacity=1024)
 
-        # Per-tag time series for RECORD and AGGREGATE metrics
-        self._time_series: dict[MetricTagT, InferenceTimeSeries] = {}
+        # Sparse record reference for query_time_range() / iter_requests() compat
+        self._records: list[MetricRecordsData | None] = []
+        self._record_count = 0
 
         # Derive functions for DERIVED metrics
         self._derive_funcs: dict[
@@ -131,111 +131,130 @@ class MetricsAccumulator(BaseMetricsProcessor):
             int(slice_dur * NANOS_PER_SECOND) if slice_dur else None
         )
 
+    @property
+    def column_store(self) -> ColumnStore:
+        """Read-only access to the underlying columnar store for analyzers."""
+        return self._column_store
+
     async def process_record(self, record: MetricRecordsData) -> None:
         """Ingest a MetricRecordsData record."""
-        ts = record.metadata.request_start_ns
-        record_idx = len(self._records)
-        self._records.append(record)
-        self._record_timestamps.append(ts)
+        idx = record.metadata.session_num
 
-        for tag, value in record.metrics.items():
-            try:
-                metric_type = self._tags_to_types.get(tag)
-                if metric_type in (MetricType.RECORD, MetricType.AGGREGATE):
-                    if tag not in self._time_series:
-                        self._time_series[tag] = InferenceTimeSeries()
-                    series = self._time_series[tag]
-                    if isinstance(value, list):
-                        series.extend(record_idx, value)
-                    else:
-                        series.append(record_idx, float(value))
+        # Compute generation_start_ns from wall-clock start + TTFT duration
+        ttft_ns = record.metrics.get("time_to_first_token")
+        gen_start = (
+            float(record.metadata.request_start_ns + int(ttft_ns))
+            if ttft_ns is not None
+            else None
+        )
 
-                else:
-                    self.warning(f"Metric '{tag}' has unexpected type: {metric_type}")
-            except NoMetricValue as e:
-                if self.is_trace_enabled:
-                    self.trace(f"No metric value for metric '{tag}': {e!r}")
-            except Exception as e:
-                self.warning(f"Error processing metric '{tag}': {e!r}")
+        self._column_store.ingest(
+            idx=idx,
+            record_metrics=record.metrics,
+            start_ns=float(record.metadata.request_start_ns),
+            end_ns=float(record.metadata.request_end_ns),
+            generation_start_ns=gen_start,
+        )
+
+        # Keep sparse record reference for query_time_range() compat
+        self._ensure_records_capacity(idx)
+        self._records[idx] = record
+        self._record_count += 1
+
+    def _ensure_records_capacity(self, idx: int) -> None:
+        """Extend _records list to accommodate session_num idx."""
+        if idx >= len(self._records):
+            self._records.extend([None] * (idx + 1 - len(self._records)))
 
     def query_time_range(self, start_ns: int, end_ns: int) -> list[MetricRecordsData]:
         """Return records whose request_start_ns falls within [start_ns, end_ns)."""
-        timestamps = self._record_timestamps.data
-        if len(timestamps) == 0:
+        n = self._column_store.count
+        if n == 0:
             return []
-        lo = int(np.searchsorted(timestamps, start_ns, side="left"))
-        hi = int(np.searchsorted(timestamps, end_ns, side="left"))
-        return self._records[lo:hi]
+        ts = self._column_store.start_ns[:n]
+        mask = ~np.isnan(ts) & (ts >= start_ns) & (ts < end_ns)
+        indices = np.where(mask)[0]
+        return [self._records[i] for i in indices if self._records[i] is not None]
 
     def iter_requests(self) -> Iterator[MetricRecordsData]:
-        """Iterate over all stored records in arrival order."""
-        return iter(self._records)
+        """Iterate over all stored records in session_num order, skipping gaps."""
+        return (r for r in self._records if r is not None)
 
     @property
     def record_count(self) -> int:
         """Number of records ingested so far."""
-        return len(self._records)
+        return self._record_count
 
     def _aggregate_values(self, tag: MetricTagT, values: np.ndarray) -> float:
         """Apply the tag's aggregation function to an array of values."""
         kind = self._aggregation_kinds.get(tag, AggregationKind.SUM)
         return _AGGREGATE_FUNCS[kind](values)
 
-    def _build_results_dict(self) -> MetricResultsDict:
-        """Build a MetricResultsDict from current state for derive functions.
+    def build_results_for_mask(self, mask: NDArray[np.bool_]) -> MetricResultsDict:
+        """Build MetricResultsDict from an arbitrary boolean mask over records.
 
-        RECORD metrics get a MetricArray wrapper sharing the InferenceTimeSeries values.
-        AGGREGATE metrics get their vectorized scalar value.
+        Works with any mask: time-range, steady-state, custom filters.
         """
         results = MetricResultsDict()
-        for tag, series in self._time_series.items():
-            metric_type = self._tags_to_types.get(tag)
-            if metric_type == MetricType.RECORD:
-                ma = MetricArray.__new__(MetricArray)
-                ma._array = series.as_metric_array()
-                results[tag] = ma
-            elif metric_type == MetricType.AGGREGATE and len(series) > 0:
-                results[tag] = self._aggregate_values(tag, series.values)
-        return results
+        store = self._column_store
 
-    def _get_record_mask(self, start_ns: int, end_ns: int) -> np.ndarray:
-        """Boolean mask over records for [start_ns, end_ns). O(log n) via searchsorted."""
-        timestamps = self._record_timestamps.data
-        n = len(timestamps)
-        if n == 0:
-            return np.zeros(0, dtype=bool)
-        lo = int(np.searchsorted(timestamps, start_ns, side="left"))
-        hi = int(np.searchsorted(timestamps, end_ns, side="left"))
-        mask = np.zeros(n, dtype=bool)
-        mask[lo:hi] = True
-        return mask
-
-    def _build_results_dict_for_window(
-        self, start_ns: int, end_ns: int
-    ) -> MetricResultsDict:
-        """Build a MetricResultsDict for a specific time window.
-
-        Both RECORD and AGGREGATE metrics are time-filtered via record mask
-        and computed vectorized — no replay needed.
-        """
-        record_mask = self._get_record_mask(start_ns, end_ns)
-        results = MetricResultsDict()
-
-        for tag, series in self._time_series.items():
-            value_mask = series.get_value_mask(record_mask)
-            filtered_values = series.values[value_mask]
-            if len(filtered_values) == 0:
+        for tag in store.numeric_tags():
+            values = store.numeric(tag)[mask]
+            # Drop NaN — these are records that don't have this metric
+            clean = values[~np.isnan(values)]
+            if len(clean) == 0:
                 continue
 
             metric_type = self._tags_to_types.get(tag)
             if metric_type == MetricType.RECORD:
                 ma = MetricArray()
-                ma.extend(list(filtered_values))
+                ma.extend(clean)
                 results[tag] = ma
             elif metric_type == MetricType.AGGREGATE:
-                results[tag] = self._aggregate_values(tag, filtered_values)
+                results[tag] = self._aggregate_values(tag, clean)
+
+        for tag in store.ragged_tags():
+            ragged = store.ragged(tag)
+            filtered = ragged.get_values_for_mask(mask)
+            if len(filtered) == 0:
+                continue
+            ma = MetricArray()
+            ma.extend(filtered)
+            results[tag] = ma
 
         return results
+
+    def compute_results_for_mask(
+        self, mask: NDArray[np.bool_]
+    ) -> dict[MetricTagT, MetricResult]:
+        """Build, derive, and convert metric results for an arbitrary boolean mask.
+
+        Public interface for analyzers (e.g. SteadyStateAnalyzer) that
+        need windowed metric computation without accessing private methods.
+        """
+        results = self.build_results_for_mask(mask)
+        self._compute_derived(results)
+        return self._build_metric_results(results)
+
+    def _build_results_dict(self) -> MetricResultsDict:
+        """Build a MetricResultsDict from all ingested data."""
+        n = self._column_store.count
+        if n == 0:
+            return MetricResultsDict()
+        ts = self._column_store.start_ns[:n]
+        mask = ~np.isnan(ts)
+        return self.build_results_for_mask(mask)
+
+    def _build_results_dict_for_window(
+        self, start_ns: int, end_ns: int
+    ) -> MetricResultsDict:
+        """Build a MetricResultsDict for a specific time window."""
+        n = self._column_store.count
+        if n == 0:
+            return MetricResultsDict()
+        ts = self._column_store.start_ns[:n]
+        mask = ~np.isnan(ts) & (ts >= start_ns) & (ts < end_ns)
+        return self.build_results_for_mask(mask)
 
     def _compute_derived(self, results: MetricResultsDict) -> None:
         """Compute derived metrics in-place on a MetricResultsDict."""
@@ -291,7 +310,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
         timeslices: dict[TimeSliceT, dict[MetricTagT, MetricResult]] | None = None
 
-        if self._slice_duration_ns is not None and len(self._records) > 0:
+        if self._slice_duration_ns is not None and self._column_store.count > 0:
             timeslices = self._compute_timeslices()
 
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")
@@ -307,24 +326,40 @@ class MetricsAccumulator(BaseMetricsProcessor):
         """Compute per-timeslice results by partitioning the time range."""
         assert self._slice_duration_ns is not None
 
-        timestamps = self._record_timestamps.data
-        min_ts = int(timestamps.min())
-        max_ts = int(timestamps.max())
+        n = self._column_store.count
+        ts = self._column_store.start_ns[:n]
+        filled = ~np.isnan(ts)
+        filled_ts = ts[filled]
+
+        if len(filled_ts) == 0:
+            return {}
+
+        min_ts = float(np.nanmin(filled_ts))
+        max_ts = float(np.nanmax(filled_ts))
+
+        # Build slice edges — compute n_slices first to avoid np.arange stop-exclusion issues
+        n_slices = int((max_ts - min_ts) / self._slice_duration_ns) + 1
+        edges = min_ts + np.arange(n_slices + 1) * self._slice_duration_ns
+
+        # Assign each record to a bin — O(n) total via digitize
+        bins = np.digitize(filled_ts, edges) - 1
 
         timeslice_results: dict[TimeSliceT, dict[MetricTagT, MetricResult]] = {}
-        slice_start = min_ts
-        counter = 0
+        filled_indices = np.where(filled)[0]
 
-        while slice_start <= max_ts:
-            slice_end = slice_start + self._slice_duration_ns
-            window_results = self._build_results_dict_for_window(slice_start, slice_end)
+        for bin_idx in range(len(edges) - 1):
+            bin_mask_local = bins == bin_idx
+            if not bin_mask_local.any():
+                continue
 
+            # Expand local mask to full-array mask
+            full_mask = np.zeros(n, dtype=bool)
+            full_mask[filled_indices[bin_mask_local]] = True
+
+            window_results = self.build_results_for_mask(full_mask)
             if len(window_results) > 0:
                 self._compute_derived(window_results)
-                timeslice_results[counter] = self._build_metric_results(window_results)
-
-            counter += 1
-            slice_start = slice_end
+                timeslice_results[bin_idx] = self._build_metric_results(window_results)
 
         return timeslice_results
 

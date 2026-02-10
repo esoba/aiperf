@@ -61,6 +61,7 @@ from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceType
+from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
 from aiperf.ui.protocols import AIPerfUIProtocol
 
 
@@ -133,6 +134,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._exit_errors: list[ExitErrorInfo] = []
         self._telemetry_results: TelemetryExportData | None = None
         self._server_metrics_results: ServerMetricsResults | None = None
+        self._steady_state_results: SteadyStateSummary | None = None
         self._profile_results_received = False
 
         self._shutdown_triggered = False
@@ -538,6 +540,7 @@ class SystemController(SignalHandlerMixin, BaseService):
                 self._server_metrics_endpoints_reachable
             )
         self._server_metrics_results = message.server_metrics_results
+        self._steady_state_results = message.steady_state_results
 
         # Trigger shutdown (lock still needed for cancel race)
         should_stop = False
@@ -760,6 +763,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             service_config=self.service_config,
             telemetry_results=self._telemetry_results,
             server_metrics_results=self._server_metrics_results,
+            steady_state_results=self._steady_state_results,
         )
 
         # Data files (CSV, JSON) already exported by RecordsManager.

@@ -53,6 +53,7 @@ from aiperf.common.config.rankings_config import (
     RankingsQueryConfig,
 )
 from aiperf.common.config.service_config import ServiceConfig
+from aiperf.common.config.steady_state_config import SteadyStateConfig
 from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.config.user_config import UserConfig
@@ -107,6 +108,7 @@ __all__ = [
     "ServerMetricsDefaults",
     "ServiceConfig",
     "ServiceDefaults",
+    "SteadyStateConfig",
     "SynthesisConfig",
     "TokenizerConfig",
     "TokenizerDefaults",

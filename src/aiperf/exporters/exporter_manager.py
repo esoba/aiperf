@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import asyncio
 
 from rich.console import Console
@@ -18,6 +20,7 @@ from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import DataExporterType, PluginType
+from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
 
 
 class ExporterManager(AIPerfLoggerMixin):
@@ -33,6 +36,7 @@ class ExporterManager(AIPerfLoggerMixin):
         service_config: ServiceConfig,
         telemetry_results: TelemetryExportData | None,
         server_metrics_results: ServerMetricsResults | None = None,
+        steady_state_results: SteadyStateSummary | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -46,6 +50,7 @@ class ExporterManager(AIPerfLoggerMixin):
             service_config=self._service_config,
             telemetry_results=telemetry_results,
             server_metrics_results=server_metrics_results,
+            steady_state_results=steady_state_results,
         )
 
     def _task_done_callback(self, task: asyncio.Task) -> None:

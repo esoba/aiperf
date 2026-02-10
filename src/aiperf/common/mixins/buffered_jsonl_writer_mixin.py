@@ -105,6 +105,16 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         except Exception as e:
             self.error(f"Failed to write record: {e!r}")
 
+    async def flush_buffer(self) -> None:
+        """Flush the current internal buffer to disk.
+
+        Swaps out the internal buffer and writes all pending records.
+        Safe to call even if the buffer is empty.
+        """
+        buffer_to_flush = self._buffer
+        self._buffer = []
+        await self._flush_buffer(buffer_to_flush)
+
     async def _flush_buffer(self, buffer_to_flush: list[bytes]) -> None:
         """Write buffered records to disk using bulk write.
 

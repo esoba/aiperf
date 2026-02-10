@@ -608,6 +608,20 @@ stream_exporter:
       record_types: [server_metrics]
 
 # =============================================================================
+# Analyzers
+# =============================================================================
+# Analyzers derive results from accumulators at summarization time.
+# No record ingestion. One-to-many: multiple analyzers loaded simultaneously.
+# =============================================================================
+analyzer:
+  steady_state:
+    class: aiperf.post_processors.steady_state_analyzer:SteadyStateAnalyzer
+    description: |
+      Steady-state detection and windowed metric computation. Reads columnar
+      arrays from MetricsAccumulator, detects ramp-up/ramp-down phases, and
+      computes metrics over the stable window. Enabled via --steady-state flag.
+
+# =============================================================================
 # Data Exporters
 # =============================================================================
 # Data exporters write benchmark results to files in various formats.
@@ -649,6 +663,18 @@ data_exporter:
     description: |
       Parquet exporter for server metrics. Exports Prometheus server metrics to
       Parquet format for efficient columnar storage and analysis.
+
+  steady_state_csv:
+    class: aiperf.exporters.steady_state_csv_exporter:SteadyStateCsvExporter
+    description: |
+      CSV exporter for steady-state windowed metrics. Exports metrics computed over
+      the detected or user-specified steady-state window to CSV format.
+
+  steady_state_json:
+    class: aiperf.exporters.steady_state_json_exporter:SteadyStateJsonExporter
+    description: |
+      JSON exporter for steady-state windowed metrics. Exports metrics computed over
+      the detected or user-specified steady-state window to JSON format.
 
   timeslice_csv:
     class: aiperf.exporters.timeslice_metrics_csv_exporter:TimesliceMetricsCsvExporter
@@ -724,6 +750,12 @@ console_exporter:
       Console exporter for output sequence length mismatch warnings. Alerts when
       actual output length differs significantly from requested --osl value.
       Typically indicates ignore_eos is not set or not supported by the server.
+
+  steady_state:
+    class: aiperf.exporters.console_steady_state_exporter:ConsoleSteadyStateExporter
+    description: |
+      Console exporter for steady-state windowed metrics. Displays a separate table
+      with metrics computed over the detected or user-specified steady-state window.
 
 # =============================================================================
 # UI Implementations

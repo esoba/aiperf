@@ -951,6 +951,31 @@ class UserConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_steady_state_options(self) -> Self:
+        """Validate steady-state configuration options."""
+        ss = self.output.steady_state
+        has_start = ss.start_pct is not None
+        has_end = ss.end_pct is not None
+
+        if has_start != has_end:
+            raise ValueError(
+                "--steady-state-start-pct and --steady-state-end-pct must be used together. "
+                "Provide both or neither."
+            )
+
+        if has_start and has_end and ss.start_pct >= ss.end_pct:
+            raise ValueError(
+                f"--steady-state-start-pct ({ss.start_pct}) must be less than "
+                f"--steady-state-end-pct ({ss.end_pct})."
+            )
+
+        # If manual percentages are provided, implicitly enable steady-state
+        if has_start and has_end and not ss.enabled:
+            ss.enabled = True
+
+        return self
+
+    @model_validator(mode="after")
     def validate_must_have_stop_condition(self) -> Self:
         """Validate that at least one stop condition is set (requests, sessions, or duration)"""
         if (
