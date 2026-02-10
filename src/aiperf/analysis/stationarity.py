@@ -157,7 +157,7 @@ def batch_means_trend_test(
         k: Number of batches (default 10).
 
     Returns:
-        (correlation, p_value). |correlation| > 0.6 with p < 0.05
+        (correlation, p_value). |correlation| > 0.65 with p < 0.05
         suggests a statistically significant trend.
     """
     if len(values) < k:

@@ -157,7 +157,7 @@ class TestStationarityWarning:
         assert len(valid) >= 10, "Need at least 10 observations for trend test"
 
         rho, p = batch_means_trend_test(valid)
-        warning = abs(rho) > 0.6 and p < 0.05
+        warning = abs(rho) > 0.65 and p < 0.05
         assert warning, (
             f"Expected stationarity warning for drifting profile (rho={rho:.2f}, p={p:.3f})"
         )

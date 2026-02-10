@@ -312,7 +312,7 @@ class SteadyStateAnalyzer:
         valid_latency = windowed_latency[~np.isnan(windowed_latency)]
         if len(valid_latency) >= 10:
             trend_rho, trend_p = batch_means_trend_test(valid_latency)
-            stationarity_warning = abs(trend_rho) > 0.6 and trend_p < 0.05
+            stationarity_warning = abs(trend_rho) > 0.65 and trend_p < 0.05
 
         # Optional bootstrap confidence intervals
         boot_ci_ramp_up: tuple[float, float] | None = None

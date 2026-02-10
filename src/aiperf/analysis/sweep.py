@@ -17,10 +17,12 @@ def _sweep_cumsum(
     deltas: NDArray[np.float64],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Sort events by timestamp (ends before starts at ties) and cumsum deltas."""
-    # Secondary key: end events (delta<0) = 0, start events (delta>0) = 1
-    # lexsort sorts by last key first, then earlier keys for ties
-    event_type = (deltas > 0).astype(np.int8)
-    order = np.lexsort((event_type, timestamps))
+    # Composite sort key: ts*2 + (1 if start else 0).
+    # Ends (delta<0) get key 2*ts, starts (delta>0) get 2*ts+1,
+    # so ends sort before starts at the same timestamp.
+    # Safe for nanosecond timestamps up to ~52 days (2^52 ns).
+    event_type = (deltas > 0).astype(np.float64)
+    order = np.argsort(timestamps * 2.0 + event_type)
     return timestamps[order], np.cumsum(deltas[order])
 
 
@@ -159,27 +161,35 @@ def compute_time_weighted_stats(
         Dict with keys: avg, min, max, p50, p90, p95, p99, std.
     """
     total_dur = window_end - window_start
+    zero_stats = {
+        k: 0.0 for k in ("avg", "min", "max", "p50", "p90", "p95", "p99", "std")
+    }
     if len(sorted_ts) == 0 or total_dur <= 0:
-        return {
-            k: 0.0 for k in ("avg", "min", "max", "p50", "p90", "p95", "p99", "std")
-        }
+        return zero_stats
+
+    # Narrow to events relevant to [window_start, window_end] via searchsorted,
+    # avoiding full-array operations on events entirely outside the window.
+    lo = max(0, int(np.searchsorted(sorted_ts, window_start, side="right")) - 1)
+    hi = min(len(sorted_ts), int(np.searchsorted(sorted_ts, window_end, side="left")) + 1)
+    ts_slice = sorted_ts[lo:hi]
+    val_slice = values[lo:hi]
 
     # Build segments clipped to [window_start, window_end].
     # Each segment i spans [sorted_ts[i], sorted_ts[i+1]) with value values[i].
-    # Before the first event, value is 0; after the last event, value is values[-1].
-    seg_starts = np.empty(len(sorted_ts) + 1, dtype=np.float64)
-    seg_values = np.empty(len(sorted_ts) + 1, dtype=np.float64)
+    n_s = len(ts_slice)
+    seg_starts = np.empty(n_s + 1, dtype=np.float64)
+    seg_values = np.empty(n_s + 1, dtype=np.float64)
 
-    # Segment before the first event
+    # Segment before the first event in slice: value is from preceding event (or 0)
     seg_starts[0] = window_start
-    seg_values[0] = 0.0
+    seg_values[0] = float(values[lo - 1]) if lo > 0 else 0.0
 
     # Segments from events
-    seg_starts[1:] = sorted_ts
-    seg_values[1:] = values
+    seg_starts[1:] = ts_slice
+    seg_values[1:] = val_slice
 
     # Segment end boundaries (next start, capped at window_end)
-    seg_ends = np.empty(len(seg_starts), dtype=np.float64)
+    seg_ends = np.empty(n_s + 1, dtype=np.float64)
     seg_ends[:-1] = seg_starts[1:]
     seg_ends[-1] = window_end
 
@@ -191,9 +201,7 @@ def compute_time_weighted_stats(
     # Filter to segments with positive duration
     mask = durations > 0
     if not mask.any():
-        return {
-            k: 0.0 for k in ("avg", "min", "max", "p50", "p90", "p95", "p99", "std")
-        }
+        return zero_stats
 
     dur = durations[mask]
     val = seg_values[mask]
