@@ -306,6 +306,10 @@ class EndpointMetadata(BaseModel):
         default=None,
         description="gRPC transport configuration. Endpoints that support gRPC declare their serializer and method paths here.",
     )
+    requires_polling: bool = Field(
+        default=False,
+        description="Whether endpoint uses async job polling (submit job, poll for status, retrieve result).",
+    )
 
 
 class TransportMetadata(BaseModel):
