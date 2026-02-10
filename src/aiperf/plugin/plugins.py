@@ -932,10 +932,10 @@ if TYPE_CHECKING:
     from aiperf.dataset.composer.base import BaseDatasetComposer
     from aiperf.dataset.protocols import CustomDatasetLoaderProtocol, DatasetBackingStoreProtocol, DatasetClientStoreProtocol, DatasetSamplingStrategyProtocol
     from aiperf.endpoints.protocols import EndpointProtocol
-    from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
+    from aiperf.exporters.protocols import ArtifactPublisherProtocol, ConsoleExporterProtocol, DataExporterProtocol
     from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import AccumulatorType, AnalyzerType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ServiceRunType, ServiceType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import AccumulatorType, AnalyzerType, ArrivalPattern, ArtifactPublisherType, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ServiceRunType, ServiceType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
     from aiperf.timing.ramping import RampStrategyProtocol
@@ -1011,6 +1011,10 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.CONSOLE_EXPORTER, "console_exporter"], name_or_class_path: ConsoleExporterType | str) -> type[ConsoleExporterProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.CONSOLE_EXPORTER, "console_exporter"]) -> Iterator[tuple[PluginEntry, type[ConsoleExporterProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.ARTIFACT_PUBLISHER, "artifact_publisher"], name_or_class_path: ArtifactPublisherType | str) -> type[ArtifactPublisherProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.ARTIFACT_PUBLISHER, "artifact_publisher"]) -> Iterator[tuple[PluginEntry, type[ArtifactPublisherProtocol]]]: ...
     @overload
     def get_class(category: Literal[PluginType.UI, "ui"], name_or_class_path: UIType | str) -> type[AIPerfUIProtocol]: ...
     @overload

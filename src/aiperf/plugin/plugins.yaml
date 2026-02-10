@@ -892,6 +892,14 @@ gpu_telemetry_collector:
       PyNVML telemetry collector that collects GPU telemetry metrics using the pynvml Python library.
 
 # =============================================================================
+# Artifact Publishers
+# =============================================================================
+# Artifact publishers upload exported benchmark files to remote storage backends.
+# One-to-many mapping: multiple publishers can be loaded simultaneously.
+# =============================================================================
+# artifact_publisher:
+
+# =============================================================================
 # Communication Backends
 # =============================================================================
 # Communication backends provide the underlying transport for inter-service messaging.

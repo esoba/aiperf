@@ -587,20 +587,14 @@ Manual override: start of steady-state window as a percentage of total benchmark
 
 Manual override: end of steady-state window as a percentage of total benchmark duration. Must be used together with --steady-state-start-pct. Overrides automatic detection.
 
-#### `--steady-state-stability-fraction` `<float>`
-
-Fraction of peak concurrency used as the stability threshold. A value of 0.90 means concurrency must reach 90% of the 95th-percentile peak before the region is considered steady state.
-<br>_Default: `0.9`_
-
-#### `--steady-state-sustained-window-pct` `<float>`
-
-Minimum sustained duration as a percentage of total benchmark duration for ramp boundary detection. Higher values require concurrency to remain above the threshold for longer before it is considered steady.
-<br>_Default: `5.0`_
-
 #### `--steady-state-min-window-pct` `<float>`
 
 Minimum steady-state window size as a percentage of total benchmark duration. If the detected window is smaller than this, AIPerf falls back to the full duration.
 <br>_Default: `10.0`_
+
+#### `--steady-state-bootstrap-iterations` `<int>`
+
+Number of bootstrap iterations for confidence intervals on boundaries. Set to 50+ to enable. Increases summarize time proportionally.
 
 ### Tokenizer
 
