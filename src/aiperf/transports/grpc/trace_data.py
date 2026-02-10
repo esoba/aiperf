@@ -14,7 +14,10 @@ from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 class GrpcTraceDataExport(TraceDataExport):
     """Export model for gRPC trace data with wall-clock timestamps."""
 
-    trace_type: Literal["grpc"] = "grpc"
+    trace_type: Literal["grpc"] = Field(
+        default="grpc",
+        description="Trace type discriminator for gRPC transport.",
+    )
 
     grpc_status_code: int | None = Field(
         default=None,
@@ -33,7 +36,10 @@ class GrpcTraceData(BaseTraceData):
     Inherits all base timing fields (reference timestamps, request/response chunks, etc.).
     """
 
-    trace_type: str = "grpc"
+    trace_type: str = Field(
+        default="grpc",
+        description="Trace type discriminator for gRPC transport.",
+    )
 
     grpc_status_code: int | None = Field(
         default=None,

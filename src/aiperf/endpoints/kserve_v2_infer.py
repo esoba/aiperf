@@ -13,6 +13,67 @@ from aiperf.common.models import (
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 
+def _extract_v2_text(output: dict[str, Any]) -> str | None:
+    """Extract text from a V2 BYTES output tensor.
+
+    Args:
+        output: V2 output tensor dict with ``data`` key.
+
+    Returns:
+        First data element as string, or None if empty.
+    """
+    data = output.get("data")
+    if isinstance(data, list) and len(data) > 0 and data[0] is not None:
+        return str(data[0])
+    return None
+
+
+def parse_v2_text_response(
+    endpoint: BaseEndpoint,
+    response: InferenceServerResponse,
+    output_name: str,
+) -> ParsedResponse | None:
+    """Parse V2 inference response, extracting text from BYTES output tensor.
+
+    Shared by KServeV2InferEndpoint and KServeV2VLMEndpoint since both
+    produce text output in the same tensor format.
+
+    Args:
+        endpoint: Endpoint instance (for make_text_response_data).
+        response: Raw response from inference server.
+        output_name: Expected output tensor name.
+
+    Returns:
+        Parsed response with extracted text content, or None if no content.
+    """
+    json_obj = response.get_json()
+    if not json_obj:
+        return None
+
+    outputs = json_obj.get("outputs")
+    if not outputs:
+        return None
+
+    for output in outputs:
+        if output.get("name") == output_name:
+            text = _extract_v2_text(output)
+            if text is not None:
+                return ParsedResponse(
+                    perf_ns=response.perf_ns,
+                    data=endpoint.make_text_response_data(text),
+                )
+
+    for output in outputs:
+        text = _extract_v2_text(output)
+        if text is not None:
+            return ParsedResponse(
+                perf_ns=response.perf_ns,
+                data=endpoint.make_text_response_data(text),
+            )
+
+    return None
+
+
 class KServeV2InferEndpoint(BaseEndpoint):
     """KServe V2 Open Inference Protocol endpoint for Triton/TRT-LLM.
 
@@ -91,32 +152,4 @@ class KServeV2InferEndpoint(BaseEndpoint):
         Returns:
             Parsed response with extracted text content, or None if no content
         """
-        json_obj = response.get_json()
-        if not json_obj:
-            return None
-
-        outputs = json_obj.get("outputs")
-        if not outputs:
-            return None
-
-        for output in outputs:
-            if output.get("name") == self._output_name:
-                data = output.get("data")
-                if isinstance(data, list) and len(data) > 0 and data[0] is not None:
-                    text = str(data[0])
-                    return ParsedResponse(
-                        perf_ns=response.perf_ns,
-                        data=self.make_text_response_data(text),
-                    )
-
-        # Fallback: try first output with data
-        for output in outputs:
-            data = output.get("data")
-            if isinstance(data, list) and len(data) > 0 and data[0] is not None:
-                text = str(data[0])
-                return ParsedResponse(
-                    perf_ns=response.perf_ns,
-                    data=self.make_text_response_data(text),
-                )
-
-        return None
+        return parse_v2_text_response(self, response, self._output_name)

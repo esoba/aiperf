@@ -44,6 +44,7 @@ from aiperf_mock_server.models import (
     EmbeddingRequest,
     HFTEIRerankRequest,
     ImageGenerationRequest,
+    KServeV2InferRequest,
     RankingRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
@@ -712,6 +713,130 @@ async def solido_rag(req: SolidoRAGRequest, request: Request) -> ORJSONResponse:
     with track_llm_request(ctx, req.inference_model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
         return ORJSONResponse(_build_solido_rag_response_data(ctx, req))
+
+
+# ============================================================================
+# KServe V2 Open Inference Protocol
+# ============================================================================
+
+
+def _has_input_tensor(inputs: list[dict], name: str) -> bool:
+    """Check if any input tensor has the given name."""
+    return any(inp.get("name") == name for inp in inputs)
+
+
+def _build_v2_text_response(ctx: RequestCtx, output_name: str) -> dict[str, Any]:
+    """Build V2 inference response with a BYTES text output tensor."""
+    return {
+        "outputs": [
+            {
+                "name": output_name,
+                "shape": [1],
+                "datatype": "BYTES",
+                "data": [ctx.content],
+            }
+        ]
+    }
+
+
+def _build_v2_image_response(prompt: str, output_name: str) -> dict[str, Any]:
+    """Build V2 inference response with a BYTES base64 image output tensor."""
+    return {
+        "outputs": [
+            {
+                "name": output_name,
+                "shape": [1],
+                "datatype": "BYTES",
+                "data": [_generate_mock_jpeg_b64(prompt)],
+            }
+        ]
+    }
+
+
+def _build_v2_embedding_response(texts: list[str], output_name: str) -> dict[str, Any]:
+    """Build V2 inference response with an FP32 embedding output tensor."""
+    dim = 768
+    flat_data: list[float] = []
+    for text in texts:
+        flat_data.extend(generate_embedding(text, dim))
+    return {
+        "outputs": [
+            {
+                "name": output_name,
+                "shape": [len(texts), dim],
+                "datatype": "FP32",
+                "data": flat_data,
+            }
+        ]
+    }
+
+
+def _build_v2_ranking_response(
+    query: str, passages: list[str], output_name: str
+) -> dict[str, Any]:
+    """Build V2 inference response with FP32 ranking scores output tensor."""
+    ranked_scores = _compute_ranked_scores(query, passages)
+    # Return scores in original passage order
+    scores_by_index = {i: s for i, s in ranked_scores}
+    ordered_scores = [scores_by_index[i] for i in range(len(passages))]
+    return {
+        "outputs": [
+            {
+                "name": output_name,
+                "shape": [len(passages)],
+                "datatype": "FP32",
+                "data": ordered_scores,
+            }
+        ]
+    }
+
+
+@app.get("/v2/models/{model_name}/ready", response_model=None)
+async def v2_model_ready(model_name: str) -> ORJSONResponse:
+    """KServe V2 model readiness health check."""
+    return ORJSONResponse({"name": model_name, "ready": True})
+
+
+@app.post("/v2/models/{model_name}/infer", response_model=None)
+@with_error_injection
+async def v2_infer(model_name: str, request: Request) -> ORJSONResponse:
+    """KServe V2 Open Inference Protocol infer endpoint.
+
+    Detects response type by input tensor names:
+    - Has 'prompt' but NOT 'text_input' -> image generation
+    - Default -> text response
+    """
+    endpoint = "/v2/models/{model_name}/infer"
+    start_time = request.state.start_time
+
+    body = await request.body()
+    raw = orjson.loads(body)
+    req = KServeV2InferRequest(model=model_name, **raw)
+    init_model_config(req.model)
+
+    inputs = req.inputs
+    is_image = _has_input_tensor(inputs, "prompt") and not _has_input_tensor(
+        inputs, "text_input"
+    )
+
+    if is_image:
+        # Image generation: use prompt tensor, build image response
+        mock_req = ChatCompletionRequest(
+            model=model_name,
+            messages=[{"role": "user", "content": req.prompt_text}],
+        )
+        ctx = make_ctx(mock_req, endpoint, start_time)
+        with track_llm_request(ctx, req.model, endpoint):
+            await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+            return ORJSONResponse(
+                _build_v2_image_response(req.prompt_text, "generated_image")
+            )
+
+    # Text generation: standard text response
+    ctx = make_ctx(req, endpoint, start_time)
+    with track_llm_request(ctx, req.model, endpoint):
+        await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+        return ORJSONResponse(_build_v2_text_response(ctx, "text_output"))
 
 
 # ============================================================================

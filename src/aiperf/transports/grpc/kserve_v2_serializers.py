@@ -108,23 +108,19 @@ def dict_to_model_infer_request(
     if request_id:
         request.id = request_id
 
-    # Convert parameters
     if "parameters" in payload:
         for key, value in payload["parameters"].items():
             request.parameters[key].CopyFrom(_make_infer_parameter(value))
 
-    # Convert input tensors
     for inp in payload.get("inputs", []):
         tensor = pb2.ModelInferRequest.InferInputTensor()
         tensor.name = inp["name"]
         tensor.datatype = inp["datatype"]
         tensor.shape.extend(int(s) for s in inp["shape"])
 
-        # Set tensor contents from data
         if "data" in inp:
             _set_tensor_contents(tensor.contents, inp["datatype"], inp["data"])
 
-        # Input-level parameters
         if "parameters" in inp:
             for key, value in inp["parameters"].items():
                 tensor.parameters[key].CopyFrom(_make_infer_parameter(value))
@@ -203,7 +199,6 @@ def _extract_raw_tensor_data(
             offset += length
         return results
 
-    # Numeric types: compute element count from shape
     num_elements = 1
     for dim in shape:
         if dim > 0:

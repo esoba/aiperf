@@ -11,6 +11,7 @@ from aiperf.common.models import (
     RequestInfo,
 )
 from aiperf.endpoints.base_endpoint import BaseEndpoint
+from aiperf.endpoints.kserve_v2_infer import parse_v2_text_response
 
 
 class KServeV2VLMEndpoint(BaseEndpoint):
@@ -108,32 +109,4 @@ class KServeV2VLMEndpoint(BaseEndpoint):
         Returns:
             Parsed response with extracted text content, or None if no content
         """
-        json_obj = response.get_json()
-        if not json_obj:
-            return None
-
-        outputs = json_obj.get("outputs")
-        if not outputs:
-            return None
-
-        for output in outputs:
-            if output.get("name") == self._output_name:
-                data = output.get("data")
-                if isinstance(data, list) and len(data) > 0 and data[0] is not None:
-                    text = str(data[0])
-                    return ParsedResponse(
-                        perf_ns=response.perf_ns,
-                        data=self.make_text_response_data(text),
-                    )
-
-        # Fallback: try first output with data
-        for output in outputs:
-            data = output.get("data")
-            if isinstance(data, list) and len(data) > 0 and data[0] is not None:
-                text = str(data[0])
-                return ParsedResponse(
-                    perf_ns=response.perf_ns,
-                    data=self.make_text_response_data(text),
-                )
-
-        return None
+        return parse_v2_text_response(self, response, self._output_name)

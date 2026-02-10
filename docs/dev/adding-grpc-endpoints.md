@@ -11,7 +11,7 @@ This guide explains how to add support for new gRPC-based inference protocols in
 
 AIPerf separates **endpoints** (payload formatting and response parsing), **transports** (wire protocol and connection management), and **serializers** (proto-specific byte conversion):
 
-```
+```text
 InferenceClient
   |
   |-- Endpoint (format_payload / parse_response)
@@ -38,7 +38,7 @@ InferenceClient
 |---|---|---|
 | Proto definitions (`.proto`) | Yes | - |
 | Serializer class (dict <-> protobuf bytes) | Yes | - |
-| `payload_converter.py` (dict <-> protobuf objects) | Yes | - |
+| Payload converter (dict <-> protobuf objects) | Yes | - |
 | Endpoint class (`format_payload` / `parse_response`) | Yes | - |
 | `GrpcTransport` (timing, tracing, cancellation) | - | Yes |
 | `GenericGrpcClient` (raw bytes over gRPC) | - | Yes |
@@ -159,9 +159,9 @@ Usage: `aiperf profile --endpoint-type my_v2_endpoint --url grpc://triton:8001 .
 
 Create your `.proto` file and generate stubs:
 
-```
+```text
 src/aiperf/transports/grpc/proto/my_service.proto
-src/aiperf/transports/grpc/proto/my_service_pb2.py      (generated)
+src/aiperf/transports/grpc/proto/my_service_pb2.py       (generated)
 src/aiperf/transports/grpc/proto/my_service_pb2_grpc.py  (generated)
 ```
 
@@ -460,5 +460,5 @@ When adding a new endpoint reusing an existing protocol (Strategy A):
 - [Source: GrpcTransport](../../src/aiperf/transports/grpc/grpc_transport.py) -- Generic transport implementation
 - [Source: GenericGrpcClient](../../src/aiperf/transports/grpc/grpc_client.py) -- Proto-free gRPC client
 - [Source: KServeV2GrpcSerializer](../../src/aiperf/transports/grpc/kserve_v2_serializers.py) -- Reference serializer implementation
-- [Source: payload_converter](../../src/aiperf/transports/grpc/payload_converter.py) -- V2 dict/protobuf conversion
+- [Source: KServeV2GrpcSerializer](../../src/aiperf/transports/grpc/kserve_v2_serializers.py) -- V2 dict/protobuf conversion
 - [Source: InferenceClient](../../src/aiperf/workers/inference_client.py) -- Transport/endpoint wiring

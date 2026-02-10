@@ -114,16 +114,19 @@ class KServeV2RankingsEndpoint(BaseRankingsEndpoint):
         if not outputs:
             return []
 
-        output = None
-        for o in outputs:
-            if o.get("name") == self._output_name:
-                output = o
-                break
-        if output is None:
-            output = outputs[0]
+        # Find the output tensor with the matching name
+        output = next(
+            (o for o in outputs if o.get("name") == self._output_name), outputs[0]
+        )
 
         data = output.get("data")
         if not data:
             return []
 
-        return [{"index": i, "score": float(s)} for i, s in enumerate(data)]
+        results = []
+        for i, s in enumerate(data):
+            try:
+                results.append({"index": i, "score": float(s)})
+            except (ValueError, TypeError):
+                self.warning(f"Skipping non-numeric score at index {i}: {s!r}")
+        return results

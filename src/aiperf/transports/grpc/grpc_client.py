@@ -89,7 +89,9 @@ class GenericGrpcClient(AIPerfLoggerMixin):
         super().__init__(**kwargs)
         self._target = target
         self._timeout = timeout
-        options = channel_options or DEFAULT_CHANNEL_OPTIONS
+        options = (
+            DEFAULT_CHANNEL_OPTIONS if channel_options is None else channel_options
+        )
 
         if secure:
             credentials = ssl_credentials or grpc.ssl_channel_credentials()

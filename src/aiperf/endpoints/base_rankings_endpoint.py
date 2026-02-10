@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
 
 from abc import abstractmethod
 from typing import Any
@@ -98,7 +99,7 @@ class BaseRankingsEndpoint(BaseEndpoint):
         turn = request_info.turns[0]
         model_endpoint = request_info.model_endpoint
 
-        if turn.max_tokens:
+        if turn.max_tokens is not None:
             self.warning("Max_tokens is provided but is not supported for rankings.")
 
         query_text, passage_texts = self._extract_query_and_passages(turn)

@@ -205,3 +205,107 @@ class TestSerializeRequestWithInputParameters:
         parsed = pb2.ModelInferRequest()
         parsed.ParseFromString(data)
         assert parsed.inputs[0].parameters["binary_data_size"].int64_param == 512
+
+
+class TestRoundtripMultipleTypedTensors:
+    """Tests for round-trip serialization of multiple tensor types."""
+
+    def test_roundtrip_multiple_typed_tensors(self) -> None:
+        """BYTES + INT32 + FP32 + INT64 tensors survive serialize -> deserialize."""
+        payload = {
+            "inputs": [
+                {
+                    "name": "text_input",
+                    "shape": [1],
+                    "datatype": "BYTES",
+                    "data": ["test prompt"],
+                },
+                {
+                    "name": "max_tokens",
+                    "shape": [1],
+                    "datatype": "INT32",
+                    "data": [128],
+                },
+                {
+                    "name": "guidance_scale",
+                    "shape": [1],
+                    "datatype": "FP32",
+                    "data": [7.5],
+                },
+                {
+                    "name": "seed",
+                    "shape": [1],
+                    "datatype": "INT64",
+                    "data": [42],
+                },
+            ]
+        }
+        serializer = KServeV2GrpcSerializer()
+        data = serializer.serialize_request(payload, model_name="multi-type")
+
+        parsed = pb2.ModelInferRequest()
+        parsed.ParseFromString(data)
+
+        assert parsed.model_name == "multi-type"
+        assert len(parsed.inputs) == 4
+
+        assert parsed.inputs[0].name == "text_input"
+        assert parsed.inputs[0].datatype == "BYTES"
+        assert parsed.inputs[0].contents.bytes_contents[0] == b"test prompt"
+
+        assert parsed.inputs[1].name == "max_tokens"
+        assert parsed.inputs[1].datatype == "INT32"
+        assert parsed.inputs[1].contents.int_contents[0] == 128
+
+        assert parsed.inputs[2].name == "guidance_scale"
+        assert parsed.inputs[2].datatype == "FP32"
+        assert abs(parsed.inputs[2].contents.fp32_contents[0] - 7.5) < 0.01
+
+        assert parsed.inputs[3].name == "seed"
+        assert parsed.inputs[3].datatype == "INT64"
+        assert parsed.inputs[3].contents.int64_contents[0] == 42
+
+    def test_roundtrip_fp32_tensor(self) -> None:
+        """FP32 tensor value survives serialize -> response deserialize round-trip."""
+        # Serialize a request with FP32
+        payload = {
+            "inputs": [
+                {
+                    "name": "embedding",
+                    "shape": [3],
+                    "datatype": "FP32",
+                    "data": [0.1, 0.2, 0.3],
+                }
+            ]
+        }
+        serializer = KServeV2GrpcSerializer()
+        data = serializer.serialize_request(payload, model_name="fp32-test")
+
+        parsed = pb2.ModelInferRequest()
+        parsed.ParseFromString(data)
+
+        # Verify FP32 values are preserved
+        assert len(parsed.inputs[0].contents.fp32_contents) == 3
+        assert abs(parsed.inputs[0].contents.fp32_contents[0] - 0.1) < 0.001
+        assert abs(parsed.inputs[0].contents.fp32_contents[1] - 0.2) < 0.001
+        assert abs(parsed.inputs[0].contents.fp32_contents[2] - 0.3) < 0.001
+
+    def test_roundtrip_int64_tensor(self) -> None:
+        """INT64 tensor value survives serialize -> response deserialize round-trip."""
+        # Build a response with INT64 output to test deserialization
+        response = pb2.ModelInferResponse()
+        response.model_name = "int64-test"
+        output = response.outputs.add()
+        output.name = "token_ids"
+        output.datatype = "INT64"
+        output.shape.append(3)
+        output.contents.int64_contents.extend([100, 200, 300])
+        data = response.SerializeToString()
+
+        serializer = KServeV2GrpcSerializer()
+        result_dict, size = serializer.deserialize_response(data)
+
+        assert size == len(data)
+        assert result_dict["outputs"][0]["name"] == "token_ids"
+        assert result_dict["outputs"][0]["datatype"] == "INT64"
+        assert result_dict["outputs"][0]["data"] == [100, 200, 300]

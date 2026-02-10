@@ -27,6 +27,10 @@ from aiperf_mock_server.app import (
     _build_nim_ranking_response_data,
     _build_solido_rag_response_data,
     _build_tgi_response_data,
+    _build_v2_embedding_response,
+    _build_v2_image_response,
+    _build_v2_ranking_response,
+    _build_v2_text_response,
     _compute_ranked_scores,
     _wait_for_processing,
 )
@@ -38,6 +42,7 @@ from aiperf_mock_server.models import (
     EmbeddingRequest,
     HFTEIRerankRequest,
     ImageGenerationRequest,
+    KServeV2InferRequest,
     RankingRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
@@ -359,6 +364,61 @@ class FakeTransport(BaseTransport):
                     self._do_simple,
                     build_response=_build_solido_rag_response_data,
                 )
+            case EndpointType.KSERVE_V2_INFER | EndpointType.KSERVE_V2_VLM:
+                return await self._dispatch(
+                    payload,
+                    endpoint_type,
+                    KServeV2InferRequest,
+                    self._do_v2_text,
+                )
+            case EndpointType.KSERVE_V2_IMAGES:
+                return await self._dispatch(
+                    payload,
+                    endpoint_type,
+                    KServeV2InferRequest,
+                    self._do_v2_image,
+                )
+            case EndpointType.KSERVE_V2_EMBEDDINGS:
+                return await self._dispatch(
+                    payload,
+                    endpoint_type,
+                    KServeV2InferRequest,
+                    self._do_v2_embedding,
+                )
+            case EndpointType.KSERVE_V2_RANKINGS:
+                return await self._dispatch(
+                    payload,
+                    endpoint_type,
+                    KServeV2InferRequest,
+                    self._do_v2_ranking,
+                )
+            case EndpointType.KSERVE_CHAT:
+                return await self._dispatch(
+                    payload,
+                    endpoint_type,
+                    ChatCompletionRequest,
+                    self._do_streaming,
+                    stream_fn=stream_chat_completion,
+                    build_response=_build_chat_response_data,
+                    first_token_callback=first_token_callback,
+                )
+            case EndpointType.KSERVE_COMPLETIONS:
+                return await self._dispatch(
+                    payload,
+                    endpoint_type,
+                    CompletionRequest,
+                    self._do_streaming,
+                    stream_fn=stream_text_completion,
+                    build_response=_build_completion_response_data,
+                    first_token_callback=first_token_callback,
+                )
+            case EndpointType.KSERVE_EMBEDDINGS:
+                return await self._dispatch(
+                    payload,
+                    endpoint_type,
+                    EmbeddingRequest,
+                    self._do_embedding,
+                )
             case _:
                 raise ValueError(f"Unsupported endpoint type: {endpoint_type}")
 
@@ -408,6 +468,55 @@ class FakeTransport(BaseTransport):
         )
         return self._make_json_record(
             inp.start_perf_ns, inp.build_response(inp.ctx, ranked_scores)
+        )
+
+    async def _do_v2_text(self, inp: HandlerInput) -> RequestRecord:
+        """Handle KServe V2 text generation requests."""
+        await inp.ctx.latency_sim.wait_for_tokens(len(inp.ctx.tokens))
+        return self._make_json_record(
+            inp.start_perf_ns, _build_v2_text_response(inp.ctx, "text_output")
+        )
+
+    async def _do_v2_image(self, inp: HandlerInput) -> RequestRecord:
+        """Handle KServe V2 image generation requests."""
+        await inp.ctx.latency_sim.wait_for_tokens(len(inp.ctx.tokens))
+        return self._make_json_record(
+            inp.start_perf_ns,
+            _build_v2_image_response(inp.req.prompt_text, "generated_image"),
+        )
+
+    async def _do_v2_embedding(self, inp: HandlerInput) -> RequestRecord:
+        """Handle KServe V2 embedding requests."""
+        texts = [str(d) for d in inp.req.inputs[0].get("data", [])]
+        await _wait_for_processing(
+            self.config.embedding_base_latency,
+            self.config.embedding_per_input_latency,
+            len(texts),
+        )
+        return self._make_json_record(
+            inp.start_perf_ns,
+            _build_v2_embedding_response(texts, "embedding_output"),
+        )
+
+    async def _do_v2_ranking(self, inp: HandlerInput) -> RequestRecord:
+        """Handle KServe V2 ranking requests."""
+        query = ""
+        passages: list[str] = []
+        for tensor in inp.req.inputs:
+            name = tensor.get("name", "")
+            data = tensor.get("data", [])
+            if name == "query" and data:
+                query = str(data[0])
+            elif name == "passages":
+                passages = [str(d) for d in data]
+        await _wait_for_processing(
+            self.config.ranking_base_latency,
+            self.config.ranking_per_passage_latency,
+            len(passages),
+        )
+        return self._make_json_record(
+            inp.start_perf_ns,
+            _build_v2_ranking_response(query, passages, "scores"),
         )
 
 

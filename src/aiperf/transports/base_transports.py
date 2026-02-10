@@ -6,7 +6,7 @@ from __future__ import annotations
 import importlib.metadata as importlib_metadata
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -39,7 +39,7 @@ It is used to release prefill concurrency.
 class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for a transport that sends requests to an inference server."""
 
-    def __init__(self, **kwargs) -> None: ...
+    def __init__(self, **kwargs: Any) -> None: ...
 
     def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]: ...
 
@@ -60,7 +60,7 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
     Transports handle the protocol layer (HTTP, gRPC, etc.).
     """
 
-    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs) -> None:
+    def __init__(self, model_endpoint: ModelEndpointInfo, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.model_endpoint: ModelEndpointInfo = model_endpoint
         self.user_agent: str = f"aiperf/{importlib_metadata.version('aiperf')}"
@@ -162,7 +162,7 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         Args:
             request_info: Request context and metadata
             payload: Request payload (format depends on transport)
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            first_token_callback: Optional callback fired on first response with ttft_ns
 
         Returns:
             Record containing responses, timing, and any errors

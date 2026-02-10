@@ -262,7 +262,7 @@ class TestGenericGrpcClientWaitForReady:
 
         # wait_for_state_change returns a future that never resolves
         async def never_resolve(_state):
-            await asyncio.get_event_loop().create_future()
+            await asyncio.get_running_loop().create_future()
 
         mock_channel.wait_for_state_change = never_resolve
 

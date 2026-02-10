@@ -30,6 +30,7 @@ from aiperf_mock_server.models import (
     EmbeddingRequest,
     HFTEIRerankRequest,
     ImageGenerationRequest,
+    KServeV2InferRequest,
     RankingRequest,
     RequestT,
     SolidoRAGRequest,
@@ -217,6 +218,8 @@ def _create_request_id(request: RequestT) -> str:
             return f"img-{uuid.uuid4()}"
         case SolidoRAGRequest():
             return f"rag-{uuid.uuid4()}"
+        case KServeV2InferRequest():
+            return f"v2-{uuid.uuid4()}"
         case _:
             raise ValueError(f"Invalid request type: {type(request)}")
 

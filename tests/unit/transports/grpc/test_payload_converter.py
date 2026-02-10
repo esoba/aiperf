@@ -422,10 +422,8 @@ class TestExtractRawTensorData:
     )
     def test_numeric_types(self, datatype: str, fmt: str, values: list) -> None:
         """Numeric types correctly unpacked from raw bytes."""
-        raw = struct.pack(
-            f"{len(values)}{fmt[-1]}" if len(fmt) > 1 else f"{len(values)}{fmt}",
-            *values,
-        )
+        endian = fmt[:-1] if len(fmt) > 1 else ""
+        raw = struct.pack(f"{endian}{len(values)}{fmt[-1]}", *values)
         result = _extract_raw_tensor_data(raw, datatype, [len(values)])
 
         for expected, actual in zip(values, result, strict=True):
@@ -450,10 +448,8 @@ class TestExtractRawTensorData:
         self, datatype: str, fmt: str, values: list
     ) -> None:
         """Additional numeric types correctly unpacked from raw bytes."""
-        raw = struct.pack(
-            f"{len(values)}{fmt[-1]}" if len(fmt) > 1 else f"{len(values)}{fmt}",
-            *values,
-        )
+        endian = fmt[:-1] if len(fmt) > 1 else ""
+        raw = struct.pack(f"{endian}{len(values)}{fmt[-1]}", *values)
         result = _extract_raw_tensor_data(raw, datatype, [len(values)])
 
         for expected, actual in zip(values, result, strict=True):

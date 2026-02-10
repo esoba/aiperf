@@ -14,6 +14,7 @@ from aiperf_mock_server.models import (
     EmbeddingRequest,
     HFTEIRerankRequest,
     ImageGenerationRequest,
+    KServeV2InferRequest,
     RankingRequest,
     RequestT,
     SolidoRAGRequest,
@@ -262,6 +263,8 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
         return request.prompt, None
     elif isinstance(request, SolidoRAGRequest):
         return " ".join(request.query), None
+    elif isinstance(request, KServeV2InferRequest):
+        return request.prompt_text, request.max_tokens
     else:
         raise ValueError(f"Unsupported request type: {type(request)}")
 

@@ -79,7 +79,7 @@ GenericGrpcClient                   -- proto-free, sends/receives raw bytes via 
 Triton / TRT-LLM Server
 ```
 
-The endpoint never knows it's running over gRPC. The serializer (e.g., `KServeV2GrpcSerializer`) converts the endpoint's dict payload to protobuf bytes on the way out, and converts response bytes back to a JSON-serialized `TextResponse` on the way in. This means all existing `--extra-inputs` options (like `v2_input_name`, `v2_output_name`) work identically over gRPC.
+The endpoint never knows it's running over gRPC. The serializer (e.g., `KServeV2GrpcSerializer`) converts the endpoint's dict payload to protobuf bytes on the way out, and converts response bytes back to a V2 JSON-format dict on the way in. The transport layer then wraps this dict as a `TextResponse`. This means all existing `--extra-inputs` options (like `v2_input_name`, `v2_output_name`) work identically over gRPC.
 
 The serializer class and gRPC method paths are declared in `plugins.yaml` endpoint metadata, so adding support for a new gRPC protocol requires only a new serializer — no transport changes.
 
@@ -326,5 +326,5 @@ When choosing between HTTP and gRPC for V2 inference:
 - [Source: grpc_transport.py](../../src/aiperf/transports/grpc/grpc_transport.py) - Generic transport implementation
 - [Source: grpc_client.py](../../src/aiperf/transports/grpc/grpc_client.py) - Proto-free gRPC client
 - [Source: kserve_v2_serializers.py](../../src/aiperf/transports/grpc/kserve_v2_serializers.py) - KServe V2 serializer
-- [Source: payload_converter.py](../../src/aiperf/transports/grpc/payload_converter.py) - Dict/protobuf conversion
+- [Source: kserve_v2_serializers.py](../../src/aiperf/transports/grpc/kserve_v2_serializers.py) - V2 dict/protobuf conversion
 - [Source: status_mapping.py](../../src/aiperf/transports/grpc/status_mapping.py) - gRPC to HTTP status mapping

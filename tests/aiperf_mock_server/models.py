@@ -196,6 +196,36 @@ class SolidoRAGRequest(BaseModel):
     min_tokens: int | None = None
 
 
+class KServeV2InferRequest(BaseModel):
+    """Request model for KServe V2 Open Inference Protocol /v2/models/{model}/infer endpoint."""
+
+    inputs: list[dict[str, Any]]
+    parameters: dict[str, Any] | None = None
+
+    # Internal fields for mock server compatibility
+    model: str = "v2-model"
+    ignore_eos: bool = False
+    min_tokens: int | None = None
+
+    @property
+    def prompt_text(self) -> str:
+        """Extract text from the first BYTES tensor's data[0]."""
+        for inp in self.inputs:
+            if inp.get("datatype") == "BYTES" and inp.get("data"):
+                return str(inp["data"][0])
+        return ""
+
+    @property
+    def max_tokens(self) -> int | None:
+        """Extract max_tokens from INT32 tensor named 'max_tokens' if present."""
+        for inp in self.inputs:
+            if inp.get("name") == "max_tokens" and inp.get("datatype") == "INT32":
+                data = inp.get("data")
+                if data:
+                    return int(data[0])
+        return None
+
+
 # ============================================================================
 # Request Type Union
 # ============================================================================
@@ -210,4 +240,5 @@ RequestT = (
     | TGIGenerateRequest
     | ImageGenerationRequest
     | SolidoRAGRequest
+    | KServeV2InferRequest
 )

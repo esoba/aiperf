@@ -432,7 +432,7 @@ class TestGrpcTransportSendRequest:
         async def slow_unary(*args, **kwargs):
             # Use a Future that never resolves to simulate a slow request.
             # asyncio.sleep is auto-mocked to be instant in tests.
-            await asyncio.get_event_loop().create_future()
+            await asyncio.get_running_loop().create_future()
             return make_unary_result()
 
         mock_client = _make_mock_client()
@@ -756,7 +756,7 @@ class TestGrpcTransportCancellation:
         transport, endpoint = transport_and_endpoint
 
         async def slow_unary(*args, **kwargs):
-            await asyncio.get_event_loop().create_future()
+            await asyncio.get_running_loop().create_future()
             return make_unary_result()
 
         mock_client = _make_mock_client()
@@ -787,7 +787,7 @@ class TestGrpcTransportCancellation:
 
             async def __aiter__(self) -> AsyncIterator[bytes]:
                 yield make_stream_response("first").SerializeToString()
-                await asyncio.get_event_loop().create_future()
+                await asyncio.get_running_loop().create_future()
 
         slow_call = SlowStreamCall(chunks=[], trailing=())
         mock_client = _make_mock_client(stream_call=slow_call)
@@ -1452,7 +1452,7 @@ class TestStreamingGrpcError:
         class ErrorStreamCall:
             async def __aiter__(self):
                 raise rpc_error
-                yield  # noqa: RUF028 - make this an async generator
+                yield  # make this an async generator
 
             async def trailing_metadata(self):
                 return ()

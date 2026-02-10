@@ -31,7 +31,6 @@ from aiperf.transports.grpc.status_mapping import grpc_status_to_http
 from aiperf.transports.grpc.stream_chunk import StreamChunk
 from aiperf.transports.grpc.trace_data import GrpcTraceData
 
-# Max time to wait for gRPC channel to become ready before considering the send failed.
 _CHANNEL_READY_TIMEOUT_S = 30.0
 
 
@@ -235,7 +234,6 @@ class GrpcTransport(BaseTransport):
                 f"Add a 'grpc' block with serializer, method, and stream_method to plugins.yaml."
             )
 
-        # Load serializer class from module:Class path
         module_path, _, class_name = metadata.grpc.serializer.rpartition(":")
         if not module_path or not class_name:
             raise ValueError(
@@ -356,10 +354,9 @@ class GrpcTransport(BaseTransport):
             trace_data=trace_data,
         )
 
-        # Resolve client based on connection reuse strategy
         reuse_strategy = self.model_endpoint.endpoint.connection_reuse_strategy
         target = self.get_url(request_info)
-        client_owner = False  # True = close client after request (NEVER)
+        client_owner = False
 
         # Capture lease_manager reference to avoid race with concurrent shutdown
         lease_manager = self._lease_manager
@@ -387,7 +384,6 @@ class GrpcTransport(BaseTransport):
                 raise ValueError(f"Invalid connection reuse strategy: {reuse_strategy}")
 
         try:
-            # Serialize request to bytes
             model_name = request_info.model_endpoint.primary_model_name
             request_bytes = self._serializer.serialize_request(
                 payload,
@@ -395,11 +391,9 @@ class GrpcTransport(BaseTransport):
                 request_id=request_info.x_request_id or "",
             )
 
-            # Build gRPC metadata from headers
             grpc_metadata = self._build_grpc_metadata(request_info)
 
-            # Record request metadata and send timing
-            trace_data.request_headers = dict(grpc_metadata) if grpc_metadata else None
+            trace_data.request_headers = _metadata_to_dict(grpc_metadata)
             trace_data.request_send_start_perf_ns = time.perf_counter_ns()
             trace_data.request_headers_sent_perf_ns = (
                 trace_data.request_send_start_perf_ns
@@ -431,7 +425,6 @@ class GrpcTransport(BaseTransport):
                     cancel_after_ns=request_info.cancel_after_ns,
                 )
 
-            # Release sticky lease on final turn, cancellation, or error
             should_release = (
                 request_info.is_final_turn
                 or record.cancellation_perf_ns is not None
@@ -561,8 +554,12 @@ class GrpcTransport(BaseTransport):
             grpc_metadata: gRPC metadata tuples.
             cancel_after_ns: Cancel after this many ns, or None for no cancellation.
         """
-        assert self._serializer is not None  # noqa: S101
-        assert self._unary_method is not None  # noqa: S101
+        if self._serializer is None:
+            raise RuntimeError(
+                "Serializer not initialized; call _init_serializer first"
+            )
+        if self._unary_method is None:
+            raise RuntimeError("Unary method not configured in endpoint grpc metadata")
 
         if cancel_after_ns is None:
             result = await client.unary(
@@ -649,8 +646,12 @@ class GrpcTransport(BaseTransport):
             first_token_callback: Optional callback on first non-error response.
             cancel_after_ns: Cancel after this many ns, or None for no cancellation.
         """
-        assert self._serializer is not None  # noqa: S101
-        assert self._stream_method is not None  # noqa: S101
+        if self._serializer is None:
+            raise RuntimeError(
+                "Serializer not initialized; call _init_serializer first"
+            )
+        if self._stream_method is None:
+            raise RuntimeError("Stream method not configured in endpoint grpc metadata")
 
         first_token_acquired = False
 
@@ -669,6 +670,7 @@ class GrpcTransport(BaseTransport):
                         message=chunk.error_message,
                         code=500,
                     )
+                    record.status = 500
                     break
 
                 perf_ns = time.perf_counter_ns()
@@ -692,7 +694,6 @@ class GrpcTransport(BaseTransport):
                         ttft_ns, text_response
                     )
 
-            # Stream completed successfully (or with inline error)
             end_ns = time.perf_counter_ns()
             trace_data.response_receive_end_perf_ns = end_ns
             if record.end_perf_ns is None:

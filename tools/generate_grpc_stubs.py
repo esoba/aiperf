@@ -44,12 +44,12 @@ def main() -> None:
     # Fix the import in the generated gRPC stub to use relative import
     grpc_stub = PROTO_DIR / "grpc_predict_v2_pb2_grpc.py"
     if grpc_stub.exists():
-        content = grpc_stub.read_text()
+        content = grpc_stub.read_text(encoding="utf-8")
         content = content.replace(
             "import grpc_predict_v2_pb2 as grpc__predict__v2__pb2",
             "from . import grpc_predict_v2_pb2 as grpc__predict__v2__pb2",
         )
-        grpc_stub.write_text(content)
+        grpc_stub.write_text(content, encoding="utf-8")
         print(f"Fixed relative import in {grpc_stub}")
 
     print("Stubs generated successfully.")

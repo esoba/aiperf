@@ -93,14 +93,10 @@ class KServeV2EmbeddingsEndpoint(BaseEndpoint):
         if not outputs:
             return None
 
-        # Find output tensor by name, fallback to first
-        output = None
-        for o in outputs:
-            if o.get("name") == self._output_name:
-                output = o
-                break
-        if output is None:
-            output = outputs[0]
+        # Find the output tensor with the matching name
+        output = next(
+            (o for o in outputs if o.get("name") == self._output_name), outputs[0]
+        )
 
         data = output.get("data")
         if not data:

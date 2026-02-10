@@ -9,7 +9,7 @@ AIPerf provides first-class support for benchmarking [KServe](https://kserve.git
 
 ## Endpoint Types
 
-AIPerf provides five KServe-specific endpoint types:
+AIPerf provides seven KServe-specific endpoint types:
 
 | Endpoint Type | Protocol | URL Path | Streaming | Token Metrics | Use Case |
 |---|---|---|---|---|---|
@@ -17,6 +17,8 @@ AIPerf provides five KServe-specific endpoint types:
 | `kserve_completions` | OpenAI-compatible | `/openai/v1/completions` | Yes | Yes | Text completions via vLLM/TRT-LLM on KServe |
 | `kserve_embeddings` | OpenAI-compatible | `/openai/v1/embeddings` | No | No | Embedding models on KServe |
 | `kserve_v2_infer` | V2 Open Inference Protocol | `/v2/models/{model_name}/infer` | Yes (gRPC) | Yes | Triton/TRT-LLM tensor inference |
+| `kserve_v2_embeddings` | V2 Open Inference Protocol | `/v2/models/{model_name}/infer` | No | No | Triton/TRT-LLM embedding models |
+| `kserve_v2_rankings` | V2 Open Inference Protocol | `/v2/models/{model_name}/infer` | No | No | Triton/TRT-LLM reranking models |
 | `kserve_v1_predict` | V1 TensorFlow Serving | `/v1/models/{model_name}:predict` | No | No | Legacy TF Serving-style models |
 
 **Token Metrics**: When "Yes", AIPerf computes token-based metrics (input/output token counts, tokens per second). When "No", only request-level metrics (latency, throughput) are available.
@@ -353,6 +355,8 @@ Each KServe endpoint type includes a `health_path` in its metadata for pre-fligh
 | `kserve_completions` | `/openai/v1/models` | Lists available OpenAI-compatible models |
 | `kserve_embeddings` | `/openai/v1/models` | Lists available OpenAI-compatible models |
 | `kserve_v2_infer` | `/v2/models/{model_name}/ready` | V2 model readiness check |
+| `kserve_v2_embeddings` | `/v2/models/{model_name}/ready` | V2 model readiness check |
+| `kserve_v2_rankings` | `/v2/models/{model_name}/ready` | V2 model readiness check |
 | `kserve_v1_predict` | `/v1/models/{model_name}` | V1 model metadata/status |
 
 Health paths that contain `{model_name}` are resolved using the same template substitution as endpoint paths.
@@ -368,6 +372,8 @@ Health paths that contain `{model_name}` are resolved using the same template su
 | KServe + vLLM (embeddings) | `kserve_embeddings` | Vector embeddings |
 | KServe + Triton (text) | `kserve_v2_infer` | Wraps text as BYTES tensors |
 | KServe + TRT-LLM via Triton | `kserve_v2_infer` | Standard Triton text pipeline |
+| KServe + Triton (embeddings) | `kserve_v2_embeddings` | V2 BYTES tensor embedding models |
+| KServe + Triton (reranking) | `kserve_v2_rankings` | V2 BYTES tensor reranking models |
 | KServe + TF Serving model | `kserve_v1_predict` | Legacy instance-based format |
 | KServe + custom model server | `kserve_v1_predict` or `template` | Depends on API format |
 | Non-KServe vLLM/TRT-LLM | `chat` or `completions` | Use standard endpoints for direct deployments |
