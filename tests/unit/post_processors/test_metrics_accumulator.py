@@ -14,16 +14,16 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import AggregationKind, MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
-from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
-from aiperf.metrics.types.request_count_metric import RequestCountMetric
-from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
-from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
-from aiperf.post_processors.column_store import ColumnStore
-from aiperf.post_processors.metrics_accumulator import (
+from aiperf.metrics.accumulator import (
     _AGGREGATE_FUNCS,
     MetricsAccumulator,
     MetricsSummary,
 )
+from aiperf.metrics.column_store import ColumnStore
+from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
+from aiperf.metrics.types.request_count_metric import RequestCountMetric
+from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from tests.unit.post_processors.conftest import (
     create_metric_records_message,
 )
@@ -42,7 +42,6 @@ class TestMetricsAccumulator:
         assert isinstance(processor._column_store, ColumnStore)
         assert isinstance(processor._tags_to_types, dict)
         assert isinstance(processor._aggregation_kinds, dict)
-        assert isinstance(processor._records, list)
 
     @pytest.mark.asyncio
     async def test_process_record_record_metric(
@@ -150,10 +149,10 @@ class TestMetricsAccumulator:
         assert results[RequestCountMetric.tag].avg == 15.0
 
     @pytest.mark.asyncio
-    async def test_record_count_and_iter_requests(
+    async def test_record_count(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Test record_count and iter_requests work correctly."""
+        """Test record_count derives from column store."""
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {}
 
@@ -161,14 +160,11 @@ class TestMetricsAccumulator:
         msg2 = create_metric_records_message(
             x_request_id="test-2", session_num=1, request_start_ns=1_000_000_001
         )
-        data1 = msg1.to_data()
-        data2 = msg2.to_data()
 
-        await processor.process_record(data1)
-        await processor.process_record(data2)
+        await processor.process_record(msg1.to_data())
+        await processor.process_record(msg2.to_data())
 
         assert processor.record_count == 2
-        assert list(processor.iter_requests()) == [data1, data2]
 
 
 class TestAggregationKind:
@@ -208,7 +204,8 @@ class TestQueryTimeRange:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         processor = MetricsAccumulator(mock_user_config)
-        assert processor.query_time_range(0, 10_000) == []
+        mask = processor.query_time_range(0, 10_000)
+        assert len(mask) == 0
 
     @pytest.mark.asyncio
     async def test_single_record_inside(
@@ -220,7 +217,8 @@ class TestQueryTimeRange:
             x_request_id="test-1", session_num=0, request_start_ns=5_000
         ).to_data()
         await processor.process_record(record)
-        assert processor.query_time_range(0, 10_000) == [record]
+        mask = processor.query_time_range(0, 10_000)
+        assert mask.sum() == 1
 
     @pytest.mark.asyncio
     async def test_single_record_outside(
@@ -232,7 +230,8 @@ class TestQueryTimeRange:
             x_request_id="test-1", session_num=0, request_start_ns=15_000
         ).to_data()
         await processor.process_record(record)
-        assert processor.query_time_range(0, 10_000) == []
+        mask = processor.query_time_range(0, 10_000)
+        assert mask.sum() == 0
 
     @pytest.mark.asyncio
     async def test_boundary_inclusive_start_exclusive_end(
@@ -249,7 +248,10 @@ class TestQueryTimeRange:
         await processor.process_record(record1)
         await processor.process_record(record2)
         # [1_000, 2_000) should include 1_000 but exclude 2_000
-        assert processor.query_time_range(1_000, 2_000) == [record1]
+        mask = processor.query_time_range(1_000, 2_000)
+        assert mask.sum() == 1
+        assert mask[0] is np.True_
+        assert mask[1] is np.False_
 
     @pytest.mark.asyncio
     async def test_multiple_records_filtering(
@@ -257,16 +259,15 @@ class TestQueryTimeRange:
     ) -> None:
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {}
-        records = []
         for i, ts in enumerate([100, 200, 300, 400, 500]):
             r = create_metric_records_message(
                 x_request_id=f"test-{i}", session_num=i, request_start_ns=ts
             ).to_data()
-            records.append(r)
             await processor.process_record(r)
 
-        result = processor.query_time_range(200, 400)
-        assert result == [records[1], records[2]]
+        mask = processor.query_time_range(200, 400)
+        assert mask.sum() == 2
+        np.testing.assert_array_equal(np.where(mask)[0], [1, 2])
 
 
 class TestSummarize:

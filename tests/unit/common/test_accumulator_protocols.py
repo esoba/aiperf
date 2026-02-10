@@ -6,7 +6,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
@@ -43,8 +45,8 @@ class StubAccumulator:
     async def process_record(self, record: Any) -> None:
         pass
 
-    def query_time_range(self, start_ns: int, end_ns: int) -> list[Any]:
-        return []
+    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
+        return np.array([], dtype=bool)
 
     async def summarize(self, ctx: SummaryContext | None = None) -> StubResult:
         return StubResult(values=[])

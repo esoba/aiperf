@@ -10,7 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from aiperf.analysis.ramp_detection import detect_steady_state_window
-from aiperf.analysis.sweep import concurrency_sweep
+from aiperf.analysis.sweep import concurrency_sweep, throughput_sweep
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,8 @@ def bootstrap_detection(
     confidence: float = 0.95,
     min_window_pct: float = 5.0,
     rng: np.random.Generator | None = None,
+    generation_start_ns: NDArray[np.float64] | None = None,
+    output_tokens: NDArray[np.float64] | None = None,
 ) -> BootstrapResult:
     """Circular block bootstrap: resample time-ordered blocks, rerun detection, report CIs.
 
@@ -66,6 +68,8 @@ def bootstrap_detection(
         confidence: Confidence level (default 0.95 for 95% CI).
         min_window_pct: Minimum window size % passed to detection.
         rng: Random generator for reproducibility.
+        generation_start_ns: Per-record generation start timestamps (optional).
+        output_tokens: Per-record output token counts (optional).
 
     Returns:
         BootstrapResult with confidence intervals.
@@ -86,6 +90,8 @@ def bootstrap_detection(
     mean_lats: list[float] = []
     p99_lats: list[float] = []
 
+    has_tput = generation_start_ns is not None and output_tokens is not None
+
     for _ in range(n_iterations):
         boot_positions = _circular_block_indices(n, block_size, rng)
         idx = time_order[boot_positions]
@@ -98,6 +104,16 @@ def bootstrap_detection(
         if len(sorted_ts) == 0:
             continue
 
+        s_tput_ts: NDArray[np.float64] | None = None
+        tput: NDArray[np.float64] | None = None
+        if has_tput:
+            gen_ns = generation_start_ns[idx]  # type: ignore[index]
+            out_tok = output_tokens[idx]  # type: ignore[index]
+            s_tput_ts, tput = throughput_sweep(gen_ns, e_ns, out_tok)
+            if len(s_tput_ts) == 0:
+                s_tput_ts = None
+                tput = None
+
         w_start, w_end, _method = detect_steady_state_window(
             sorted_ts,
             conc,
@@ -106,6 +122,8 @@ def bootstrap_detection(
             lat,
             tt,
             min_window_pct=min_window_pct,
+            sorted_tput_ts=s_tput_ts,
+            throughput=tput,
         )
 
         ramp_ups.append(w_start)

@@ -4,9 +4,9 @@
 import numpy as np
 
 from aiperf.common.enums import AggregationKind
+from aiperf.metrics.accumulator import _AGGREGATE_FUNCS
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
-from aiperf.post_processors.metrics_accumulator import _AGGREGATE_FUNCS
 from tests.unit.metrics.conftest import create_record
 
 

@@ -6,6 +6,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
+import numpy as np
+from numpy.typing import NDArray
+
 if TYPE_CHECKING:
     from aiperf.common.models.error_models import ErrorDetailsCount
     from aiperf.exporters.exporter_config import FileExportInfo
@@ -76,10 +79,11 @@ class AccumulatorProtocol(Protocol):
         """Ingest a single record into this accumulator's internal storage."""
         ...
 
-    def query_time_range(self, start_ns: int, end_ns: int) -> list[Any]:
-        """Return records whose timestamps fall within [start_ns, end_ns).
+    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
+        """Return a boolean mask where True marks records in [start_ns, end_ns).
 
-        Uses bisect for O(log n) lookup on sorted timestamp arrays.
+        The mask length equals the accumulator's record count. Callers can use
+        ``mask.sum()`` for the count or ``np.where(mask)[0]`` for indices.
         """
         ...
 

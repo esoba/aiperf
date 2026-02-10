@@ -15,7 +15,9 @@ from __future__ import annotations
 from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
@@ -88,8 +90,8 @@ class StubAccumulatorA:
     ) -> StubAccumulatorResult:
         return StubAccumulatorResult()
 
-    def query_time_range(self, start_ns: int, end_ns: int) -> list[Any]:
-        return []
+    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
+        return np.array([], dtype=bool)
 
     async def export_results(self, ctx: ExportContext) -> StubAccumulatorResult:
         return StubAccumulatorResult()
@@ -106,8 +108,8 @@ class StubAccumulatorB:
     ) -> StubAccumulatorResult:
         return StubAccumulatorResult()
 
-    def query_time_range(self, start_ns: int, end_ns: int) -> list[Any]:
-        return []
+    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
+        return np.array([], dtype=bool)
 
     async def export_results(self, ctx: ExportContext) -> StubAccumulatorResult:
         return StubAccumulatorResult()

@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.config import UserConfig
@@ -18,6 +18,7 @@ from aiperf.common.constants import (
 )
 from aiperf.common.enums import PrometheusMetricType, ServerMetricsFormat
 from aiperf.common.exceptions import DataExporterDisabled, PluginDisabled
+from aiperf.common.growable_array import GrowableArray
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
     GaugeMetricData,
@@ -123,9 +124,8 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # Use slice_duration from config for windowed stats
         self._slice_duration: float | None = user_config.output.slice_duration
 
-        # Raw record storage for process_record() / query_time_range()
-        self._raw_records: list[ServerMetricsRecord] = []
-        self._raw_timestamps_ns: list[int] = []
+        # Lightweight timestamp storage for query_time_range()
+        self._timestamps_ns = GrowableArray(initial_capacity=1024, dtype=np.int64)
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -139,20 +139,16 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         return self._server_metrics_hierarchy
 
     async def process_record(self, record: ServerMetricsRecord) -> None:
-        """Ingest a ServerMetricsRecord into raw storage and hierarchical storage."""
-        self._raw_records.append(record)
-        self._raw_timestamps_ns.append(record.timestamp_ns)
+        """Ingest a ServerMetricsRecord into timestamp storage and hierarchical storage."""
+        self._timestamps_ns.append(record.timestamp_ns)
         self._server_metrics_hierarchy.add_record(record)
 
-    def query_time_range(self, start_ns: int, end_ns: int) -> list[ServerMetricsRecord]:
-        """Return records whose timestamp_ns falls within [start_ns, end_ns)."""
-        lo = bisect_left(self._raw_timestamps_ns, start_ns)
-        hi = (
-            bisect_right(self._raw_timestamps_ns, end_ns - 1)
-            if end_ns > start_ns
-            else lo
-        )
-        return self._raw_records[lo:hi]
+    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
+        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
+        if len(self._timestamps_ns) == 0:
+            return np.array([], dtype=bool)
+        ts = self._timestamps_ns.data
+        return (ts >= start_ns) & (ts < end_ns)
 
     async def export_results(self, ctx: ExportContext) -> ServerMetricsResults | None:
         """Export accumulated server metrics as results for final reporting.

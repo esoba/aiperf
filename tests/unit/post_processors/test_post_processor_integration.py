@@ -11,6 +11,7 @@ from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import AggregationKind, MetricType
 from aiperf.common.models import MetricResult, ParsedResponseRecord
+from aiperf.metrics.accumulator import MetricsAccumulator
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
@@ -18,7 +19,6 @@ from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
 from aiperf.post_processors.metric_record_processor import MetricRecordProcessor
-from aiperf.post_processors.metrics_accumulator import MetricsAccumulator
 from tests.unit.post_processors.conftest import (
     create_accumulator_with_metrics,
     create_metric_records_message,
@@ -141,7 +141,6 @@ class TestPostProcessorIntegration:
             end_ns=1_100_000_000.0,
             generation_start_ns=None,
         )
-        accumulator._ensure_records_capacity(0)
 
         # BenchmarkDuration is a DERIVED metric; add it as a derive func that
         # returns a constant, then let RequestThroughput compute from both.

@@ -63,6 +63,7 @@ from aiperf.credit.messages import (
 from aiperf.exporters.exporter_config import FileExportInfo
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.gpu_telemetry.protocols import GPUTelemetryAccumulatorProtocol
+from aiperf.metrics.accumulator import MetricsSummary
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     AccumulatorType,
@@ -71,7 +72,6 @@ from aiperf.plugin.enums import (
     StreamExporterType,
     UIType,
 )
-from aiperf.post_processors.metrics_accumulator import MetricsSummary
 from aiperf.post_processors.steady_state_analyzer import SteadyStateSummary
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_tracker import RecordsTracker

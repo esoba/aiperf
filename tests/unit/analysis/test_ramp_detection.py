@@ -14,7 +14,7 @@ from aiperf.analysis.ramp_detection import (
     mser5_boundary_ns,
     mser5_truncation_point,
 )
-from aiperf.analysis.sweep import concurrency_sweep
+from aiperf.analysis.sweep import concurrency_sweep, throughput_sweep
 
 
 class TestCusumSteadyStateWindow:
@@ -169,22 +169,46 @@ class TestDetectSteadyStateWindowCombined:
                 ]
             )
 
+        # Throughput data
+        generation_start_ns = start_ns + np.abs(ttft) * 0.1
+        output_tokens = rng.integers(50, 200, n).astype(np.float64)
+        sorted_t_ts, tput = throughput_sweep(generation_start_ns, end_ns, output_tokens)
+
         sorted_ts, concurrency = concurrency_sweep(start_ns, end_ns)
-        return sorted_ts, concurrency, start_ns, end_ns, latency, ttft
+        return (
+            sorted_ts,
+            concurrency,
+            start_ns,
+            end_ns,
+            latency,
+            ttft,
+            sorted_t_ts,
+            tput,
+        )
 
     def test_all_signals_agree(self) -> None:
         """All signals present → method includes all signal names."""
-        sorted_ts, conc, start_ns, end_ns, lat, ttft = self._make_scenario()
+        sorted_ts, conc, start_ns, end_ns, lat, ttft, s_t_ts, tput = (
+            self._make_scenario()
+        )
         ws, we, method = detect_steady_state_window(
-            sorted_ts, conc, start_ns, end_ns, lat, ttft, min_window_pct=5.0
+            sorted_ts,
+            conc,
+            start_ns,
+            end_ns,
+            lat,
+            ttft,
+            min_window_pct=5.0,
+            sorted_tput_ts=s_t_ts,
+            throughput=tput,
         )
         assert we > ws
         assert "cusum" in method
 
     def test_non_streaming_ttft_nan(self) -> None:
         """TTFT all NaN → method should not include mser5_ttft."""
-        sorted_ts, conc, start_ns, end_ns, lat, ttft = self._make_scenario(
-            ttft_all_nan=True
+        sorted_ts, conc, start_ns, end_ns, lat, ttft, s_t_ts, tput = (
+            self._make_scenario(ttft_all_nan=True)
         )
         ws, we, method = detect_steady_state_window(
             sorted_ts, conc, start_ns, end_ns, lat, ttft, min_window_pct=5.0
@@ -192,6 +216,42 @@ class TestDetectSteadyStateWindowCombined:
         assert we > ws
         assert "mser5_ttft" not in method
         assert "cusum" in method
+
+    def test_all_signals_with_throughput(self) -> None:
+        """Throughput signal present → method includes cusum_throughput."""
+        sorted_ts, conc, start_ns, end_ns, lat, ttft, s_t_ts, tput = (
+            self._make_scenario()
+        )
+        ws, we, method = detect_steady_state_window(
+            sorted_ts,
+            conc,
+            start_ns,
+            end_ns,
+            lat,
+            ttft,
+            min_window_pct=5.0,
+            sorted_tput_ts=s_t_ts,
+            throughput=tput,
+        )
+        assert we > ws
+        assert "cusum_throughput" in method
+
+    def test_throughput_none_excluded(self) -> None:
+        """Throughput params None → cusum_throughput NOT in method."""
+        sorted_ts, conc, start_ns, end_ns, lat, ttft, _, _ = self._make_scenario()
+        ws, we, method = detect_steady_state_window(
+            sorted_ts,
+            conc,
+            start_ns,
+            end_ns,
+            lat,
+            ttft,
+            min_window_pct=5.0,
+            sorted_tput_ts=None,
+            throughput=None,
+        )
+        assert we > ws
+        assert "cusum_throughput" not in method
 
     def test_empty_input(self) -> None:
         empty = np.array([], dtype=np.float64)

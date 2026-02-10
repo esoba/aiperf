@@ -128,3 +128,35 @@ class TestBootstrapShortInput:
         assert result.n_iterations == 20
         # CIs should be finite (not NaN for small-but-valid input)
         assert not math.isnan(result.ci_ramp_up_ns[0])
+
+
+class TestBootstrapThroughput:
+    def test_none_throughput_backward_compat(self, clean_profile) -> None:
+        """None throughput params do not break bootstrap."""
+        result = bootstrap_detection(
+            clean_profile.start_ns,
+            clean_profile.end_ns,
+            clean_profile.latency,
+            clean_profile.ttft,
+            n_iterations=10,
+            rng=np.random.default_rng(42),
+            generation_start_ns=None,
+            output_tokens=None,
+        )
+        assert isinstance(result, BootstrapResult)
+        assert result.n_iterations == 10
+
+    def test_with_throughput_data(self, clean_profile) -> None:
+        """Passing throughput data produces valid CIs."""
+        result = bootstrap_detection(
+            clean_profile.start_ns,
+            clean_profile.end_ns,
+            clean_profile.latency,
+            clean_profile.ttft,
+            n_iterations=10,
+            rng=np.random.default_rng(42),
+            generation_start_ns=clean_profile.generation_start_ns,
+            output_tokens=clean_profile.output_tokens,
+        )
+        assert isinstance(result, BootstrapResult)
+        assert result.ci_ramp_up_ns[0] <= result.ci_ramp_up_ns[1]

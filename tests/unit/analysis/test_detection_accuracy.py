@@ -9,7 +9,7 @@ import pytest
 
 from aiperf.analysis.ramp_detection import detect_steady_state_window
 from aiperf.analysis.stationarity import batch_means_trend_test
-from aiperf.analysis.sweep import concurrency_sweep
+from aiperf.analysis.sweep import concurrency_sweep, throughput_sweep
 from tests.unit.analysis.profiles import (
     SyntheticBenchmark,
     no_steady_state,
@@ -20,6 +20,15 @@ from tests.unit.analysis.profiles import (
 def _detect(bench: SyntheticBenchmark) -> tuple[float, float, str]:
     """Run detect_steady_state_window on a benchmark profile."""
     sorted_ts, concurrency = concurrency_sweep(bench.start_ns, bench.end_ns)
+    s_tput_ts = None
+    tput = None
+    if bench.generation_start_ns is not None and bench.output_tokens is not None:
+        s_tput_ts, tput = throughput_sweep(
+            bench.generation_start_ns, bench.end_ns, bench.output_tokens
+        )
+        if len(s_tput_ts) == 0:
+            s_tput_ts = None
+            tput = None
     return detect_steady_state_window(
         sorted_ts,
         concurrency,
@@ -28,6 +37,8 @@ def _detect(bench: SyntheticBenchmark) -> tuple[float, float, str]:
         bench.latency,
         bench.ttft,
         min_window_pct=5.0,
+        sorted_tput_ts=s_tput_ts,
+        throughput=tput,
     )
 
 

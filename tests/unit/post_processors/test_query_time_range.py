@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from aiperf.common.accumulator_protocols import AccumulatorProtocol
 from aiperf.common.messages.inference_messages import MetricRecordsData
-from aiperf.post_processors.metrics_accumulator import MetricsAccumulator
+from aiperf.metrics.accumulator import MetricsAccumulator
 from tests.unit.post_processors.conftest import (
     create_accumulator_with_metrics,
     create_metric_metadata,
@@ -48,7 +49,6 @@ class TestProcessRecord:
         record = _make_record(1_000, session_num=0)
         await processor.process_record(record)
         assert processor.record_count == 1
-        assert list(processor.iter_requests()) == [record]
 
     @pytest.mark.asyncio
     async def test_process_record_multiple(self, processor: MetricsAccumulator) -> None:
@@ -59,56 +59,59 @@ class TestProcessRecord:
         for r in records:
             await processor.process_record(r)
         assert processor.record_count == 3
-        assert list(processor.iter_requests()) == records
 
 
 class TestQueryTimeRange:
     @pytest.mark.asyncio
     async def test_empty(self, processor: MetricsAccumulator) -> None:
-        assert processor.query_time_range(0, 10_000) == []
+        mask = processor.query_time_range(0, 10_000)
+        assert len(mask) == 0
 
     @pytest.mark.asyncio
     async def test_single_record_inside(self, processor: MetricsAccumulator) -> None:
-        record = _make_record(5_000, session_num=0)
-        await processor.process_record(record)
-        assert processor.query_time_range(0, 10_000) == [record]
+        await processor.process_record(_make_record(5_000, session_num=0))
+        mask = processor.query_time_range(0, 10_000)
+        assert mask.sum() == 1
 
     @pytest.mark.asyncio
     async def test_single_record_outside(self, processor: MetricsAccumulator) -> None:
         await processor.process_record(_make_record(15_000, session_num=0))
-        assert processor.query_time_range(0, 10_000) == []
+        mask = processor.query_time_range(0, 10_000)
+        assert mask.sum() == 0
 
     @pytest.mark.asyncio
     async def test_boundary_inclusive_start(
         self, processor: MetricsAccumulator
     ) -> None:
-        record = _make_record(1_000, session_num=0)
-        await processor.process_record(record)
+        await processor.process_record(_make_record(1_000, session_num=0))
         # [1_000, 2_000) should include 1_000
-        assert processor.query_time_range(1_000, 2_000) == [record]
+        mask = processor.query_time_range(1_000, 2_000)
+        assert mask.sum() == 1
 
     @pytest.mark.asyncio
     async def test_boundary_exclusive_end(self, processor: MetricsAccumulator) -> None:
-        record = _make_record(2_000, session_num=0)
-        await processor.process_record(record)
+        await processor.process_record(_make_record(2_000, session_num=0))
         # [1_000, 2_000) should NOT include 2_000
-        assert processor.query_time_range(1_000, 2_000) == []
+        mask = processor.query_time_range(1_000, 2_000)
+        assert mask.sum() == 0
 
     @pytest.mark.asyncio
     async def test_multiple_records_filtering(
         self, processor: MetricsAccumulator
     ) -> None:
         timestamps = [100, 200, 300, 400, 500]
-        records = [_make_record(ts, session_num=i) for i, ts in enumerate(timestamps)]
-        for r in records:
-            await processor.process_record(r)
+        for i, ts in enumerate(timestamps):
+            await processor.process_record(_make_record(ts, session_num=i))
 
-        result = processor.query_time_range(200, 400)
-        assert result == [records[1], records[2]]
+        mask = processor.query_time_range(200, 400)
+        assert mask.sum() == 2
+        indices = np.where(mask)[0]
+        np.testing.assert_array_equal(indices, [1, 2])
 
     @pytest.mark.asyncio
     async def test_equal_start_end_returns_empty(
         self, processor: MetricsAccumulator
     ) -> None:
         await processor.process_record(_make_record(100, session_num=0))
-        assert processor.query_time_range(100, 100) == []
+        mask = processor.query_time_range(100, 100)
+        assert mask.sum() == 0

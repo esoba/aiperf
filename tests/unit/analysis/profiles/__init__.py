@@ -22,6 +22,8 @@ class SyntheticBenchmark:
     true_ramp_down_start_ns: float
     true_steady_state_mean_latency: float
     profile_name: str
+    generation_start_ns: NDArray[np.float64] | None = None
+    output_tokens: NDArray[np.float64] | None = None
 
     @property
     def total_duration(self) -> float:

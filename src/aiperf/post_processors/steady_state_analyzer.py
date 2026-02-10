@@ -17,7 +17,11 @@ from aiperf.analysis.ramp_detection import (
     mser5_boundary_ns,
 )
 from aiperf.analysis.stationarity import batch_means_trend_test
-from aiperf.analysis.sweep import compute_time_weighted_stats, concurrency_sweep
+from aiperf.analysis.sweep import (
+    compute_time_weighted_stats,
+    concurrency_sweep,
+    throughput_sweep,
+)
 from aiperf.common.config import UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PluginDisabled
@@ -27,8 +31,8 @@ from aiperf.common.types import MetricTagT
 
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import SummaryContext
+    from aiperf.metrics.accumulator import MetricsAccumulator
     from aiperf.plugin.enums import AccumulatorType
-    from aiperf.post_processors.metrics_accumulator import MetricsAccumulator
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +105,14 @@ class SteadyStateWindowMetadata(AIPerfBaseModel, frozen=True):
         default=None,
         description="MSER-5 TTFT-detected ramp-down start timestamp (ns)",
     )
+    cusum_throughput_ramp_up_end_ns: float | None = Field(
+        default=None,
+        description="CUSUM throughput-detected ramp-up end timestamp (ns)",
+    )
+    cusum_throughput_ramp_down_start_ns: float | None = Field(
+        default=None,
+        description="CUSUM throughput-detected ramp-down start timestamp (ns)",
+    )
 
     # Bootstrap confidence intervals (optional, only when bootstrap_iterations is set)
     bootstrap_ci_ramp_up_ns: tuple[float, float] | None = Field(
@@ -168,6 +180,8 @@ class SteadyStateSummary(AIPerfBaseModel):
                     "mser5_latency_ramp_down_start_ns": meta.mser5_latency_ramp_down_start_ns,
                     "mser5_ttft_ramp_up_end_ns": meta.mser5_ttft_ramp_up_end_ns,
                     "mser5_ttft_ramp_down_start_ns": meta.mser5_ttft_ramp_down_start_ns,
+                    "cusum_throughput_ramp_up_end_ns": meta.cusum_throughput_ramp_up_end_ns,
+                    "cusum_throughput_ramp_down_start_ns": meta.cusum_throughput_ramp_down_start_ns,
                 },
             },
         }
@@ -216,8 +230,8 @@ class SteadyStateAnalyzer:
 
     async def summarize(self, ctx: SummaryContext) -> SteadyStateSummary:
         """Detect steady-state window and compute windowed metrics."""
+        from aiperf.metrics.accumulator import MetricsAccumulator
         from aiperf.plugin.enums import AccumulatorType
-        from aiperf.post_processors.metrics_accumulator import MetricsAccumulator
 
         metrics_acc: MetricsAccumulator | None = ctx.get_accumulator(
             AccumulatorType.METRIC_RESULTS
@@ -244,6 +258,11 @@ class SteadyStateAnalyzer:
         # Concurrency curve (needed for both detection and stats)
         sorted_c_ts, concurrency = concurrency_sweep(start_ns, end_ns)
 
+        # Throughput curve (needed for Signal 4: CUSUM on throughput)
+        generation_start_ns = store.generation_start_ns[:n]
+        output_tokens = store.numeric("output_tokens")
+        sorted_t_ts, tput = throughput_sweep(generation_start_ns, end_ns, output_tokens)
+
         # Per-signal diagnostics
         cusum_start_ns: float | None = None
         cusum_end_ns: float | None = None
@@ -251,6 +270,8 @@ class SteadyStateAnalyzer:
         lat_end_ns: float | None = None
         ttft_start_ns: float | None = None
         ttft_end_ns: float | None = None
+        tput_start_ns: float | None = None
+        tput_end_ns: float | None = None
 
         # User override or automatic detection
         if self._start_pct is not None and self._end_pct is not None:
@@ -269,6 +290,8 @@ class SteadyStateAnalyzer:
                 latency,
                 ttft,
                 min_window_pct=self._min_window_pct,
+                sorted_tput_ts=sorted_t_ts if len(sorted_t_ts) > 0 else None,
+                throughput=tput if len(sorted_t_ts) > 0 else None,
             )
             # Collect per-signal boundaries for diagnostics
             cusum_start_ns, cusum_end_ns = cusum_steady_state_window(
@@ -280,6 +303,10 @@ class SteadyStateAnalyzer:
             ttft_start_ns, ttft_end_ns = mser5_boundary_ns(
                 ttft, start_ns, end_ns, filled
             )
+            if len(sorted_t_ts) > 0:
+                tput_start_ns, tput_end_ns = cusum_steady_state_window(
+                    sorted_t_ts, tput, min_window_pct=0.0
+                )
 
         # Time-weighted concurrency statistics within the window
         conc_stats = compute_time_weighted_stats(
@@ -332,6 +359,8 @@ class SteadyStateAnalyzer:
                 ttft,
                 n_iterations=self._bootstrap_iterations,
                 min_window_pct=self._min_window_pct,
+                generation_start_ns=generation_start_ns,
+                output_tokens=output_tokens,
             )
             boot_ci_ramp_up = boot.ci_ramp_up_ns
             boot_ci_ramp_down = boot.ci_ramp_down_ns
@@ -376,6 +405,8 @@ class SteadyStateAnalyzer:
                 mser5_latency_ramp_down_start_ns=lat_end_ns,
                 mser5_ttft_ramp_up_end_ns=ttft_start_ns,
                 mser5_ttft_ramp_down_start_ns=ttft_end_ns,
+                cusum_throughput_ramp_up_end_ns=tput_start_ns,
+                cusum_throughput_ramp_down_start_ns=tput_end_ns,
                 bootstrap_ci_ramp_up_ns=boot_ci_ramp_up,
                 bootstrap_ci_ramp_down_ns=boot_ci_ramp_down,
                 bootstrap_ci_mean_latency=boot_ci_mean_lat,

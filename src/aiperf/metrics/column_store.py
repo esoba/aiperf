@@ -9,11 +9,11 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from aiperf.post_processors.ragged_series import RaggedSeries
+from aiperf.metrics.ragged_series import RaggedSeries
 
 
 class ColumnStore:
-    """Session-indexed NaN-sparse columnar storage for per-record metrics.
+    """Request-indexed NaN-sparse columnar storage for per-record metrics.
 
     Uses session_num (credit issuance index) as the canonical array index.
     Pre-filled with NaN/None; records write to their slot on arrival in any order.
@@ -27,6 +27,8 @@ class ColumnStore:
         "_ragged",
         "_sums",
         "_counts",
+        "_metadata_numeric",
+        "_metadata_string",
         "start_ns",
         "end_ns",
         "generation_start_ns",
@@ -40,6 +42,11 @@ class ColumnStore:
         self._ragged: dict[str, RaggedSeries] = {}
         self._sums: dict[str, float] = {}
         self._counts: dict[str, int] = {}
+        # Metadata columns — separate from metric columns so _compute_results()
+        # doesn't pick them up. Numeric metadata uses NaN-filled float64 arrays;
+        # string metadata uses None-filled lists (same layout as _string).
+        self._metadata_numeric: dict[str, NDArray[np.float64]] = {}
+        self._metadata_string: dict[str, list[str | None]] = {}
         # Timestamp columns — float64 for NaN support
         self.start_ns = np.full(initial_capacity, np.nan, dtype=np.float64)
         self.end_ns = np.full(initial_capacity, np.nan, dtype=np.float64)
@@ -86,6 +93,20 @@ class ColumnStore:
         """Return the count of values ingested for a numeric column (O(1))."""
         return self._counts.get(tag, 0)
 
+    def metadata_numeric(self, tag: str) -> NDArray[np.float64]:
+        """Return the metadata float64 column for `tag`, sliced to count. NaN where missing."""
+        col = self._metadata_numeric.get(tag)
+        if col is None:
+            return np.full(self._count, np.nan, dtype=np.float64)
+        return col[: self._count]
+
+    def metadata_string(self, tag: str) -> list[str | None]:
+        """Return the metadata string column for `tag`, sliced to count. None where missing."""
+        col = self._metadata_string.get(tag)
+        if col is None:
+            return [None] * self._count
+        return col[: self._count]
+
     # --- Write API (called from MetricsAccumulator.process_record) ---
 
     def ingest(
@@ -126,6 +147,29 @@ class ColumnStore:
                 self._sums[tag] += fval
                 self._counts[tag] += 1
 
+    def ingest_metadata(
+        self,
+        idx: int,
+        metadata_numeric: dict[str, float | None],
+        metadata_string: dict[str, str | None],
+    ) -> None:
+        """Write per-record metadata to slot `idx`.
+
+        Metadata columns are kept separate from metric columns so that
+        _compute_results() does not treat them as metrics.
+        """
+        if idx >= self._capacity:
+            self._grow(idx)
+
+        for tag, value in metadata_numeric.items():
+            if value is not None:
+                col = self._ensure_metadata_numeric_column(tag)
+                col[idx] = float(value)
+
+        for tag, value in metadata_string.items():
+            col = self._ensure_metadata_string_column(tag)
+            col[idx] = value
+
     # --- Internal ---
 
     def _grow(self, min_idx: int) -> None:
@@ -151,6 +195,17 @@ class ColumnStore:
         for tag, old in self._string.items():
             old.extend([None] * (new_cap - self._capacity))
             self._string[tag] = old
+
+        # Grow metadata numeric columns
+        for tag, old in self._metadata_numeric.items():
+            new = np.full(new_cap, np.nan, dtype=np.float64)
+            new[: self._capacity] = old[: self._capacity]
+            self._metadata_numeric[tag] = new
+
+        # Grow metadata string columns
+        for tag, old in self._metadata_string.items():
+            old.extend([None] * (new_cap - self._capacity))
+            self._metadata_string[tag] = old
 
         self._capacity = new_cap
 
@@ -179,3 +234,19 @@ class ColumnStore:
             ragged = RaggedSeries()
             self._ragged[tag] = ragged
         return ragged
+
+    def _ensure_metadata_numeric_column(self, tag: str) -> NDArray[np.float64]:
+        """Lazily create a NaN-filled float64 metadata column for `tag`."""
+        col = self._metadata_numeric.get(tag)
+        if col is None:
+            col = np.full(self._capacity, np.nan, dtype=np.float64)
+            self._metadata_numeric[tag] = col
+        return col
+
+    def _ensure_metadata_string_column(self, tag: str) -> list[str | None]:
+        """Lazily create a None-filled metadata string column for `tag`."""
+        col = self._metadata_string.get(tag)
+        if col is None:
+            col: list[str | None] = [None] * self._capacity
+            self._metadata_string[tag] = col
+        return col

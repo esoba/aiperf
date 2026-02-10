@@ -5,10 +5,10 @@ import numpy as np
 from pytest import approx
 
 from aiperf.common.enums import AggregationKind
+from aiperf.metrics.accumulator import _AGGREGATE_FUNCS
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
-from aiperf.post_processors.metrics_accumulator import _AGGREGATE_FUNCS
 from tests.unit.metrics.conftest import create_record
 
 

@@ -19,8 +19,8 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
+from aiperf.metrics.accumulator import MetricsSummary
 from aiperf.plugin.enums import AccumulatorType, StreamExporterType
-from aiperf.post_processors.metrics_accumulator import MetricsSummary
 
 # ---------------------------------------------------------------------------
 # Stub results

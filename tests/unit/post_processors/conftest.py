@@ -42,9 +42,9 @@ from aiperf.common.models.record_models import (
 )
 from aiperf.common.types import MetricTagT
 from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.metrics.accumulator import MetricsAccumulator
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.metrics_accumulator import MetricsAccumulator
 from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
 from tests.unit.conftest import (
     DEFAULT_FIRST_RESPONSE_NS,
@@ -358,9 +358,7 @@ def mock_metric_registry(monkeypatch):
     monkeypatch.setattr(
         "aiperf.post_processors.base_metrics_processor.MetricRegistry", mock_registry
     )
-    monkeypatch.setattr(
-        "aiperf.post_processors.metrics_accumulator.MetricRegistry", mock_registry
-    )
+    monkeypatch.setattr("aiperf.metrics.accumulator.MetricRegistry", mock_registry)
 
     return mock_registry
 

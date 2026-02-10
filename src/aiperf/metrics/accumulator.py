@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -23,10 +23,10 @@ from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import MetricResult
 from aiperf.common.types import MetricTagT, TimeSliceT
 from aiperf.metrics.base_metric import BaseMetric
+from aiperf.metrics.column_store import ColumnStore
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
-from aiperf.post_processors.column_store import ColumnStore
 
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
@@ -91,10 +91,6 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # Session-indexed columnar storage
         self._column_store = ColumnStore(initial_capacity=1024)
 
-        # Sparse record reference for query_time_range() / iter_requests() compat
-        self._records: list[MetricRecordsData | None] = []
-        self._record_count = 0
-
         # Derive functions for DERIVED metrics
         self._derive_funcs: dict[
             MetricTagT, Callable[[MetricResultsDict], MetricValueTypeT]
@@ -137,51 +133,58 @@ class MetricsAccumulator(BaseMetricsProcessor):
     async def process_record(self, record: MetricRecordsData) -> None:
         """Ingest a MetricRecordsData record."""
         idx = record.metadata.session_num
+        meta = record.metadata
 
         # Compute generation_start_ns from wall-clock start + TTFT duration
         ttft_ns = record.metrics.get("time_to_first_token")
         gen_start = (
-            float(record.metadata.request_start_ns + int(ttft_ns))
-            if ttft_ns is not None
-            else None
+            float(meta.request_start_ns + int(ttft_ns)) if ttft_ns is not None else None
         )
 
         self._column_store.ingest(
             idx=idx,
             record_metrics=record.metrics,
-            start_ns=float(record.metadata.request_start_ns),
-            end_ns=float(record.metadata.request_end_ns),
+            start_ns=float(meta.request_start_ns),
+            end_ns=float(meta.request_end_ns),
             generation_start_ns=gen_start,
         )
 
-        # Keep sparse record reference for query_time_range() compat
-        self._ensure_records_capacity(idx)
-        self._records[idx] = record
-        self._record_count += 1
+        # Store per-record metadata in ColumnStore (separate from metrics)
+        self._column_store.ingest_metadata(
+            idx=idx,
+            metadata_numeric={
+                "credit_issued_ns": meta.credit_issued_ns,
+                "request_ack_ns": meta.request_ack_ns,
+                "cancellation_time_ns": meta.cancellation_time_ns,
+                "turn_index": meta.turn_index,
+                "was_cancelled": float(meta.was_cancelled),
+                "has_error": float(record.error is not None),
+            },
+            metadata_string={
+                "worker_id": meta.worker_id,
+                "record_processor_id": meta.record_processor_id,
+                "x_request_id": meta.x_request_id,
+                "x_correlation_id": meta.x_correlation_id,
+                "conversation_id": meta.conversation_id,
+                "benchmark_phase": str(meta.benchmark_phase),
+            },
+        )
 
-    def _ensure_records_capacity(self, idx: int) -> None:
-        """Extend _records list to accommodate session_num idx."""
-        if idx >= len(self._records):
-            self._records.extend([None] * (idx + 1 - len(self._records)))
-
-    def query_time_range(self, start_ns: int, end_ns: int) -> list[MetricRecordsData]:
-        """Return records whose request_start_ns falls within [start_ns, end_ns)."""
+    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
+        """Return a boolean mask where True marks records in [start_ns, end_ns)."""
         n = self._column_store.count
         if n == 0:
-            return []
+            return np.array([], dtype=bool)
         ts = self._column_store.start_ns[:n]
-        mask = ~np.isnan(ts) & (ts >= start_ns) & (ts < end_ns)
-        indices = np.where(mask)[0]
-        return [self._records[i] for i in indices if self._records[i] is not None]
-
-    def iter_requests(self) -> Iterator[MetricRecordsData]:
-        """Iterate over all stored records in session_num order, skipping gaps."""
-        return (r for r in self._records if r is not None)
+        return ~np.isnan(ts) & (ts >= start_ns) & (ts < end_ns)
 
     @property
     def record_count(self) -> int:
         """Number of records ingested so far."""
-        return self._record_count
+        n = self._column_store.count
+        if n == 0:
+            return 0
+        return int(np.count_nonzero(~np.isnan(self._column_store.start_ns[:n])))
 
     def _aggregate_values(self, tag: MetricTagT, values: np.ndarray) -> float:
         """Apply the tag's aggregation function to an array of values."""

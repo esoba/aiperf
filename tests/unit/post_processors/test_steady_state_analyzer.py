@@ -344,6 +344,8 @@ class TestSteadyStateSummarySerialize:
                 mser5_latency_ramp_down_start_ns=900.0,
                 mser5_ttft_ramp_up_end_ns=None,
                 mser5_ttft_ramp_down_start_ns=None,
+                cusum_throughput_ramp_up_end_ns=95.0,
+                cusum_throughput_ramp_down_start_ns=905.0,
             ),
         )
 
@@ -371,6 +373,8 @@ class TestSteadyStateSummarySerialize:
         assert cv["cusum_ramp_up_end_ns"] == 90.0
         assert cv["mser5_latency_ramp_up_end_ns"] == 100.0
         assert cv["mser5_ttft_ramp_up_end_ns"] is None
+        assert cv["cusum_throughput_ramp_up_end_ns"] == 95.0
+        assert cv["cusum_throughput_ramp_down_start_ns"] == 905.0
         assert data["effective_concurrency"]["avg"] == 5.0
         assert data["effective_concurrency"]["p99"] == 8.0
 

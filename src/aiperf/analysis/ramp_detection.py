@@ -192,14 +192,17 @@ def detect_steady_state_window(
     latency: NDArray[np.float64],
     ttft: NDArray[np.float64],
     min_window_pct: float = 10.0,
+    sorted_tput_ts: NDArray[np.float64] | None = None,
+    throughput: NDArray[np.float64] | None = None,
 ) -> tuple[float, float, str]:
-    """Detect steady-state window using CUSUM + MSER-5(latency) + MSER-5(TTFT).
+    """Detect steady-state window using CUSUM + MSER-5 + optional CUSUM(throughput).
 
     Combines concurrency-based CUSUM (load perspective) with metric-based
-    MSER-5 on both latency and TTFT (performance perspective). The effective
+    MSER-5 on both latency and TTFT (performance perspective), and optionally
+    CUSUM on the aggregate throughput curve (output perspective). The effective
     boundary is the most conservative across all signals:
-      ramp_up_end   = max(CUSUM, MSER-5 latency, MSER-5 TTFT)
-      ramp_down_start = min(CUSUM, MSER-5 latency, MSER-5 TTFT)
+      ramp_up_end   = max(CUSUM, MSER-5 latency, MSER-5 TTFT, CUSUM throughput)
+      ramp_down_start = min(CUSUM, MSER-5 latency, MSER-5 TTFT, CUSUM throughput)
 
     Args:
         sorted_ts: Sorted event timestamps from concurrency_sweep().
@@ -209,6 +212,8 @@ def detect_steady_state_window(
         latency: Per-record request_latency values (session-indexed).
         ttft: Per-record time_to_first_token values (session-indexed, may be all-NaN).
         min_window_pct: Minimum window size as % of total duration.
+        sorted_tput_ts: Sorted event timestamps from throughput_sweep() (optional).
+        throughput: Throughput values at each event boundary (optional).
 
     Returns:
         (window_start, window_end, detection_method) tuple.
@@ -251,6 +256,19 @@ def detect_steady_state_window(
         signals_used.append("mser5_ttft")
     if ttft_end is not None:
         ends.append(ttft_end)
+
+    # --- Signal 4: CUSUM on throughput curve ---
+    if (
+        sorted_tput_ts is not None
+        and throughput is not None
+        and len(sorted_tput_ts) > 0
+    ):
+        tput_start, tput_end = cusum_steady_state_window(
+            sorted_tput_ts, throughput, min_window_pct=0.0
+        )
+        starts.append(tput_start)
+        ends.append(tput_end)
+        signals_used.append("cusum_throughput")
 
     # --- Combine: most conservative boundary across all signals ---
     window_start = max(starts)

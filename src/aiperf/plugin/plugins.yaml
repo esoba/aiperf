@@ -557,7 +557,7 @@ accumulator:
       record_types: [gpu_telemetry]
 
   metric_results:
-    class: aiperf.post_processors.metrics_accumulator:MetricsAccumulator
+    class: aiperf.metrics.accumulator:MetricsAccumulator
     description: |
       Numpy-backed metrics accumulator that ingests inference metric records,
       stores per-tag time series with timestamps, and produces summaries with

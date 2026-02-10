@@ -29,10 +29,10 @@ from aiperf.common.models.model_endpoint_info import (
 )
 from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.types import MetricTagT
+from aiperf.metrics.accumulator import _AGGREGATE_FUNCS
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.plugin.enums import EndpointType
-from aiperf.post_processors.metrics_accumulator import _AGGREGATE_FUNCS
 
 
 def _create_test_request_info(model_name: str = "test-model") -> RequestInfo:

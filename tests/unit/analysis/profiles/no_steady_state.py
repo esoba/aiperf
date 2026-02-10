@@ -29,6 +29,9 @@ def generate(rng: np.random.Generator, n: int = 5_000) -> SyntheticBenchmark:
     ends = starts + latency
     ttft = latency * rng.uniform(0.05, 0.15, n)
 
+    generation_start_ns = starts + ttft
+    output_tokens = rng.integers(50, 200, n).astype(np.float64)
+
     return SyntheticBenchmark(
         start_ns=starts,
         end_ns=ends,
@@ -38,4 +41,6 @@ def generate(rng: np.random.Generator, n: int = 5_000) -> SyntheticBenchmark:
         true_ramp_down_start_ns=75 * _NS,
         true_steady_state_mean_latency=65e6,
         profile_name="no_steady_state",
+        generation_start_ns=generation_start_ns,
+        output_tokens=output_tokens,
     )
