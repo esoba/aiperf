@@ -147,8 +147,8 @@ class TestWarmupPhaseTransition:
     The transition should be seamless with no credit loss or duplication.
     """
 
-    def test_warmup_to_profiling_transition_seamless(self, cli: AIPerfCLI):
-        """Test seamless transition from warmup to profiling.
+    def test_warmup_to_profiling_transition_ordering(self, cli: AIPerfCLI):
+        """Test that warmup credits are sent before profiling credits.
 
         Scenario:
         - Warmup phase completes
@@ -356,4 +356,178 @@ class TestWarmupInteractions:
         profiling_errors = sum(1 for r in profiling_returns if r.error is not None)
         assert profiling_errors > 0, (
             "Profiling should have some errors with 50% cancellation rate"
+        )
+
+
+@pytest.mark.component_integration
+class TestWarmupSeamless:
+    """Tests for seamless warmup-to-profiling transition.
+
+    With --warmup-seamless, profiling starts immediately after warmup finishes
+    sending credits, without waiting for all warmup responses to return.
+    This eliminates the idle gap between phases that causes TTFT spikes.
+    """
+
+    def test_warmup_seamless_completes(self, cli: AIPerfCLI):
+        """Test seamless warmup with request count.
+
+        Scenario:
+        - Warmup: 20 requests, seamless=True
+        - Profiling: 30 requests
+        - Verify both phases complete with correct credit counts
+        """
+        cmd = f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --streaming \
+                --request-count 30 \
+                --request-rate 300 \
+                --request-rate-mode constant \
+                --osl 5 \
+                --extra-inputs ignore_eos:true \
+                --ui {defaults.ui} \
+                --warmup-request-count 20 \
+                --warmup-seamless
+        """
+
+        result = cli.run_sync(cmd, timeout=30.0)
+
+        assert result.request_count == 30
+
+        runner = result.runner_result
+        credit_payloads = [
+            p for p in runner.sent_payloads if isinstance(p.payload, Credit)
+        ]
+
+        warmup_credits = [
+            p for p in credit_payloads if p.payload.phase == CreditPhase.WARMUP
+        ]
+        profiling_credits = [
+            p for p in credit_payloads if p.payload.phase == CreditPhase.PROFILING
+        ]
+
+        assert len(warmup_credits) == 20
+        assert len(profiling_credits) == 30
+
+        # Verify both phases balanced (all credits returned)
+        return_payloads = [
+            p for p in runner.sent_payloads if isinstance(p.payload, CreditReturn)
+        ]
+        warmup_returns = [
+            p for p in return_payloads if p.payload.credit.phase == CreditPhase.WARMUP
+        ]
+        profiling_returns = [
+            p
+            for p in return_payloads
+            if p.payload.credit.phase == CreditPhase.PROFILING
+        ]
+        assert len(warmup_returns) == 20
+        assert len(profiling_returns) == 30
+
+    def test_warmup_seamless_phases_overlap(self, cli: AIPerfCLI):
+        """Test that profiling credits overlap with warmup returns in seamless mode.
+
+        Scenario:
+        - Warmup: 20 requests with longer OSL (slower returns)
+        - Profiling: 20 requests
+        - First profiling credit should be issued before last warmup return
+        """
+        cmd = f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --streaming \
+                --request-count 20 \
+                --request-rate 300 \
+                --request-rate-mode constant \
+                --osl 20 \
+                --extra-inputs ignore_eos:true \
+                --ui {defaults.ui} \
+                --warmup-request-count 20 \
+                --warmup-seamless
+        """
+
+        result = cli.run_sync(cmd, timeout=30.0)
+
+        runner = result.runner_result
+
+        credit_payloads = [
+            p for p in runner.sent_payloads if isinstance(p.payload, Credit)
+        ]
+        return_payloads = [
+            p for p in runner.sent_payloads if isinstance(p.payload, CreditReturn)
+        ]
+
+        # First profiling credit timestamp
+        profiling_credits = sorted(
+            [p for p in credit_payloads if p.payload.phase == CreditPhase.PROFILING],
+            key=lambda p: p.timestamp_ns,
+        )
+        first_profiling_ts = profiling_credits[0].timestamp_ns
+
+        # Last warmup return timestamp
+        warmup_returns = sorted(
+            [
+                p
+                for p in return_payloads
+                if p.payload.credit.phase == CreditPhase.WARMUP
+            ],
+            key=lambda p: p.timestamp_ns,
+        )
+        last_warmup_return_ts = warmup_returns[-1].timestamp_ns
+
+        # In seamless mode, profiling should start before all warmup returns complete
+        assert first_profiling_ts < last_warmup_return_ts, (
+            "Seamless mode: profiling should start before all warmup returns arrive"
+        )
+
+    def test_warmup_seamless_with_multi_turn(self, cli: AIPerfCLI):
+        """Test seamless warmup with multi-turn conversations.
+
+        Scenario:
+        - Warmup: 5 sessions x 3 turns = 15 credits, seamless
+        - Profiling: 8 sessions x 3 turns = 24 credits
+        - Verify session isolation between phases
+        """
+        cmd = f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --streaming \
+                --num-sessions 8 \
+                --session-turns-mean 3 \
+                --session-turns-stddev 0 \
+                --request-rate 250 \
+                --request-rate-mode constant \
+                --osl 5 \
+                --extra-inputs ignore_eos:true \
+                --ui {defaults.ui} \
+                --num-warmup-sessions 5 \
+                --warmup-seamless
+        """
+
+        result = cli.run_sync(cmd, timeout=30.0)
+
+        assert result.request_count == 24
+
+        runner = result.runner_result
+        credit_payloads = [
+            p for p in runner.sent_payloads if isinstance(p.payload, Credit)
+        ]
+
+        warmup_credits = [
+            p.payload for p in credit_payloads if p.payload.phase == CreditPhase.WARMUP
+        ]
+        profiling_credits = [
+            p.payload
+            for p in credit_payloads
+            if p.payload.phase == CreditPhase.PROFILING
+        ]
+
+        assert len(warmup_credits) == 15
+        assert len(profiling_credits) == 24
+
+        # Verify session isolation
+        warmup_session_ids = {c.x_correlation_id for c in warmup_credits}
+        profiling_session_ids = {c.x_correlation_id for c in profiling_credits}
+        assert warmup_session_ids.isdisjoint(profiling_session_ids), (
+            "Warmup and profiling should use different sessions"
         )

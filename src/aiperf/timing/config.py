@@ -228,7 +228,7 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
         request_rate=request_rate,
         arrival_pattern=arrival_pattern,
         arrival_smoothness=loadgen.arrival_smoothness,
-        seamless=False,
+        seamless=loadgen.warmup_seamless,
         grace_period_sec=loadgen.warmup_grace_period if loadgen.warmup_grace_period is not None else float('inf'),
         concurrency_ramp_duration_sec=loadgen.warmup_concurrency_ramp_duration or loadgen.concurrency_ramp_duration,
         prefill_concurrency_ramp_duration_sec=loadgen.warmup_prefill_concurrency_ramp_duration or loadgen.prefill_concurrency_ramp_duration,

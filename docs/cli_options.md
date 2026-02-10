@@ -672,6 +672,11 @@ The arrival pattern to use for the warmup phase. If not set, it will use the `--
 The grace period in seconds to wait for responses after warmup phase ends. Only applies when warmup is enabled. Responses received within this period are included in warmup completion. If not set, waits indefinitely for all warmup responses.
 <br>_Constraints: ≥ 0_
 
+#### `--warmup-seamless`
+
+Enable seamless warmup-to-profiling transition. When enabled, profiling starts immediately after warmup finishes sending, without waiting for all warmup responses to return. This eliminates the idle gap between phases that can cause TTFT spikes on the first profiling requests.
+<br>_Flag (no value required)_
+
 #### `--request-cancellation-rate` `<float>`
 
 Percentage (0-100) of requests to cancel for testing cancellation handling. Cancelled requests are sent normally but aborted after `--request-cancellation-delay` seconds. Useful for testing graceful degradation and resource cleanup.

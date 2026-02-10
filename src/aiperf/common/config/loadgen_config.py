@@ -242,6 +242,20 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = None
 
+    warmup_seamless: Annotated[
+        bool,
+        Field(
+            description="Enable seamless warmup-to-profiling transition. "
+            "When enabled, profiling starts immediately after warmup finishes sending, "
+            "without waiting for all warmup responses to return. "
+            "This eliminates the idle gap between phases that can cause TTFT spikes on the first profiling requests.",
+        ),
+        CLIParameter(
+            name=("--warmup-seamless",),
+            group=_CLI_GROUP,
+        ),
+    ] = False
+
     # TODO: We should add a warning for values below 1.0, to ensure the user is aware that the value is a percentage.
     request_cancellation_rate: Annotated[
         float | None,
