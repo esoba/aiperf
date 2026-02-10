@@ -326,5 +326,4 @@ When choosing between HTTP and gRPC for V2 inference:
 - [Source: grpc_transport.py](../../src/aiperf/transports/grpc/grpc_transport.py) - Generic transport implementation
 - [Source: grpc_client.py](../../src/aiperf/transports/grpc/grpc_client.py) - Proto-free gRPC client
 - [Source: kserve_v2_serializers.py](../../src/aiperf/transports/grpc/kserve_v2_serializers.py) - KServe V2 serializer
-- [Source: kserve_v2_serializers.py](../../src/aiperf/transports/grpc/kserve_v2_serializers.py) - V2 dict/protobuf conversion
 - [Source: status_mapping.py](../../src/aiperf/transports/grpc/status_mapping.py) - gRPC to HTTP status mapping

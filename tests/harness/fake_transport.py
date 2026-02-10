@@ -487,7 +487,8 @@ class FakeTransport(BaseTransport):
 
     async def _do_v2_embedding(self, inp: HandlerInput) -> RequestRecord:
         """Handle KServe V2 embedding requests."""
-        texts = [str(d) for d in inp.req.inputs[0].get("data", [])]
+        first_input = inp.req.inputs[0] if inp.req.inputs else {}
+        texts = [str(d) for d in first_input.get("data", [])]
         await _wait_for_processing(
             self.config.embedding_base_latency,
             self.config.embedding_per_input_latency,

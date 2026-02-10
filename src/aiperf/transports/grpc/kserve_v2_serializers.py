@@ -201,8 +201,9 @@ def _extract_raw_tensor_data(
 
     num_elements = 1
     for dim in shape:
-        if dim > 0:
-            num_elements *= dim
+        num_elements *= dim
+    if num_elements <= 0:
+        return []
 
     fmt_map: dict[str, str] = {
         "BOOL": "?",

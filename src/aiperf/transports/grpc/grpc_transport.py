@@ -115,7 +115,8 @@ class GrpcChannelLeaseManager(AIPerfLoggerMixin):
         leases = list(self._leases.values())
         self._leases.clear()
         for lease in leases:
-            await lease.close()
+            with contextlib.suppress(Exception):
+                await lease.close()
 
 
 class GrpcTransport(BaseTransport):
@@ -259,7 +260,8 @@ class GrpcTransport(BaseTransport):
         clients = list(self._channel_pool.values())
         self._channel_pool.clear()
         for client in clients:
-            await client.close()
+            with contextlib.suppress(Exception):
+                await client.close()
 
     def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """gRPC uses metadata, not HTTP headers. Returns empty dict."""

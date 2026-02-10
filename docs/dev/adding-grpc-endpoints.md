@@ -459,6 +459,5 @@ When adding a new endpoint reusing an existing protocol (Strategy A):
 - [Plugin System](../plugins/plugin-system.md) -- Plugin registration details
 - [Source: GrpcTransport](../../src/aiperf/transports/grpc/grpc_transport.py) -- Generic transport implementation
 - [Source: GenericGrpcClient](../../src/aiperf/transports/grpc/grpc_client.py) -- Proto-free gRPC client
-- [Source: KServeV2GrpcSerializer](../../src/aiperf/transports/grpc/kserve_v2_serializers.py) -- Reference serializer implementation
-- [Source: KServeV2GrpcSerializer](../../src/aiperf/transports/grpc/kserve_v2_serializers.py) -- V2 dict/protobuf conversion
+- [Source: KServeV2GrpcSerializer](../../src/aiperf/transports/grpc/kserve_v2_serializers.py) -- Reference serializer and V2 dict/protobuf conversion
 - [Source: InferenceClient](../../src/aiperf/workers/inference_client.py) -- Transport/endpoint wiring

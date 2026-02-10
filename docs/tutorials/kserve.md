@@ -9,7 +9,7 @@ AIPerf provides first-class support for benchmarking [KServe](https://kserve.git
 
 ## Endpoint Types
 
-AIPerf provides seven KServe-specific endpoint types:
+AIPerf provides nine KServe-specific endpoint types:
 
 | Endpoint Type | Protocol | URL Path | Streaming | Token Metrics | Use Case |
 |---|---|---|---|---|---|
@@ -17,6 +17,8 @@ AIPerf provides seven KServe-specific endpoint types:
 | `kserve_completions` | OpenAI-compatible | `/openai/v1/completions` | Yes | Yes | Text completions via vLLM/TRT-LLM on KServe |
 | `kserve_embeddings` | OpenAI-compatible | `/openai/v1/embeddings` | No | No | Embedding models on KServe |
 | `kserve_v2_infer` | V2 Open Inference Protocol | `/v2/models/{model_name}/infer` | Yes (gRPC) | Yes | Triton/TRT-LLM tensor inference |
+| `kserve_v2_vlm` | V2 Open Inference Protocol | `/v2/models/{model_name}/infer` | Yes (gRPC) | Yes | Vision-language models on Triton |
+| `kserve_v2_images` | V2 Open Inference Protocol | `/v2/models/{model_name}/infer` | No | No | Image generation models (Stable Diffusion, SDXL, Flux) on Triton |
 | `kserve_v2_embeddings` | V2 Open Inference Protocol | `/v2/models/{model_name}/infer` | No | No | Triton/TRT-LLM embedding models |
 | `kserve_v2_rankings` | V2 Open Inference Protocol | `/v2/models/{model_name}/infer` | No | No | Triton/TRT-LLM reranking models |
 | `kserve_v1_predict` | V1 TensorFlow Serving | `/v1/models/{model_name}:predict` | No | No | Legacy TF Serving-style models |

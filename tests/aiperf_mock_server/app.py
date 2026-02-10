@@ -811,6 +811,7 @@ async def v2_infer(model_name: str, request: Request) -> ORJSONResponse:
 
     body = await request.body()
     raw = orjson.loads(body)
+    raw.pop("model", None)
     req = KServeV2InferRequest(model=model_name, **raw)
     init_model_config(req.model)
 
