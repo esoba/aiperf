@@ -207,12 +207,8 @@ class TestGenericGrpcClientWaitForReady:
                 grpc.ChannelConnectivity.READY,
             ]
         )
-        # First call with try_to_connect=True, then without
-        call_count = 0
 
         def get_state(try_to_connect: bool = False) -> grpc.ChannelConnectivity:
-            nonlocal call_count
-            call_count += 1
             return next(states)
 
         mock_channel.get_state = get_state

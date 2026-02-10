@@ -304,6 +304,28 @@ class TestKServeV2RankingsParseResponse:
 
         assert endpoint.parse_response(response) is None
 
+    def test_parse_response_non_numeric_scores_skipped(self, endpoint, caplog):
+        """Test that non-numeric scores are skipped with a warning."""
+        response = create_mock_response(
+            json_data={
+                "outputs": [
+                    {
+                        "name": "scores",
+                        "shape": [3],
+                        "datatype": "BYTES",
+                        "data": [0.9, "bad", 0.3],
+                    }
+                ]
+            }
+        )
+
+        with caplog.at_level(logging.WARNING):
+            parsed = endpoint.parse_response(response)
+
+        assert parsed is not None
+        assert len(parsed.data.rankings) == 2
+        assert "Skipping non-numeric score" in caplog.text
+
     def test_parse_response_empty_data(self, endpoint):
         """Test parsing response with empty data array."""
         response = create_mock_response(

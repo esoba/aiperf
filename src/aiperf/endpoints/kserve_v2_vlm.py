@@ -66,7 +66,6 @@ class KServeV2VLMEndpoint(BaseEndpoint):
             }
         ]
 
-        # Extract image data as BYTES tensor
         image_data = [
             content for image in turn.images for content in image.contents if content
         ]

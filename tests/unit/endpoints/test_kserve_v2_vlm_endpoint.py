@@ -236,6 +236,23 @@ class TestKServeV2VLMParseResponse:
 
         assert parsed is None
 
+    def test_parse_response_empty_data(self, endpoint):
+        """Test parsing response with empty data array returns None."""
+        response = create_mock_response(
+            json_data={
+                "outputs": [
+                    {
+                        "name": "text_output",
+                        "shape": [0],
+                        "datatype": "BYTES",
+                        "data": [],
+                    }
+                ]
+            }
+        )
+
+        assert endpoint.parse_response(response) is None
+
     def test_parse_response_no_outputs(self, endpoint):
         """Test parsing response with no outputs field returns None."""
         response = create_mock_response(json_data={"id": "123"})
