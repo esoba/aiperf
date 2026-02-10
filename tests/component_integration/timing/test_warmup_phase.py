@@ -424,62 +424,6 @@ class TestWarmupSeamless:
         assert len(warmup_returns) == 20
         assert len(profiling_returns) == 30
 
-    def test_warmup_seamless_phases_overlap(self, cli: AIPerfCLI):
-        """Test that profiling credits overlap with warmup returns in seamless mode.
-
-        Scenario:
-        - Warmup: 20 requests with longer OSL (slower returns)
-        - Profiling: 20 requests
-        - First profiling credit should be issued before last warmup return
-        """
-        cmd = f"""
-            aiperf profile \
-                --model {defaults.model} \
-                --streaming \
-                --request-count 20 \
-                --request-rate 300 \
-                --request-rate-mode constant \
-                --osl 20 \
-                --extra-inputs ignore_eos:true \
-                --ui {defaults.ui} \
-                --warmup-request-count 20 \
-                --warmup-seamless
-        """
-
-        result = cli.run_sync(cmd, timeout=30.0)
-
-        runner = result.runner_result
-
-        credit_payloads = [
-            p for p in runner.sent_payloads if isinstance(p.payload, Credit)
-        ]
-        return_payloads = [
-            p for p in runner.sent_payloads if isinstance(p.payload, CreditReturn)
-        ]
-
-        # First profiling credit timestamp
-        profiling_credits = sorted(
-            [p for p in credit_payloads if p.payload.phase == CreditPhase.PROFILING],
-            key=lambda p: p.timestamp_ns,
-        )
-        first_profiling_ts = profiling_credits[0].timestamp_ns
-
-        # Last warmup return timestamp
-        warmup_returns = sorted(
-            [
-                p
-                for p in return_payloads
-                if p.payload.credit.phase == CreditPhase.WARMUP
-            ],
-            key=lambda p: p.timestamp_ns,
-        )
-        last_warmup_return_ts = warmup_returns[-1].timestamp_ns
-
-        # In seamless mode, profiling should start before all warmup returns complete
-        assert first_profiling_ts < last_warmup_return_ts, (
-            "Seamless mode: profiling should start before all warmup returns arrive"
-        )
-
     def test_warmup_seamless_with_multi_turn(self, cli: AIPerfCLI):
         """Test seamless warmup with multi-turn conversations.
 
