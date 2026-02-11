@@ -505,8 +505,11 @@ class GrpcTransport(BaseTransport):
         Returns:
             True if channel is ready, False if send timed out (record populated with error).
         """
+        endpoint_timeout = self.model_endpoint.endpoint.timeout
         send_timeout = min(
-            self.model_endpoint.endpoint.timeout or _CHANNEL_READY_TIMEOUT_S,
+            endpoint_timeout
+            if endpoint_timeout is not None
+            else _CHANNEL_READY_TIMEOUT_S,
             _CHANNEL_READY_TIMEOUT_S,
         )
         try:
