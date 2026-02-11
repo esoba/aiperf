@@ -250,7 +250,7 @@ Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALU
 
 #### `--service-tier-dist` `<str>`
 
-Distribution of service_tier values for OpenAI API requests. Format: `tier:prob;tier:prob` (percentages 0-100 that must sum to 100). Example: `default:50;flex:30;priority:20`. Valid tiers: auto, default, flex, scale, priority.
+Distribution of service_tier values for OpenAI API requests. Format: `tier:prob;tier:prob` (percentages 0-100 that must sum to 100). Example: `default:50;flex:30;priority:20`. Common tiers: auto, default, flex, scale, priority.
 
 ### Audio Input
 

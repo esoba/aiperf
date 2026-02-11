@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
+
+if TYPE_CHECKING:
+    from aiperf.common.models.service_tier_distribution import ServiceTierDistribution
 
 from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
@@ -358,7 +361,7 @@ class InputConfig(BaseConfig):
             description="Distribution of service_tier values for OpenAI API requests. "
             "Format: `tier:prob;tier:prob` (percentages 0-100 that must sum to 100). "
             "Example: `default:50;flex:30;priority:20`. "
-            "Valid tiers: auto, default, flex, scale, priority.",
+            "Common tiers: auto, default, flex, scale, priority.",
         ),
         CLIParameter(
             name=("--service-tier-dist",),
@@ -374,7 +377,7 @@ class InputConfig(BaseConfig):
     synthesis: SynthesisConfig = SynthesisConfig()
     conversation: ConversationConfig = ConversationConfig()
 
-    def get_service_tier_distribution(self):
+    def get_service_tier_distribution(self) -> "ServiceTierDistribution | None":
         """Get service tier distribution object, returning None if not specified."""
         if self.service_tier_distribution is not None:
             from aiperf.common.models.service_tier_distribution import (

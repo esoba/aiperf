@@ -87,7 +87,7 @@ class ServiceTierDistribution:
         self._cumulative_probs = self._compute_cumulative_probabilities()
 
         logger.debug(
-            f"Created service tier distribution with {len(self._entries)} entries: {self}"
+            lambda: f"Created service tier distribution with {len(self._entries)} entries: {self}"
         )
 
     def _compute_cumulative_probabilities(self) -> np.ndarray:

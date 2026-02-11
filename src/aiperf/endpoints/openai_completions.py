@@ -91,7 +91,7 @@ class CompletionsEndpoint(BaseEndpoint):
 
         if data or usage:
             metadata = {}
-            if service_tier := json_obj.get("service_tier"):
+            if (service_tier := json_obj.get("service_tier")) is not None:
                 metadata["service_tier"] = service_tier
             return ParsedResponse(
                 perf_ns=response.perf_ns, data=data, usage=usage, metadata=metadata
