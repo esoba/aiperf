@@ -188,6 +188,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Initialized when DatasetConfiguredNotification is received via factory
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
+        self._engine_ready = asyncio.Event()
 
         # Only send FirstToken messages when prefill concurrency limiting is active.
         # Detecting first token requires parsing each SSE chunk, so skip this overhead
@@ -209,8 +210,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
-        """Send WorkerReady to announce presence."""
+        """Send WorkerReady to announce presence, then configure transport."""
         await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        # Load in-engine model after registration (no-op for HTTP transports).
+        # Credits are gated on _engine_ready so they wait until loading completes.
+        await self.inference_client.configure()
+        self._engine_ready.set()
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
@@ -375,6 +380,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         For tasks cancelled before they start, the done callback handles the return.
         """
         try:
+            await self._engine_ready.wait()
             if not self.inference_client:
                 raise NotInitializedError("Inference server client not initialized.")
             await self._process_credit(credit_context)

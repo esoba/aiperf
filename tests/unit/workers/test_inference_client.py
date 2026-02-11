@@ -200,6 +200,13 @@ class TestInferenceClient:
         assert request_info.endpoint_params["timeout"] == "30"
 
     @pytest.mark.asyncio
+    async def test_configure_delegates_to_transport(self, inference_client):
+        """Test that configure() delegates to transport.configure()."""
+        inference_client.transport.configure = AsyncMock()
+        await inference_client.configure()
+        inference_client.transport.configure.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_send_request_calls_transport(
         self,
         inference_client,

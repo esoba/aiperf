@@ -152,6 +152,22 @@ class InputConfig(BaseConfig):
 
         return self
 
+    engine_params: Annotated[
+        Any,
+        Field(
+            description="Engine-specific parameters for in-engine transports (vllm://, sglang://, trtllm://). "
+            "Specify as `key:value` pairs (e.g., `--engine-params gpu_memory_utilization:0.8 tensor_parallel_size:2`). "
+            "These parameters are passed to the engine constructor (e.g., vLLM's LLM class) and are NOT included "
+            "in the request payload. Use --extra-inputs for request payload parameters instead.",
+        ),
+        CLIParameter(
+            name=("--engine-params",),
+            consume_multiple=True,
+            group=_CLI_GROUP,
+        ),
+        BeforeValidator(parse_str_or_dict_as_tuple_list),
+    ] = InputDefaults.ENGINE_PARAMS
+
     extra: Annotated[
         Any,
         Field(

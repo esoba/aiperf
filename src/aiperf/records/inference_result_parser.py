@@ -19,6 +19,7 @@ from aiperf.common.models.record_models import ReasoningResponseData, TokenCount
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
+from aiperf.workers.inference_client import resolve_in_engine_endpoint
 
 
 # TODO: Should we create non-tokenizer based parsers?
@@ -40,6 +41,7 @@ class InferenceResultParser(CommunicationMixin):
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
             user_config
         )
+        resolve_in_engine_endpoint(self.model_endpoint)
         EndpointClass = plugins.get_class(
             PluginType.ENDPOINT, self.model_endpoint.endpoint.type
         )

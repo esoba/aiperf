@@ -126,7 +126,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br/>_Choices: [`chat`, `vllm_generate`, `sglang_generate`, `trtllm_generate`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
 <br/>_Default: `chat`_
 
 #### `--streaming`
@@ -158,7 +158,7 @@ API authentication key for the endpoint. When provided, automatically included i
 #### `--transport`, `--transport-type` `<str>`
 
 Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` → `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
-<br/>_Choices: [`http`]_
+<br/>_Choices: [`http`, `vllm`, `sglang`, `trtllm`]_
 
 #### `--use-legacy-max-tokens`
 
@@ -188,6 +188,11 @@ For video generation endpoints, download the video content after generation comp
 <br/>_Flag (no value required)_
 
 ### Input
+
+#### `--engine-params` `<list>`
+
+Engine-specific parameters for in-engine transports (vllm://, sglang://, trtllm://). Specify as `key:value` pairs (e.g., `--engine-params gpu_memory_utilization:0.8 tensor_parallel_size:2`). These parameters are passed to the engine constructor (e.g., vLLM's LLM class) and are NOT included in the request payload. Use --extra-inputs for request payload parameters instead.
+<br>_Default: `[]`_
 
 #### `--extra-inputs` `<list>`
 

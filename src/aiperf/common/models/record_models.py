@@ -335,6 +335,39 @@ class BinaryResponse:
 
 
 @dataclass(slots=True)
+class InEngineResponse:
+    """Direct response from in-engine inference -- no JSON round-trip."""
+
+    # Reject extra fields so Pydantic's union discrimination (e.g. in
+    # RequestRecord.responses) doesn't match the wrong dataclass type.
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    perf_ns: int
+    """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
+
+    text: str
+    """Generated text from the engine."""
+
+    input_tokens: int
+    """Number of prompt/input tokens."""
+
+    output_tokens: int
+    """Number of completion/output tokens."""
+
+    finish_reason: str = "stop"
+    """Engine finish reason."""
+
+    def get_raw(self) -> Any | None:
+        return self.text
+
+    def get_text(self) -> str | None:
+        return self.text
+
+    def get_json(self) -> JsonObject | None:
+        return None
+
+
+@dataclass(slots=True)
 class SSEMessage:
     """Individual SSE message from an SSE stream. Delimited by \\n\\n.
 
@@ -575,7 +608,9 @@ class RequestRecord(AIPerfBaseModel):
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
+    responses: SerializeAsAny[
+        list[SSEMessage | TextResponse | BinaryResponse | InEngineResponse]
+    ] = Field(
         default_factory=list,
         description="The raw responses received from the request.",
     )
@@ -1031,7 +1066,9 @@ class RawRecordInfo(AIPerfBaseModel):
         default=None,
         description="The headers of the response.",
     )
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
+    responses: SerializeAsAny[
+        list[SSEMessage | TextResponse | BinaryResponse | InEngineResponse]
+    ] = Field(
         ...,
         description="The raw responses received from the request.",
     )

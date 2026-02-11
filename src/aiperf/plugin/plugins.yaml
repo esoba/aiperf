@@ -205,6 +205,42 @@ endpoint:
       supports_videos: true
       metrics_title: LLM Metrics
 
+  vllm_generate:
+    class: aiperf.endpoints.engine_generate:VLLMGenerateEndpoint
+    description: |
+      vLLM direct-generate endpoint for in-engine inference.
+      Builds native vllm.SamplingParams and bypasses OpenAI format serialization.
+    metadata:
+      endpoint_path: null
+      supports_streaming: false
+      produces_tokens: true
+      tokenizes_input: true
+      metrics_title: LLM Metrics
+
+  sglang_generate:
+    class: aiperf.endpoints.engine_generate:SGLangGenerateEndpoint
+    description: |
+      SGLang direct-generate endpoint for in-engine inference.
+      Builds SGLang-native sampling params and bypasses OpenAI format serialization.
+    metadata:
+      endpoint_path: null
+      supports_streaming: false
+      produces_tokens: true
+      tokenizes_input: true
+      metrics_title: LLM Metrics
+
+  trtllm_generate:
+    class: aiperf.endpoints.engine_generate:TRTLLMGenerateEndpoint
+    description: |
+      TensorRT-LLM direct-generate endpoint for in-engine inference.
+      Builds native tensorrt_llm.SamplingParams and bypasses OpenAI format serialization.
+    metadata:
+      endpoint_path: null
+      supports_streaming: false
+      produces_tokens: true
+      tokenizes_input: true
+      metrics_title: LLM Metrics
+
   cohere_rankings:
     class: aiperf.endpoints.cohere_rankings:CohereRankingsEndpoint
     description: |
@@ -391,6 +427,39 @@ transport:
     metadata:
       transport_type: http
       url_schemes: [http, https]
+
+  vllm:
+    class: aiperf.transports.in_engine.vllm_transport:VLLMTransport
+    description: |
+      vLLM in-engine transport for offline inference benchmarking.
+      Uses vLLM's Python LLM API to run inference directly without an HTTP server.
+      Measures raw engine throughput by bypassing network overhead entirely.
+      Supports PagedAttention, tensor parallelism, and continuous batching.
+    metadata:
+      transport_type: vllm
+      url_schemes: [vllm]
+
+  sglang:
+    class: aiperf.transports.in_engine.sglang_transport:SGLangTransport
+    description: |
+      SGLang in-engine transport for offline inference benchmarking.
+      Uses SGLang's Engine class for direct inference without an HTTP server.
+      Measures raw engine throughput with RadixAttention prefix caching
+      and zero-overhead batch scheduling.
+    metadata:
+      transport_type: sglang
+      url_schemes: [sglang]
+
+  trtllm:
+    class: aiperf.transports.in_engine.trtllm_transport:TRTLLMTransport
+    description: |
+      TensorRT-LLM in-engine transport for offline inference benchmarking.
+      Uses TRT-LLM's Python LLM API with PyTorch backend for direct inference.
+      Measures raw engine throughput with inflight batching and
+      MAX_UTILIZATION scheduling.
+    metadata:
+      transport_type: trtllm
+      url_schemes: [trtllm]
 
 # =============================================================================
 # Dataset Composers

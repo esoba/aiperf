@@ -52,6 +52,7 @@ class EndpointDefaults:
 @dataclass(frozen=True)
 class InputDefaults:
     BATCH_SIZE = 1
+    ENGINE_PARAMS = []
     EXTRA = []
     HEADERS = []
     FILE = None

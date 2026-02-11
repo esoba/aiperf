@@ -17,8 +17,42 @@ from aiperf.common.models import (
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
+# Maps in-engine transport names to their corresponding endpoint types.
+# Used to auto-select the engine-specific generate endpoint.
+_IN_ENGINE_ENDPOINTS: dict[str, str] = {
+    "vllm": "vllm_generate",
+    "sglang": "sglang_generate",
+    "trtllm": "trtllm_generate",
+}
+
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
+
+
+def resolve_in_engine_endpoint(model_endpoint: ModelEndpointInfo) -> None:
+    """Auto-detect in-engine transport and switch to the engine-specific endpoint.
+
+    For in-engine transports (vllm://, sglang://, trtllm://), this:
+    1. Detects transport type from URL scheme if not already set
+    2. Switches endpoint type from generic chat/completions to engine-specific
+    3. Enables use_server_token_count (engine token counts are exact)
+
+    Mutates ``model_endpoint`` in place. Safe to call multiple times.
+
+    Args:
+        model_endpoint: Model endpoint info to resolve
+    """
+    if not model_endpoint.transport:
+        model_endpoint.transport = detect_transport_from_url(
+            model_endpoint.endpoint.base_url,
+        )
+
+    transport_name = str(model_endpoint.transport)
+    if transport_name in _IN_ENGINE_ENDPOINTS:
+        endpoint_type = str(model_endpoint.endpoint.type)
+        if endpoint_type in ("chat", "completions"):
+            model_endpoint.endpoint.type = _IN_ENGINE_ENDPOINTS[transport_name]
+        model_endpoint.endpoint.use_server_token_count = True
 
 
 def detect_transport_from_url(url: str) -> str:
@@ -57,11 +91,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         self.model_endpoint = model_endpoint
         self.service_id = service_id
 
-        # Detect and set transport type if not explicitly set
-        if not model_endpoint.transport:
-            model_endpoint.transport = detect_transport_from_url(
-                model_endpoint.endpoint.base_url,
-            )
+        resolve_in_engine_endpoint(model_endpoint)
 
         # Create endpoint and transport instances
         EndpointClass = plugins.get_class(
@@ -73,6 +103,10 @@ class InferenceClient(AIPerfLifecycleMixin):
         )
         self.transport = TransportClass(model_endpoint=self.model_endpoint)
         self.attach_child_lifecycle(self.transport)
+
+    async def configure(self) -> None:
+        """Prepare transport for profiling (e.g., load in-engine model)."""
+        await self.transport.configure()
 
     async def _send_request_to_transport(
         self,

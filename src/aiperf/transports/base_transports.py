@@ -83,6 +83,12 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         """
         ...
 
+    async def configure(self) -> None:
+        """Optional heavy initialization called before profiling begins.
+
+        Override in subclasses that need deferred setup (e.g., model loading).
+        """
+
     def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Get protocol-specific headers (e.g., Content-Type, Accept).
 

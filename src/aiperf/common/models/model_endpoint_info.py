@@ -94,6 +94,11 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.TIMEOUT,
         description="The timeout in seconds for each request to the endpoint.",
     )
+    engine_params: list[tuple[str, Any]] = Field(
+        default=[],
+        description="Engine-specific parameters for in-engine transports (e.g., gpu_memory_utilization, tensor_parallel_size). "
+        "Passed to the engine constructor, NOT included in request payloads.",
+    )
     extra: list[tuple[str, Any]] = Field(
         default=[],
         description="Additional inputs to include with every request. "
@@ -149,6 +154,7 @@ class EndpointInfo(AIPerfBaseModel):
             streaming=user_config.endpoint.streaming,
             base_urls=user_config.endpoint.urls,
             headers=user_config.input.headers,
+            engine_params=user_config.input.engine_params,
             extra=user_config.input.extra,
             timeout=user_config.endpoint.timeout_seconds,
             api_key=user_config.endpoint.api_key,
