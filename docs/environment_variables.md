@@ -21,6 +21,18 @@ export AIPERF_ZMQ_RCVTIMEO=600000
 > Environment variable names, default values, and definitions are subject to change.
 > These settings may be modified, renamed, or removed in future releases.
 
+## CONTENTSERVER
+
+Content server configuration for serving multimodal files over HTTP. Controls whether the content server is enabled, which host/port to bind to, the directory to serve files from, and request tracking limits.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_CONTENT_SERVER_ENABLED` | `False` | — | Enable the content server for serving multimodal files over HTTP. When enabled, files in the content directory are served via HTTP URLs that can be referenced in LLM API requests. |
+| `AIPERF_CONTENT_SERVER_HOST` | `'0.0.0.0'` | — | Host to bind the content server to |
+| `AIPERF_CONTENT_SERVER_PORT` | `8090` | ≥ 1, ≤ 65535 | Port for the content server HTTP endpoints |
+| `AIPERF_CONTENT_SERVER_CONTENT_DIR` | `''` | — | Directory containing files to serve. If empty, a temporary directory is created automatically. |
+| `AIPERF_CONTENT_SERVER_MAX_TRACKED_RECORDS` | `10000` | ≥ 100, ≤ 1000000 | Maximum number of request records to keep in the tracking buffer |
+
 ## DATASET
 
 Dataset loading and configuration. Controls timeouts and behavior for dataset loading operations, as well as memory-mapped dataset storage settings.

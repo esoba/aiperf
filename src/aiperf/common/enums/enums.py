@@ -203,6 +203,7 @@ class MessageType(CaseInsensitiveStrEnum):
     COMMAND = "command"
     COMMAND_RESPONSE = "command_response"
     CONNECTION_PROBE = "connection_probe"
+    CONTENT_SERVER_STATUS = "content_server_status"
     CONVERSATION_REQUEST = "conversation_request"
     CONVERSATION_RESPONSE = "conversation_response"
     CONVERSATION_TURN_REQUEST = "conversation_turn_request"

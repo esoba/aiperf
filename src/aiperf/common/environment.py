@@ -7,6 +7,7 @@ Provides a hierarchical, type-safe configuration system using Pydantic BaseSetti
 All settings can be configured via environment variables with the AIPERF_ prefix.
 
 Structure:
+    Environment.CONTENT_SERVER.* - Content server for multimodal file serving
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
     Environment.GPU.*            - GPU telemetry collection
@@ -49,6 +50,46 @@ from aiperf.plugin.enums import ServiceType
 _logger = AIPerfLogger(__name__)
 
 __all__ = ["Environment"]
+
+
+class _ContentServerSettings(BaseSettings):
+    """Content server configuration for serving multimodal files over HTTP.
+
+    Controls whether the content server is enabled, which host/port to bind to,
+    the directory to serve files from, and request tracking limits.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_CONTENT_SERVER_",
+    )
+
+    ENABLED: bool = Field(
+        default=False,
+        description="Enable the content server for serving multimodal files over HTTP. "
+        "When enabled, files in the content directory are served via HTTP URLs "
+        "that can be referenced in LLM API requests.",
+    )
+    HOST: str = Field(
+        default="0.0.0.0",
+        description="Host to bind the content server to",
+    )
+    PORT: int = Field(
+        ge=1,
+        le=65535,
+        default=8090,
+        description="Port for the content server HTTP endpoints",
+    )
+    CONTENT_DIR: str = Field(
+        default="",
+        description="Directory containing files to serve. "
+        "If empty, a temporary directory is created automatically.",
+    )
+    MAX_TRACKED_RECORDS: int = Field(
+        ge=100,
+        le=1000000,
+        default=10000,
+        description="Maximum number of request records to keep in the tracking buffer",
+    )
 
 
 class _DatasetSettings(BaseSettings):
@@ -875,6 +916,10 @@ class _Environment(BaseSettings):
     )
 
     # Nested subsystem settings (alphabetically ordered)
+    CONTENT_SERVER: _ContentServerSettings = Field(
+        default_factory=_ContentServerSettings,
+        description="Content server settings for serving multimodal files over HTTP",
+    )
     DATASET: _DatasetSettings = Field(
         default_factory=_DatasetSettings,
         description="Dataset loading and configuration settings",

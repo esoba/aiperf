@@ -25,6 +25,15 @@ schema_version: "1.0"
 # Each service runs in a separate process and communicates via ZMQ message bus.
 # =============================================================================
 service:
+  content_server:
+    class: aiperf.content_server.server:ContentServer
+    description: |
+      Content server for serving multimodal files (images, audio, video) over HTTP.
+      Allows target LLM servers to fetch content by URL instead of base64 payloads.
+    metadata:
+      required: false
+      auto_start: true
+
   dataset_manager:
     class: aiperf.dataset.dataset_manager:DatasetManager
     description: |

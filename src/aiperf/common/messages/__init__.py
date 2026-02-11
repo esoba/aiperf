@@ -28,6 +28,9 @@ from aiperf.common.messages.command_messages import (
     StartRealtimeTelemetryCommand,
     TargetedServiceMessage,
 )
+from aiperf.common.messages.content_server_messages import (
+    ContentServerStatusMessage,
+)
 from aiperf.common.messages.dataset_messages import (
     ConversationRequestMessage,
     ConversationResponseMessage,
@@ -76,6 +79,7 @@ __all__ = [
     "BaseServiceErrorMessage",
     "BaseServiceMessage",
     "BaseStatusMessage",
+    "ContentServerStatusMessage",
     "CommandAcknowledgedResponse",
     "CommandErrorResponse",
     "CommandMessage",
