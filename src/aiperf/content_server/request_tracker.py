@@ -60,7 +60,11 @@ class RequestTracker:
 
 
 def _decode(value: bytes | str) -> str:
-    """Decode bytes to str, passthrough str."""
+    """Decode bytes to str, passthrough str.
+
+    Uses latin-1 because it maps every byte 0x00-0xFF to a unicode codepoint,
+    so ASGI header bytes always round-trip without errors.
+    """
     return value.decode("latin-1") if isinstance(value, bytes) else value
 
 

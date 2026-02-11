@@ -11,8 +11,8 @@ from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
 class SyntheticDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer):
-        super().__init__(config, tokenizer)
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs) -> None:
+        super().__init__(config, tokenizer, **kwargs)
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
 
         self._turn_sampler_rng = rng.derive("composer.conversation.turn_count")

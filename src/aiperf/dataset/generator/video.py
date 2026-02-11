@@ -24,7 +24,7 @@ class VideoGenerator(BaseGenerator):
     and returned as base64 encoded strings.
     """
 
-    def __init__(self, config: VideoConfig, **kwargs):
+    def __init__(self, config: VideoConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self.config = config
 
@@ -73,7 +73,8 @@ class VideoGenerator(BaseGenerator):
         """Generate a video with the configured parameters.
 
         Returns:
-            A base64 encoded string of the generated video, or empty string if generation is disabled.
+            An HTTP URL (when content server is enabled), a base64 data URI,
+            or empty string if generation is disabled.
         """
         # Only generate videos if width and height are non-zero
         if not self.config.width or not self.config.height:
@@ -94,8 +95,65 @@ class VideoGenerator(BaseGenerator):
         # Generate frames
         frames = self._generate_frames()
 
+        if self._writes_files:
+            return self._write_video_to_file(frames)
+
         # Convert frames to video data and return base64
         return self._encode_frames_to_base64(frames)
+
+    def _require_ffmpeg(self) -> None:
+        """Raise RuntimeError if FFmpeg is not available."""
+        if not self._check_ffmpeg_availability():
+            install_cmd = self._get_ffmpeg_install_instructions()
+            raise RuntimeError(
+                f"FFmpeg binary not found. Please install FFmpeg:\n\n"
+                f"  Recommended: {install_cmd}\n\n"
+                f"  Alternative: conda install -c conda-forge ffmpeg\n\n"
+                f"After installation, restart your terminal and try again."
+            )
+
+    def _build_output_options(self) -> dict:
+        """Build the ffmpeg output options dict from config."""
+        options: dict = {
+            "format": self.config.format,
+            "vcodec": self.config.codec,
+            "pix_fmt": "yuv420p",
+        }
+        if self.config.format == VideoFormat.MP4:
+            options["movflags"] = "faststart"
+        return options
+
+    def _write_video_to_file(self, frames: list[Image.Image]) -> str:
+        """Encode frames to video and write directly to the content directory.
+
+        Args:
+            frames: List of PIL Image frames to encode.
+
+        Returns:
+            The HTTP URL where the content server will serve the file.
+        """
+        self._require_ffmpeg()
+
+        video_format = str(self.config.format)
+        path, url = self._next_file_path("video", "vid", video_format)
+
+        all_data = b"".join(self._prepare_frame_for_encoding(frame) for frame in frames)
+
+        try:
+            ffmpeg.input(
+                "pipe:",
+                format="rawvideo",
+                pix_fmt="rgb24",
+                s=f"{self.config.width}x{self.config.height}",
+                r=self.config.fps,
+            ).output(str(path), **self._build_output_options()).overwrite_output().run(
+                input=all_data, capture_stdout=True, capture_stderr=True
+            )
+        except ffmpeg.Error as e:
+            error_msg = e.stderr.decode() if e.stderr else "Unknown ffmpeg error"
+            raise RuntimeError(f"FFmpeg process failed: {error_msg}") from e
+
+        return url
 
     def _generate_frames(self) -> list[Image.Image]:
         """Generate frames based on the synthesis type."""
@@ -259,15 +317,7 @@ class VideoGenerator(BaseGenerator):
                 f"Unsupported video format: {self.config.format}. Only MP4 and WebM are supported."
             )
 
-        # Check if FFmpeg is available before proceeding
-        if not self._check_ffmpeg_availability():
-            install_cmd = self._get_ffmpeg_install_instructions()
-            raise RuntimeError(
-                f"FFmpeg binary not found. Please install FFmpeg:\n\n"
-                f"  Recommended: {install_cmd}\n\n"
-                f"  Alternative: conda install -c conda-forge ffmpeg\n\n"
-                f"After installation, restart your terminal and try again."
-            )
+        self._require_ffmpeg()
 
         try:
             return self._create_video_with_ffmpeg(frames)
@@ -322,16 +372,10 @@ class VideoGenerator(BaseGenerator):
                 self._prepare_frame_for_encoding(frame) for frame in frames
             )
 
-            output_options = {
-                "format": self.config.format,
-                "vcodec": self.config.codec,
-                "pix_fmt": "yuv420p",
-            }
+            output_options = self._build_output_options()
 
             # Determine output destination based on format
             if self.config.format == VideoFormat.MP4:
-                # MP4 requires seekable output, use temp file
-                output_options["movflags"] = "faststart"
                 # Ignore SIM115 warning as we are closing the file in the finally block
                 temp_output = tempfile.NamedTemporaryFile(  # noqa: SIM115
                     suffix=f".{self.config.format}", delete=False
@@ -406,16 +450,7 @@ class VideoGenerator(BaseGenerator):
             output_path = os.path.join(temp_dir, f"output.{file_ext}")
             frame_pattern = os.path.join(temp_dir, "frame_%06d.png")
 
-            # Build output options based on format
-            output_options = {
-                "format": self.config.format,
-                "vcodec": self.config.codec,
-                "pix_fmt": "yuv420p",
-            }
-
-            # Add format-specific options
-            if self.config.format == VideoFormat.MP4:
-                output_options["movflags"] = "faststart"
+            output_options = self._build_output_options()
 
             # Use ffmpeg to create video from frames
             _ = (

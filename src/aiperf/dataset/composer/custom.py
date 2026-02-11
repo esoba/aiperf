@@ -15,8 +15,8 @@ from aiperf.plugin.enums import CustomDatasetType, PluginType
 
 
 class CustomDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer):
-        super().__init__(config, tokenizer)
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs) -> None:
+        super().__init__(config, tokenizer, **kwargs)
 
     def create_dataset(self) -> list[Conversation]:
         """Create conversations from a file or directory.

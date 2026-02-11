@@ -15,8 +15,8 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
     Each dataset entry contains one query and multiple passages.
     """
 
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer):
-        super().__init__(config, tokenizer)
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs) -> None:
+        super().__init__(config, tokenizer, **kwargs)
 
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
         self._passages_rng = rng.derive("dataset.rankings.passages")
@@ -80,6 +80,8 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
         self._finalize_turn(turn)
 
         self.debug(
-            lambda: f"[rankings] query_len={len(query_text)} chars, passages={num_passages}"
+            lambda: (
+                f"[rankings] query_len={len(query_text)} chars, passages={num_passages}"
+            )
         )
         return turn

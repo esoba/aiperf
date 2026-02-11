@@ -49,6 +49,15 @@ def open_image(filename: str) -> Image:
     return img
 
 
+# Deterministic compression settings per image format.
+# Explicit values ensure consistent output across platforms (macOS/Linux may have
+# different library versions that produce different default output).
+IMAGE_SAVE_KWARGS: dict[str, dict] = {
+    "PNG": {"compress_level": 6, "optimize": False},
+    "JPEG": {"quality": 85, "subsampling": 0},
+}
+
+
 def encode_image(img: Image, format: str) -> str:
     """Encodes an image into base64 encoded string.
 
@@ -65,16 +74,8 @@ def encode_image(img: Image, format: str) -> str:
         img = img.convert("RGB")
 
     buffer = BytesIO()
-    # Use explicit compression settings to ensure deterministic output across platforms
-    # (macOS and Linux may have different library versions that produce different output)
-    if format == "PNG":
-        # PNG: Explicit compress_level and disable optimize to ensure consistent zlib compression
-        img.save(buffer, format=format, compress_level=6, optimize=False)
-    elif format == "JPEG":
-        # JPEG: Explicit quality and subsampling to ensure consistent libjpeg output
-        img.save(buffer, format=format, quality=85, subsampling=0)
-    else:
-        img.save(buffer, format=format)
+    save_kwargs = IMAGE_SAVE_KWARGS.get(format, {})
+    img.save(buffer, format=format, **save_kwargs)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 

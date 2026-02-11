@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import orjson
@@ -167,8 +168,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         endpoint: EndpointProtocol = EndpointClass(model_endpoint=model_endpoint)
         self.debug(
-            lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
-            f"class: {endpoint.__class__.__name__}",
+            lambda: (
+                f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
+                f"class: {endpoint.__class__.__name__}"
+            ),
         )
         session_payloads_map: dict[str, list] = {}
         for conversation in self.dataset.values():
@@ -263,11 +266,27 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
         return await loader.convert_to_conversations(dataset)
 
+    def _get_content_server_kwargs(self) -> dict:
+        """Return content_dir/base_url kwargs if content server is enabled."""
+        settings = Environment.CONTENT_SERVER
+        if not settings.ENABLED or not settings.CONTENT_DIR:
+            return {}
+        content_dir = Path(settings.CONTENT_DIR)
+        # TODO: Consume base_url from ContentServerStatusMessage instead of
+        # reconstructing here, so the URL stays in sync if the server ever
+        # changes scheme or resolves the listen address.
+        base_url = f"http://{settings.HOST}:{settings.PORT}"
+        return {"content_dir": content_dir, "base_url": base_url}
+
     def _load_custom_dataset(self) -> list[Conversation]:
         ComposerClass = plugins.get_class(
             PluginType.DATASET_COMPOSER, ComposerType.CUSTOM
         )
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        composer = ComposerClass(
+            config=self.user_config,
+            tokenizer=self.tokenizer,
+            **self._get_content_server_kwargs(),
+        )
         return composer.create_dataset()
 
     def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
@@ -282,7 +301,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             composer_type = ComposerType.SYNTHETIC
 
         ComposerClass = plugins.get_class(PluginType.DATASET_COMPOSER, composer_type)
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        composer = ComposerClass(
+            config=self.user_config,
+            tokenizer=self.tokenizer,
+            **self._get_content_server_kwargs(),
+        )
         return composer.create_dataset()
 
     async def _configure_dataset(self) -> None:

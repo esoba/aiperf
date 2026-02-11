@@ -56,6 +56,15 @@ def _make_server(
     return server
 
 
+def _mock_uvicorn_server() -> MagicMock:
+    """Create a mock uvicorn.Server that reports as started immediately."""
+    mock = MagicMock()
+    mock.started = True
+    mock.should_exit = False
+    mock.serve = AsyncMock()
+    return mock
+
+
 async def _init_server(server: ContentServer) -> None:
     """Run the _initialize hook on a ContentServer."""
     # Patch parent_process to simulate main process
@@ -200,7 +209,10 @@ class TestContentServerLifecycle:
     async def test_start_publishes_status_when_enabled(self, content_dir: Path) -> None:
         server = _make_server(content_dir, enabled=True)
         await _init_server(server)
-        await server._start_http_server()
+        with patch("aiperf.content_server.server.uvicorn") as mock_uvicorn:
+            mock_uvicorn.Config.return_value = MagicMock()
+            mock_uvicorn.Server.return_value = _mock_uvicorn_server()
+            await server._start_http_server()
         server.publish.assert_called_once()
         msg = server.publish.call_args[0][0]
         assert msg.status.enabled is True
@@ -209,8 +221,10 @@ class TestContentServerLifecycle:
     async def test_stop_cleans_up(self, content_dir: Path) -> None:
         server = _make_server(content_dir, enabled=True)
         await _init_server(server)
-        await server._start_http_server()
-        # Simulate uvicorn server being set
+        with patch("aiperf.content_server.server.uvicorn") as mock_uvicorn:
+            mock_uvicorn.Config.return_value = MagicMock()
+            mock_uvicorn.Server.return_value = _mock_uvicorn_server()
+            await server._start_http_server()
         assert server._uvicorn_server is not None
         await server._stop_http_server()
         assert server._uvicorn_server is None

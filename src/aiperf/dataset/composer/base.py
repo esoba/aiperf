@@ -1,7 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
@@ -16,18 +17,31 @@ from aiperf.dataset.generator.video import VideoGenerator
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs):
+    def __init__(
+        self,
+        config: UserConfig,
+        tokenizer: Tokenizer,
+        *,
+        content_dir: Path | None = None,
+        base_url: str = "",
+        **kwargs,
+    ) -> None:
         self.config = config
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
 
-        # Create generators
+        # Content server kwargs for generators that support file writing
+        content_kwargs: dict = {}
+        if content_dir is not None:
+            content_kwargs = {"content_dir": content_dir, "base_url": base_url}
+
+        # Create generators — audio stays inline (no content server support)
         self.prompt_generator = PromptGenerator(
             config.input.prompt,
             tokenizer,
         )
-        self.image_generator = ImageGenerator(config.input.image)
+        self.image_generator = ImageGenerator(config.input.image, **content_kwargs)
         self.audio_generator = AudioGenerator(config.input.audio)
-        self.video_generator = VideoGenerator(config.input.video)
+        self.video_generator = VideoGenerator(config.input.video, **content_kwargs)
 
         self._model_selector_rng = rng.derive("composer.turn.model_selection")
         self._max_tokens_rng = rng.derive("composer.turn.max_tokens")
@@ -191,7 +205,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             if shared_system_prompt:
                 conversation.system_message = shared_system_prompt
                 self.trace(
-                    lambda conv=conversation: f"Set system_message on conversation {conv.session_id}"
+                    lambda conv=conversation: (
+                        f"Set system_message on conversation {conv.session_id}"
+                    )
                 )
 
             # Set user context prompt (unique per session)
@@ -201,7 +217,8 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 )
                 conversation.user_context_message = user_context
                 self.trace(
-                    lambda idx=session_index,
-                    conv=conversation: f"Set user_context_message for session {idx} "
-                    f"(conversation {conv.session_id})"
+                    lambda idx=session_index, conv=conversation: (
+                        f"Set user_context_message for session {idx} "
+                        f"(conversation {conv.session_id})"
+                    )
                 )

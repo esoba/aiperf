@@ -8,6 +8,7 @@ fetch content by URL instead of requiring base64-encoded payloads.
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import tempfile
 from multiprocessing import parent_process
@@ -118,8 +119,19 @@ class ContentServer(BaseComponentService):
         self._uvicorn_server = uvicorn.Server(config)
 
         self.execute_async(self._uvicorn_server.serve())
-        self.info(f"Content server started on {self._base_url}")
 
+        # Wait for uvicorn to bind the socket before publishing readiness
+        for _ in range(100):  # up to 5 seconds (100 × 50ms)
+            if self._uvicorn_server.started:
+                break
+            await asyncio.sleep(0.05)
+
+        if not self._uvicorn_server.started:
+            self.error("Content server failed to start within timeout")
+            await self._publish_status(enabled=False, reason="start timeout")
+            return
+
+        self.info(f"Content server started on {self._base_url}")
         await self._publish_status(enabled=True)
 
     @on_stop
@@ -142,12 +154,14 @@ class ContentServer(BaseComponentService):
 
     async def _serve_file(self, request: Request, file_path: str) -> Response:
         """Serve a file from the content directory with path traversal prevention."""
-        assert self._content_dir is not None  # guarded by _initialize
+        if self._content_dir is None:
+            return PlainTextResponse("Not configured", status_code=500)
 
         resolved = (self._content_dir / file_path).resolve()
 
-        # Path traversal prevention
-        if not str(resolved).startswith(str(self._content_dir)):
+        # Path traversal prevention — is_relative_to handles edge cases like
+        # content_dir="/tmp/content" vs resolved="/tmp/content_evil/..."
+        if not resolved.is_relative_to(self._content_dir):
             return PlainTextResponse("Forbidden", status_code=403)
 
         if not resolved.is_file():
