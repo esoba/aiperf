@@ -136,6 +136,10 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
     )
+    service_tier: str | None = Field(
+        default=None,
+        description="The service_tier returned by the API for this request.",
+    )
 
 
 class ProfileResults(AIPerfBaseModel):

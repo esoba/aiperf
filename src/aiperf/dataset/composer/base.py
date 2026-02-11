@@ -37,6 +37,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         # Initialize sequence distribution
         self._seq_distribution = config.input.prompt.get_sequence_distribution()
 
+        # Initialize service tier distribution
+        self._service_tier_distribution = config.input.get_service_tier_distribution()
+
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
 
@@ -139,6 +142,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         turn.model = self._select_model_name()
         self._set_max_tokens(turn)
+
+        if self._service_tier_distribution is not None:
+            turn.service_tier = self._service_tier_distribution.sample()
 
         # Clear cached sequence lengths for this turn to free memory
         turn_id = id(turn)

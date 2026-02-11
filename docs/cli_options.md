@@ -248,6 +248,10 @@ Random seed for deterministic data generation. When set, makes synthetic prompts
 
 Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric's display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
 
+#### `--service-tier-dist` `<str>`
+
+Distribution of service_tier values for OpenAI API requests. Format: `tier:prob;tier:prob` (percentages 0-100 that must sum to 100). Example: `default:50;flex:30;priority:20`. Valid tiers: auto, default, flex, scale, priority.
+
 ### Audio Input
 
 #### `--audio-batch-size`, `--batch-size-audio` `<int>`

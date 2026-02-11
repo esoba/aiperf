@@ -12,7 +12,7 @@ from aiperf.common.models.model_endpoint_info import (
 )
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import create_request_info
+from tests.unit.endpoints.conftest import create_mock_response, create_request_info
 
 
 class TestCompletionsEndpoint:
@@ -111,3 +111,53 @@ class TestCompletionsEndpoint:
         else:
             assert "stream_options" in payload
             assert payload["stream_options"] == expected_stream_options
+
+    def test_format_payload_with_service_tier(
+        self, model_endpoint, sample_conversations
+    ):
+        """Verify service_tier from Turn is included in payload."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turn.service_tier = "flex"
+        turns = [turn]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        payload = endpoint.format_payload(request_info)
+        assert payload["service_tier"] == "flex"
+
+    def test_format_payload_without_service_tier(
+        self, model_endpoint, sample_conversations
+    ):
+        """Verify service_tier is not in payload when not set."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turns = [turn]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        payload = endpoint.format_payload(request_info)
+        assert "service_tier" not in payload
+
+    def test_parse_response_extracts_service_tier(self, model_endpoint):
+        """Verify service_tier is extracted from response JSON into metadata."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        response = create_mock_response(
+            json_data={
+                "object": "text_completion",
+                "service_tier": "priority",
+                "choices": [{"text": "Hello"}],
+            }
+        )
+        parsed = endpoint.parse_response(response)
+        assert parsed is not None
+        assert parsed.metadata.get("service_tier") == "priority"
+
+    def test_parse_response_no_service_tier(self, model_endpoint):
+        """Verify metadata is empty when response has no service_tier."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        response = create_mock_response(
+            json_data={
+                "object": "text_completion",
+                "choices": [{"text": "Hello"}],
+            }
+        )
+        parsed = endpoint.parse_response(response)
+        assert parsed is not None
+        assert "service_tier" not in parsed.metadata

@@ -58,6 +58,9 @@ class ChatEndpoint(BaseEndpoint):
             )
             payload[token_field] = turns[-1].max_tokens
 
+        if turns[-1].service_tier is not None:
+            payload["service_tier"] = turns[-1].service_tier
+
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
@@ -199,7 +202,12 @@ class ChatEndpoint(BaseEndpoint):
         usage = json_obj.get("usage") or None
 
         if data or usage:
-            return ParsedResponse(perf_ns=response.perf_ns, data=data, usage=usage)
+            metadata = {}
+            if service_tier := json_obj.get("service_tier"):
+                metadata["service_tier"] = service_tier
+            return ParsedResponse(
+                perf_ns=response.perf_ns, data=data, usage=usage, metadata=metadata
+            )
 
         return None
 

@@ -159,6 +159,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         metadata = self._create_metric_record_metadata(
             message.record, message.service_id
         )
+
+        # Extract response service_tier (check reversed - streaming puts metadata on last chunk)
+        for resp in reversed(parsed_record.responses):
+            if st := resp.metadata.get("service_tier"):
+                metadata.service_tier = st
+                break
+
         raw_results = await self._process_record(parsed_record, metadata)
         results = []
         for result in raw_results:

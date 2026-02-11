@@ -951,6 +951,18 @@ class UserConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_service_tier_endpoint_type(self) -> Self:
+        """Validate that --service-tier-dist is only used with chat or completions endpoints."""
+        if self.input.service_tier_distribution is not None:
+            supported = {EndpointType.CHAT, EndpointType.COMPLETIONS}
+            if self.endpoint.type not in supported:
+                raise ValueError(
+                    f"--service-tier-dist is only supported with chat and completions endpoints, "
+                    f"got endpoint type '{self.endpoint.type}'"
+                )
+        return self
+
+    @model_validator(mode="after")
     def validate_must_have_stop_condition(self) -> Self:
         """Validate that at least one stop condition is set (requests, sessions, or duration)"""
         if (

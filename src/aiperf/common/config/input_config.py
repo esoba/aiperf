@@ -129,6 +129,20 @@ class InputConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_service_tier_mutual_exclusivity(self) -> Self:
+        """Validate that --service-tier-dist and --extra-inputs service_tier are not both set."""
+        if self.service_tier_distribution is not None and self.extra:
+            extra_dict = (
+                dict(self.extra) if isinstance(self.extra, list) else self.extra
+            )
+            if isinstance(extra_dict, dict) and "service_tier" in extra_dict:
+                raise ValueError(
+                    "Cannot use both --service-tier-dist and --extra-inputs service_tier. "
+                    "Use one or the other."
+                )
+        return self
+
+    @model_validator(mode="after")
     def validate_goodput(self) -> Self:
         """
         Validate that all keys provided to --goodput are known metric tags.
@@ -337,6 +351,21 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.GOODPUT
 
+    service_tier_distribution: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Distribution of service_tier values for OpenAI API requests. "
+            "Format: `tier:prob;tier:prob` (percentages 0-100 that must sum to 100). "
+            "Example: `default:50;flex:30;priority:20`. "
+            "Valid tiers: auto, default, flex, scale, priority.",
+        ),
+        CLIParameter(
+            name=("--service-tier-dist",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
     video: VideoConfig = VideoConfig()
@@ -344,3 +373,13 @@ class InputConfig(BaseConfig):
     rankings: RankingsConfig = RankingsConfig()
     synthesis: SynthesisConfig = SynthesisConfig()
     conversation: ConversationConfig = ConversationConfig()
+
+    def get_service_tier_distribution(self):
+        """Get service tier distribution object, returning None if not specified."""
+        if self.service_tier_distribution is not None:
+            from aiperf.common.models.service_tier_distribution import (
+                ServiceTierDistributionParser,
+            )
+
+            return ServiceTierDistributionParser.parse(self.service_tier_distribution)
+        return None

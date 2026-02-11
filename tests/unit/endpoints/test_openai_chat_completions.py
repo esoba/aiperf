@@ -11,7 +11,7 @@ from aiperf.common.models.model_endpoint_info import (
 )
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import create_request_info
+from tests.unit.endpoints.conftest import create_mock_response, create_request_info
 
 
 class TestChatEndpoint:
@@ -338,3 +338,66 @@ class TestChatEndpoint:
         assert payload["messages"][1]["content"] == user_context
         # Third message should be the turn
         assert payload["messages"][2]["role"] == (turn.role or "user")
+
+    def test_format_payload_with_service_tier(
+        self, model_endpoint, sample_conversations
+    ):
+        """Verify service_tier from Turn is included in payload."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turn.service_tier = "flex"
+        turns = [turn]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        payload = endpoint.format_payload(request_info)
+        assert payload["service_tier"] == "flex"
+
+    def test_format_payload_without_service_tier(
+        self, model_endpoint, sample_conversations
+    ):
+        """Verify service_tier is not in payload when not set."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turns = [turn]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        payload = endpoint.format_payload(request_info)
+        assert "service_tier" not in payload
+
+    def test_format_payload_service_tier_overridden_by_extra(
+        self, model_endpoint, sample_conversations
+    ):
+        """Verify --extra-inputs service_tier overrides Turn.service_tier."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turn.service_tier = "flex"
+        turns = [turn]
+        model_endpoint.endpoint.extra = {"service_tier": "priority"}
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        payload = endpoint.format_payload(request_info)
+        assert payload["service_tier"] == "priority"
+
+    def test_parse_response_extracts_service_tier(self, model_endpoint):
+        """Verify service_tier is extracted from response JSON into metadata."""
+        endpoint = ChatEndpoint(model_endpoint)
+        response = create_mock_response(
+            json_data={
+                "object": "chat.completion",
+                "service_tier": "flex",
+                "choices": [{"message": {"content": "Hello"}}],
+            }
+        )
+        parsed = endpoint.parse_response(response)
+        assert parsed is not None
+        assert parsed.metadata.get("service_tier") == "flex"
+
+    def test_parse_response_no_service_tier(self, model_endpoint):
+        """Verify metadata is empty when response has no service_tier."""
+        endpoint = ChatEndpoint(model_endpoint)
+        response = create_mock_response(
+            json_data={
+                "object": "chat.completion",
+                "choices": [{"message": {"content": "Hello"}}],
+            }
+        )
+        parsed = endpoint.parse_response(response)
+        assert parsed is not None
+        assert "service_tier" not in parsed.metadata

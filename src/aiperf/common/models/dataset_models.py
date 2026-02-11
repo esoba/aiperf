@@ -123,6 +123,10 @@ class Turn(AIPerfBaseModel):
     max_tokens: int | None = Field(
         default=None, description="Maximum number of tokens to generate for this turn."
     )
+    service_tier: str | None = Field(
+        default=None,
+        description="The service_tier to use for this turn's API request.",
+    )
     texts: list[Text] = Field(
         default=[], description="Collection of text data in each turn."
     )
@@ -159,6 +163,7 @@ class Turn(AIPerfBaseModel):
             timestamp=self.timestamp,
             delay=self.delay,
             max_tokens=self.max_tokens,
+            service_tier=self.service_tier,
             texts=[Text(name=t.name, contents=list(t.contents)) for t in self.texts],
             images=[
                 Image(
