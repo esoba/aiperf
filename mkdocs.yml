@@ -19,6 +19,8 @@ nav:
     - Sequence Distributions: tutorials/sequence-distributions.md
     - Goodput: tutorials/goodput.md
     - Request Rate with Max Concurrency: tutorials/request-rate-concurrency.md
+    - Agentic Benchmarking: tutorials/agentic-benchmarking.md
+    - Agentic Load Generation: tutorials/agentic-load.md
     - GPU Telemetry: tutorials/gpu-telemetry.md
     - Timeslices: tutorials/timeslices.md
     - Visualization and Plotting: tutorials/plot.md

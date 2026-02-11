@@ -300,6 +300,19 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = None
 
+    agentic_load: Annotated[
+        bool,
+        Field(
+            description="Enable agentic load generation mode. N concurrent users work through "
+            "pre-assigned trajectory sets sequentially with zero inter-turn delay. "
+            "Users start at random offsets to avoid ISL bias. Requires --concurrency.",
+        ),
+        CLIParameter(
+            name=("--agentic-load",),
+            group=_CLI_GROUP,
+        ),
+    ] = False
+
     concurrency_ramp_duration: Annotated[
         float | None,
         Field(

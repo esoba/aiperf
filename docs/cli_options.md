@@ -233,7 +233,7 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br>_Choices: [`mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
+<br>_Choices: [`agentic_coding`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -697,6 +697,11 @@ Enable user-centric rate limiting mode with the specified request rate (QPS). Ea
 
 The number of initial users to use for --user-centric-rate mode.
 <br>_Constraints: ≥ 1_
+
+#### `--agentic-load`
+
+Enable agentic load generation mode. N concurrent users work through pre-assigned trajectory sets sequentially with zero inter-turn delay. Users start at random offsets to avoid ISL bias. Requires --concurrency.
+<br>_Flag (no value required)_
 
 #### `--concurrency-ramp-duration` `<float>`
 

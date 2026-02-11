@@ -218,8 +218,7 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
 
     return CreditPhaseConfig(
         phase=CreditPhase.WARMUP,
-        # Warmup phase is always request rate timing mode
-        timing_mode=TimingMode.REQUEST_RATE,
+        timing_mode=TimingMode.AGENTIC_LOAD if loadgen.agentic_load else TimingMode.REQUEST_RATE,
         total_expected_requests=loadgen.warmup_request_count,
         expected_duration_sec=loadgen.warmup_duration,
         expected_num_sessions=loadgen.warmup_num_sessions,

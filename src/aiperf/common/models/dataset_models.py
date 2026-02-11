@@ -135,6 +135,16 @@ class Turn(AIPerfBaseModel):
     videos: list[Video] = Field(
         default=[], description="Collection of video data in each turn."
     )
+    raw_messages: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted messages to send as-is to the API. "
+        "When set, the endpoint uses these directly instead of constructing "
+        "messages from texts/images/audios/videos fields.",
+    )
+    input_tokens: int | None = Field(
+        default=None,
+        description="Pre-computed input token count for this turn's full payload.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -181,6 +191,8 @@ class Turn(AIPerfBaseModel):
                 )
                 for vid in self.videos
             ],
+            raw_messages=self.raw_messages,
+            input_tokens=self.input_tokens,
         )
 
 
@@ -254,6 +266,16 @@ class Conversation(AIPerfBaseModel):
         default=None,
         description="Optional per-conversation user context prepended to the first turn. "
         "Unique for each conversation when using --user-context-prompt-length.",
+    )
+    tools: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Tool definitions to include in API requests for this conversation.",
+    )
+    discard_assistant_response: bool = Field(
+        default=False,
+        description="When True, the worker discards the LLM response instead of storing it "
+        "for multi-turn context. Used when dataset entries contain pre-recorded cumulative "
+        "message history (e.g., Agentic Coding format).",
     )
 
     def metadata(self) -> ConversationMetadata:

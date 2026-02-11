@@ -285,3 +285,86 @@ class TestTimingConfigFromUserConfig:
         )
         warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
         assert warmup.grace_period_sec == expected
+
+    def test_agentic_warmup_uses_agentic_timing_mode(self) -> None:
+        cfg = TimingConfig.from_user_config(
+            make_user_config(
+                timing_mode=TimingMode.AGENTIC_LOAD,
+                warmup_request_count=10,
+                concurrency=4,
+            )
+        )
+        warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
+        assert warmup.timing_mode == TimingMode.AGENTIC_LOAD
+
+    def test_agentic_warmup_inherits_concurrency(self) -> None:
+        cfg = TimingConfig.from_user_config(
+            make_user_config(
+                timing_mode=TimingMode.AGENTIC_LOAD,
+                warmup_request_count=10,
+                warmup_concurrency=2,
+                concurrency=8,
+            )
+        )
+        warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
+        assert warmup.concurrency == 2
+
+    def test_agentic_warmup_falls_back_to_profiling_concurrency(self) -> None:
+        cfg = TimingConfig.from_user_config(
+            make_user_config(
+                timing_mode=TimingMode.AGENTIC_LOAD,
+                warmup_request_count=10,
+                concurrency=8,
+            )
+        )
+        warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
+        assert warmup.concurrency == 8
+
+    def test_agentic_warmup_has_no_request_rate(self) -> None:
+        cfg = TimingConfig.from_user_config(
+            make_user_config(
+                timing_mode=TimingMode.AGENTIC_LOAD,
+                warmup_request_count=10,
+                concurrency=4,
+                request_rate=100.0,
+            )
+        )
+        warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
+        assert warmup.request_rate is None
+
+    def test_agentic_warmup_with_ramp_duration(self) -> None:
+        cfg = TimingConfig.from_user_config(
+            make_user_config(
+                timing_mode=TimingMode.AGENTIC_LOAD,
+                warmup_request_count=10,
+                concurrency=4,
+                warmup_concurrency_ramp_duration=5.0,
+            )
+        )
+        warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
+        assert warmup.concurrency_ramp_duration_sec == 5.0
+
+    def test_agentic_warmup_ramp_falls_back_to_profiling(self) -> None:
+        cfg = TimingConfig.from_user_config(
+            make_user_config(
+                timing_mode=TimingMode.AGENTIC_LOAD,
+                warmup_request_count=10,
+                concurrency=4,
+                concurrency_ramp_duration=10.0,
+            )
+        )
+        warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
+        assert warmup.concurrency_ramp_duration_sec == 10.0
+
+    def test_non_agentic_warmup_still_uses_request_rate(self) -> None:
+        cfg = TimingConfig.from_user_config(
+            make_user_config(
+                timing_mode=TimingMode.REQUEST_RATE,
+                warmup_request_count=10,
+                request_rate=50.0,
+                concurrency=4,
+            )
+        )
+        warmup = next(pc for pc in cfg.phase_configs if pc.phase == CreditPhase.WARMUP)
+        assert warmup.timing_mode == TimingMode.REQUEST_RATE
+        assert warmup.request_rate == 50.0

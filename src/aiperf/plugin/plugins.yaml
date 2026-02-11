@@ -366,6 +366,15 @@ dataset_composer:
 # Auto-detection: the custom composer tries loaders in priority order based on can_load().
 # =============================================================================
 custom_dataset_loader:
+  agentic_coding:
+    class: aiperf.dataset.loader.agentic_coding:AgenticCodingDatasetLoader
+    description: |
+      Agentic Coding benchmark dataset loader for pre-recorded multi-turn
+      trajectories with cumulative message history. Supports tool calls and
+      reasoning content in messages. Each trajectory is processed sequentially
+      with zero inter-turn delay, and LLM responses are discarded since the
+      dataset contains pre-recorded responses for subsequent turns.
+
   mooncake_trace:
     class: aiperf.dataset.loader.mooncake_trace:MooncakeTraceDatasetLoader
     description: |
@@ -474,6 +483,13 @@ timing_strategy:
       A mode where each session acts as a separate user with gap = num_users / request_rate between turns.
       Users block on their previous turn (no interleaving within a user).
       Matches LMBenchmark behavior for KV cache benchmarking.
+
+  agentic_load:
+    class: aiperf.timing.strategies.agentic_load:AgenticLoadStrategy
+    description: |
+      Deterministic load generation where N concurrent users work through pre-assigned
+      trajectory sets sequentially with zero inter-turn delay. Users start at random
+      offsets to avoid ISL bias. Purely concurrency-based (no rate limiting).
 
 # =============================================================================
 # Arrival Pattern (Interval Generators)

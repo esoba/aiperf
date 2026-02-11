@@ -116,6 +116,17 @@ class UserConfig(BaseConfig):
                 _logger.info(
                     f"No request count value provided for mooncake trace dataset, setting to dataset entry count: {self.loadgen.request_count}"
                 )
+        elif self.loadgen.agentic_load:
+            # Agentic load mode: N concurrent users with zero inter-turn delay
+            self._timing_mode = TimingMode.AGENTIC_LOAD
+            if self.loadgen.concurrency is None:
+                raise ValueError("--agentic-load requires --concurrency to be set")
+            if self.loadgen.request_rate is not None:
+                raise ValueError("--agentic-load cannot be used with --request-rate")
+            if self.loadgen.user_centric_rate is not None:
+                raise ValueError(
+                    "--agentic-load cannot be used with --user-centric-rate"
+                )
         elif self.loadgen.user_centric_rate is not None:
             # User-centric rate mode: per-user rate limiting (LMBenchmark parity)
             # --user-centric-rate takes the QPS value directly
@@ -728,6 +739,8 @@ class UserConfig(BaseConfig):
                 if self.loadgen.user_centric_rate is not None:
                     stimulus.append(f"qps{self.loadgen.user_centric_rate}")
                 return "-".join(stimulus)
+            case TimingMode.AGENTIC_LOAD:
+                return f"c{self.loadgen.concurrency}-agentic"
             case _:
                 raise ValueError(f"Unknown timing mode '{self._timing_mode}'.")
 

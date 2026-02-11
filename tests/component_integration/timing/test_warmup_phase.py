@@ -17,6 +17,9 @@ CRITICAL: Warmup and profiling phases have SEPARATE credit tracking.
 Each phase should balance independently.
 """
 
+from pathlib import Path
+
+import orjson
 import pytest
 
 from aiperf.common.enums import CreditPhase
@@ -357,3 +360,110 @@ class TestWarmupInteractions:
         assert profiling_errors > 0, (
             "Profiling should have some errors with 50% cancellation rate"
         )
+
+
+def _write_agentic_dataset(
+    path: Path, num_conversations: int, turns_per_conversation: int
+) -> Path:
+    """Write a minimal agentic coding dataset JSONL file.
+
+    Creates conversations where each step has cumulative message history,
+    matching the AgenticCodingEntry schema.
+    """
+    dataset_file = path / "agentic_dataset.jsonl"
+    with open(dataset_file, "w") as f:
+        for conv_idx in range(num_conversations):
+            conv_id = f"conv-{conv_idx}"
+            messages: list[dict[str, str]] = []
+            for step in range(turns_per_conversation):
+                messages.append({"role": "user", "content": f"Turn {step} prompt"})
+                messages.append(
+                    {"role": "assistant", "content": f"Turn {step} response"}
+                )
+                entry = {
+                    "type": "agentic_coding",
+                    "conversation_id": conv_id,
+                    "conversation_idx": step,
+                    "messages": list(messages),
+                }
+                f.write(orjson.dumps(entry).decode() + "\n")
+    return dataset_file
+
+
+@pytest.mark.component_integration
+class TestWarmupAgentic:
+    """Tests for warmup phase with agentic load mode.
+
+    Agentic warmup should use AGENTIC_LOAD timing mode (not REQUEST_RATE)
+    so the server warms up with the same workload pattern as profiling.
+    """
+
+    def test_agentic_warmup_and_profiling_complete(
+        self, cli: AIPerfCLI, tmp_path: Path
+    ):
+        """Test warmup + profiling both complete with agentic load.
+
+        Scenario:
+        - 4 conversations with 3 turns each in the dataset
+        - Warmup: 6 requests, concurrency 2
+        - Profiling: 12 requests (all), concurrency 2
+        - Verify both phases issue correct credits
+        """
+        dataset_file = _write_agentic_dataset(
+            tmp_path, num_conversations=4, turns_per_conversation=3
+        )
+
+        cmd = f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --streaming \
+                --agentic-load \
+                --concurrency 2 \
+                --input-file {dataset_file} \
+                --custom-dataset-type agentic_coding \
+                --osl 5 \
+                --extra-inputs ignore_eos:true \
+                --ui {defaults.ui} \
+                --warmup-request-count 6 \
+                --request-count 12
+        """
+
+        result = cli.run_sync(cmd, timeout=30.0)
+
+        assert result.request_count == 12  # Profiling only
+
+        runner = result.runner_result
+        credit_payloads = [
+            p for p in runner.sent_payloads if isinstance(p.payload, Credit)
+        ]
+
+        warmup_credits = [
+            p for p in credit_payloads if p.payload.phase == CreditPhase.WARMUP
+        ]
+        profiling_credits = [
+            p for p in credit_payloads if p.payload.phase == CreditPhase.PROFILING
+        ]
+
+        assert len(warmup_credits) == 6, (
+            f"Expected 6 warmup credits, got {len(warmup_credits)}"
+        )
+        assert len(profiling_credits) == 12, (
+            f"Expected 12 profiling credits, got {len(profiling_credits)}"
+        )
+
+        # Verify both phases balanced independently
+        return_payloads = [
+            p for p in runner.sent_payloads if isinstance(p.payload, CreditReturn)
+        ]
+
+        warmup_returns = [
+            p for p in return_payloads if p.payload.credit.phase == CreditPhase.WARMUP
+        ]
+        profiling_returns = [
+            p
+            for p in return_payloads
+            if p.payload.credit.phase == CreditPhase.PROFILING
+        ]
+
+        assert len(warmup_returns) == 6
+        assert len(profiling_returns) == 12
