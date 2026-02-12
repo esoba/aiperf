@@ -248,6 +248,21 @@ endpoint:
       tokenizes_input: true
       metrics_title: Image Generation Metrics
 
+  video_generation:
+    class: aiperf.endpoints.openai_video_generation:VideoGenerationEndpoint
+    description: |
+      OpenAI/SGLang Video Generation endpoint for text-to-video models.
+      Supports async generation with polling. Compatible with Sora, Wan2.1,
+      HunyuanVideo via SGLang. Use --endpoint-type video_generation.
+    metadata:
+      endpoint_path: /v1/videos
+      supports_streaming: false
+      produces_tokens: false
+      produces_videos: true
+      tokenizes_input: true
+      requires_polling: true
+      metrics_title: Video Generation Metrics
+
   nim_embeddings:
     class: aiperf.endpoints.nim_embeddings:NIMEmbeddingsEndpoint
     description: |
@@ -906,6 +921,12 @@ gpu_telemetry_collector:
 # One-to-one mapping: exactly one communication backend is selected based on deployment.
 # =============================================================================
 communication:
+  zmq_dual_bind:
+    class: aiperf.zmq.zmq_comms:ZMQDualBindCommunication
+    description: |
+      ZMQ dual-bind communication backend for Kubernetes deployments. Provides
+      high-performance message passing over both IPC and TCP for both local and remote communication.
+
   zmq_ipc:
     class: aiperf.zmq.zmq_comms:ZMQIPCCommunication
     description: |

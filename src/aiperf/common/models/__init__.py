@@ -56,6 +56,7 @@ from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerSt
 from aiperf.common.models.record_models import (
     BaseInferenceServerResponse,
     BaseResponseData,
+    BinaryResponse,
     EmbeddingResponseData,
     ImageDataItem,
     ImageResponseData,
@@ -79,6 +80,7 @@ from aiperf.common.models.record_models import (
     TextResponse,
     TextResponseData,
     TokenCounts,
+    VideoResponseData,
 )
 from aiperf.common.models.sequence_distribution import (
     DistributionParser,
@@ -144,6 +146,7 @@ __all__ = [
     "BaseServerMetricData",
     "BaseTimeslice",
     "BaseTraceData",
+    "BinaryResponse",
     "CPUTimes",
     "Conversation",
     "ConversationMetadata",
@@ -237,6 +240,7 @@ __all__ = [
     "TurnMetadata",
     "Usage",
     "Video",
+    "VideoResponseData",
     "WorkerProcessingStats",
     "WorkerStats",
     "WorkerTaskStats",

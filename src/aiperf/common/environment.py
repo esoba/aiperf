@@ -184,6 +184,11 @@ class _HTTPSettings(BaseSettings):
     Controls low-level socket options, keepalive settings, DNS caching, and connection
     pooling for HTTP clients. These settings optimize performance for high-throughput
     streaming workloads.
+
+    Video Generation Polling:
+        For async video generation APIs that use job polling (e.g., SGLang /v1/videos),
+        the poll interval is controlled by AIPERF_HTTP_VIDEO_POLL_INTERVAL. The max poll time uses
+        the --request-timeout-seconds CLI argument.
     """
 
     model_config = SettingsConfigDict(
@@ -289,6 +294,14 @@ class _HTTPSettings(BaseSettings):
         description="Trust environment variables for HTTP client configuration. "
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
+    )
+    VIDEO_POLL_INTERVAL: float = Field(
+        ge=0.001,
+        le=10.0,
+        default=0.1,
+        description="Interval in seconds between status polls for async video generation jobs. "
+        "Lower values provide faster completion detection but increase server load. "
+        "Applies to the aiohttp transport.",
     )
 
 
@@ -602,6 +615,28 @@ class _ServiceSettings(BaseSettings):
         default=10.0,
         description="Warning threshold in milliseconds for event loop latency (default: 10ms). "
         "If the actual sleep duration exceeds the expected duration by this amount, a warning is logged.",
+    )
+    # Health server settings for Kubernetes probes
+    HEALTH_ENABLED: bool = Field(
+        default=False,
+        description="Enable the lightweight health server for Kubernetes liveness/readiness probes. "
+        "When enabled, non-API services will start an HTTP server serving /healthz and /readyz endpoints.",
+    )
+    HEALTH_HOST: str = Field(
+        default="127.0.0.1",
+        description="Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments.",
+    )
+    HEALTH_PORT: int = Field(
+        ge=1,
+        le=65535,
+        default=8080,
+        description="Port for the health server HTTP endpoints (/healthz, /readyz).",
+    )
+    HEALTH_REQUEST_TIMEOUT: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=5.0,
+        description="Timeout in seconds for reading health check HTTP requests.",
     )
 
     @model_validator(mode="after")

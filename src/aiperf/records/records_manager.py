@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import time
 from collections import defaultdict
@@ -16,6 +18,7 @@ from aiperf.common.accumulator_protocols import (
 )
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.config.zmq_config import ZMQDualBindConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     CommAddress,
@@ -79,7 +82,7 @@ from aiperf.records.records_tracker import RecordsTracker
 
 @dataclass
 class ErrorTrackingState:
-    """Base class for tracking errors with counts and thread-safe access.
+    """State container for tracking errors with counts and thread-safe access.
 
     Provides common error tracking functionality for all metrics subsystems
     (telemetry, server metrics, regular metrics).
@@ -105,7 +108,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         service_config: ServiceConfig,
         user_config: UserConfig,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
+        # For dual-bind mode (Kubernetes), also bind to TCP for remote record processors.
+        # Controller binds to IPC + TCP; workers connect via TCP.
+        additional_bind_address: str | None = None
+        comm_config = service_config.comm_config
+        if (
+            isinstance(comm_config, ZMQDualBindConfig)
+            and not comm_config.controller_host
+        ):
+            additional_bind_address = comm_config.records_push_pull_tcp_bind_address
+
         super().__init__(
             service_config=service_config,
             user_config=user_config,
@@ -113,6 +127,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             pull_client_address=CommAddress.RECORDS,
             pull_client_bind=True,
             pull_client_max_concurrency=Environment.ZMQ.PULL_MAX_CONCURRENCY,
+            pull_client_additional_bind_address=additional_bind_address,
+            **kwargs,
         )
 
         self._records_tracker = RecordsTracker()

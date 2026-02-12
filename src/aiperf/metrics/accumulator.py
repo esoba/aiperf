@@ -37,6 +37,11 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
 
+# (sorted_c_ts, concurrency, sorted_t_ts, throughput) from _compute_sweeps()
+_SweepCurves = tuple[
+    NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]
+]
+
 _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
     AggregationKind.SUM: lambda a: float(np.sum(a)),
     AggregationKind.MAX: lambda a: float(np.max(a)),
@@ -332,8 +337,13 @@ class MetricsAccumulator(BaseMetricsProcessor):
         timeslices: dict[TimeSliceT, dict[MetricTagT, MetricResult]] | None = None
         timeslice_windows: dict[TimeSliceT, TimesliceWindow] | None = None
 
-        if self._slice_duration_ns is not None and self._column_store.count > 0:
-            timeslices, timeslice_windows = self._compute_timeslices()
+        if self._column_store.count > 0:
+            # Compute sweeps once for both overall and timeslice injection
+            sweeps = self._compute_sweeps()
+            self._inject_sweep_metrics(overall_results, sweeps)
+
+            if self._slice_duration_ns is not None:
+                timeslices, timeslice_windows = self._compute_timeslices(sweeps)
 
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")
         return MetricsSummary(
@@ -346,47 +356,20 @@ class MetricsAccumulator(BaseMetricsProcessor):
         """Export final metrics results. Delegates to summarize()."""
         return await self.summarize()
 
-    def _compute_timeslices(
-        self,
-    ) -> tuple[
-        dict[TimeSliceT, dict[MetricTagT, MetricResult]],
-        dict[TimeSliceT, TimesliceWindow],
-    ]:
-        """Compute per-timeslice results by partitioning the time range.
-
-        Sweeps (concurrency, throughput) are computed once on the full arrays,
-        then ``compute_time_weighted_stats`` windows them per timeslice — O(N log N)
-        for the sweep + O(T log M) for windowing.
+    def _compute_sweeps(self) -> _SweepCurves:
+        """Compute concurrency and throughput sweep curves on the full dataset.
 
         Returns:
-            Tuple of (timeslice_results, timeslice_windows).
+            (sorted_c_ts, concurrency, sorted_t_ts, throughput) — step-function
+            arrays suitable for ``compute_time_weighted_stats``.
         """
-        assert self._slice_duration_ns is not None
-
         store = self._column_store
         n = store.count
         start_ns = store.start_ns[:n]
         end_ns = store.end_ns[:n]
-        filled = ~np.isnan(start_ns)
-        filled_ts = start_ns[filled]
 
-        if len(filled_ts) == 0:
-            return {}, {}
-
-        min_ts = float(np.nanmin(filled_ts))
-        max_ts = float(np.nanmax(filled_ts))
-
-        # Build slice edges — compute n_slices first to avoid np.arange stop-exclusion issues
-        n_slices = int((max_ts - min_ts) / self._slice_duration_ns) + 1
-        edges = min_ts + np.arange(n_slices + 1) * self._slice_duration_ns
-
-        # Assign each record to a bin — O(n) total via digitize
-        bins = np.digitize(filled_ts, edges) - 1
-
-        # --- Pre-compute sweep curves once on full arrays ---
         sorted_c_ts, concurrency = concurrency_sweep(start_ns, end_ns)
 
-        # Throughput: prefer ICL-aware if inter_chunk_latency data exists
         generation_start_ns = store.generation_start_ns[:n]
         output_tokens = (
             store.numeric("output_tokens")
@@ -413,6 +396,79 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 generation_start_ns, end_ns, output_tokens
             )
 
+        return sorted_c_ts, concurrency, sorted_t_ts, throughput
+
+    def _inject_sweep_metrics(
+        self,
+        results: dict[MetricTagT, MetricResult],
+        sweeps: _SweepCurves,
+    ) -> None:
+        """Inject time-weighted effective_concurrency and effective_throughput."""
+        sorted_c_ts, concurrency, sorted_t_ts, throughput = sweeps
+
+        # Full extent: earliest start to latest end across both sweeps
+        window_start = float(sorted_c_ts[0]) if len(sorted_c_ts) > 0 else 0.0
+        window_end = float(sorted_c_ts[-1]) if len(sorted_c_ts) > 0 else 0.0
+
+        conc_stats = compute_time_weighted_stats(
+            sorted_c_ts, concurrency, window_start, window_end
+        )
+        results["effective_concurrency"] = _metric_result_from_sweep_stats(
+            "effective_concurrency",
+            "Effective Concurrency",
+            "requests",
+            conc_stats,
+        )
+
+        tput_stats = compute_time_weighted_stats(
+            sorted_t_ts, throughput, window_start, window_end
+        )
+        results["effective_throughput"] = _metric_result_from_sweep_stats(
+            "effective_throughput",
+            "Effective Throughput",
+            "tokens/sec",
+            tput_stats,
+            scale=NANOS_PER_SECOND,
+        )
+
+    def _compute_timeslices(
+        self,
+        sweeps: _SweepCurves,
+    ) -> tuple[
+        dict[TimeSliceT, dict[MetricTagT, MetricResult]],
+        dict[TimeSliceT, TimesliceWindow],
+    ]:
+        """Compute per-timeslice results by partitioning the time range.
+
+        Sweeps are pre-computed once in ``summarize()`` and windowed per
+        timeslice via ``compute_time_weighted_stats`` — O(T log M) total.
+
+        Returns:
+            Tuple of (timeslice_results, timeslice_windows).
+        """
+        assert self._slice_duration_ns is not None
+
+        store = self._column_store
+        n = store.count
+        start_ns = store.start_ns[:n]
+        filled = ~np.isnan(start_ns)
+        filled_ts = start_ns[filled]
+
+        if len(filled_ts) == 0:
+            return {}, {}
+
+        min_ts = float(np.nanmin(filled_ts))
+        max_ts = float(np.nanmax(filled_ts))
+
+        # Build slice edges — compute n_slices first to avoid np.arange stop-exclusion issues
+        n_slices = int((max_ts - min_ts) / self._slice_duration_ns) + 1
+        edges = min_ts + np.arange(n_slices + 1) * self._slice_duration_ns
+
+        # Assign each record to a bin — O(n) total via digitize
+        bins = np.digitize(filled_ts, edges) - 1
+
+        sorted_c_ts, concurrency, sorted_t_ts, throughput = sweeps
+
         timeslice_results: dict[TimeSliceT, dict[MetricTagT, MetricResult]] = {}
         timeslice_windows: dict[TimeSliceT, TimesliceWindow] = {}
         filled_indices = np.where(filled)[0]
@@ -437,7 +493,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
             if len(results) == 0:
                 continue
 
-            # Inject sweep-based effective_concurrency
+            # Inject sweep-based metrics windowed to this timeslice
             conc_stats = compute_time_weighted_stats(
                 sorted_c_ts, concurrency, window_start, window_end
             )
@@ -448,7 +504,6 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 conc_stats,
             )
 
-            # Inject sweep-based effective_throughput (sweep returns tokens/ns)
             tput_stats = compute_time_weighted_stats(
                 sorted_t_ts, throughput, window_start, window_end
             )

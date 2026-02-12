@@ -249,16 +249,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
             exporter = TimesliceMetricsJsonExporter(config)
 
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                content = exporter._generate_content()
+            content = exporter._generate_content()
 
             data = json.loads(content)
 
@@ -300,16 +291,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
             exporter = TimesliceMetricsJsonExporter(config)
 
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                content = exporter._generate_content()
+            content = exporter._generate_content()
 
             data = json.loads(content)
 
@@ -358,16 +340,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
             exporter = TimesliceMetricsJsonExporter(config)
 
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                content = exporter._generate_content()
+            content = exporter._generate_content()
 
             data = json.loads(content)
 
@@ -413,16 +386,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
             exporter = TimesliceMetricsJsonExporter(config)
 
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                content = exporter._generate_content()
+            content = exporter._generate_content()
 
             data = json.loads(content)
 
@@ -476,16 +440,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
 
             exporter = TimesliceMetricsJsonExporter(config)
 
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                content = exporter._generate_content()
+            content = exporter._generate_content()
 
             data = json.loads(content)
 
@@ -526,18 +481,7 @@ class TestTimesliceMetricsJsonExporterGenerateContent:
                 return original_method(metrics)
 
             with patch.object(exporter, "_prepare_metrics_for_json", mock_prepare):
-                import aiperf.exporters.metrics_base_exporter as mbe
-
-                def mock_convert(metrics, reg):
-                    return {m.tag: m for m in metrics}
-
-                with (
-                    patch.object(
-                        mbe, "convert_all_metrics_to_display_units", mock_convert
-                    ),
-                    patch.object(exporter, "_should_export", return_value=True),
-                ):
-                    exporter._generate_content()
+                exporter._generate_content()
 
             # Should be called once for each timeslice (2 in fixture)
             assert call_count == 2
@@ -563,16 +507,7 @@ class TestTimesliceMetricsJsonExporterIntegration:
 
             exporter = TimesliceMetricsJsonExporter(config)
 
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                await exporter.export()
+            await exporter.export()
 
             # Verify file exists
             assert exporter._file_path.exists()
@@ -601,16 +536,7 @@ class TestTimesliceMetricsJsonExporterIntegration:
 
             exporter = TimesliceMetricsJsonExporter(config)
 
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                await exporter.export()
+            await exporter.export()
 
             # Read and deserialize
             with open(exporter._file_path) as f:
@@ -654,16 +580,7 @@ class TestTimesliceMetricsJsonExporterIntegration:
 
             exporter = TimesliceMetricsJsonExporter(config)
 
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                await exporter.export()
+            await exporter.export()
 
             with open(exporter._file_path) as f:
                 data = json.load(f)
@@ -685,17 +602,7 @@ class TestTimesliceMetricsJsonExporterIntegration:
             )
 
             exporter = TimesliceMetricsJsonExporter(config)
-
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                content = exporter._generate_content()
+            content = exporter._generate_content()
 
             data = json.loads(content)
 
@@ -742,17 +649,7 @@ class TestTimesliceMetricsJsonExporterIntegration:
             )
 
             exporter = TimesliceMetricsJsonExporter(config)
-
-            import aiperf.exporters.metrics_base_exporter as mbe
-
-            def mock_convert(metrics, reg):
-                return {m.tag: m for m in metrics}
-
-            with (
-                patch.object(mbe, "convert_all_metrics_to_display_units", mock_convert),
-                patch.object(exporter, "_should_export", return_value=True),
-            ):
-                content = exporter._generate_content()
+            content = exporter._generate_content()
 
             data = json.loads(content)
 

@@ -9,9 +9,9 @@ from rich.console import Console, RenderableType
 from rich.table import Table
 
 from aiperf.common.enums import MetricFlags
+from aiperf.common.exceptions import MetricTypeError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
-from aiperf.exporters.display_units_utils import to_display_unit
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.metric_registry import MetricRegistry
 
@@ -50,19 +50,31 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         self._construct_table(table, records)
         return table
 
-    def _construct_table(self, table: Table, records: Iterable[MetricResult]) -> None:
-        records = sorted(
-            (to_display_unit(r, MetricRegistry) for r in records),
-            key=lambda x: MetricRegistry.get_class(x.tag).display_order or sys.maxsize,
+    def _construct_table(self, table: Table, records: list[MetricResult]) -> None:
+        # Records are already in display units from summarize()
+        sorted_records = sorted(
+            records,
+            key=lambda x: self._display_order(x.tag),
         )
-        for record in records:
+        for record in sorted_records:
             if not self._should_show(record):
                 continue
             table.add_row(*self._format_row(record))
 
+    @staticmethod
+    def _display_order(tag: str) -> int:
+        """Return the display order for a metric tag, defaulting to last for unregistered tags."""
+        try:
+            return MetricRegistry.get_class(tag).display_order or sys.maxsize
+        except MetricTypeError:
+            return sys.maxsize
+
     def _should_show(self, record: MetricResult) -> bool:
-        # Only show metrics that are not error-only or hidden
-        metric_class = MetricRegistry.get_class(record.tag)
+        """Only show metrics that are not error-only or hidden."""
+        try:
+            metric_class = MetricRegistry.get_class(record.tag)
+        except MetricTypeError:
+            return True
         return metric_class.missing_flags(
             MetricFlags.ERROR_ONLY
             | MetricFlags.NO_CONSOLE
@@ -71,10 +83,8 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
         )
 
     def _format_row(self, record: MetricResult) -> list[str]:
-        metric_class = MetricRegistry.get_class(record.tag)
-        display_unit = metric_class.display_unit or metric_class.unit
         delimiter = "\n" if len(record.header) > 30 else " "
-        row = [f"{record.header}{delimiter}({display_unit})"]
+        row = [f"{record.header}{delimiter}({record.unit})"]
         for stat in self.STAT_COLUMN_KEYS:
             value = getattr(record, stat, None)
             if value is None:
