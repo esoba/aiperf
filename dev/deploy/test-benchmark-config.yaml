@@ -1,0 +1,23 @@
+# Test benchmark configuration for K8s deployment
+endpoint:
+  model_names: ["mock-model"]
+  urls: ["http://aiperf-mock-server.default.svc.cluster.local:8000/v1"]
+  type: chat
+
+loadgen:
+  concurrency: 5
+  request_count: 50
+  warmup_request_count: 5
+
+tokenizer:
+  name: gpt2
+
+dataset:
+  sequence_length:
+    distribution: uniform
+    min: 50
+    max: 100
+  output_tokens:
+    distribution: uniform
+    min: 10
+    max: 50
