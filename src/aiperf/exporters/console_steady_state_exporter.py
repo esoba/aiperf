@@ -45,6 +45,12 @@ class ConsoleSteadyStateExporter(AIPerfLoggerMixin):
             f"p50={conc.p50:.1f} p90={conc.p90:.1f}",
             f"min={conc.min:.0f} max={conc.max:.0f}",
         )
+        tput = self._summary.effective_throughput
+        info.add_row(
+            f"[bold]Throughput:[/bold] avg={tput.avg:,.1f} {tput.unit}",
+            f"p50={tput.p50:,.1f} p90={tput.p90:,.1f}",
+            f"min={tput.min:,.1f} max={tput.max:,.1f}",
+        )
 
         # Stationarity status
         if meta.stationarity_warning:

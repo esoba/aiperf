@@ -87,17 +87,21 @@ def throughput_sweep(
 
 def throughput_sweep_icl(
     generation_start_ns: NDArray[np.float64],
+    output_tokens: NDArray[np.float64],
     icl_values: NDArray[np.float64],
     icl_record_indices: NDArray[np.int32],
     icl_offsets: NDArray[np.int64],
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Compute ICL-aware instantaneous throughput at every chunk boundary.
 
-    Uses per-chunk interval rates instead of uniform per-request rate.
-    Fully vectorized via RaggedSeries grouped_cumsum pattern.
+    Uses per-request rescaled rates: each ICL interval carries
+    ``output_tokens / n_icl_intervals`` tokens instead of exactly 1.
+    This preserves the accurate temporal shape from SSE message boundaries
+    while matching the known total token count per request.
 
     Args:
         generation_start_ns: Per-record first-token wall-clock (indexed by session_num).
+        output_tokens: Per-record output token count (indexed by session_num).
         icl_values: Flat array of all ICL durations (M values).
         icl_record_indices: Session_num per ICL value (M values).
         icl_offsets: Per-session_num start offset into icl_values.
@@ -122,11 +126,17 @@ def throughput_sweep_icl(
     interval_end = gen_start + relative_cs
     interval_start = interval_end - icl_values
 
-    # One token per ICL interval
-    rates = 1.0 / icl_values
+    # Per-request ICL interval count, then per-interval tokens-per-message
+    icl_counts = np.bincount(rec_idx, minlength=len(output_tokens)).astype(np.float64)
+    per_req_tokens = output_tokens[rec_idx]
+    per_req_icl_count = icl_counts[rec_idx]
+    tokens_per_msg = np.where(
+        per_req_icl_count > 0, per_req_tokens / per_req_icl_count, 0.0
+    )
+    rates = tokens_per_msg / icl_values
 
-    # Filter out invalid (NaN gen_start, zero ICL)
-    valid = ~np.isnan(gen_start) & (icl_values > 0)
+    # Filter out invalid (NaN gen_start, zero ICL, NaN output_tokens)
+    valid = ~np.isnan(gen_start) & (icl_values > 0) & ~np.isnan(per_req_tokens)
     if not valid.any():
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
 

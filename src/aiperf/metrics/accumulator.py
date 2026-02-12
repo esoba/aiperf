@@ -11,6 +11,12 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from numpy.typing import NDArray
 
+from aiperf.analysis.sweep import (
+    compute_time_weighted_stats,
+    concurrency_sweep,
+    throughput_sweep,
+    throughput_sweep_icl,
+)
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
@@ -36,6 +42,29 @@ _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
     AggregationKind.MAX: lambda a: float(np.max(a)),
     AggregationKind.MIN: lambda a: float(np.min(a)),
 }
+
+
+def _metric_result_from_sweep_stats(
+    tag: str,
+    header: str,
+    unit: str,
+    stats: dict[str, float],
+    scale: float = 1.0,
+) -> MetricResult:
+    """Build a MetricResult from compute_time_weighted_stats output."""
+    return MetricResult(
+        tag=tag,
+        header=header,
+        unit=unit,
+        avg=stats["avg"] * scale,
+        min=stats["min"] * scale,
+        max=stats["max"] * scale,
+        p50=stats["p50"] * scale,
+        p90=stats["p90"] * scale,
+        p95=stats["p95"] * scale,
+        p99=stats["p99"] * scale,
+        std=stats["std"] * scale,
+    )
 
 
 @dataclass
@@ -325,15 +354,21 @@ class MetricsAccumulator(BaseMetricsProcessor):
     ]:
         """Compute per-timeslice results by partitioning the time range.
 
+        Sweeps (concurrency, throughput) are computed once on the full arrays,
+        then ``compute_time_weighted_stats`` windows them per timeslice — O(N log N)
+        for the sweep + O(T log M) for windowing.
+
         Returns:
             Tuple of (timeslice_results, timeslice_windows).
         """
         assert self._slice_duration_ns is not None
 
-        n = self._column_store.count
-        ts = self._column_store.start_ns[:n]
-        filled = ~np.isnan(ts)
-        filled_ts = ts[filled]
+        store = self._column_store
+        n = store.count
+        start_ns = store.start_ns[:n]
+        end_ns = store.end_ns[:n]
+        filled = ~np.isnan(start_ns)
+        filled_ts = start_ns[filled]
 
         if len(filled_ts) == 0:
             return {}, {}
@@ -348,6 +383,36 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # Assign each record to a bin — O(n) total via digitize
         bins = np.digitize(filled_ts, edges) - 1
 
+        # --- Pre-compute sweep curves once on full arrays ---
+        sorted_c_ts, concurrency = concurrency_sweep(start_ns, end_ns)
+
+        # Throughput: prefer ICL-aware if inter_chunk_latency data exists
+        generation_start_ns = store.generation_start_ns[:n]
+        output_tokens = (
+            store.numeric("output_tokens")
+            if "output_tokens" in store.numeric_tags()
+            else np.full(n, np.nan)
+        )
+        has_icl = "inter_chunk_latency" in store.ragged_tags()
+        if has_icl:
+            icl = store.ragged("inter_chunk_latency")
+            if len(icl.values) > 0:
+                sorted_t_ts, throughput = throughput_sweep_icl(
+                    generation_start_ns,
+                    output_tokens,
+                    icl.values,
+                    icl.record_indices,
+                    icl.offsets,
+                )
+            else:
+                sorted_t_ts, throughput = throughput_sweep(
+                    generation_start_ns, end_ns, output_tokens
+                )
+        else:
+            sorted_t_ts, throughput = throughput_sweep(
+                generation_start_ns, end_ns, output_tokens
+            )
+
         timeslice_results: dict[TimeSliceT, dict[MetricTagT, MetricResult]] = {}
         timeslice_windows: dict[TimeSliceT, TimesliceWindow] = {}
         filled_indices = np.where(filled)[0]
@@ -361,17 +426,45 @@ class MetricsAccumulator(BaseMetricsProcessor):
             full_mask = np.zeros(n, dtype=bool)
             full_mask[filled_indices[bin_mask_local]] = True
 
+            window_start = float(edges[bin_idx])
+            window_end = float(edges[bin_idx + 1])
+
             results = self._compute_results(
                 full_mask,
                 window_start_ns=int(edges[bin_idx]),
                 window_end_ns=int(edges[bin_idx + 1]),
             )
-            if len(results) > 0:
-                timeslice_results[bin_idx] = results
-                timeslice_windows[bin_idx] = TimesliceWindow(
-                    start_ns=int(edges[bin_idx]),
-                    end_ns=int(edges[bin_idx + 1]),
-                )
+            if len(results) == 0:
+                continue
+
+            # Inject sweep-based effective_concurrency
+            conc_stats = compute_time_weighted_stats(
+                sorted_c_ts, concurrency, window_start, window_end
+            )
+            results["effective_concurrency"] = _metric_result_from_sweep_stats(
+                "effective_concurrency",
+                "Effective Concurrency",
+                "requests",
+                conc_stats,
+            )
+
+            # Inject sweep-based effective_throughput (sweep returns tokens/ns)
+            tput_stats = compute_time_weighted_stats(
+                sorted_t_ts, throughput, window_start, window_end
+            )
+            results["effective_throughput"] = _metric_result_from_sweep_stats(
+                "effective_throughput",
+                "Effective Throughput",
+                "tokens/sec",
+                tput_stats,
+                scale=NANOS_PER_SECOND,
+            )
+
+            timeslice_results[bin_idx] = results
+            timeslice_windows[bin_idx] = TimesliceWindow(
+                start_ns=int(edges[bin_idx]),
+                end_ns=int(edges[bin_idx + 1]),
+            )
 
         return timeslice_results, timeslice_windows
 

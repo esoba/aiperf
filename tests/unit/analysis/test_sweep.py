@@ -113,6 +113,7 @@ class TestThroughputSweepIcl:
         ts, tput = throughput_sweep_icl(
             np.array([], dtype=np.float64),
             np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
             np.array([], dtype=np.int32),
             np.array([], dtype=np.int64),
         )
@@ -121,33 +122,36 @@ class TestThroughputSweepIcl:
     def test_single_request_uniform_chunks(self) -> None:
         """Single request with 3 equal ICL chunks of 10ns each."""
         gen_start = np.array([0.0])  # indexed by session_num
+        output_tokens = np.array([3.0])  # 3 tokens across 3 chunks → 1 tok/msg
         icl_values = np.array([10.0, 10.0, 10.0])
         icl_record_indices = np.array([0, 0, 0], dtype=np.int32)
         icl_offsets = np.array([0], dtype=np.int64)
 
         ts, tput = throughput_sweep_icl(
-            gen_start, icl_values, icl_record_indices, icl_offsets
+            gen_start, output_tokens, icl_values, icl_record_indices, icl_offsets
         )
         assert len(ts) == 6  # 3 chunks * 2 events each
-        # Each chunk: rate = 1/10 = 0.1 tokens/ns
+        # Each chunk: rate = (3/3) / 10 = 0.1 tokens/ns
         # Since chunks are sequential, peak throughput should be 0.1
         assert float(np.max(tput)) == pytest.approx(0.1)
 
     def test_nan_gen_start_excluded(self) -> None:
         """Records with NaN generation_start should be excluded."""
         gen_start = np.array([np.nan])
+        output_tokens = np.array([5.0])
         icl_values = np.array([10.0])
         icl_record_indices = np.array([0], dtype=np.int32)
         icl_offsets = np.array([0], dtype=np.int64)
 
         ts, tput = throughput_sweep_icl(
-            gen_start, icl_values, icl_record_indices, icl_offsets
+            gen_start, output_tokens, icl_values, icl_record_indices, icl_offsets
         )
         assert len(ts) == 0
 
     def test_two_overlapping_requests(self) -> None:
         """Two requests with overlapping ICL chunks."""
         gen_start = np.array([0.0, 5.0])
+        output_tokens = np.array([2.0, 2.0])  # 2 tokens each, 2 chunks each → 1 tok/msg
         # Request 0: chunks at [0,10), [10,20)
         # Request 1: chunks at [5,15), [15,25)
         icl_values = np.array([10.0, 10.0, 10.0, 10.0])
@@ -155,11 +159,26 @@ class TestThroughputSweepIcl:
         icl_offsets = np.array([0, 2], dtype=np.int64)
 
         ts, tput = throughput_sweep_icl(
-            gen_start, icl_values, icl_record_indices, icl_offsets
+            gen_start, output_tokens, icl_values, icl_record_indices, icl_offsets
         )
         assert len(ts) == 8  # 4 chunks * 2 events
         # When chunks overlap, throughput should be > single chunk rate
         assert float(np.max(tput)) > 0.1
+
+    def test_rescaling_with_variable_tokens(self) -> None:
+        """6 output tokens across 3 chunks → 2 tokens/msg, rates double."""
+        gen_start = np.array([0.0])
+        output_tokens = np.array([6.0])  # 6 tokens across 3 chunks → 2 tok/msg
+        icl_values = np.array([10.0, 10.0, 10.0])
+        icl_record_indices = np.array([0, 0, 0], dtype=np.int32)
+        icl_offsets = np.array([0], dtype=np.int64)
+
+        ts, tput = throughput_sweep_icl(
+            gen_start, output_tokens, icl_values, icl_record_indices, icl_offsets
+        )
+        assert len(ts) == 6
+        # Each chunk: rate = (6/3) / 10 = 0.2 tokens/ns (doubled vs 1 tok/msg)
+        assert float(np.max(tput)) == pytest.approx(0.2)
 
 
 class TestComputeTimeWeightedStats:

@@ -37,6 +37,8 @@ class SteadyStateJsonExporter(MetricsBaseExporter):
         prepared = self._prepare_metrics(self._summary.results.values())
         conc = self._summary.effective_concurrency
         prepared[conc.tag] = conc
+        tput = self._summary.effective_throughput
+        prepared[tput.tag] = tput
         meta = self._summary.window_metadata
 
         data: dict[str, Any] = {

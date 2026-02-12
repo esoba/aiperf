@@ -21,8 +21,10 @@ from aiperf.analysis.sweep import (
     compute_time_weighted_stats,
     concurrency_sweep,
     throughput_sweep,
+    throughput_sweep_icl,
 )
 from aiperf.common.config import UserConfig
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PluginDisabled
 from aiperf.common.models import MetricResult
@@ -146,6 +148,9 @@ class SteadyStateSummary(AIPerfBaseModel):
     effective_concurrency: MetricResult = Field(
         description="Time-weighted concurrency statistics during steady state"
     )
+    effective_throughput: MetricResult = Field(
+        description="Time-weighted throughput statistics during steady state"
+    )
     window_metadata: SteadyStateWindowMetadata = Field(
         description="Metadata about the detected steady-state window"
     )
@@ -155,6 +160,7 @@ class SteadyStateSummary(AIPerfBaseModel):
         data: dict[str, Any] = {
             "results": [r.to_json_result().model_dump() for r in self.results.values()],
             "effective_concurrency": self.effective_concurrency.to_json_result().model_dump(),
+            "effective_throughput": self.effective_throughput.to_json_result().model_dump(),
             "window_metadata": {
                 "detection_method": meta.detection_method,
                 "ramp_up_end_ns": meta.ramp_up_end_ns,
@@ -313,6 +319,36 @@ class SteadyStateAnalyzer:
             sorted_c_ts, concurrency, window_start, window_end
         )
 
+        # Time-weighted throughput statistics within the window.
+        # Prefer ICL-aware sweep (accurate SSE message timing, per-request rescaled
+        # token counts) over uniform sweep (tokens spread evenly over generation window).
+        if "inter_chunk_latency" in store.ragged_tags():
+            icl = store.ragged("inter_chunk_latency")
+            if len(icl.values) > 0:
+                tput_ts, tput_vals = throughput_sweep_icl(
+                    generation_start_ns,
+                    output_tokens,
+                    icl.values,
+                    icl.record_indices,
+                    icl.offsets,
+                )
+            else:
+                tput_ts, tput_vals = sorted_t_ts, tput
+        else:
+            tput_ts, tput_vals = sorted_t_ts, tput
+
+        if len(tput_ts) > 0:
+            tput_stats = compute_time_weighted_stats(
+                tput_ts, tput_vals, window_start, window_end
+            )
+            # Sweep returns tokens/ns — convert to tokens/sec
+            for key in tput_stats:
+                tput_stats[key] *= NANOS_PER_SECOND
+        else:
+            tput_stats = {
+                k: 0.0 for k in ("avg", "min", "max", "p50", "p90", "p95", "p99", "std")
+            }
+
         # Steady-state mask: request started AND ended within window
         ss_mask = filled & (start_ns >= window_start) & (end_ns <= window_end)
 
@@ -388,6 +424,19 @@ class SteadyStateAnalyzer:
                 p95=conc_stats["p95"],
                 p99=conc_stats["p99"],
                 std=conc_stats["std"],
+            ),
+            effective_throughput=MetricResult(
+                tag="effective_throughput",
+                header="Effective Throughput",
+                unit="tokens/sec",
+                avg=tput_stats["avg"],
+                min=tput_stats["min"],
+                max=tput_stats["max"],
+                p50=tput_stats["p50"],
+                p90=tput_stats["p90"],
+                p95=tput_stats["p95"],
+                p99=tput_stats["p99"],
+                std=tput_stats["std"],
             ),
             window_metadata=SteadyStateWindowMetadata(
                 ramp_up_end_ns=window_start,

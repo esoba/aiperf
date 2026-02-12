@@ -324,6 +324,19 @@ class TestSteadyStateSummarySerialize:
                 p99=8.0,
                 std=1.5,
             ),
+            effective_throughput=MetricResult(
+                tag="effective_throughput",
+                header="Effective Throughput",
+                unit="tokens/sec",
+                avg=100.0,
+                min=50.0,
+                max=200.0,
+                p50=100.0,
+                p90=180.0,
+                p95=190.0,
+                p99=200.0,
+                std=30.0,
+            ),
             window_metadata=SteadyStateWindowMetadata(
                 ramp_up_end_ns=100.0,
                 ramp_down_start_ns=900.0,
@@ -377,6 +390,8 @@ class TestSteadyStateSummarySerialize:
         assert cv["cusum_throughput_ramp_down_start_ns"] == 905.0
         assert data["effective_concurrency"]["avg"] == 5.0
         assert data["effective_concurrency"]["p99"] == 8.0
+        assert data["effective_throughput"]["avg"] == 100.0
+        assert data["effective_throughput"]["unit"] == "tokens/sec"
 
     def test_to_csv(self) -> None:
         summary = self._make_summary()
@@ -470,3 +485,142 @@ class TestSteadyStateAnalyzerSampleQuality:
         # 2000 * 0.01 = 20, so warning should not fire
         assert meta.effective_p99_sample_size >= 10
         assert meta.sample_size_warning is False
+
+
+# ---------------------------------------------------------------------------
+# Effective Throughput Tests
+# ---------------------------------------------------------------------------
+
+
+def _make_throughput_metric():
+    """Create metric classes needed for throughput testing."""
+    from aiperf.common.enums import MetricType
+
+    class FakeLatency:
+        tag = "request_latency"
+        type = MetricType.RECORD
+        header = "Request Latency"
+        unit = "ms"
+
+        def derive_value(self, results):
+            raise NotImplementedError
+
+    class FakeOutputTokens:
+        tag = "output_tokens"
+        type = MetricType.RECORD
+        header = "Output Tokens"
+        unit = "tokens"
+
+        def derive_value(self, results):
+            raise NotImplementedError
+
+    class FakeTTFT:
+        tag = "time_to_first_token"
+        type = MetricType.RECORD
+        header = "Time To First Token"
+        unit = "ns"
+
+        def derive_value(self, results):
+            raise NotImplementedError
+
+    return FakeLatency, FakeOutputTokens, FakeTTFT
+
+
+async def _build_accumulator_with_throughput_records(
+    mock_metric_registry: Mock,
+    user_config: UserConfig,
+    records: list[tuple[int, int, int, float, float, float]],
+) -> object:
+    """Build and populate a MetricsAccumulator with throughput-relevant data.
+
+    Args:
+        records: list of (session_num, start_ns, end_ns, latency, output_tokens, ttft_ns)
+    """
+    latency_cls, output_cls, ttft_cls = _make_throughput_metric()
+    acc = create_accumulator_with_metrics(
+        user_config, latency_cls, output_cls, ttft_cls
+    )
+
+    for session_num, start_ns, end_ns, latency, output_tokens, ttft_ns in records:
+        msg = create_metric_records_message(
+            session_num=session_num,
+            request_start_ns=start_ns,
+            request_end_ns=end_ns,
+            results=[
+                {
+                    "request_latency": latency,
+                    "output_tokens": output_tokens,
+                    "time_to_first_token": ttft_ns,
+                }
+            ],
+        )
+        await acc.process_record(msg.to_data())
+
+    return acc
+
+
+class TestSteadyStateAnalyzerEffectiveThroughput:
+    @pytest.mark.asyncio
+    async def test_effective_throughput_present(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """effective_throughput field is always present on the result."""
+        records = [(i, 0, 1_000_000_000, float(i * 10)) for i in range(50)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config()
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        assert hasattr(result, "effective_throughput")
+        assert result.effective_throughput.tag == "effective_throughput"
+        assert result.effective_throughput.unit == "tokens/sec"
+
+    @pytest.mark.asyncio
+    async def test_zero_throughput_without_token_data(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """When no output_tokens/TTFT data exists, throughput stats are zero."""
+        # Records without output_tokens or time_to_first_token → no generation_start_ns
+        records = [(i, i * 100, (i + 1) * 100, float(i)) for i in range(20)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        tput = result.effective_throughput
+        assert tput.avg == pytest.approx(0.0)
+        assert tput.min == pytest.approx(0.0)
+        assert tput.max == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_known_throughput_with_overlapping_requests(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Overlapping requests with known token rates → verify avg throughput."""
+        # 10 requests: each starts at 0, ends at 1_000_000_000 (1 sec),
+        # TTFT = 0 (generation starts at request start),
+        # output_tokens = 101 → per-request rate = 100 tokens / 1e9 ns = 1e-7 tokens/ns
+        # 10 overlapping → total ~1000 tokens/sec
+        records = [(i, 0, 1_000_000_000, 100.0, 101.0, 0.0) for i in range(10)]
+        acc = await _build_accumulator_with_throughput_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        tput = result.effective_throughput
+        # 10 * (101-1) / 1sec = 1000 tokens/sec
+        assert tput.avg == pytest.approx(1000.0, rel=0.05)
+        assert tput.min >= 0.0
+        assert tput.max >= tput.avg
