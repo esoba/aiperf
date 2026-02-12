@@ -8,8 +8,30 @@ Input arrays are expected to be session_num-indexed (from ColumnStore).
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
 from numpy.typing import NDArray
+
+from aiperf.common.models import MetricResult
+
+
+class SweepStats(NamedTuple):
+    """Time-weighted statistics from a sweep-line step function."""
+
+    avg: float
+    min: float
+    max: float
+    p50: float
+    p90: float
+    p95: float
+    p99: float
+    std: float
+
+
+ZERO_SWEEP_STATS = SweepStats(
+    avg=0.0, min=0.0, max=0.0, p50=0.0, p90=0.0, p95=0.0, p99=0.0, std=0.0
+)
 
 
 def _sweep_cumsum(
@@ -85,6 +107,45 @@ def throughput_sweep(
     return sorted_ts, throughput
 
 
+def prefill_throughput_sweep(
+    start_ns: NDArray[np.float64],
+    generation_start_ns: NDArray[np.float64],
+    input_tokens: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Compute exact instantaneous prefill throughput (tokens/ns) at every event boundary.
+
+    During prefill [start_ns, generation_start_ns), the model processes
+    input_tokens tokens. The per-request prefill rate is
+    input_tokens / prefill_duration.
+
+    Args:
+        start_ns: Request start timestamps (wall-clock). NaN for missing.
+        generation_start_ns: First-token wall-clock timestamps. NaN for missing.
+        input_tokens: Input token counts. NaN for missing.
+
+    Returns:
+        Tuple of (sorted_timestamps, prefill_throughput_values) in tokens/ns.
+    """
+    prefill_dur = generation_start_ns - start_ns
+    valid = (
+        ~np.isnan(start_ns)
+        & ~np.isnan(generation_start_ns)
+        & ~np.isnan(input_tokens)
+        & (prefill_dur > 0)
+    )
+    k = int(valid.sum())
+    if k == 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    rates = input_tokens[valid] / prefill_dur[valid]
+
+    timestamps = np.concatenate([start_ns[valid], generation_start_ns[valid]])
+    deltas = np.concatenate([rates, -rates])
+
+    sorted_ts, prefill_tput = _sweep_cumsum(timestamps, deltas)
+    return sorted_ts, prefill_tput
+
+
 def throughput_sweep_icl(
     generation_start_ns: NDArray[np.float64],
     output_tokens: NDArray[np.float64],
@@ -152,7 +213,7 @@ def compute_time_weighted_stats(
     values: NDArray[np.float64],
     window_start: float,
     window_end: float,
-) -> dict[str, float]:
+) -> SweepStats:
     """Compute time-weighted statistics over a step-function within a window.
 
     The sweep-line output defines a step function: value[i] is held from
@@ -166,14 +227,11 @@ def compute_time_weighted_stats(
         window_end: Right boundary of the analysis window.
 
     Returns:
-        Dict with keys: avg, min, max, p50, p90, p95, p99, std.
+        SweepStats with avg, min, max, p50, p90, p95, p99, std.
     """
     total_dur = window_end - window_start
-    zero_stats = {
-        k: 0.0 for k in ("avg", "min", "max", "p50", "p90", "p95", "p99", "std")
-    }
     if len(sorted_ts) == 0 or total_dur <= 0:
-        return zero_stats
+        return ZERO_SWEEP_STATS
 
     # Narrow to events relevant to [window_start, window_end] via searchsorted,
     # avoiding full-array operations on events entirely outside the window.
@@ -211,7 +269,7 @@ def compute_time_weighted_stats(
     # Filter to segments with positive duration
     mask = durations > 0
     if not mask.any():
-        return zero_stats
+        return ZERO_SWEEP_STATS
 
     dur = durations[mask]
     val = seg_values[mask]
@@ -237,13 +295,29 @@ def compute_time_weighted_stats(
     np.minimum(indices, len(sorted_val) - 1, out=indices)
     p50, p90, p95, p99 = sorted_val[indices].tolist()
 
-    return {
-        "avg": avg,
-        "min": mn,
-        "max": mx,
-        "p50": p50,
-        "p90": p90,
-        "p95": p95,
-        "p99": p99,
-        "std": std,
-    }
+    return SweepStats(
+        avg=avg, min=mn, max=mx, p50=p50, p90=p90, p95=p95, p99=p99, std=std
+    )
+
+
+def metric_result_from_sweep_stats(
+    tag: str,
+    header: str,
+    unit: str,
+    stats: SweepStats,
+    scale: float = 1.0,
+) -> MetricResult:
+    """Build a MetricResult from compute_time_weighted_stats output."""
+    return MetricResult(
+        tag=tag,
+        header=header,
+        unit=unit,
+        avg=stats.avg * scale,
+        min=stats.min * scale,
+        max=stats.max * scale,
+        p50=stats.p50 * scale,
+        p90=stats.p90 * scale,
+        p95=stats.p95 * scale,
+        p99=stats.p99 * scale,
+        std=stats.std * scale,
+    )

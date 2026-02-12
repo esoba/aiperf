@@ -7,7 +7,10 @@ This module provides functions to compute statistics from time series data
 into type-specific series models (GaugeSeries, CounterSeries, HistogramSeries).
 """
 
+from __future__ import annotations
+
 from dataclasses import asdict
+from typing import NamedTuple
 
 import numpy as np
 
@@ -33,6 +36,15 @@ from aiperf.server_metrics.histogram_percentiles import (
 from aiperf.server_metrics.storage import HistogramTimeSeries, ScalarTimeSeries
 
 _logger = AIPerfLogger(__name__)
+
+
+class TimesliceBoundaries(NamedTuple):
+    """Evenly-spaced timeslice start/end boundaries with completeness flags."""
+
+    starts: np.ndarray
+    ends: np.ndarray
+    is_complete: np.ndarray
+
 
 # =============================================================================
 # Public API: Statistics Computation
@@ -120,7 +132,7 @@ def _compute_timeslice_boundaries(
     range_start_ns: int,
     range_end_ns: int,
     slice_duration: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+) -> TimesliceBoundaries | None:
     """Compute timeslice start/end boundaries and completeness flags.
 
     Generates evenly-spaced timeslice boundaries covering the time range, including
@@ -176,7 +188,7 @@ def _compute_timeslice_boundaries(
         timeslice_ends = np.append(timeslice_ends, range_end_ns)
         is_complete = np.append(is_complete, False)
 
-    return timeslice_starts, timeslice_ends, is_complete
+    return TimesliceBoundaries(timeslice_starts, timeslice_ends, is_complete)
 
 
 # =============================================================================

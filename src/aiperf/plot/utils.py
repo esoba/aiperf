@@ -8,14 +8,33 @@ Provides shared utilities for metric parsing, data preparation, and other
 cross-cutting concerns used by multiple plot modules.
 """
 
+from __future__ import annotations
+
 import re
+from typing import Any, NamedTuple
 
 import orjson
 
 from aiperf.plot.metric_names import _format_server_metric_name
 
 
-def parse_server_metric_spec(metric_spec: str) -> tuple[str, str | None, dict | None]:
+class ParsedMetricSpec(NamedTuple):
+    """Parsed server metric specification with optional filters."""
+
+    metric_name: str
+    endpoint_url: str | None
+    labels: dict[str, str] | None
+
+
+class FilteredMetrics(NamedTuple):
+    """Filtered server metrics DataFrame with metadata."""
+
+    dataframe: Any  # pandas DataFrame
+    unit: str
+    metric_type: str
+
+
+def parse_server_metric_spec(metric_spec: str) -> ParsedMetricSpec:
     """
     Parse server metric specification with optional endpoint and label filters.
 
@@ -76,7 +95,7 @@ def parse_server_metric_spec(metric_spec: str) -> tuple[str, str | None, dict | 
                 f"Expected format: metric_name{{label1=value1,label2=value2}}"
             )
         # Fallback: return as-is if pattern doesn't match (may be simple metric name)
-        return metric_spec.strip(), None, None
+        return ParsedMetricSpec(metric_spec.strip(), None, None)
 
     metric_name = combined_match.group(1)
     endpoint = combined_match.group(2)  # None if not present
@@ -107,7 +126,7 @@ def parse_server_metric_spec(metric_spec: str) -> tuple[str, str | None, dict | 
                 )
             labels[key] = value
 
-    return metric_name.strip(), endpoint, labels
+    return ParsedMetricSpec(metric_name.strip(), endpoint, labels)
 
 
 def filter_server_metrics_dataframe(
@@ -115,7 +134,7 @@ def filter_server_metrics_dataframe(
     metric_name: str,
     endpoint_filter: str | None = None,
     labels_filter: dict | None = None,
-) -> tuple:
+) -> FilteredMetrics:
     """
     Filter server metrics DataFrame by metric name, endpoint, and labels.
 
@@ -193,7 +212,7 @@ def filter_server_metrics_dataframe(
         else ""
     )
 
-    return filtered, unit, metric_type
+    return FilteredMetrics(filtered, unit, metric_type)
 
 
 def detect_server_metric_series(df) -> list[tuple[str, str]]:

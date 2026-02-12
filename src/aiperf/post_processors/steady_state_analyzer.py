@@ -18,8 +18,11 @@ from aiperf.analysis.ramp_detection import (
 )
 from aiperf.analysis.stationarity import batch_means_trend_test
 from aiperf.analysis.sweep import (
+    ZERO_SWEEP_STATS,
     compute_time_weighted_stats,
     concurrency_sweep,
+    metric_result_from_sweep_stats,
+    prefill_throughput_sweep,
     throughput_sweep,
     throughput_sweep_icl,
 )
@@ -151,6 +154,9 @@ class SteadyStateSummary(AIPerfBaseModel):
     effective_throughput: MetricResult = Field(
         description="Time-weighted throughput statistics during steady state"
     )
+    effective_prefill_throughput: MetricResult = Field(
+        description="Time-weighted prefill throughput statistics during steady state"
+    )
     window_metadata: SteadyStateWindowMetadata = Field(
         description="Metadata about the detected steady-state window"
     )
@@ -161,6 +167,7 @@ class SteadyStateSummary(AIPerfBaseModel):
             "results": [r.to_json_result().model_dump() for r in self.results.values()],
             "effective_concurrency": self.effective_concurrency.to_json_result().model_dump(),
             "effective_throughput": self.effective_throughput.to_json_result().model_dump(),
+            "effective_prefill_throughput": self.effective_prefill_throughput.to_json_result().model_dump(),
             "window_metadata": {
                 "detection_method": meta.detection_method,
                 "ramp_up_end_ns": meta.ramp_up_end_ns,
@@ -341,13 +348,20 @@ class SteadyStateAnalyzer:
             tput_stats = compute_time_weighted_stats(
                 tput_ts, tput_vals, window_start, window_end
             )
-            # Sweep returns tokens/ns — convert to tokens/sec
-            for key in tput_stats:
-                tput_stats[key] *= NANOS_PER_SECOND
         else:
-            tput_stats = {
-                k: 0.0 for k in ("avg", "min", "max", "p50", "p90", "p95", "p99", "std")
-            }
+            tput_stats = ZERO_SWEEP_STATS
+
+        # Prefill throughput: input tokens processed during [start_ns, generation_start_ns)
+        input_tokens = store.numeric("input_sequence_length")
+        sorted_p_ts, prefill_tput = prefill_throughput_sweep(
+            start_ns, generation_start_ns, input_tokens
+        )
+        if len(sorted_p_ts) > 0:
+            prefill_stats = compute_time_weighted_stats(
+                sorted_p_ts, prefill_tput, window_start, window_end
+            )
+        else:
+            prefill_stats = ZERO_SWEEP_STATS
 
         # Steady-state mask: request started AND ended within window
         ss_mask = filled & (start_ns >= window_start) & (end_ns <= window_end)
@@ -412,31 +426,25 @@ class SteadyStateAnalyzer:
 
         return SteadyStateSummary(
             results=windowed_results,
-            effective_concurrency=MetricResult(
-                tag="effective_concurrency",
-                header="Effective Concurrency",
-                unit="requests",
-                avg=conc_stats["avg"],
-                min=conc_stats["min"],
-                max=conc_stats["max"],
-                p50=conc_stats["p50"],
-                p90=conc_stats["p90"],
-                p95=conc_stats["p95"],
-                p99=conc_stats["p99"],
-                std=conc_stats["std"],
+            effective_concurrency=metric_result_from_sweep_stats(
+                "effective_concurrency",
+                "Effective Concurrency",
+                "requests",
+                conc_stats,
             ),
-            effective_throughput=MetricResult(
-                tag="effective_throughput",
-                header="Effective Throughput",
-                unit="tokens/sec",
-                avg=tput_stats["avg"],
-                min=tput_stats["min"],
-                max=tput_stats["max"],
-                p50=tput_stats["p50"],
-                p90=tput_stats["p90"],
-                p95=tput_stats["p95"],
-                p99=tput_stats["p99"],
-                std=tput_stats["std"],
+            effective_throughput=metric_result_from_sweep_stats(
+                "effective_throughput",
+                "Effective Throughput",
+                "tokens/sec",
+                tput_stats,
+                scale=NANOS_PER_SECOND,
+            ),
+            effective_prefill_throughput=metric_result_from_sweep_stats(
+                "effective_prefill_throughput",
+                "Effective Prefill Throughput",
+                "tokens/sec",
+                prefill_stats,
+                scale=NANOS_PER_SECOND,
             ),
             window_metadata=SteadyStateWindowMetadata(
                 ramp_up_end_ns=window_start,

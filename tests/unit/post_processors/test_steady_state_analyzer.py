@@ -337,6 +337,19 @@ class TestSteadyStateSummarySerialize:
                 p99=200.0,
                 std=30.0,
             ),
+            effective_prefill_throughput=MetricResult(
+                tag="effective_prefill_throughput",
+                header="Effective Prefill Throughput",
+                unit="tokens/sec",
+                avg=500.0,
+                min=200.0,
+                max=800.0,
+                p50=500.0,
+                p90=700.0,
+                p95=750.0,
+                p99=790.0,
+                std=100.0,
+            ),
             window_metadata=SteadyStateWindowMetadata(
                 ramp_up_end_ns=100.0,
                 ramp_down_start_ns=900.0,
@@ -392,6 +405,8 @@ class TestSteadyStateSummarySerialize:
         assert data["effective_concurrency"]["p99"] == 8.0
         assert data["effective_throughput"]["avg"] == 100.0
         assert data["effective_throughput"]["unit"] == "tokens/sec"
+        assert data["effective_prefill_throughput"]["avg"] == 500.0
+        assert data["effective_prefill_throughput"]["unit"] == "tokens/sec"
 
     def test_to_csv(self) -> None:
         summary = self._make_summary()
@@ -523,36 +538,50 @@ def _make_throughput_metric():
         def derive_value(self, results):
             raise NotImplementedError
 
-    return FakeLatency, FakeOutputTokens, FakeTTFT
+    class FakeISL:
+        tag = "input_sequence_length"
+        type = MetricType.RECORD
+        header = "Input Sequence Length"
+        unit = "tokens"
+
+        def derive_value(self, results):
+            raise NotImplementedError
+
+    return FakeLatency, FakeOutputTokens, FakeTTFT, FakeISL
 
 
 async def _build_accumulator_with_throughput_records(
     mock_metric_registry: Mock,
     user_config: UserConfig,
     records: list[tuple[int, int, int, float, float, float]],
+    *,
+    input_tokens: float | None = None,
 ) -> object:
     """Build and populate a MetricsAccumulator with throughput-relevant data.
 
     Args:
         records: list of (session_num, start_ns, end_ns, latency, output_tokens, ttft_ns)
+        input_tokens: If set, include input_sequence_length in each record.
     """
-    latency_cls, output_cls, ttft_cls = _make_throughput_metric()
-    acc = create_accumulator_with_metrics(
-        user_config, latency_cls, output_cls, ttft_cls
-    )
+    latency_cls, output_cls, ttft_cls, isl_cls = _make_throughput_metric()
+    metric_classes = [latency_cls, output_cls, ttft_cls]
+    if input_tokens is not None:
+        metric_classes.append(isl_cls)
+    acc = create_accumulator_with_metrics(user_config, *metric_classes)
 
-    for session_num, start_ns, end_ns, latency, output_tokens, ttft_ns in records:
+    for session_num, start_ns, end_ns, latency, output_tokens_val, ttft_ns in records:
+        result: dict = {
+            "request_latency": latency,
+            "output_tokens": output_tokens_val,
+            "time_to_first_token": ttft_ns,
+        }
+        if input_tokens is not None:
+            result["input_sequence_length"] = input_tokens
         msg = create_metric_records_message(
             session_num=session_num,
             request_start_ns=start_ns,
             request_end_ns=end_ns,
-            results=[
-                {
-                    "request_latency": latency,
-                    "output_tokens": output_tokens,
-                    "time_to_first_token": ttft_ns,
-                }
-            ],
+            results=[result],
         )
         await acc.process_record(msg.to_data())
 
@@ -624,3 +653,73 @@ class TestSteadyStateAnalyzerEffectiveThroughput:
         assert tput.avg == pytest.approx(1000.0, rel=0.05)
         assert tput.min >= 0.0
         assert tput.max >= tput.avg
+
+
+class TestSteadyStateAnalyzerEffectivePrefillThroughput:
+    @pytest.mark.asyncio
+    async def test_effective_prefill_throughput_present(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """effective_prefill_throughput field is always present on the result."""
+        records = [(i, 0, 1_000_000_000, float(i * 10)) for i in range(50)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config()
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        assert hasattr(result, "effective_prefill_throughput")
+        assert result.effective_prefill_throughput.tag == "effective_prefill_throughput"
+        assert result.effective_prefill_throughput.unit == "tokens/sec"
+
+    @pytest.mark.asyncio
+    async def test_zero_prefill_throughput_without_isl(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """When no ISL data exists, prefill throughput stats are zero."""
+        records = [(i, i * 100, (i + 1) * 100, float(i)) for i in range(20)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        ptput = result.effective_prefill_throughput
+        assert ptput.avg == pytest.approx(0.0)
+        assert ptput.min == pytest.approx(0.0)
+        assert ptput.max == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_known_prefill_throughput_with_overlapping_requests(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Overlapping requests with known prefill rates → verify avg prefill throughput."""
+        # 10 requests: each starts at 0, ends at 1_000_000_000 (1 sec),
+        # TTFT = 100_000_000 (100ms), input_tokens = 200
+        # Per-request prefill rate = 200 / 100e6 ns = 2e-6 tokens/ns = 2000 tokens/sec
+        # 10 overlapping prefills → total ~20000 tokens/sec
+        records = [
+            (i, 0, 1_000_000_000, 100.0, 101.0, 100_000_000.0) for i in range(10)
+        ]
+        acc = await _build_accumulator_with_throughput_records(
+            mock_metric_registry, mock_user_config, records, input_tokens=200.0
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        ptput = result.effective_prefill_throughput
+        # Prefill window is [0, 100ms) for each request
+        # During [0, 100ms]: 10 * 200 / 100ms = 20000 tokens/sec
+        # But time-weighted over the full window [0, ~1s], the avg will be lower
+        # since no prefill activity after 100ms
+        assert ptput.avg > 0.0
+        assert ptput.max == pytest.approx(20000.0, rel=0.05)

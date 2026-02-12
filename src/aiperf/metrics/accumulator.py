@@ -14,6 +14,8 @@ from numpy.typing import NDArray
 from aiperf.analysis.sweep import (
     compute_time_weighted_stats,
     concurrency_sweep,
+    metric_result_from_sweep_stats,
+    prefill_throughput_sweep,
     throughput_sweep,
     throughput_sweep_icl,
 )
@@ -37,39 +39,24 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
 
-# (sorted_c_ts, concurrency, sorted_t_ts, throughput) from _compute_sweeps()
-_SweepCurves = tuple[
-    NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]
-]
+
+@dataclass(frozen=True, slots=True)
+class SweepCurves:
+    """Pre-computed sweep-line curves for concurrency, throughput, and prefill throughput."""
+
+    concurrency_ts: NDArray[np.float64]
+    concurrency: NDArray[np.float64]
+    throughput_ts: NDArray[np.float64]
+    throughput: NDArray[np.float64]
+    prefill_throughput_ts: NDArray[np.float64]
+    prefill_throughput: NDArray[np.float64]
+
 
 _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
     AggregationKind.SUM: lambda a: float(np.sum(a)),
     AggregationKind.MAX: lambda a: float(np.max(a)),
     AggregationKind.MIN: lambda a: float(np.min(a)),
 }
-
-
-def _metric_result_from_sweep_stats(
-    tag: str,
-    header: str,
-    unit: str,
-    stats: dict[str, float],
-    scale: float = 1.0,
-) -> MetricResult:
-    """Build a MetricResult from compute_time_weighted_stats output."""
-    return MetricResult(
-        tag=tag,
-        header=header,
-        unit=unit,
-        avg=stats["avg"] * scale,
-        min=stats["min"] * scale,
-        max=stats["max"] * scale,
-        p50=stats["p50"] * scale,
-        p90=stats["p90"] * scale,
-        p95=stats["p95"] * scale,
-        p99=stats["p99"] * scale,
-        std=stats["std"] * scale,
-    )
 
 
 @dataclass
@@ -356,12 +343,13 @@ class MetricsAccumulator(BaseMetricsProcessor):
         """Export final metrics results. Delegates to summarize()."""
         return await self.summarize()
 
-    def _compute_sweeps(self) -> _SweepCurves:
-        """Compute concurrency and throughput sweep curves on the full dataset.
+    def _compute_sweeps(self) -> SweepCurves:
+        """Compute concurrency, throughput, and prefill throughput sweep curves.
 
         Returns:
-            (sorted_c_ts, concurrency, sorted_t_ts, throughput) — step-function
-            arrays suitable for ``compute_time_weighted_stats``.
+            (sorted_c_ts, concurrency, sorted_t_ts, throughput,
+             sorted_p_ts, prefill_tput) — step-function arrays suitable
+            for ``compute_time_weighted_stats``.
         """
         store = self._column_store
         n = store.count
@@ -396,24 +384,42 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 generation_start_ns, end_ns, output_tokens
             )
 
-        return sorted_c_ts, concurrency, sorted_t_ts, throughput
+        input_tokens = (
+            store.numeric("input_sequence_length")
+            if "input_sequence_length" in store.numeric_tags()
+            else np.full(n, np.nan)
+        )
+        sorted_p_ts, prefill_tput = prefill_throughput_sweep(
+            start_ns, generation_start_ns, input_tokens
+        )
+
+        return SweepCurves(
+            concurrency_ts=sorted_c_ts,
+            concurrency=concurrency,
+            throughput_ts=sorted_t_ts,
+            throughput=throughput,
+            prefill_throughput_ts=sorted_p_ts,
+            prefill_throughput=prefill_tput,
+        )
 
     def _inject_sweep_metrics(
         self,
         results: dict[MetricTagT, MetricResult],
-        sweeps: _SweepCurves,
+        sweeps: SweepCurves,
     ) -> None:
-        """Inject time-weighted effective_concurrency and effective_throughput."""
-        sorted_c_ts, concurrency, sorted_t_ts, throughput = sweeps
-
+        """Inject time-weighted sweep metrics into results."""
         # Full extent: earliest start to latest end across both sweeps
-        window_start = float(sorted_c_ts[0]) if len(sorted_c_ts) > 0 else 0.0
-        window_end = float(sorted_c_ts[-1]) if len(sorted_c_ts) > 0 else 0.0
+        window_start = (
+            float(sweeps.concurrency_ts[0]) if len(sweeps.concurrency_ts) > 0 else 0.0
+        )
+        window_end = (
+            float(sweeps.concurrency_ts[-1]) if len(sweeps.concurrency_ts) > 0 else 0.0
+        )
 
         conc_stats = compute_time_weighted_stats(
-            sorted_c_ts, concurrency, window_start, window_end
+            sweeps.concurrency_ts, sweeps.concurrency, window_start, window_end
         )
-        results["effective_concurrency"] = _metric_result_from_sweep_stats(
+        results["effective_concurrency"] = metric_result_from_sweep_stats(
             "effective_concurrency",
             "Effective Concurrency",
             "requests",
@@ -421,9 +427,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
         )
 
         tput_stats = compute_time_weighted_stats(
-            sorted_t_ts, throughput, window_start, window_end
+            sweeps.throughput_ts, sweeps.throughput, window_start, window_end
         )
-        results["effective_throughput"] = _metric_result_from_sweep_stats(
+        results["effective_throughput"] = metric_result_from_sweep_stats(
             "effective_throughput",
             "Effective Throughput",
             "tokens/sec",
@@ -431,9 +437,23 @@ class MetricsAccumulator(BaseMetricsProcessor):
             scale=NANOS_PER_SECOND,
         )
 
+        prefill_stats = compute_time_weighted_stats(
+            sweeps.prefill_throughput_ts,
+            sweeps.prefill_throughput,
+            window_start,
+            window_end,
+        )
+        results["effective_prefill_throughput"] = metric_result_from_sweep_stats(
+            "effective_prefill_throughput",
+            "Effective Prefill Throughput",
+            "tokens/sec",
+            prefill_stats,
+            scale=NANOS_PER_SECOND,
+        )
+
     def _compute_timeslices(
         self,
-        sweeps: _SweepCurves,
+        sweeps: SweepCurves,
     ) -> tuple[
         dict[TimeSliceT, dict[MetricTagT, MetricResult]],
         dict[TimeSliceT, TimesliceWindow],
@@ -467,8 +487,6 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # Assign each record to a bin — O(n) total via digitize
         bins = np.digitize(filled_ts, edges) - 1
 
-        sorted_c_ts, concurrency, sorted_t_ts, throughput = sweeps
-
         timeslice_results: dict[TimeSliceT, dict[MetricTagT, MetricResult]] = {}
         timeslice_windows: dict[TimeSliceT, TimesliceWindow] = {}
         filled_indices = np.where(filled)[0]
@@ -495,9 +513,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
             # Inject sweep-based metrics windowed to this timeslice
             conc_stats = compute_time_weighted_stats(
-                sorted_c_ts, concurrency, window_start, window_end
+                sweeps.concurrency_ts, sweeps.concurrency, window_start, window_end
             )
-            results["effective_concurrency"] = _metric_result_from_sweep_stats(
+            results["effective_concurrency"] = metric_result_from_sweep_stats(
                 "effective_concurrency",
                 "Effective Concurrency",
                 "requests",
@@ -505,13 +523,27 @@ class MetricsAccumulator(BaseMetricsProcessor):
             )
 
             tput_stats = compute_time_weighted_stats(
-                sorted_t_ts, throughput, window_start, window_end
+                sweeps.throughput_ts, sweeps.throughput, window_start, window_end
             )
-            results["effective_throughput"] = _metric_result_from_sweep_stats(
+            results["effective_throughput"] = metric_result_from_sweep_stats(
                 "effective_throughput",
                 "Effective Throughput",
                 "tokens/sec",
                 tput_stats,
+                scale=NANOS_PER_SECOND,
+            )
+
+            prefill_stats = compute_time_weighted_stats(
+                sweeps.prefill_throughput_ts,
+                sweeps.prefill_throughput,
+                window_start,
+                window_end,
+            )
+            results["effective_prefill_throughput"] = metric_result_from_sweep_stats(
+                "effective_prefill_throughput",
+                "Effective Prefill Throughput",
+                "tokens/sec",
+                prefill_stats,
                 scale=NANOS_PER_SECOND,
             )
 

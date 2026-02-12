@@ -879,7 +879,13 @@ def _make_sweep_metric_classes():
         header = "Time To First Token"
         unit = "ns"
 
-    return FakeLatency, FakeOutputTokens, FakeTTFT
+    class FakeISL:
+        tag = "input_sequence_length"
+        type = MetricType.RECORD
+        header = "Input Sequence Length"
+        unit = "tokens"
+
+    return FakeLatency, FakeOutputTokens, FakeTTFT, FakeISL
 
 
 class TestTimesliceSweepMetrics:
@@ -889,9 +895,9 @@ class TestTimesliceSweepMetrics:
     async def test_timeslice_has_effective_concurrency_and_throughput(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Both sweep metrics are present in every timeslice with correct tag/unit."""
+        """All sweep metrics are present in every timeslice with correct tag/unit."""
         mock_user_config.output = OutputConfig(slice_duration=1.0)
-        latency_cls, output_cls, ttft_cls = _make_sweep_metric_classes()
+        latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls
         )
@@ -916,12 +922,16 @@ class TestTimesliceSweepMetrics:
         for ts_results in summary.timeslices.values():
             assert "effective_concurrency" in ts_results
             assert "effective_throughput" in ts_results
+            assert "effective_prefill_throughput" in ts_results
             ec = ts_results["effective_concurrency"]
             et = ts_results["effective_throughput"]
+            ept = ts_results["effective_prefill_throughput"]
             assert ec.tag == "effective_concurrency"
             assert ec.unit == "requests"
             assert et.tag == "effective_throughput"
             assert et.unit == "tokens/sec"
+            assert ept.tag == "effective_prefill_throughput"
+            assert ept.unit == "tokens/sec"
 
     @pytest.mark.asyncio
     async def test_timeslice_effective_concurrency_overlapping_requests(
@@ -929,7 +939,7 @@ class TestTimesliceSweepMetrics:
     ) -> None:
         """Overlapping requests in a timeslice produce avg concurrency > 1."""
         mock_user_config.output = OutputConfig(slice_duration=2.0)
-        latency_cls, output_cls, ttft_cls = _make_sweep_metric_classes()
+        latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls
         )
@@ -964,7 +974,7 @@ class TestTimesliceSweepMetrics:
     ) -> None:
         """Records with output_tokens and TTFT produce nonzero throughput."""
         mock_user_config.output = OutputConfig(slice_duration=1.0)
-        latency_cls, output_cls, ttft_cls = _make_sweep_metric_classes()
+        latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls
         )
@@ -994,7 +1004,7 @@ class TestTimesliceSweepMetrics:
     ) -> None:
         """Without output_tokens, throughput avg is 0 but concurrency is nonzero."""
         mock_user_config.output = OutputConfig(slice_duration=1.0)
-        latency_cls, _, _ = _make_sweep_metric_classes()
+        latency_cls, _, _, _ = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(mock_user_config, latency_cls)
 
         msg = create_metric_records_message(
@@ -1017,7 +1027,7 @@ class TestTimesliceSweepMetrics:
     ) -> None:
         """Records across 3 slices each have distinct sweep metric values."""
         mock_user_config.output = OutputConfig(slice_duration=1.0)
-        latency_cls, output_cls, ttft_cls = _make_sweep_metric_classes()
+        latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls
         )
@@ -1071,8 +1081,8 @@ class TestOverallSweepMetrics:
     async def test_overall_has_effective_concurrency_and_throughput(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
-        """Both sweep metrics are present in the overall results with correct tag/unit."""
-        latency_cls, output_cls, ttft_cls = _make_sweep_metric_classes()
+        """All sweep metrics are present in the overall results with correct tag/unit."""
+        latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls
         )
@@ -1094,19 +1104,23 @@ class TestOverallSweepMetrics:
         summary = await acc.summarize()
         assert "effective_concurrency" in summary.results
         assert "effective_throughput" in summary.results
+        assert "effective_prefill_throughput" in summary.results
         ec = summary.results["effective_concurrency"]
         et = summary.results["effective_throughput"]
+        ept = summary.results["effective_prefill_throughput"]
         assert ec.tag == "effective_concurrency"
         assert ec.unit == "requests"
         assert et.tag == "effective_throughput"
         assert et.unit == "tokens/sec"
+        assert ept.tag == "effective_prefill_throughput"
+        assert ept.unit == "tokens/sec"
 
     @pytest.mark.asyncio
     async def test_overall_effective_concurrency_overlapping_requests(
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Overlapping requests produce avg concurrency > 1 in overall results."""
-        latency_cls, output_cls, ttft_cls = _make_sweep_metric_classes()
+        latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls
         )
@@ -1134,7 +1148,7 @@ class TestOverallSweepMetrics:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Records with output_tokens and TTFT produce nonzero overall throughput."""
-        latency_cls, output_cls, ttft_cls = _make_sweep_metric_classes()
+        latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(
             mock_user_config, latency_cls, output_cls, ttft_cls
         )
@@ -1161,7 +1175,7 @@ class TestOverallSweepMetrics:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """Without output_tokens, throughput avg is 0 but concurrency is nonzero."""
-        latency_cls, _, _ = _make_sweep_metric_classes()
+        latency_cls, _, _, _ = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(mock_user_config, latency_cls)
 
         msg = create_metric_records_message(
@@ -1181,9 +1195,65 @@ class TestOverallSweepMetrics:
         self, mock_metric_registry: Mock, mock_user_config: UserConfig
     ) -> None:
         """No sweep metrics when no records have been ingested."""
-        latency_cls, _, _ = _make_sweep_metric_classes()
+        latency_cls, _, _, _ = _make_sweep_metric_classes()
         acc = create_accumulator_with_metrics(mock_user_config, latency_cls)
 
         summary = await acc.summarize()
         assert "effective_concurrency" not in summary.results
         assert "effective_throughput" not in summary.results
+        assert "effective_prefill_throughput" not in summary.results
+
+    @pytest.mark.asyncio
+    async def test_overall_effective_prefill_throughput_nonzero(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Records with ISL and TTFT produce nonzero prefill throughput."""
+        latency_cls, output_cls, ttft_cls, isl_cls = _make_sweep_metric_classes()
+        acc = create_accumulator_with_metrics(
+            mock_user_config, latency_cls, output_cls, ttft_cls, isl_cls
+        )
+
+        msg = create_metric_records_message(
+            session_num=0,
+            request_start_ns=int(0.1 * NANOS_PER_SECOND),
+            request_end_ns=int(0.9 * NANOS_PER_SECOND),
+            results=[
+                {
+                    "request_latency": 800_000_000.0,
+                    "output_tokens": 100.0,
+                    "time_to_first_token": 50_000_000.0,
+                    "input_sequence_length": 200.0,
+                }
+            ],
+        )
+        await acc.process_record(msg.to_data())
+
+        summary = await acc.summarize()
+        assert summary.results["effective_prefill_throughput"].avg > 0.0
+
+    @pytest.mark.asyncio
+    async def test_overall_zero_prefill_throughput_without_isl(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Without input_sequence_length metric, prefill throughput avg is 0."""
+        latency_cls, output_cls, ttft_cls, _isl_cls = _make_sweep_metric_classes()
+        acc = create_accumulator_with_metrics(
+            mock_user_config, latency_cls, output_cls, ttft_cls
+        )
+
+        msg = create_metric_records_message(
+            session_num=0,
+            request_start_ns=int(0.2 * NANOS_PER_SECOND),
+            request_end_ns=int(0.7 * NANOS_PER_SECOND),
+            results=[
+                {
+                    "request_latency": 500_000_000.0,
+                    "output_tokens": 50.0,
+                    "time_to_first_token": 50_000_000.0,
+                }
+            ],
+        )
+        await acc.process_record(msg.to_data())
+
+        summary = await acc.summarize()
+        assert summary.results["effective_prefill_throughput"].avg == 0.0

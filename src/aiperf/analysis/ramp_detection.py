@@ -5,11 +5,20 @@
 from __future__ import annotations
 
 import logging
+from typing import NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
+
+
+class DetectionResult(NamedTuple):
+    """Result from steady-state window detection."""
+
+    window_start: float
+    window_end: float
+    detection_method: str
 
 
 def cusum_steady_state_window(
@@ -194,7 +203,7 @@ def detect_steady_state_window(
     min_window_pct: float = 10.0,
     sorted_tput_ts: NDArray[np.float64] | None = None,
     throughput: NDArray[np.float64] | None = None,
-) -> tuple[float, float, str]:
+) -> DetectionResult:
     """Detect steady-state window using CUSUM + MSER-5 + optional CUSUM(throughput).
 
     Combines concurrency-based CUSUM (load perspective) with metric-based
@@ -216,16 +225,16 @@ def detect_steady_state_window(
         throughput: Throughput values at each event boundary (optional).
 
     Returns:
-        (window_start, window_end, detection_method) tuple.
+        DetectionResult with window_start, window_end, and detection_method.
     """
     if len(sorted_ts) == 0:
-        return 0.0, 0.0, "empty"
+        return DetectionResult(0.0, 0.0, "empty")
 
     min_ts = float(sorted_ts[0])
     max_ts = float(sorted_ts[-1])
     total_duration = max_ts - min_ts
     if total_duration <= 0:
-        return min_ts, max_ts, "zero_duration"
+        return DetectionResult(min_ts, max_ts, "zero_duration")
 
     filled = ~np.isnan(start_ns) & ~np.isnan(end_ns)
 
@@ -282,7 +291,7 @@ def detect_steady_state_window(
             "falling back to full range",
             method,
         )
-        return min_ts, max_ts, "fallback_no_overlap"
+        return DetectionResult(min_ts, max_ts, "fallback_no_overlap")
 
     # min_window_pct safety guard
     if (window_end - window_start) < total_duration * min_window_pct / 100.0:
@@ -292,9 +301,9 @@ def detect_steady_state_window(
             (window_end - window_start) / total_duration * 100,
             min_window_pct,
         )
-        return min_ts, max_ts, "fallback_min_window"
+        return DetectionResult(min_ts, max_ts, "fallback_min_window")
 
-    return window_start, window_end, method
+    return DetectionResult(window_start, window_end, method)
 
 
 def manual_steady_state_window(

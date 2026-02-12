@@ -10,6 +10,7 @@ import pytest
 from aiperf.analysis.sweep import (
     compute_time_weighted_stats,
     concurrency_sweep,
+    prefill_throughput_sweep,
     throughput_sweep,
     throughput_sweep_icl,
 )
@@ -108,6 +109,56 @@ class TestThroughputSweep:
         assert len(ts) == 2  # Only 1 valid request
 
 
+class TestPrefillThroughputSweep:
+    def test_empty_input(self) -> None:
+        ts, tput = prefill_throughput_sweep(
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+        )
+        assert len(ts) == 0
+        assert len(tput) == 0
+
+    def test_single_request_known_rate(self) -> None:
+        """Single request: 100 input tokens over 50ns prefill → rate = 2.0 tokens/ns."""
+        start = np.array([0.0])
+        gen_start = np.array([50.0])
+        input_tokens = np.array([100.0])
+        ts, tput = prefill_throughput_sweep(start, gen_start, input_tokens)
+        assert len(ts) == 2
+        assert tput[0] == pytest.approx(2.0)  # rate added at start
+        assert tput[1] == pytest.approx(0.0)  # rate removed at gen_start
+
+    def test_nan_excluded(self) -> None:
+        """NaN input_tokens or generation_start_ns are filtered out."""
+        start = np.array([0.0, 0.0, 0.0])
+        gen_start = np.array([50.0, np.nan, 50.0])
+        input_tokens = np.array([100.0, 100.0, np.nan])
+        ts, tput = prefill_throughput_sweep(start, gen_start, input_tokens)
+        # Only 1 valid record
+        assert len(ts) == 2
+
+    def test_zero_prefill_duration_excluded(self) -> None:
+        """start_ns == generation_start_ns → zero duration → filtered out."""
+        start = np.array([100.0])
+        gen_start = np.array([100.0])
+        input_tokens = np.array([50.0])
+        ts, tput = prefill_throughput_sweep(start, gen_start, input_tokens)
+        assert len(ts) == 0
+        assert len(tput) == 0
+
+    def test_overlapping_prefills(self) -> None:
+        """Two concurrent prefills → peak rate = sum of individual rates."""
+        # Request A: [0, 50), 100 tokens → rate = 2.0
+        # Request B: [10, 60), 150 tokens → rate = 3.0
+        # Overlap at [10, 50): combined rate = 5.0
+        start = np.array([0.0, 10.0])
+        gen_start = np.array([50.0, 60.0])
+        input_tokens = np.array([100.0, 150.0])
+        ts, tput = prefill_throughput_sweep(start, gen_start, input_tokens)
+        assert float(np.max(tput)) == pytest.approx(5.0)
+
+
 class TestThroughputSweepIcl:
     def test_empty_input(self) -> None:
         ts, tput = throughput_sweep_icl(
@@ -189,14 +240,14 @@ class TestComputeTimeWeightedStats:
         vals = np.array([5.0, 0.0])  # step function: 5 at t=0, drops to 0 at t=100
         stats = compute_time_weighted_stats(ts, vals, 0.0, 100.0)
 
-        assert stats["avg"] == pytest.approx(5.0)
-        assert stats["min"] == pytest.approx(5.0)
-        assert stats["max"] == pytest.approx(5.0)
-        assert stats["p50"] == pytest.approx(5.0)
-        assert stats["p90"] == pytest.approx(5.0)
-        assert stats["p95"] == pytest.approx(5.0)
-        assert stats["p99"] == pytest.approx(5.0)
-        assert stats["std"] == pytest.approx(0.0)
+        assert stats.avg == pytest.approx(5.0)
+        assert stats.min == pytest.approx(5.0)
+        assert stats.max == pytest.approx(5.0)
+        assert stats.p50 == pytest.approx(5.0)
+        assert stats.p90 == pytest.approx(5.0)
+        assert stats.p95 == pytest.approx(5.0)
+        assert stats.p99 == pytest.approx(5.0)
+        assert stats.std == pytest.approx(0.0)
 
     def test_two_segments_known_avg(self) -> None:
         """Two segments with known durations → verify time-weighted avg."""
@@ -206,14 +257,14 @@ class TestComputeTimeWeightedStats:
         stats = compute_time_weighted_stats(ts, vals, 0.0, 100.0)
 
         # avg = (2*80 + 10*20) / 100 = (160 + 200) / 100 = 3.6
-        assert stats["avg"] == pytest.approx(3.6)
-        assert stats["min"] == pytest.approx(2.0)
-        assert stats["max"] == pytest.approx(10.0)
+        assert stats.avg == pytest.approx(3.6)
+        assert stats.min == pytest.approx(2.0)
+        assert stats.max == pytest.approx(10.0)
 
         # std = sqrt((80*(2-3.6)^2 + 20*(10-3.6)^2) / 100)
         #     = sqrt((80*2.56 + 20*40.96) / 100)
         #     = sqrt((204.8 + 819.2) / 100) = sqrt(10.24) ≈ 3.2
-        assert stats["std"] == pytest.approx(3.2, abs=0.01)
+        assert stats.std == pytest.approx(3.2, abs=0.01)
 
     def test_percentiles_unequal_durations(self) -> None:
         """Verify percentile computation with unequal segment durations."""
@@ -223,13 +274,13 @@ class TestComputeTimeWeightedStats:
         stats = compute_time_weighted_stats(ts, vals, 0.0, 1000.0)
 
         # p50 should be 1 (value held for 90% of time)
-        assert stats["p50"] == pytest.approx(1.0)
+        assert stats.p50 == pytest.approx(1.0)
         # p90 should be 1 (90% of time is at value 1, cum_frac = 0.9)
-        assert stats["p90"] == pytest.approx(1.0)
+        assert stats.p90 == pytest.approx(1.0)
         # p95 should be 100 (only 10% of time is at value 100)
-        assert stats["p95"] == pytest.approx(100.0)
+        assert stats.p95 == pytest.approx(100.0)
         # p99 should be 100
-        assert stats["p99"] == pytest.approx(100.0)
+        assert stats.p99 == pytest.approx(100.0)
 
     def test_window_clipping(self) -> None:
         """Events outside window are ignored via clipping."""
@@ -239,10 +290,10 @@ class TestComputeTimeWeightedStats:
 
         # Only look at [50, 100] — should see only value 5
         stats = compute_time_weighted_stats(ts, vals, 50.0, 100.0)
-        assert stats["avg"] == pytest.approx(5.0)
-        assert stats["min"] == pytest.approx(5.0)
-        assert stats["max"] == pytest.approx(5.0)
-        assert stats["std"] == pytest.approx(0.0)
+        assert stats.avg == pytest.approx(5.0)
+        assert stats.min == pytest.approx(5.0)
+        assert stats.max == pytest.approx(5.0)
+        assert stats.std == pytest.approx(0.0)
 
     def test_window_clipping_partial_segment(self) -> None:
         """Window that slices through the middle of a segment."""
@@ -252,7 +303,7 @@ class TestComputeTimeWeightedStats:
 
         # Window [25, 75] — should still see value 2
         stats = compute_time_weighted_stats(ts, vals, 25.0, 75.0)
-        assert stats["avg"] == pytest.approx(2.0)
+        assert stats.avg == pytest.approx(2.0)
 
     def test_single_event_degenerate(self) -> None:
         """Single event at the start of the window."""
@@ -261,9 +312,9 @@ class TestComputeTimeWeightedStats:
         stats = compute_time_weighted_stats(ts, vals, 0.0, 100.0)
 
         # Value 3 is held for the entire window
-        assert stats["avg"] == pytest.approx(3.0)
-        assert stats["min"] == pytest.approx(3.0)
-        assert stats["max"] == pytest.approx(3.0)
+        assert stats.avg == pytest.approx(3.0)
+        assert stats.min == pytest.approx(3.0)
+        assert stats.max == pytest.approx(3.0)
 
     def test_empty_arrays(self) -> None:
         """Empty arrays return all zeros."""
@@ -273,11 +324,11 @@ class TestComputeTimeWeightedStats:
             0.0,
             100.0,
         )
-        assert all(v == 0.0 for v in stats.values())
+        assert all(v == 0.0 for v in stats)
 
     def test_zero_duration_window(self) -> None:
         """Zero-duration window returns all zeros."""
         ts = np.array([0.0, 100.0])
         vals = np.array([5.0, 0.0])
         stats = compute_time_weighted_stats(ts, vals, 50.0, 50.0)
-        assert all(v == 0.0 for v in stats.values())
+        assert all(v == 0.0 for v in stats)

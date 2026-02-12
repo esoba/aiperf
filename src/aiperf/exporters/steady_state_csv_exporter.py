@@ -106,6 +106,8 @@ class SteadyStateCsvExporter(MetricsBaseExporter):
         prepared[conc.tag] = conc
         tput = self._summary.effective_throughput
         prepared[tput.tag] = tput
+        ptput = self._summary.effective_prefill_throughput
+        prepared[ptput.tag] = ptput
         if not prepared:
             return buf.getvalue()
 

@@ -39,6 +39,8 @@ class SteadyStateJsonExporter(MetricsBaseExporter):
         prepared[conc.tag] = conc
         tput = self._summary.effective_throughput
         prepared[tput.tag] = tput
+        ptput = self._summary.effective_prefill_throughput
+        prepared[ptput.tag] = ptput
         meta = self._summary.window_metadata
 
         data: dict[str, Any] = {
