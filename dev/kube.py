@@ -1895,7 +1895,6 @@ def cmd_run_local(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
     user_data = yaml.safe_load(config_path.read_text())
     user_config = UserConfig(**(user_data or {}))
     cli_args = _user_config_to_cli_args(user_config)
-    cli_args.extend(["--workers-max", str(opts.workers)])
     cli_args.extend(["--ui-type", "none"])
 
     namespace = f"aiperf-local-{int(time.time())}"
