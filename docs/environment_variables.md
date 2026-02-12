@@ -151,6 +151,15 @@ Timing manager configuration. Controls timing-related settings for credit phase 
 | `AIPERF_TIMING_CANCEL_DRAIN_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for waiting for cancelled credits to drain after phase timeout |
 | `AIPERF_TIMING_RATE_RAMP_UPDATE_INTERVAL` | `0.1` | ≥ 0.01, ≤ 10.0 | Update interval in seconds for continuous rate ramping (default 0.1s = 100ms) |
 
+## TOKENIZER
+
+Tokenizer initialization and retry configuration. Automatically retries tokenizer initialization on transient network errors from HuggingFace Hub. Most users never need to change these settings.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_TOKENIZER_INIT_MAX_RETRIES` | `3` | ≥ 0, ≤ 5 | Maximum retry attempts for tokenizer initialization on network errors. Default (3) handles most transient failures automatically (total wait ~7s with exponential backoff). |
+| `AIPERF_TOKENIZER_INIT_BASE_DELAY` | `1.0` | ≥ 0.5, ≤ 5.0 | Base delay in seconds for exponential backoff retry logic (delays: 1s, 2s, 4s). Increase if encountering rate limiting from HuggingFace Hub. |
+
 ## UI
 
 User interface and dashboard configuration. Controls refresh rates, update thresholds, and notification behavior for the various UI modes (dashboard, tqdm, etc.).

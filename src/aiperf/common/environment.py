@@ -17,6 +17,7 @@ Structure:
     Environment.SERVER_METRICS.* - Server metrics collection
     Environment.SERVICE.*        - Service lifecycle and communication
     Environment.TIMING.*         - Timing manager settings
+    Environment.TOKENIZER.*      - Tokenizer initialization and retry settings
     Environment.UI.*             - User interface settings
     Environment.WORKER.*         - Worker management and scaling
     Environment.ZMQ.*            - ZMQ communication settings
@@ -471,6 +472,33 @@ class _TimingSettings(BaseSettings):
     )
 
 
+class _TokenizerSettings(BaseSettings):
+    """Tokenizer initialization and retry configuration.
+
+    Automatically retries tokenizer initialization on transient network errors
+    from HuggingFace Hub. Most users never need to change these settings.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_TOKENIZER_",
+    )
+
+    INIT_MAX_RETRIES: int = Field(
+        ge=0,
+        le=5,
+        default=3,
+        description="Maximum retry attempts for tokenizer initialization on network errors. "
+        "Default (3) handles most transient failures automatically (total wait ~7s with exponential backoff).",
+    )
+    INIT_BASE_DELAY: float = Field(
+        ge=0.5,
+        le=5.0,
+        default=1.0,
+        description="Base delay in seconds for exponential backoff retry logic (delays: 1s, 2s, 4s). "
+        "Increase if encountering rate limiting from HuggingFace Hub.",
+    )
+
+
 class _ServiceSettings(BaseSettings):
     """Service lifecycle and inter-service communication configuration.
 
@@ -914,6 +942,10 @@ class _Environment(BaseSettings):
     TIMING: _TimingSettings = Field(
         default_factory=_TimingSettings,
         description="Timing manager settings",
+    )
+    TOKENIZER: _TokenizerSettings = Field(
+        default_factory=_TokenizerSettings,
+        description="Tokenizer initialization and retry settings",
     )
     UI: _UISettings = Field(
         default_factory=_UISettings,

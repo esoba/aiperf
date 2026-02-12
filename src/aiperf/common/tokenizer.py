@@ -3,16 +3,17 @@
 
 """HuggingFace tokenizer wrapper with sensible defaults."""
 
+import asyncio
 import contextlib
 import io
 import logging
 import os
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NotInitializedError, TokenizerError
 
 if TYPE_CHECKING:
@@ -53,6 +54,52 @@ def _is_offline_mode() -> bool:
     return bool(os.environ.get("HF_HUB_OFFLINE", "")) or bool(
         os.environ.get("TRANSFORMERS_OFFLINE", "")
     )
+
+
+def _is_network_error(exception: Exception) -> bool:
+    """Check if an exception is a network error that should trigger a retry.
+
+    Args:
+        exception: The exception to check.
+
+    Returns:
+        True if the exception is a retryable network error, False otherwise.
+    """
+    error_message = str(exception).lower()
+    error_type = type(exception).__name__.lower()
+
+    # Check for network-related keywords in the error message
+    network_keywords = [
+        "connection",
+        "timeout",
+        "network",
+        "http",
+        "ssl",
+        "certificate",
+        "resolve",
+        "dns",
+    ]
+
+    # Check for HTTP status codes that indicate transient errors
+    http_status_codes = ["429", "500", "502", "503", "504"]
+
+    # Check if it's a known network-related exception type
+    network_exception_types = [
+        "connectionerror",
+        "timeout",
+        "httperror",
+        "sslerror",
+        "urlerror",
+    ]
+
+    # Check error message for keywords or status codes
+    has_network_keyword = any(keyword in error_message for keyword in network_keywords)
+    has_http_status = any(status in error_message for status in http_status_codes)
+    is_network_exception_type = any(
+        exc_type in error_type for exc_type in network_exception_types
+    )
+
+    return has_network_keyword or has_http_status or is_network_exception_type
 
 
 def resolve_alias(name: str) -> AliasResolutionResult:
@@ -154,7 +201,7 @@ class Tokenizer:
         return resolve_alias(name)
 
     @classmethod
-    def from_pretrained(
+    async def from_pretrained(
         cls,
         name: str,
         trust_remote_code: bool = False,
@@ -162,6 +209,8 @@ class Tokenizer:
         resolve_alias: bool = True,
     ) -> "Tokenizer":
         """Load a tokenizer for the given pretrained model name.
+
+        Automatically retries on transient network errors using exponential backoff.
 
         Uses HF_TOKEN environment variable for authentication.
 
@@ -175,47 +224,79 @@ class Tokenizer:
             AmbiguousTokenizerNameError: If the name is ambiguous.
             TokenizerError: If the tokenizer cannot be loaded.
         """
-        try:
-            # Silence tokenizer warning on import and first use
-            with (
-                contextlib.redirect_stdout(io.StringIO()),
-                contextlib.redirect_stderr(io.StringIO()),
-            ):
-                from transformers import AutoTokenizer
+        max_retries = Environment.TOKENIZER.INIT_MAX_RETRIES
+        base_delay = Environment.TOKENIZER.INIT_BASE_DELAY
 
-                # Offline mode: skip alias resolution, load from local cache
-                if _is_offline_mode():
-                    tokenizer_instance = cls._from_pretrained_local(
-                        AutoTokenizer.from_pretrained,
-                        name,
+        def _load() -> "Tokenizer":
+            """Load the tokenizer (blocking operation run in thread pool)."""
+            try:
+                # Silence tokenizer warning on import and first use
+                with (
+                    contextlib.redirect_stdout(io.StringIO()),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    from transformers import AutoTokenizer
+
+                    # Offline mode: skip alias resolution, load from local cache
+                    if _is_offline_mode():
+                        tokenizer_instance = cls._from_pretrained_local(
+                            AutoTokenizer.from_pretrained,
+                            name,
+                            trust_remote_code=trust_remote_code,
+                            revision=revision,
+                        )
+                        tokenizer_instance._resolved_name = name
+                        return tokenizer_instance
+
+                    # Online mode: resolve alias then load
+                    resolved_name = name
+                    if resolve_alias:
+                        result = cls.resolve_alias(name)
+                        resolved_name = result.resolved_name
+                        if result.is_ambiguous:
+                            raise AmbiguousTokenizerNameError(name, result.suggestions)
+
+                    tokenizer_cls = cls()
+                    tokenizer_cls._tokenizer = AutoTokenizer.from_pretrained(
+                        resolved_name,
                         trust_remote_code=trust_remote_code,
                         revision=revision,
                     )
-                    tokenizer_instance._resolved_name = name
-                    return tokenizer_instance
+                    tokenizer_cls._resolved_name = resolved_name
+            except AmbiguousTokenizerNameError:
+                raise
+            except Exception as e:
+                raise TokenizerError(
+                    f"Failed to load tokenizer '{name}'", tokenizer_name=name
+                ) from e
+            return tokenizer_cls
 
-                # Online mode: resolve alias then load
-                resolved_name = name
-                if resolve_alias:
-                    result = cls.resolve_alias(name)
-                    resolved_name = result.resolved_name
-                    if result.is_ambiguous:
-                        raise AmbiguousTokenizerNameError(name, result.suggestions)
+        # Retry loop with exponential backoff
+        for attempt in range(max_retries + 1):
+            try:
+                return await asyncio.to_thread(_load)
+            except (AmbiguousTokenizerNameError, TokenizerError) as e:
+                # Check if this is a retryable network error
+                if isinstance(e, AmbiguousTokenizerNameError) or not _is_network_error(
+                    e.__cause__ or e
+                ):
+                    # Don't retry on ambiguous names or non-network errors
+                    raise
 
-                tokenizer_cls = cls()
-                tokenizer_cls._tokenizer = AutoTokenizer.from_pretrained(
-                    resolved_name,
-                    trust_remote_code=trust_remote_code,
-                    revision=revision,
-                )
-                tokenizer_cls._resolved_name = resolved_name
-        except AmbiguousTokenizerNameError:
-            raise
-        except Exception as e:
-            raise TokenizerError(
-                f"Failed to load tokenizer '{name}'", tokenizer_name=name
-            ) from e
-        return tokenizer_cls
+                # Network error - retry if we have attempts left
+                if attempt < max_retries:
+                    delay = base_delay * (2**attempt)
+                    _logger.warning(
+                        f"Network error loading tokenizer '{name}' (attempt {attempt + 1}/{max_retries + 1}): {e.__cause__!r}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    # Exhausted all retries
+                    _logger.error(
+                        f"Failed to load tokenizer '{name}' after {max_retries + 1} attempts due to network errors"
+                    )
+                    raise
 
     @staticmethod
     def _find_cached_model_for_alias(name: str) -> str | None:

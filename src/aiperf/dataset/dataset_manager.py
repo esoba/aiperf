@@ -147,8 +147,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model_name)
 
         # Let exceptions propagate - controller_utils will display the error panel
-        self.tokenizer = await asyncio.to_thread(
-            Tokenizer.from_pretrained,
+        self.tokenizer = await Tokenizer.from_pretrained(
             tokenizer_name,
             trust_remote_code=tokenizer_config.trust_remote_code,
             revision=tokenizer_config.revision,
