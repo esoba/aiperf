@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.models import MetricResult, ProfileResults
+from aiperf.common.types import TimesliceWindow
 
 
 class TestProfileResults:
@@ -125,3 +126,36 @@ class TestProfileResults:
         for i in range(3):
             assert i in profile_results.timeslice_metric_results
             assert len(profile_results.timeslice_metric_results[i]) == 2
+
+    def test_profile_results_with_timeslice_windows(self):
+        """Test ProfileResults accepts timeslice_windows."""
+        windows = {
+            0: TimesliceWindow(start_ns=1_000_000_000, end_ns=2_000_000_000),
+            1: TimesliceWindow(start_ns=2_000_000_000, end_ns=3_000_000_000),
+        }
+
+        profile_results = ProfileResults(
+            records={},
+            timeslice_windows=windows,
+            completed=0,
+            start_ns=1_000_000_000,
+            end_ns=3_000_000_000,
+        )
+
+        assert profile_results.timeslice_windows is not None
+        assert len(profile_results.timeslice_windows) == 2
+        assert profile_results.timeslice_windows[0].start_ns == 1_000_000_000
+        assert profile_results.timeslice_windows[0].end_ns == 2_000_000_000
+        assert profile_results.timeslice_windows[0].is_complete is None
+        assert profile_results.timeslice_windows[1].start_ns == 2_000_000_000
+
+    def test_profile_results_without_timeslice_windows(self):
+        """Test ProfileResults defaults timeslice_windows to None."""
+        profile_results = ProfileResults(
+            records={},
+            completed=0,
+            start_ns=1_000_000_000,
+            end_ns=2_000_000_000,
+        )
+
+        assert profile_results.timeslice_windows is None

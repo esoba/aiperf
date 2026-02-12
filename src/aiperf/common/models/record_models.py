@@ -27,7 +27,7 @@ from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
-from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
+from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT, TimesliceWindow
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
@@ -149,6 +149,10 @@ class ProfileResults(AIPerfBaseModel):
     ) = Field(
         default=None,
         description="The timeslice metric results of the profile (if using timeslice mode)",
+    )
+    timeslice_windows: dict[TimeSliceT, TimesliceWindow] | None = Field(
+        default=None,
+        description="Window boundaries for each timeslice (start_ns, end_ns, is_complete)",
     )
     total_expected: int | None = Field(
         default=None,

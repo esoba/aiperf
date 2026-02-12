@@ -704,6 +704,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Build ProcessRecordsResult from metric accumulator outputs
         records_results: dict[MetricTagT, MetricResult] = {}
         timeslice_metric_results: dict[str, dict[MetricTagT, MetricResult]] = {}
+        timeslice_windows: dict[str, Any] = {}
         error_results: list[ErrorDetails] = []
 
         for _acc_type, output in export_outputs.items():
@@ -711,6 +712,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 records_results.update(output.results)
                 if output.timeslices is not None:
                     timeslice_metric_results.update(output.timeslices)
+                if output.timeslice_windows is not None:
+                    timeslice_windows.update(output.timeslice_windows)
 
         # Collect errors from failed accumulator exports
         for _acc_type, result in zip(acc_types, raw_results, strict=True):
@@ -721,6 +724,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             results=ProfileResults(
                 records=records_results,
                 timeslice_metric_results=timeslice_metric_results,
+                timeslice_windows=timeslice_windows or None,
                 completed=len(records_results),
                 start_ns=phase_stats.start_ns or time.time_ns(),
                 end_ns=phase_stats.requests_end_ns or time.time_ns(),

@@ -21,7 +21,7 @@ from aiperf.common.enums import (
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.models import MetricResult
-from aiperf.common.types import MetricTagT, TimeSliceT
+from aiperf.common.types import MetricTagT, TimeSliceT, TimesliceWindow
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.column_store import ColumnStore
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
@@ -51,6 +51,7 @@ class MetricsSummary:
     timeslices: dict[TimeSliceT, dict[MetricTagT, MetricResult]] | None = field(
         default=None
     )
+    timeslice_windows: dict[TimeSliceT, TimesliceWindow] | None = field(default=None)
 
     def to_json(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -300,12 +301,17 @@ class MetricsAccumulator(BaseMetricsProcessor):
         overall_results = self._compute_results()
 
         timeslices: dict[TimeSliceT, dict[MetricTagT, MetricResult]] | None = None
+        timeslice_windows: dict[TimeSliceT, TimesliceWindow] | None = None
 
         if self._slice_duration_ns is not None and self._column_store.count > 0:
-            timeslices = self._compute_timeslices()
+            timeslices, timeslice_windows = self._compute_timeslices()
 
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")
-        return MetricsSummary(results=overall_results, timeslices=timeslices)
+        return MetricsSummary(
+            results=overall_results,
+            timeslices=timeslices,
+            timeslice_windows=timeslice_windows,
+        )
 
     async def export_results(self, ctx: ExportContext) -> MetricsSummary:
         """Export final metrics results. Delegates to summarize()."""
@@ -313,8 +319,15 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     def _compute_timeslices(
         self,
-    ) -> dict[TimeSliceT, dict[MetricTagT, MetricResult]]:
-        """Compute per-timeslice results by partitioning the time range."""
+    ) -> tuple[
+        dict[TimeSliceT, dict[MetricTagT, MetricResult]],
+        dict[TimeSliceT, TimesliceWindow],
+    ]:
+        """Compute per-timeslice results by partitioning the time range.
+
+        Returns:
+            Tuple of (timeslice_results, timeslice_windows).
+        """
         assert self._slice_duration_ns is not None
 
         n = self._column_store.count
@@ -323,7 +336,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         filled_ts = ts[filled]
 
         if len(filled_ts) == 0:
-            return {}
+            return {}, {}
 
         min_ts = float(np.nanmin(filled_ts))
         max_ts = float(np.nanmax(filled_ts))
@@ -336,6 +349,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         bins = np.digitize(filled_ts, edges) - 1
 
         timeslice_results: dict[TimeSliceT, dict[MetricTagT, MetricResult]] = {}
+        timeslice_windows: dict[TimeSliceT, TimesliceWindow] = {}
         filled_indices = np.where(filled)[0]
 
         for bin_idx in range(len(edges) - 1):
@@ -354,8 +368,12 @@ class MetricsAccumulator(BaseMetricsProcessor):
             )
             if len(results) > 0:
                 timeslice_results[bin_idx] = results
+                timeslice_windows[bin_idx] = TimesliceWindow(
+                    start_ns=int(edges[bin_idx]),
+                    end_ns=int(edges[bin_idx + 1]),
+                )
 
-        return timeslice_results
+        return timeslice_results, timeslice_windows
 
     async def full_metrics(self) -> dict[MetricTagT, MetricResult]:
         """Returns the full metrics results, including derived metrics."""

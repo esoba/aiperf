@@ -14,6 +14,7 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import AggregationKind, MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
+from aiperf.common.types import TimesliceWindow
 from aiperf.metrics.accumulator import (
     _AGGREGATE_FUNCS,
     MetricsAccumulator,
@@ -637,6 +638,70 @@ class TestTimesliceSummarize:
         assert summary.timeslices is not None
         ts0_results = summary.timeslices[0]
         assert ts0_results["min_ts"].avg == 200.0  # MIN of 500, 200
+
+    @pytest.mark.asyncio
+    async def test_compute_timeslices_populates_timeslice_windows(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Test _compute_timeslices returns timeslice_windows with correct boundaries."""
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
+        processor = MetricsAccumulator(mock_user_config)
+        processor._tags_to_types = {"test_record": MetricType.RECORD}
+        processor._metric_classes = {"test_record": RequestLatencyMetric()}
+
+        msg1 = create_metric_records_message(
+            x_request_id="test-1",
+            session_num=0,
+            request_start_ns=int(0.5 * NANOS_PER_SECOND),
+            results=[{"test_record": 42.0}],
+        )
+        await processor.process_record(msg1.to_data())
+
+        msg2 = create_metric_records_message(
+            x_request_id="test-2",
+            session_num=1,
+            request_start_ns=int(1.5 * NANOS_PER_SECOND),
+            results=[{"test_record": 84.0}],
+        )
+        await processor.process_record(msg2.to_data())
+
+        summary = await processor.summarize()
+
+        assert summary.timeslice_windows is not None
+        assert len(summary.timeslice_windows) == 2
+        assert 0 in summary.timeslice_windows
+        assert 1 in summary.timeslice_windows
+
+        w0 = summary.timeslice_windows[0]
+        w1 = summary.timeslice_windows[1]
+        assert isinstance(w0, TimesliceWindow)
+        assert isinstance(w1, TimesliceWindow)
+
+        # Windows should be consecutive 1-second bins
+        assert w0.end_ns == w1.start_ns
+        assert w1.end_ns - w1.start_ns == NANOS_PER_SECOND
+        # is_complete defaults to None (complete)
+        assert w0.is_complete is None
+        assert w1.is_complete is None
+
+    @pytest.mark.asyncio
+    async def test_timeslice_windows_none_without_config(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Test timeslice_windows is None when slice_duration is not set."""
+        processor = MetricsAccumulator(mock_user_config)
+        processor._tags_to_types = {"test_record": MetricType.RECORD}
+        processor._metric_classes = {"test_record": RequestLatencyMetric()}
+
+        msg = create_metric_records_message(
+            x_request_id="test-1",
+            session_num=0,
+            results=[{"test_record": 42.0}],
+        )
+        await processor.process_record(msg.to_data())
+
+        summary = await processor.summarize()
+        assert summary.timeslice_windows is None
 
 
 class TestMetricsSummary:

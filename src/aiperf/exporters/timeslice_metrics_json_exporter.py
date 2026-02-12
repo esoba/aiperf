@@ -66,8 +66,14 @@ class TimesliceMetricsJsonExporter(MetricsJsonExporter):
                 metric_results_dict.values()
             )
 
-            # Create timeslice object with dynamic metrics
-            timeslice = TimesliceData(timeslice_index=timeslice_index)
+            # Create timeslice object with window timestamps and dynamic metrics
+            window = (self._results.timeslice_windows or {}).get(timeslice_index)
+            timeslice = TimesliceData(
+                timeslice_index=timeslice_index,
+                start_ns=window.start_ns if window else None,
+                end_ns=window.end_ns if window else None,
+                is_complete=window.is_complete if window else None,
+            )
             for tag, json_result in prepared_json_metrics.items():
                 setattr(timeslice, tag, json_result)
 

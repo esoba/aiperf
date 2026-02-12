@@ -305,6 +305,7 @@ def mock_results_with_timeslices(sample_timeslice_metric_results):
     class MockResultsWithTimeslices:
         def __init__(self):
             self.timeslice_metric_results = sample_timeslice_metric_results
+            self.timeslice_windows = None
             self.records = []
             self.start_ns = None
             self.end_ns = None
@@ -322,6 +323,7 @@ def mock_results_without_timeslices():
     class MockResultsNoTimeslices:
         def __init__(self):
             self.timeslice_metric_results = None
+            self.timeslice_windows = None
             self.records = []
             self.start_ns = None
             self.end_ns = None
