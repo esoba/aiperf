@@ -18,16 +18,12 @@ from aiperf.analysis.ramp_detection import (
 )
 from aiperf.analysis.stationarity import batch_means_trend_test
 from aiperf.analysis.sweep import (
-    ZERO_SWEEP_STATS,
-    compute_time_weighted_stats,
+    SweepCurves,
     concurrency_sweep,
-    metric_result_from_sweep_stats,
     prefill_throughput_sweep,
     throughput_sweep,
-    throughput_sweep_icl,
 )
 from aiperf.common.config import UserConfig
-from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PluginDisabled
 from aiperf.common.models import MetricResult
@@ -141,6 +137,47 @@ class SteadyStateWindowMetadata(AIPerfBaseModel, frozen=True):
         description="Number of bootstrap iterations performed",
     )
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to structured JSON-ready dictionary."""
+        data: dict[str, Any] = {
+            "detection_method": self.detection_method,
+            "ramp_up_end_ns": self.ramp_up_end_ns,
+            "ramp_down_start_ns": self.ramp_down_start_ns,
+            "steady_state_duration_ns": self.steady_state_duration_ns,
+            "total_requests": self.total_requests,
+            "steady_state_requests": self.steady_state_requests,
+            "quality": {
+                "fraction_retained": self.fraction_retained,
+                "variance_inflation_factor": self.variance_inflation_factor,
+                "effective_p99_sample_size": self.effective_p99_sample_size,
+                "sample_size_warning": self.sample_size_warning,
+            },
+            "stationarity": {
+                "trend_correlation": self.trend_correlation,
+                "trend_p_value": self.trend_p_value,
+                "stationarity_warning": self.stationarity_warning,
+            },
+            "cross_validation": {
+                "cusum_ramp_up_end_ns": self.cusum_ramp_up_end_ns,
+                "cusum_ramp_down_start_ns": self.cusum_ramp_down_start_ns,
+                "mser5_latency_ramp_up_end_ns": self.mser5_latency_ramp_up_end_ns,
+                "mser5_latency_ramp_down_start_ns": self.mser5_latency_ramp_down_start_ns,
+                "mser5_ttft_ramp_up_end_ns": self.mser5_ttft_ramp_up_end_ns,
+                "mser5_ttft_ramp_down_start_ns": self.mser5_ttft_ramp_down_start_ns,
+                "cusum_throughput_ramp_up_end_ns": self.cusum_throughput_ramp_up_end_ns,
+                "cusum_throughput_ramp_down_start_ns": self.cusum_throughput_ramp_down_start_ns,
+            },
+        }
+        if self.bootstrap_n_iterations is not None:
+            data["bootstrap"] = {
+                "n_iterations": self.bootstrap_n_iterations,
+                "ci_ramp_up_ns": self.bootstrap_ci_ramp_up_ns,
+                "ci_ramp_down_ns": self.bootstrap_ci_ramp_down_ns,
+                "ci_mean_latency": self.bootstrap_ci_mean_latency,
+                "ci_p99_latency": self.bootstrap_ci_p99_latency,
+            }
+        return data
+
 
 class SteadyStateSummary(AIPerfBaseModel):
     """Typed result from SteadyStateAnalyzer.summarize()."""
@@ -161,51 +198,23 @@ class SteadyStateSummary(AIPerfBaseModel):
         description="Metadata about the detected steady-state window"
     )
 
+    @property
+    def sweep_metrics(self) -> dict[str, MetricResult]:
+        """Return all sweep MetricResults keyed by tag."""
+        return {
+            self.effective_concurrency.tag: self.effective_concurrency,
+            self.effective_throughput.tag: self.effective_throughput,
+            self.effective_prefill_throughput.tag: self.effective_prefill_throughput,
+        }
+
     def to_json(self) -> dict[str, Any]:
-        meta = self.window_metadata
         data: dict[str, Any] = {
             "results": [r.to_json_result().model_dump() for r in self.results.values()],
             "effective_concurrency": self.effective_concurrency.to_json_result().model_dump(),
             "effective_throughput": self.effective_throughput.to_json_result().model_dump(),
             "effective_prefill_throughput": self.effective_prefill_throughput.to_json_result().model_dump(),
-            "window_metadata": {
-                "detection_method": meta.detection_method,
-                "ramp_up_end_ns": meta.ramp_up_end_ns,
-                "ramp_down_start_ns": meta.ramp_down_start_ns,
-                "steady_state_duration_ns": meta.steady_state_duration_ns,
-                "total_requests": meta.total_requests,
-                "steady_state_requests": meta.steady_state_requests,
-                "quality": {
-                    "fraction_retained": meta.fraction_retained,
-                    "variance_inflation_factor": meta.variance_inflation_factor,
-                    "effective_p99_sample_size": meta.effective_p99_sample_size,
-                    "sample_size_warning": meta.sample_size_warning,
-                },
-                "stationarity": {
-                    "trend_correlation": meta.trend_correlation,
-                    "trend_p_value": meta.trend_p_value,
-                    "stationarity_warning": meta.stationarity_warning,
-                },
-                "cross_validation": {
-                    "cusum_ramp_up_end_ns": meta.cusum_ramp_up_end_ns,
-                    "cusum_ramp_down_start_ns": meta.cusum_ramp_down_start_ns,
-                    "mser5_latency_ramp_up_end_ns": meta.mser5_latency_ramp_up_end_ns,
-                    "mser5_latency_ramp_down_start_ns": meta.mser5_latency_ramp_down_start_ns,
-                    "mser5_ttft_ramp_up_end_ns": meta.mser5_ttft_ramp_up_end_ns,
-                    "mser5_ttft_ramp_down_start_ns": meta.mser5_ttft_ramp_down_start_ns,
-                    "cusum_throughput_ramp_up_end_ns": meta.cusum_throughput_ramp_up_end_ns,
-                    "cusum_throughput_ramp_down_start_ns": meta.cusum_throughput_ramp_down_start_ns,
-                },
-            },
+            "window_metadata": self.window_metadata.to_dict(),
         }
-        if meta.bootstrap_n_iterations is not None:
-            data["window_metadata"]["bootstrap"] = {
-                "n_iterations": meta.bootstrap_n_iterations,
-                "ci_ramp_up_ns": meta.bootstrap_ci_ramp_up_ns,
-                "ci_ramp_down_ns": meta.bootstrap_ci_ramp_down_ns,
-                "ci_mean_latency": meta.bootstrap_ci_mean_latency,
-                "ci_p99_latency": meta.bootstrap_ci_p99_latency,
-            }
         return data
 
     def to_csv(self) -> list[dict[str, Any]]:
@@ -321,47 +330,26 @@ class SteadyStateAnalyzer:
                     sorted_t_ts, tput, min_window_pct=0.0
                 )
 
-        # Time-weighted concurrency statistics within the window
-        conc_stats = compute_time_weighted_stats(
-            sorted_c_ts, concurrency, window_start, window_end
+        # Prefer ICL-aware throughput when SSE chunk timing is available
+        tput_ts, tput_vals = MetricsAccumulator._icl_aware_throughput(
+            store, generation_start_ns, end_ns, output_tokens
         )
 
-        # Time-weighted throughput statistics within the window.
-        # Prefer ICL-aware sweep (accurate SSE message timing, per-request rescaled
-        # token counts) over uniform sweep (tokens spread evenly over generation window).
-        if "inter_chunk_latency" in store.ragged_tags():
-            icl = store.ragged("inter_chunk_latency")
-            if len(icl.values) > 0:
-                tput_ts, tput_vals = throughput_sweep_icl(
-                    generation_start_ns,
-                    output_tokens,
-                    icl.values,
-                    icl.record_indices,
-                    icl.offsets,
-                )
-            else:
-                tput_ts, tput_vals = sorted_t_ts, tput
-        else:
-            tput_ts, tput_vals = sorted_t_ts, tput
-
-        if len(tput_ts) > 0:
-            tput_stats = compute_time_weighted_stats(
-                tput_ts, tput_vals, window_start, window_end
-            )
-        else:
-            tput_stats = ZERO_SWEEP_STATS
-
-        # Prefill throughput: input tokens processed during [start_ns, generation_start_ns)
         input_tokens = store.numeric("input_sequence_length")
         sorted_p_ts, prefill_tput = prefill_throughput_sweep(
             start_ns, generation_start_ns, input_tokens
         )
-        if len(sorted_p_ts) > 0:
-            prefill_stats = compute_time_weighted_stats(
-                sorted_p_ts, prefill_tput, window_start, window_end
-            )
-        else:
-            prefill_stats = ZERO_SWEEP_STATS
+
+        # Build unified sweep curves and compute all metrics in one call
+        sweeps = SweepCurves(
+            concurrency_ts=sorted_c_ts,
+            concurrency=concurrency,
+            throughput_ts=tput_ts,
+            throughput=tput_vals,
+            prefill_throughput_ts=sorted_p_ts,
+            prefill_throughput=prefill_tput,
+        )
+        sweep_results = sweeps.compute_metrics(window_start, window_end)
 
         # Steady-state mask: request started AND ended within window
         ss_mask = filled & (start_ns >= window_start) & (end_ns <= window_end)
@@ -426,26 +414,9 @@ class SteadyStateAnalyzer:
 
         return SteadyStateSummary(
             results=windowed_results,
-            effective_concurrency=metric_result_from_sweep_stats(
-                "effective_concurrency",
-                "Effective Concurrency",
-                "requests",
-                conc_stats,
-            ),
-            effective_throughput=metric_result_from_sweep_stats(
-                "effective_throughput",
-                "Effective Throughput",
-                "tokens/sec",
-                tput_stats,
-                scale=NANOS_PER_SECOND,
-            ),
-            effective_prefill_throughput=metric_result_from_sweep_stats(
-                "effective_prefill_throughput",
-                "Effective Prefill Throughput",
-                "tokens/sec",
-                prefill_stats,
-                scale=NANOS_PER_SECOND,
-            ),
+            effective_concurrency=sweep_results["effective_concurrency"],
+            effective_throughput=sweep_results["effective_throughput"],
+            effective_prefill_throughput=sweep_results["effective_prefill_throughput"],
             window_metadata=SteadyStateWindowMetadata(
                 ramp_up_end_ns=window_start,
                 ramp_down_start_ns=window_end,

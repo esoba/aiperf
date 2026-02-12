@@ -35,42 +35,10 @@ class SteadyStateJsonExporter(MetricsBaseExporter):
 
     def _generate_content(self) -> str:
         prepared = self._prepare_metrics(self._summary.results.values())
-        conc = self._summary.effective_concurrency
-        prepared[conc.tag] = conc
-        tput = self._summary.effective_throughput
-        prepared[tput.tag] = tput
-        ptput = self._summary.effective_prefill_throughput
-        prepared[ptput.tag] = ptput
-        meta = self._summary.window_metadata
+        prepared.update(self._summary.sweep_metrics)
 
         data: dict[str, Any] = {
-            "window_metadata": {
-                "detection_method": meta.detection_method,
-                "ramp_up_end_ns": meta.ramp_up_end_ns,
-                "ramp_down_start_ns": meta.ramp_down_start_ns,
-                "steady_state_duration_ns": meta.steady_state_duration_ns,
-                "total_requests": meta.total_requests,
-                "steady_state_requests": meta.steady_state_requests,
-                "quality": {
-                    "fraction_retained": meta.fraction_retained,
-                    "variance_inflation_factor": meta.variance_inflation_factor,
-                    "effective_p99_sample_size": meta.effective_p99_sample_size,
-                    "sample_size_warning": meta.sample_size_warning,
-                },
-                "stationarity": {
-                    "trend_correlation": meta.trend_correlation,
-                    "trend_p_value": meta.trend_p_value,
-                    "stationarity_warning": meta.stationarity_warning,
-                },
-                "cross_validation": {
-                    "cusum_ramp_up_end_ns": meta.cusum_ramp_up_end_ns,
-                    "cusum_ramp_down_start_ns": meta.cusum_ramp_down_start_ns,
-                    "mser5_latency_ramp_up_end_ns": meta.mser5_latency_ramp_up_end_ns,
-                    "mser5_latency_ramp_down_start_ns": meta.mser5_latency_ramp_down_start_ns,
-                    "mser5_ttft_ramp_up_end_ns": meta.mser5_ttft_ramp_up_end_ns,
-                    "mser5_ttft_ramp_down_start_ns": meta.mser5_ttft_ramp_down_start_ns,
-                },
-            },
+            "window_metadata": self._summary.window_metadata.to_dict(),
             "metrics": {},
         }
 

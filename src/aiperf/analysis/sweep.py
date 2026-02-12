@@ -8,11 +8,13 @@ Input arrays are expected to be session_num-indexed (from ColumnStore).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
 
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.models import MetricResult
 
 
@@ -32,6 +34,67 @@ class SweepStats(NamedTuple):
 ZERO_SWEEP_STATS = SweepStats(
     avg=0.0, min=0.0, max=0.0, p50=0.0, p90=0.0, p95=0.0, p99=0.0, std=0.0
 )
+
+
+class SweepMetricSpec(NamedTuple):
+    """Specification for a sweep-line metric (tag, header, unit, scale)."""
+
+    tag: str
+    header: str
+    unit: str
+    scale: float
+
+
+SWEEP_METRIC_SPECS: tuple[SweepMetricSpec, ...] = (
+    SweepMetricSpec("effective_concurrency", "Effective Concurrency", "requests", 1.0),
+    SweepMetricSpec(
+        "effective_throughput", "Effective Throughput", "tokens/sec", NANOS_PER_SECOND
+    ),
+    SweepMetricSpec(
+        "effective_prefill_throughput",
+        "Effective Prefill Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SweepCurves:
+    """Pre-computed sweep-line curves for concurrency, throughput, and prefill throughput."""
+
+    concurrency_ts: NDArray[np.float64]
+    concurrency: NDArray[np.float64]
+    throughput_ts: NDArray[np.float64]
+    throughput: NDArray[np.float64]
+    prefill_throughput_ts: NDArray[np.float64]
+    prefill_throughput: NDArray[np.float64]
+
+    def curves(
+        self,
+    ) -> tuple[
+        tuple[NDArray[np.float64], NDArray[np.float64]],
+        tuple[NDArray[np.float64], NDArray[np.float64]],
+        tuple[NDArray[np.float64], NDArray[np.float64]],
+    ]:
+        """Return (ts, values) pairs in SWEEP_METRIC_SPECS order."""
+        return (
+            (self.concurrency_ts, self.concurrency),
+            (self.throughput_ts, self.throughput),
+            (self.prefill_throughput_ts, self.prefill_throughput),
+        )
+
+    def compute_metrics(
+        self, window_start: float, window_end: float
+    ) -> dict[str, MetricResult]:
+        """Compute all sweep MetricResults for a time window."""
+        results: dict[str, MetricResult] = {}
+        for spec, (ts, values) in zip(SWEEP_METRIC_SPECS, self.curves(), strict=True):
+            stats = compute_time_weighted_stats(ts, values, window_start, window_end)
+            results[spec.tag] = metric_result_from_sweep_stats(
+                spec.tag, spec.header, spec.unit, stats, scale=spec.scale
+            )
+        return results
 
 
 def _sweep_cumsum(

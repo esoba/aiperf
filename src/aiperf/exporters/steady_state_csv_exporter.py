@@ -102,12 +102,7 @@ class SteadyStateCsvExporter(MetricsBaseExporter):
 
         # Metrics table
         prepared = self._prepare_metrics(self._summary.results.values())
-        conc = self._summary.effective_concurrency
-        prepared[conc.tag] = conc
-        tput = self._summary.effective_throughput
-        prepared[tput.tag] = tput
-        ptput = self._summary.effective_prefill_throughput
-        prepared[ptput.tag] = ptput
+        prepared.update(self._summary.sweep_metrics)
         if not prepared:
             return buf.getvalue()
 
