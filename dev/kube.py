@@ -2277,16 +2277,34 @@ def cmd_reload() -> None:
 def cmd_setup(
     *,
     no_dynamo: Annotated[
-        bool, Parameter(negative="", help="Skip Dynamo operator install.")
+        bool,
+        Parameter(
+            name=["-D", "--no-dynamo"],
+            negative="",
+            help="Skip Dynamo operator install.",
+        ),
     ] = False,
     no_jobset: Annotated[
-        bool, Parameter(negative="", help="Skip JobSet controller install.")
+        bool,
+        Parameter(
+            name=["-J", "--no-jobset"],
+            negative="",
+            help="Skip JobSet controller install.",
+        ),
     ] = False,
     no_mock: Annotated[
-        bool, Parameter(negative="", help="Skip mock server deploy.")
+        bool,
+        Parameter(
+            name=["-M", "--no-mock"], negative="", help="Skip mock server deploy."
+        ),
     ] = False,
     continue_on_error: Annotated[
-        bool, Parameter(negative="", help="Continue past failures in optional steps.")
+        bool,
+        Parameter(
+            name=["-k", "--continue-on-error"],
+            negative="",
+            help="Continue past failures in optional steps.",
+        ),
     ] = False,
 ) -> None:
     """Full setup: cluster + GPU + Dynamo operator + JobSet + images + servers."""
@@ -2399,18 +2417,5 @@ def _cli_load() -> None:
 # fmt: on
 
 
-@app.meta.default
-def _cli_meta(
-    *tokens: Annotated[str, Parameter(show=False)],
-    no_banner: Annotated[
-        bool,
-        Parameter(name="--no-banner", negative="", help="Suppress the startup banner."),
-    ] = False,
-) -> None:
-    if not no_banner:
-        print(_BANNER)
-    app(tokens)
-
-
 if __name__ == "__main__":
-    app.meta()
+    app()
