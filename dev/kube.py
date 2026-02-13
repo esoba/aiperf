@@ -98,7 +98,7 @@ def _detect_docker_cpus() -> int:
             check=True,
             timeout=10,
         )
-        return int(r.stdout.strip())
+        return int(r.stdout.strip()) or 2
     except Exception:
         return os.cpu_count() or 2
 
@@ -2269,18 +2269,67 @@ def cmd_reload() -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_setup() -> None:
+@app.command(
+    name="setup",
+    group=workflow,
+    help="Full setup: cluster + GPU + Dynamo operator + JobSet + mock server.",
+)
+def cmd_setup(
+    *,
+    no_dynamo: Annotated[
+        bool, Parameter(negative="", help="Skip Dynamo operator install.")
+    ] = False,
+    no_jobset: Annotated[
+        bool, Parameter(negative="", help="Skip JobSet controller install.")
+    ] = False,
+    no_mock: Annotated[
+        bool, Parameter(negative="", help="Skip mock server deploy.")
+    ] = False,
+    continue_on_error: Annotated[
+        bool, Parameter(negative="", help="Continue past failures in optional steps.")
+    ] = False,
+) -> None:
     """Full setup: cluster + GPU + Dynamo operator + JobSet + images + servers."""
     _preflight()
+
+    # Auto-skip GPU-dependent components on CPU-only systems
+    has_gpu = shutil.which("nvidia-smi") is not None
+    if not has_gpu and not no_dynamo:
+        log_info("No GPU detected — skipping Dynamo operator install")
+        no_dynamo = True
+
+    # Essential steps — always run, never swallowed by continue-on-error
     cmd_cluster_create()
-    cmd_install_dynamo()
-    cmd_install_jobset()
-    cmd_build(aiperf=True, mock=True)
-    cmd_load(aiperf=True, mock=True)
-    cmd_deploy_mock()
+    cmd_build(aiperf=True, mock=not no_mock)
+    cmd_load(aiperf=True, mock=not no_mock)
+
+    # Optional steps — skippable and protected by continue-on-error
+    _optional_steps: list[tuple[str, Any]] = []
+    if not no_dynamo:
+        _optional_steps.append(("Install Dynamo operator", cmd_install_dynamo))
+    if not no_jobset:
+        _optional_steps.append(("Install JobSet controller", cmd_install_jobset))
+    if not no_mock:
+        _optional_steps.append(("Deploy mock server", cmd_deploy_mock))
+
+    failed: list[str] = []
+    for label, func in _optional_steps:
+        try:
+            func()
+        except (SystemExit, Exception) as exc:
+            if not continue_on_error:
+                raise
+            log_warn(f"{label} failed: {exc!r}")
+            failed.append(label)
 
     print()
-    log_success("Setup complete!")
+    if failed:
+        log_warn(f"Setup finished with errors: {', '.join(failed)}")
+        log_info(
+            "Re-run failing steps individually or fix the issue and run setup again."
+        )
+    else:
+        log_success("Setup complete!")
     log_info("Next steps:")
     log_info("  ./dev/kube.py deploy-dynamo   # Deploy Dynamo inference server")
     log_info("  ./dev/kube.py deploy-vllm     # Deploy vLLM inference server")
@@ -2294,7 +2343,6 @@ def cmd_setup() -> None:
 # fmt: off
 for _func, _name, _group, _help in [
     (cmd_doctor,         "doctor",         workflow, "Check prerequisites (minikube, kubectl, helm, docker, nvidia, k9s)."),
-    (cmd_setup,          "setup",          workflow, "Full setup: cluster + GPU + Dynamo operator + JobSet + mock server."),
     (cmd_teardown,       "teardown",       workflow, "Delete entire minikube cluster."),
     (cmd_status,         "status",         workflow, "Show cluster status (GPU, Dynamo, vLLM, benchmarks)."),
     (cmd_reload,         "reload",         workflow, "Rebuild + load AIPerf image."),
