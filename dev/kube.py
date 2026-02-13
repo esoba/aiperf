@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -28,11 +29,15 @@ import yaml
 from cyclopts import App, Group, Parameter
 from pydantic import BaseModel, Field
 from rich.console import Console
+from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.rule import Rule
+from rich.spinner import Spinner
 from rich.syntax import Syntax
 from rich.table import Table
+from rich.text import Text
 
 from aiperf.common.config.user_config import UserConfig
 
@@ -375,20 +380,45 @@ def _get_aiperf_namespaces(*, latest_only: bool = False) -> list[str]:
     return r.stdout.split() if r.stdout.strip() else []
 
 
+def _has_buildx() -> bool:
+    """Check if docker buildx is available."""
+    r = sh("docker", "buildx", "version", capture=True, check=False)
+    return r.returncode == 0
+
+
 def _docker_build(image: str, dockerfile: str, *extra_args: str) -> None:
-    """Build a Docker image from PROJECT_ROOT."""
+    """Build a Docker image from PROJECT_ROOT.
+
+    Uses ``docker buildx build --load`` when buildx is available (required on
+    macOS for reliable cross-platform builds), falls back to ``docker build``.
+    """
     log_step(f"Building {image}")
-    sh(
-        "docker",
-        "build",
-        *extra_args,
-        "-t",
-        image,
-        "-f",
-        dockerfile,
-        ".",
-        cwd=PROJECT_ROOT,
-    )
+    if _has_buildx():
+        sh(
+            "docker",
+            "buildx",
+            "build",
+            "--load",
+            *extra_args,
+            "-t",
+            image,
+            "-f",
+            dockerfile,
+            ".",
+            cwd=PROJECT_ROOT,
+        )
+    else:
+        sh(
+            "docker",
+            "build",
+            *extra_args,
+            "-t",
+            image,
+            "-f",
+            dockerfile,
+            ".",
+            cwd=PROJECT_ROOT,
+        )
     log_success(f"Built {image}")
 
 
@@ -2269,6 +2299,148 @@ def cmd_reload() -> None:
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _SetupStep:
+    """A single step in the setup pipeline with status tracking."""
+
+    label: str
+    func: Any  # Callable[[], str]
+    optional: bool = False
+    skip: bool = False
+    skip_reason: str = ""
+    status: str = ""
+    failed: bool = False
+    error: str = ""
+
+
+class _StepProgress:
+    """Live renderable: spinner + step label + elapsed stopwatch."""
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self.t0 = time.monotonic()
+        self._spinner = Spinner("dots", style="cyan")
+
+    def __rich_console__(self, console: Console, options: Any) -> Any:
+        elapsed = int(time.monotonic() - self.t0)
+        line = Text.assemble(
+            "  ",
+            self._spinner.render(console.get_time()),
+            " ",
+            (f"{self.label:16s}", "bold"),
+            f" {elapsed}s",
+        )
+        yield line
+
+
+def _run_setup_steps(
+    steps: list[_SetupStep], *, continue_on_error: bool, has_gpu: bool
+) -> None:
+    """Execute setup steps and display results in a Rich panel."""
+    # Console on a dup'd fd so it can write to the terminal even while
+    # fd 1/2 are redirected to /dev/null during step execution.
+    con_fd = os.dup(sys.stdout.fileno())
+    con_file = os.fdopen(con_fd, "w", buffering=1)
+    con = Console(file=con_file)
+
+    con.print(Rule("[bold cyan]Setup — aiperf minikube cluster[/]", style="cyan"))
+
+    # Environment summary
+    parts: list[str] = []
+    parts.append("GPU" if has_gpu else "CPU-only")
+    parts.append(f"{_docker_cpus} CPUs")
+    parts.append(f"{_docker_mem_mb // 1024} GB")
+    if _TIMEOUT_SCALE > 1:
+        parts.append(f"timeout \u00d7{_TIMEOUT_SCALE}")
+    con.print(
+        Panel(
+            " \u00b7 ".join(parts),
+            title="[bold]System[/]",
+            border_style="dim",
+        )
+    )
+
+    t0 = time.monotonic()
+
+    for step in steps:
+        if step.skip:
+            con.print(
+                f"  [dim]\u25cb[/] [bold]{step.label:16s}[/] [dim]{step.skip_reason}[/]"
+            )
+            continue
+
+        progress = _StepProgress(step.label)
+
+        # Redirect Python streams (captures log_error messages in captured_err)
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        captured_err = io.StringIO()
+        sys.stdout = io.StringIO()
+        sys.stderr = captured_err
+
+        # Redirect OS-level fds so subprocess output goes to /dev/null
+        saved_fd1 = os.dup(1)
+        saved_fd2 = os.dup(2)
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull_fd, 1)
+        os.dup2(devnull_fd, 2)
+        os.close(devnull_fd)
+
+        try:
+            with Live(progress, console=con, transient=True, refresh_per_second=8):
+                step.status = step.func() or "done"
+            step_secs = int(time.monotonic() - progress.t0)
+            elapsed_tag = f" ({step_secs}s)" if step_secs >= 2 else ""
+            con.print(
+                f"  [green]\u2713[/] [bold]{step.label:16s}[/] {step.status}{elapsed_tag}"
+            )
+        except (SystemExit, Exception) as exc:
+            step.failed = True
+            # Prefer captured log_error() text over bare str(SystemExit(1))=="1"
+            stderr_text = _ANSI_ESCAPE.sub("", captured_err.getvalue()).strip()
+            step.error = stderr_text or str(exc) or repr(exc)
+            con.print(
+                f"  [red]\u2717[/] [bold]{step.label:16s}[/] [red]{escape(step.error)}[/]"
+            )
+            if not (step.optional and continue_on_error):
+                raise
+        finally:
+            # Restore OS-level fds first, then Python streams
+            os.dup2(saved_fd1, 1)
+            os.dup2(saved_fd2, 2)
+            os.close(saved_fd1)
+            os.close(saved_fd2)
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+
+    elapsed = time.monotonic() - t0
+    failed = [s for s in steps if s.failed]
+
+    con.print()
+    if failed:
+        lines = "\n".join(
+            f"  [red]\u2717[/] {s.label}: {escape(s.error)}" for s in failed
+        )
+        con.print(
+            Panel(
+                f"{lines}\n\n"
+                "Re-run failing steps individually or fix the issue and run setup again.",
+                title="[bold yellow]Setup completed with errors[/]",
+                border_style="yellow",
+            )
+        )
+    else:
+        con.print(
+            Panel(
+                f"Done in {elapsed:.0f}s\n\n"
+                "  ./dev/kube.py run              # benchmark mock server\n"
+                "  ./dev/kube.py deploy-vllm      # deploy real server\n"
+                "  ./dev/kube.py deploy-dynamo    # deploy Dynamo server",
+                title="[bold green]Setup complete[/]",
+                border_style="green",
+            )
+        )
+
+
 @app.command(
     name="setup",
     group=workflow,
@@ -2310,48 +2482,89 @@ def cmd_setup(
     """Full setup: cluster + GPU + Dynamo operator + JobSet + images + servers."""
     _preflight()
 
-    # Auto-skip GPU-dependent components on CPU-only systems
     has_gpu = shutil.which("nvidia-smi") is not None
     if not has_gpu and not no_dynamo:
-        log_info("No GPU detected — skipping Dynamo operator install")
         no_dynamo = True
 
-    # Essential steps — always run, never swallowed by continue-on-error
-    cmd_cluster_create()
-    cmd_build(aiperf=True, mock=not no_mock)
-    cmd_load(aiperf=True, mock=not no_mock)
+    build_mock = not no_mock
 
-    # Optional steps — skippable and protected by continue-on-error
-    _optional_steps: list[tuple[str, Any]] = []
-    if not no_dynamo:
-        _optional_steps.append(("Install Dynamo operator", cmd_install_dynamo))
-    if not no_jobset:
-        _optional_steps.append(("Install JobSet controller", cmd_install_jobset))
-    if not no_mock:
-        _optional_steps.append(("Deploy mock server", cmd_deploy_mock))
-
-    failed: list[str] = []
-    for label, func in _optional_steps:
-        try:
-            func()
-        except (SystemExit, Exception) as exc:
-            if not continue_on_error:
-                raise
-            log_warn(f"{label} failed: {exc!r}")
-            failed.append(label)
-
-    print()
-    if failed:
-        log_warn(f"Setup finished with errors: {', '.join(failed)}")
-        log_info(
-            "Re-run failing steps individually or fix the issue and run setup again."
+    # Step wrappers that return short status strings
+    def _step_cluster() -> str:
+        was_running = cluster_running()
+        cmd_cluster_create()
+        return (
+            "already running"
+            if was_running
+            else f"created ({'GPU' if has_gpu else 'CPU-only'})"
         )
-    else:
-        log_success("Setup complete!")
-    log_info("Next steps:")
-    log_info("  ./dev/kube.py deploy-dynamo   # Deploy Dynamo inference server")
-    log_info("  ./dev/kube.py deploy-vllm     # Deploy vLLM inference server")
-    log_info("  ./dev/kube.py run             # Run benchmark against mock server")
+
+    def _step_build() -> str:
+        images = [AIPERF_IMAGE]
+        if build_mock:
+            images.append(MOCK_SERVER_IMAGE)
+        cmd_build(aiperf=True, mock=build_mock)
+        return ", ".join(images)
+
+    def _step_load() -> str:
+        count = 1 + (1 if build_mock else 0)
+        cmd_load(aiperf=True, mock=build_mock)
+        return f"{count} image{'s' if count > 1 else ''} \u2192 minikube"
+
+    def _step_dynamo() -> str:
+        r = kubectl(
+            "get",
+            "crd",
+            "dynamographdeployments.nvidia.com",
+            capture=True,
+            check=False,
+        )
+        was_installed = r.returncode == 0
+        cmd_install_dynamo()
+        return "already installed" if was_installed else f"{DYNAMO_VERSION} installed"
+
+    def _step_jobset() -> str:
+        was_installed = _deployment_ready_replicas(
+            "jobset-controller-manager", "jobset-system"
+        )
+        cmd_install_jobset()
+        if was_installed is not None and was_installed > 0:
+            return "already installed"
+        return f"{JOBSET_VERSION} installed"
+
+    def _step_mock() -> str:
+        ready = _deployment_ready_replicas("aiperf-mock-server", None)
+        was_deployed = ready is not None and ready > 0
+        cmd_deploy_mock()
+        return "already deployed" if was_deployed else "deployed"
+
+    steps: list[_SetupStep] = [
+        _SetupStep(label="Cluster", func=_step_cluster),
+        _SetupStep(label="Build images", func=_step_build),
+        _SetupStep(label="Load images", func=_step_load),
+        _SetupStep(
+            label="Dynamo",
+            func=_step_dynamo,
+            optional=True,
+            skip=no_dynamo,
+            skip_reason="skipped (no GPU)" if not has_gpu else "skipped (--no-dynamo)",
+        ),
+        _SetupStep(
+            label="JobSet",
+            func=_step_jobset,
+            optional=True,
+            skip=no_jobset,
+            skip_reason="skipped (--no-jobset)",
+        ),
+        _SetupStep(
+            label="Mock server",
+            func=_step_mock,
+            optional=True,
+            skip=no_mock,
+            skip_reason="skipped (--no-mock)",
+        ),
+    ]
+
+    _run_setup_steps(steps, continue_on_error=continue_on_error, has_gpu=has_gpu)
 
 
 # ---------------------------------------------------------------------------
