@@ -948,20 +948,20 @@ def cmd_doctor() -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_cluster_create() -> None:
+def cmd_cluster_create() -> str:
     log_step(f"Creating minikube cluster: {CLUSTER_NAME}")
     require("minikube", "kubectl", "docker")
     _require_docker_running()
 
     if cluster_running():
         log_success(f"Cluster {CLUSTER_NAME} already running")
-        return
+        return "already running"
 
     if cluster_exists():
         log_info(f"Cluster {CLUSTER_NAME} exists but stopped, starting...")
         minikube("start")
         log_success(f"Cluster {CLUSTER_NAME} started")
-        return
+        return "started"
 
     # Detect GPU availability for --gpus flag
     has_gpu = shutil.which("nvidia-smi") is not None
@@ -1000,7 +1000,9 @@ handler: nvidia
         kubectl("apply", "-f", "-", input=_runtimeclass, text=True)
         log_info("Created nvidia RuntimeClass")
 
+    mode = "GPU" if has_gpu else "CPU-only"
     log_success(f"Cluster {CLUSTER_NAME} created (context: {CLUSTER_NAME})")
+    return f"created ({mode})"
 
 
 def cmd_cluster_delete() -> None:
@@ -1020,12 +1022,16 @@ def cmd_cluster_delete() -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_build(*, aiperf: bool = True, mock: bool = True) -> None:
+def cmd_build(*, aiperf: bool = True, mock: bool = True) -> str:
     require("docker")
+    built: list[str] = []
     if aiperf:
         _docker_build(AIPERF_IMAGE, "Dockerfile", "--target", "runtime")
+        built.append(AIPERF_IMAGE)
     if mock:
         _docker_build(MOCK_SERVER_IMAGE, "dev/deploy/Dockerfile.mock-server")
+        built.append(MOCK_SERVER_IMAGE)
+    return ", ".join(built)
 
 
 def _local_image_id(image: str) -> str | None:
@@ -1049,9 +1055,12 @@ def _minikube_image_id(image: str) -> str | None:
     return r.stdout.strip() if r.returncode == 0 else None
 
 
-def cmd_load(*, aiperf: bool = True, mock: bool = True) -> None:
+def cmd_load(*, aiperf: bool = True, mock: bool = True) -> str:
     require("minikube")
     require_cluster()
+
+    loaded: list[str] = []
+    skipped: list[str] = []
 
     def _load(image: str) -> None:
         local_id = _local_image_id(image)
@@ -1060,15 +1069,22 @@ def cmd_load(*, aiperf: bool = True, mock: bool = True) -> None:
             raise SystemExit(1)
         if local_id == _minikube_image_id(image):
             log_success(f"{image} already loaded (up to date)")
+            skipped.append(image)
             return
         log_step(f"Loading {image} into minikube")
         minikube("image", "load", image)
         log_success(f"Loaded {image}")
+        loaded.append(image)
 
     if aiperf:
         _load(AIPERF_IMAGE)
     if mock:
         _load(MOCK_SERVER_IMAGE)
+
+    if not loaded:
+        return "already loaded (up to date)"
+    n = len(loaded)
+    return f"{n} image{'s' if n > 1 else ''} \u2192 minikube"
 
 
 # ---------------------------------------------------------------------------
@@ -1076,7 +1092,7 @@ def cmd_load(*, aiperf: bool = True, mock: bool = True) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_install_jobset() -> None:
+def cmd_install_jobset() -> str:
     log_step(f"Installing JobSet controller {JOBSET_VERSION}")
     _require_kubectl_and_cluster()
 
@@ -1085,7 +1101,7 @@ def cmd_install_jobset() -> None:
         "jobset-system",
         "JobSet controller already installed",
     ):
-        return
+        return "already installed"
 
     log_info("Applying JobSet manifests...")
     kubectl(
@@ -1104,6 +1120,7 @@ def cmd_install_jobset() -> None:
         "jobset-system",
     )
     log_success(f"JobSet controller {JOBSET_VERSION} installed and ready")
+    return f"{JOBSET_VERSION} installed"
 
 
 # ---------------------------------------------------------------------------
@@ -1111,7 +1128,7 @@ def cmd_install_jobset() -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_install_dynamo() -> None:
+def cmd_install_dynamo() -> str:
     """Install Dynamo operator via Helm from NGC."""
     log_step(f"Installing Dynamo operator {DYNAMO_VERSION}")
     require("helm")
@@ -1123,7 +1140,7 @@ def cmd_install_dynamo() -> None:
     )
     if r.returncode == 0:
         log_success("Dynamo operator already installed")
-        return
+        return "already installed"
 
     ngc_base = "https://helm.ngc.nvidia.com/nvidia/ai-dynamo/charts"
     crds_tgz = f"dynamo-crds-{DYNAMO_VERSION}.tgz"
@@ -1191,6 +1208,7 @@ def cmd_install_dynamo() -> None:
         )
 
     log_success(f"Dynamo operator {DYNAMO_VERSION} installed")
+    return f"{DYNAMO_VERSION} installed"
 
 
 # ---------------------------------------------------------------------------
@@ -1198,14 +1216,14 @@ def cmd_install_dynamo() -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_deploy_mock() -> None:
+def cmd_deploy_mock() -> str:
     log_step("Deploying mock server")
     _require_kubectl_and_cluster()
 
     if _skip_if_deployment_ready(
         "aiperf-mock-server", None, "Mock server already deployed and ready"
     ):
-        return
+        return "already deployed"
 
     if not MOCK_SERVER_MANIFEST.exists():
         log_error(f"Mock server manifest not found: {MOCK_SERVER_MANIFEST}")
@@ -1227,6 +1245,7 @@ def cmd_deploy_mock() -> None:
     log_success("Mock server deployed")
     kubectl("get", "pods", "-l", "app=aiperf-mock-server")
     log_info("Endpoint: http://aiperf-mock-server.default.svc.cluster.local:8000")
+    return "deployed"
 
 
 def cmd_remove_mock() -> None:
@@ -2492,81 +2511,33 @@ def cmd_setup(
 
     build_mock = not no_mock
 
-    # Step wrappers that return short status strings
-    def _step_cluster() -> str:
-        was_running = cluster_running()
-        cmd_cluster_create()
-        return (
-            "already running"
-            if was_running
-            else f"created ({'GPU' if has_gpu else 'CPU-only'})"
-        )
-
-    def _step_build() -> str:
-        images = [AIPERF_IMAGE]
-        if build_mock:
-            images.append(MOCK_SERVER_IMAGE)
-        cmd_build(aiperf=True, mock=build_mock)
-        return ", ".join(images)
-
-    def _step_load() -> str:
-        images = [AIPERF_IMAGE] + ([MOCK_SERVER_IMAGE] if build_mock else [])
-        already = [
-            img for img in images if _local_image_id(img) == _minikube_image_id(img)
-        ]
-        cmd_load(aiperf=True, mock=build_mock)
-        if len(already) == len(images):
-            return "already loaded (up to date)"
-        return f"{len(images)} image{'s' if len(images) > 1 else ''} \u2192 minikube"
-
-    def _step_dynamo() -> str:
-        r = kubectl(
-            "get",
-            "crd",
-            "dynamographdeployments.nvidia.com",
-            capture=True,
-            check=False,
-        )
-        was_installed = r.returncode == 0
-        cmd_install_dynamo()
-        return "already installed" if was_installed else f"{DYNAMO_VERSION} installed"
-
-    def _step_jobset() -> str:
-        was_installed = _deployment_ready_replicas(
-            "jobset-controller-manager", "jobset-system"
-        )
-        cmd_install_jobset()
-        if was_installed is not None and was_installed > 0:
-            return "already installed"
-        return f"{JOBSET_VERSION} installed"
-
-    def _step_mock() -> str:
-        ready = _deployment_ready_replicas("aiperf-mock-server", None)
-        was_deployed = ready is not None and ready > 0
-        cmd_deploy_mock()
-        return "already deployed" if was_deployed else "deployed"
-
     steps: list[_SetupStep] = [
-        _SetupStep(label="Cluster", func=_step_cluster),
-        _SetupStep(label="Build images", func=_step_build),
-        _SetupStep(label="Load images", func=_step_load),
+        _SetupStep(label="Cluster", func=cmd_cluster_create),
+        _SetupStep(
+            label="Build images",
+            func=lambda: cmd_build(aiperf=True, mock=build_mock),
+        ),
+        _SetupStep(
+            label="Load images",
+            func=lambda: cmd_load(aiperf=True, mock=build_mock),
+        ),
         _SetupStep(
             label="Dynamo",
-            func=_step_dynamo,
+            func=cmd_install_dynamo,
             optional=True,
             skip=no_dynamo,
             skip_reason="skipped (no GPU)" if not has_gpu else "skipped (--no-dynamo)",
         ),
         _SetupStep(
             label="JobSet",
-            func=_step_jobset,
+            func=cmd_install_jobset,
             optional=True,
             skip=no_jobset,
             skip_reason="skipped (--no-jobset)",
         ),
         _SetupStep(
             label="Mock server",
-            func=_step_mock,
+            func=cmd_deploy_mock,
             optional=True,
             skip=no_mock,
             skip_reason="skipped (--no-mock)",
