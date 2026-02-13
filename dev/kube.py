@@ -84,6 +84,25 @@ DYNAMO_CONNECTORS: list[str] = (
 )
 
 
+def _detect_docker_cpus() -> int:
+    """Query Docker daemon for CPU count. Falls back to host CPU count.
+
+    On Colima/Docker Desktop the VM may have fewer CPUs than the host,
+    so ``os.cpu_count()`` alone would over-provision.
+    """
+    try:
+        r = subprocess.run(
+            ["docker", "info", "--format", "{{.NCPU}}"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        return int(r.stdout.strip())
+    except Exception:
+        return os.cpu_count() or 2
+
+
 def _detect_docker_memory_mb() -> int:
     """Query Docker daemon for total memory (MB).  Falls back to host memory."""
     try:
@@ -112,7 +131,8 @@ _default_memory_mb = min(
 )
 
 MINIKUBE_MEMORY = os.environ.get("MINIKUBE_MEMORY") or f"{_default_memory_mb}mb"
-MINIKUBE_CPUS = os.environ.get("MINIKUBE_CPUS") or str(min(os.cpu_count() or 2, 8))
+_docker_cpus = _detect_docker_cpus()
+MINIKUBE_CPUS = os.environ.get("MINIKUBE_CPUS") or str(min(_docker_cpus, 8))
 
 # fmt: off
 _BANNER = (
@@ -126,8 +146,11 @@ _BANNER = (
 # fmt: on
 
 DEFAULT_CONFIG: str | None = os.environ.get("CONFIG") or None
-DEFAULT_WORKERS = int(os.environ.get("WORKERS") or "10")
+DEFAULT_WORKERS = int(os.environ.get("WORKERS") or str(min(_docker_cpus, 10)))
 FOLLOW_DEFAULT = bool(os.environ.get("FOLLOW"))
+
+# Scale timeouts on constrained systems: 2 CPUs → 2x, 1 CPU → 4x, 8+ → 1x (no change)
+_TIMEOUT_SCALE = max(1, 4 // _docker_cpus)
 
 # Reusable cyclopts type alias for --follow/-f flags
 FollowFlag = Annotated[
@@ -293,6 +316,14 @@ def _require_docker_running() -> None:
     r = sh("docker", "info", capture=True, check=False)
     if r.returncode != 0:
         log_error("Docker is not running. Please start Docker first.")
+        raise SystemExit(1)
+
+
+def _require_gpu() -> None:
+    """Require GPU (nvidia-smi). Exits with hint on CPU-only systems."""
+    if shutil.which("nvidia-smi") is None:
+        log_error("GPU required. deploy-vllm and deploy-dynamo need GPU passthrough.")
+        log_info("Use 'deploy-mock' + 'run' for CPU-only benchmarking.")
         raise SystemExit(1)
 
 
@@ -1033,7 +1064,7 @@ def cmd_install_jobset() -> None:
     kubectl(
         "wait",
         "--for=condition=available",
-        "--timeout=120s",
+        f"--timeout={120 * _TIMEOUT_SCALE}s",
         "deployment/jobset-controller-manager",
         "-n",
         "jobset-system",
@@ -1153,7 +1184,12 @@ def cmd_deploy_mock() -> None:
     )
     kubectl("apply", "-f", "-", input=manifest, text=True)
     log_info("Waiting for mock server to be ready...")
-    kubectl("rollout", "status", "deployment/aiperf-mock-server", "--timeout=120s")
+    kubectl(
+        "rollout",
+        "status",
+        "deployment/aiperf-mock-server",
+        f"--timeout={120 * _TIMEOUT_SCALE}s",
+    )
     log_success("Mock server deployed")
     kubectl("get", "pods", "-l", "app=aiperf-mock-server")
     log_info("Endpoint: http://aiperf-mock-server.default.svc.cluster.local:8000")
@@ -1288,6 +1324,7 @@ def cmd_deploy_vllm(
         f"Deploying vLLM server (model={model_opts.model}, gpus={model_opts.gpus})"
     )
     _require_kubectl_and_cluster()
+    _require_gpu()
 
     if _skip_if_deployment_ready(
         "vllm-server", VLLM_NAMESPACE, "vLLM server already deployed and ready"
@@ -1642,6 +1679,7 @@ def cmd_deploy_dynamo(
             f"gpus={model_opts.gpus}{extras_str})"
         )
     _require_kubectl_and_cluster()
+    _require_gpu()
     _check_dynamo_operator()
 
     hf_secret = _ensure_hf_token_secret(DYNAMO_NAMESPACE)
@@ -1951,7 +1989,7 @@ def cmd_run_local(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
             "app=aiperf",
             "-n",
             namespace,
-            "--timeout=120s",
+            f"--timeout={120 * _TIMEOUT_SCALE}s",
             check=False,
         )
         log_info("Attaching to benchmark logs (Ctrl-C to detach)...")
