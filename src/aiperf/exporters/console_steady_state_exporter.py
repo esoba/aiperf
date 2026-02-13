@@ -57,6 +57,42 @@ class ConsoleSteadyStateExporter(AIPerfLoggerMixin):
             f"p50={ptput.p50:,.1f} p90={ptput.p90:,.1f}",
             f"min={ptput.min:,.1f} max={ptput.max:,.1f}",
         )
+        total_tput = self._summary.effective_total_throughput
+        info.add_row(
+            f"[bold]Total Tput:[/bold] avg={total_tput.avg:,.1f} {total_tput.unit}",
+            f"p50={total_tput.p50:,.1f} p90={total_tput.p90:,.1f}",
+            f"min={total_tput.min:,.1f} max={total_tput.max:,.1f}",
+        )
+        gen_conc = self._summary.effective_generation_concurrency
+        info.add_row(
+            f"[bold]Gen Conc:[/bold] avg={gen_conc.avg:.1f}",
+            f"p50={gen_conc.p50:.1f} p90={gen_conc.p90:.1f}",
+            f"min={gen_conc.min:.0f} max={gen_conc.max:.0f}",
+        )
+        pre_conc = self._summary.effective_prefill_concurrency
+        info.add_row(
+            f"[bold]Prefill Conc:[/bold] avg={pre_conc.avg:.1f}",
+            f"p50={pre_conc.p50:.1f} p90={pre_conc.p90:.1f}",
+            f"min={pre_conc.min:.0f} max={pre_conc.max:.0f}",
+        )
+        tput_pu = self._summary.effective_throughput_per_user
+        info.add_row(
+            f"[bold]Tput/User:[/bold] avg={tput_pu.avg:,.1f} {tput_pu.unit}",
+            f"p50={tput_pu.p50:,.1f} p90={tput_pu.p90:,.1f}",
+            f"min={tput_pu.min:,.1f} max={tput_pu.max:,.1f}",
+        )
+        ptput_pu = self._summary.effective_prefill_throughput_per_user
+        info.add_row(
+            f"[bold]Prefill/User:[/bold] avg={ptput_pu.avg:,.1f} {ptput_pu.unit}",
+            f"p50={ptput_pu.p50:,.1f} p90={ptput_pu.p90:,.1f}",
+            f"min={ptput_pu.min:,.1f} max={ptput_pu.max:,.1f}",
+        )
+        tif = self._summary.tokens_in_flight
+        info.add_row(
+            f"[bold]Tokens In Flight:[/bold] avg={tif.avg:,.0f}",
+            f"p50={tif.p50:,.0f} p90={tif.p90:,.0f}",
+            f"min={tif.min:,.0f} max={tif.max:,.0f}",
+        )
 
         # Stationarity status
         if meta.stationarity_warning:

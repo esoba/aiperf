@@ -350,6 +350,84 @@ class TestSteadyStateSummarySerialize:
                 p99=790.0,
                 std=100.0,
             ),
+            effective_generation_concurrency=MetricResult(
+                tag="effective_generation_concurrency",
+                header="Effective Generation Concurrency",
+                unit="requests",
+                avg=4.5,
+                min=2.0,
+                max=7.0,
+                p50=4.5,
+                p90=6.5,
+                p95=7.0,
+                p99=7.0,
+                std=1.2,
+            ),
+            effective_prefill_concurrency=MetricResult(
+                tag="effective_prefill_concurrency",
+                header="Effective Prefill Concurrency",
+                unit="requests",
+                avg=3.0,
+                min=1.0,
+                max=5.0,
+                p50=3.0,
+                p90=4.5,
+                p95=5.0,
+                p99=5.0,
+                std=0.8,
+            ),
+            effective_total_throughput=MetricResult(
+                tag="effective_total_throughput",
+                header="Effective Total Throughput",
+                unit="tokens/sec",
+                avg=600.0,
+                min=250.0,
+                max=1000.0,
+                p50=600.0,
+                p90=880.0,
+                p95=940.0,
+                p99=990.0,
+                std=130.0,
+            ),
+            effective_throughput_per_user=MetricResult(
+                tag="effective_throughput_per_user",
+                header="Effective Throughput Per User",
+                unit="tokens/sec/user",
+                avg=20.0,
+                min=10.0,
+                max=40.0,
+                p50=20.0,
+                p90=36.0,
+                p95=38.0,
+                p99=40.0,
+                std=6.0,
+            ),
+            effective_prefill_throughput_per_user=MetricResult(
+                tag="effective_prefill_throughput_per_user",
+                header="Effective Prefill Throughput Per User",
+                unit="tokens/sec/user",
+                avg=100.0,
+                min=40.0,
+                max=160.0,
+                p50=100.0,
+                p90=140.0,
+                p95=150.0,
+                p99=158.0,
+                std=20.0,
+            ),
+            tokens_in_flight=MetricResult(
+                tag="tokens_in_flight",
+                header="Tokens In Flight",
+                unit="tokens",
+                avg=5000.0,
+                min=100.0,
+                max=12000.0,
+                p50=4500.0,
+                p90=10000.0,
+                p95=11000.0,
+                p99=11800.0,
+                std=2500.0,
+            ),
             window_metadata=SteadyStateWindowMetadata(
                 ramp_up_end_ns=100.0,
                 ramp_down_start_ns=900.0,
@@ -407,6 +485,35 @@ class TestSteadyStateSummarySerialize:
         assert data["effective_throughput"]["unit"] == "tokens/sec"
         assert data["effective_prefill_throughput"]["avg"] == 500.0
         assert data["effective_prefill_throughput"]["unit"] == "tokens/sec"
+        assert data["effective_generation_concurrency"]["avg"] == 4.5
+        assert data["effective_generation_concurrency"]["unit"] == "requests"
+        assert data["effective_prefill_concurrency"]["avg"] == 3.0
+        assert data["effective_prefill_concurrency"]["unit"] == "requests"
+        assert data["effective_total_throughput"]["avg"] == 600.0
+        assert data["effective_total_throughput"]["unit"] == "tokens/sec"
+        assert data["effective_throughput_per_user"]["avg"] == 20.0
+        assert data["effective_throughput_per_user"]["unit"] == "tokens/sec/user"
+        assert data["effective_prefill_throughput_per_user"]["avg"] == 100.0
+        assert (
+            data["effective_prefill_throughput_per_user"]["unit"] == "tokens/sec/user"
+        )
+        assert data["tokens_in_flight"]["avg"] == 5000.0
+        assert data["tokens_in_flight"]["unit"] == "tokens"
+
+    def test_sweep_metrics_dict(self) -> None:
+        """sweep_metrics property includes all 9 sweep metrics."""
+        summary = self._make_summary()
+        sm = summary.sweep_metrics
+        assert "effective_concurrency" in sm
+        assert "effective_throughput" in sm
+        assert "effective_prefill_throughput" in sm
+        assert "effective_generation_concurrency" in sm
+        assert "effective_prefill_concurrency" in sm
+        assert "effective_total_throughput" in sm
+        assert "effective_throughput_per_user" in sm
+        assert "effective_prefill_throughput_per_user" in sm
+        assert "tokens_in_flight" in sm
+        assert len(sm) == 9
 
     def test_to_csv(self) -> None:
         summary = self._make_summary()
@@ -723,3 +830,134 @@ class TestSteadyStateAnalyzerEffectivePrefillThroughput:
         # since no prefill activity after 100ms
         assert ptput.avg > 0.0
         assert ptput.max == pytest.approx(20000.0, rel=0.05)
+
+
+class TestSteadyStateAnalyzerEffectiveThroughputPerUser:
+    @pytest.mark.asyncio
+    async def test_per_user_throughput_present(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """effective_throughput_per_user field is always present on the result."""
+        records = [(i, 0, 1_000_000_000, float(i * 10)) for i in range(50)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config()
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        assert hasattr(result, "effective_throughput_per_user")
+        assert (
+            result.effective_throughput_per_user.tag == "effective_throughput_per_user"
+        )
+        assert result.effective_throughput_per_user.unit == "tokens/sec/user"
+
+    @pytest.mark.asyncio
+    async def test_zero_per_user_throughput_without_token_data(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """When no output_tokens/TTFT data exists, per-user throughput is zero."""
+        records = [(i, i * 100, (i + 1) * 100, float(i)) for i in range(20)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        tput_pu = result.effective_throughput_per_user
+        assert tput_pu.avg == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_known_per_user_throughput_single_concurrency(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Single concurrent request → per-user throughput equals aggregate."""
+        # 1 request: 101 output tokens over 1 sec = 100 tokens/sec
+        records = [(0, 0, 1_000_000_000, 100.0, 101.0, 0.0)]
+        acc = await _build_accumulator_with_throughput_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        tput = result.effective_throughput
+        tput_pu = result.effective_throughput_per_user
+        # With concurrency 1, per-user ≈ aggregate
+        assert tput_pu.avg == pytest.approx(tput.avg, rel=0.05)
+
+    @pytest.mark.asyncio
+    async def test_known_per_user_throughput_multiple_concurrent(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """10 overlapping requests → per-user throughput ≈ aggregate / 10."""
+        # 10 requests: each 101 tokens over 1 sec
+        # Aggregate = 1000 tok/sec, per-user = 100 tok/sec
+        records = [(i, 0, 1_000_000_000, 100.0, 101.0, 0.0) for i in range(10)]
+        acc = await _build_accumulator_with_throughput_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        tput_pu = result.effective_throughput_per_user
+        # Per-user = 100 tokens/sec (1000 / 10)
+        assert tput_pu.avg == pytest.approx(100.0, rel=0.05)
+
+
+class TestSteadyStateAnalyzerEffectivePrefillThroughputPerUser:
+    @pytest.mark.asyncio
+    async def test_per_user_prefill_throughput_present(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """effective_prefill_throughput_per_user field is always present."""
+        records = [(i, 0, 1_000_000_000, float(i * 10)) for i in range(50)]
+        acc = await _build_accumulator_with_records(
+            mock_metric_registry, mock_user_config, records
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config()
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        assert hasattr(result, "effective_prefill_throughput_per_user")
+        assert (
+            result.effective_prefill_throughput_per_user.tag
+            == "effective_prefill_throughput_per_user"
+        )
+        assert result.effective_prefill_throughput_per_user.unit == "tokens/sec/user"
+
+    @pytest.mark.asyncio
+    async def test_known_per_user_prefill_throughput_multiple_concurrent(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """10 overlapping prefills → per-user prefill ≈ aggregate / 10."""
+        # 10 requests: TTFT=100ms, input_tokens=200
+        # Per-request: 200/100ms = 2000 tok/sec, aggregate = 20000
+        # Per-user = 2000 tok/sec
+        records = [
+            (i, 0, 1_000_000_000, 100.0, 101.0, 100_000_000.0) for i in range(10)
+        ]
+        acc = await _build_accumulator_with_throughput_records(
+            mock_metric_registry, mock_user_config, records, input_tokens=200.0
+        )
+        ctx = _make_summary_ctx(acc)
+
+        config = _make_user_config(start_pct=0.0, end_pct=99.9)
+        ss = SteadyStateAnalyzer(user_config=config)
+        result = await ss.summarize(ctx)
+
+        ptput_pu = result.effective_prefill_throughput_per_user
+        # During prefill window, per-user = 2000 tokens/sec
+        assert ptput_pu.max == pytest.approx(2000.0, rel=0.05)

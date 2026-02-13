@@ -56,6 +56,42 @@ SWEEP_METRIC_SPECS: tuple[SweepMetricSpec, ...] = (
         "tokens/sec",
         NANOS_PER_SECOND,
     ),
+    SweepMetricSpec(
+        "effective_generation_concurrency",
+        "Effective Generation Concurrency",
+        "requests",
+        1.0,
+    ),
+    SweepMetricSpec(
+        "effective_prefill_concurrency",
+        "Effective Prefill Concurrency",
+        "requests",
+        1.0,
+    ),
+    SweepMetricSpec(
+        "effective_total_throughput",
+        "Effective Total Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+    ),
+    SweepMetricSpec(
+        "effective_throughput_per_user",
+        "Effective Throughput Per User",
+        "tokens/sec/user",
+        NANOS_PER_SECOND,
+    ),
+    SweepMetricSpec(
+        "effective_prefill_throughput_per_user",
+        "Effective Prefill Throughput Per User",
+        "tokens/sec/user",
+        NANOS_PER_SECOND,
+    ),
+    SweepMetricSpec(
+        "tokens_in_flight",
+        "Tokens In Flight",
+        "tokens",
+        1.0,
+    ),
 )
 
 
@@ -69,19 +105,33 @@ class SweepCurves:
     throughput: NDArray[np.float64]
     prefill_throughput_ts: NDArray[np.float64]
     prefill_throughput: NDArray[np.float64]
+    generation_concurrency_ts: NDArray[np.float64]
+    generation_concurrency: NDArray[np.float64]
+    prefill_concurrency_ts: NDArray[np.float64]
+    prefill_concurrency: NDArray[np.float64]
+    total_throughput_ts: NDArray[np.float64]
+    total_throughput: NDArray[np.float64]
+    throughput_per_user_ts: NDArray[np.float64]
+    throughput_per_user: NDArray[np.float64]
+    prefill_throughput_per_user_ts: NDArray[np.float64]
+    prefill_throughput_per_user: NDArray[np.float64]
+    tokens_in_flight_ts: NDArray[np.float64]
+    tokens_in_flight: NDArray[np.float64]
 
     def curves(
         self,
-    ) -> tuple[
-        tuple[NDArray[np.float64], NDArray[np.float64]],
-        tuple[NDArray[np.float64], NDArray[np.float64]],
-        tuple[NDArray[np.float64], NDArray[np.float64]],
-    ]:
+    ) -> tuple[tuple[NDArray[np.float64], NDArray[np.float64]], ...]:
         """Return (ts, values) pairs in SWEEP_METRIC_SPECS order."""
         return (
             (self.concurrency_ts, self.concurrency),
             (self.throughput_ts, self.throughput),
             (self.prefill_throughput_ts, self.prefill_throughput),
+            (self.generation_concurrency_ts, self.generation_concurrency),
+            (self.prefill_concurrency_ts, self.prefill_concurrency),
+            (self.total_throughput_ts, self.total_throughput),
+            (self.throughput_per_user_ts, self.throughput_per_user),
+            (self.prefill_throughput_per_user_ts, self.prefill_throughput_per_user),
+            (self.tokens_in_flight_ts, self.tokens_in_flight),
         )
 
     def compute_metrics(
@@ -107,6 +157,117 @@ def _sweep_cumsum(
     event_type = (deltas > 0).astype(np.int8)
     order = np.lexsort((event_type, timestamps))
     return timestamps[order], np.cumsum(deltas[order])
+
+
+def _step_lookup(
+    event_ts: NDArray[np.float64],
+    event_vals: NDArray[np.float64],
+    query_ts: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Look up step-function values at query timestamps (0 before first event)."""
+    idx = np.searchsorted(event_ts, query_ts, side="right").astype(np.intp) - 1
+    return np.where(idx >= 0, event_vals[np.clip(idx, 0, len(event_vals) - 1)], 0.0)
+
+
+def add_step_functions(
+    a_ts: NDArray[np.float64],
+    a_vals: NDArray[np.float64],
+    b_ts: NDArray[np.float64],
+    b_vals: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Add two step functions, returning a new step function on merged timestamps.
+
+    Args:
+        a_ts: Sorted timestamps of the first step function.
+        a_vals: Values of the first step function.
+        b_ts: Sorted timestamps of the second step function.
+        b_vals: Values of the second step function.
+
+    Returns:
+        Tuple of (merged_timestamps, sum_values).
+    """
+    if len(a_ts) == 0:
+        return b_ts.copy(), b_vals.copy()
+    if len(b_ts) == 0:
+        return a_ts.copy(), a_vals.copy()
+
+    merged_ts = np.unique(np.concatenate([a_ts, b_ts]))
+    return merged_ts, _step_lookup(a_ts, a_vals, merged_ts) + _step_lookup(
+        b_ts, b_vals, merged_ts
+    )
+
+
+def divide_step_functions(
+    num_ts: NDArray[np.float64],
+    num_vals: NDArray[np.float64],
+    den_ts: NDArray[np.float64],
+    den_vals: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Divide two step functions, returning a new step function on merged timestamps.
+
+    Where denominator is zero the result is zero (safe division).
+
+    Args:
+        num_ts: Sorted timestamps of the numerator step function.
+        num_vals: Values of the numerator step function.
+        den_ts: Sorted timestamps of the denominator step function.
+        den_vals: Values of the denominator step function.
+
+    Returns:
+        Tuple of (merged_timestamps, quotient_values).
+    """
+    if len(num_ts) == 0 or len(den_ts) == 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    merged_ts = np.unique(np.concatenate([num_ts, den_ts]))
+    num_at = _step_lookup(num_ts, num_vals, merged_ts)
+    den_at = _step_lookup(den_ts, den_vals, merged_ts)
+
+    result = np.zeros_like(num_at)
+    np.divide(num_at, den_at, out=result, where=den_at > 0)
+    return merged_ts, result
+
+
+def throughput_per_user_sweep(
+    generation_start_ns: NDArray[np.float64],
+    end_ns: NDArray[np.float64],
+    tput_ts: NDArray[np.float64],
+    tput_vals: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Compute per-user throughput by dividing aggregate throughput by generation-phase concurrency.
+
+    Args:
+        generation_start_ns: First-token wall-clock timestamps. NaN for missing.
+        end_ns: Request end timestamps. NaN for missing.
+        tput_ts: Sorted timestamps from throughput_sweep (or ICL variant).
+        tput_vals: Throughput values (tokens/ns) at each timestamp.
+
+    Returns:
+        Tuple of (timestamps, per_user_throughput) in tokens/ns/user.
+    """
+    conc_ts, conc_vals = concurrency_sweep(generation_start_ns, end_ns)
+    return divide_step_functions(tput_ts, tput_vals, conc_ts, conc_vals)
+
+
+def prefill_throughput_per_user_sweep(
+    start_ns: NDArray[np.float64],
+    generation_start_ns: NDArray[np.float64],
+    ptput_ts: NDArray[np.float64],
+    ptput_vals: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Compute per-user prefill throughput by dividing aggregate prefill throughput by prefill-phase concurrency.
+
+    Args:
+        start_ns: Request start timestamps. NaN for missing.
+        generation_start_ns: First-token wall-clock timestamps. NaN for missing.
+        ptput_ts: Sorted timestamps from prefill_throughput_sweep.
+        ptput_vals: Prefill throughput values (tokens/ns) at each timestamp.
+
+    Returns:
+        Tuple of (timestamps, per_user_prefill_throughput) in tokens/ns/user.
+    """
+    conc_ts, conc_vals = concurrency_sweep(start_ns, generation_start_ns)
+    return divide_step_functions(ptput_ts, ptput_vals, conc_ts, conc_vals)
 
 
 def concurrency_sweep(
@@ -207,6 +368,264 @@ def prefill_throughput_sweep(
 
     sorted_ts, prefill_tput = _sweep_cumsum(timestamps, deltas)
     return sorted_ts, prefill_tput
+
+
+def total_throughput_sweep(
+    start_ns: NDArray[np.float64],
+    generation_start_ns: NDArray[np.float64],
+    end_ns: NDArray[np.float64],
+    input_tokens: NDArray[np.float64],
+    output_tokens: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Compute total throughput (prefill + generation) in a single sweep pass.
+
+    Combines prefill rate events [start_ns, generation_start_ns) and generation
+    rate events [generation_start_ns, end_ns) into one sweep, avoiding the
+    overhead of two separate sweeps + grid merge + searchsorted lookups.
+
+    Args:
+        start_ns: Request start timestamps. NaN for missing.
+        generation_start_ns: First-token wall-clock timestamps. NaN for missing.
+        end_ns: Request end timestamps. NaN for missing.
+        input_tokens: Input token counts. NaN for missing.
+        output_tokens: Output token counts. NaN for missing.
+
+    Returns:
+        Tuple of (sorted_timestamps, total_throughput_values) in tokens/ns.
+    """
+    # Prefill: input_tokens / prefill_duration during [start, gen_start)
+    prefill_dur = generation_start_ns - start_ns
+    pf_valid = (
+        ~np.isnan(start_ns)
+        & ~np.isnan(generation_start_ns)
+        & ~np.isnan(input_tokens)
+        & (prefill_dur > 0)
+    )
+    pf_k = int(pf_valid.sum())
+
+    # Generation: (output_tokens - 1) / gen_duration during [gen_start, end)
+    gen_dur = end_ns - generation_start_ns
+    gn_valid = ~np.isnan(generation_start_ns) & ~np.isnan(output_tokens) & (gen_dur > 0)
+    gn_k = int(gn_valid.sum())
+
+    if pf_k == 0 and gn_k == 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    parts_ts: list[NDArray[np.float64]] = []
+    parts_delta: list[NDArray[np.float64]] = []
+
+    if pf_k > 0:
+        pf_rates = input_tokens[pf_valid] / prefill_dur[pf_valid]
+        parts_ts.extend([start_ns[pf_valid], generation_start_ns[pf_valid]])
+        parts_delta.extend([pf_rates, -pf_rates])
+
+    if gn_k > 0:
+        gn_rates = (output_tokens[gn_valid] - 1.0) / gen_dur[gn_valid]
+        parts_ts.extend([generation_start_ns[gn_valid], end_ns[gn_valid]])
+        parts_delta.extend([gn_rates, -gn_rates])
+
+    return _sweep_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
+
+
+def tokens_in_flight_sweep(
+    start_ns: NDArray[np.float64],
+    generation_start_ns: NDArray[np.float64],
+    end_ns: NDArray[np.float64],
+    input_tokens: NDArray[np.float64],
+    output_tokens: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Compute instantaneous KV cache token load at every event boundary.
+
+    Models the total tokens held in server memory (KV cache) per request:
+    - During prefill [start_ns, generation_start_ns): input_tokens
+    - During generation [generation_start_ns, end_ns): input_tokens + output_tokens
+
+    Input tokens stay in the KV cache throughout the request lifetime, and
+    output tokens accumulate on top during generation. This reveals GPU
+    memory pressure — two concurrent 4K-token requests look identical to two
+    128-token requests in concurrency but wildly different here.
+
+    Events per request (up to 3):
+      +input_tokens   at start_ns
+      +output_tokens  at generation_start_ns
+      -(input_tokens + output_tokens) at end_ns
+
+    Args:
+        start_ns: Request start timestamps. NaN for missing.
+        generation_start_ns: First-token wall-clock timestamps. NaN for missing.
+        end_ns: Request end timestamps. NaN for missing.
+        input_tokens: Input token counts. NaN for missing.
+        output_tokens: Output token counts. NaN for missing.
+
+    Returns:
+        Tuple of (sorted_timestamps, tokens_in_flight) in tokens.
+    """
+    # We need per-request validity for each event type:
+    # 1. Prefill start (+input_tokens at start_ns): need valid start + input_tokens
+    # 2. Gen start (+output_tokens at gen_start): need valid gen_start + output_tokens
+    # 3. Request end (-(input+output) at end_ns): need valid end + knowledge of what was added
+
+    # Requests with valid prefill: contribute +input_tokens at start_ns
+    has_start = ~np.isnan(start_ns) & ~np.isnan(input_tokens)
+    # Requests with valid generation: contribute +output_tokens at generation_start_ns
+    gen_dur = end_ns - generation_start_ns
+    has_gen = ~np.isnan(generation_start_ns) & ~np.isnan(output_tokens) & (gen_dur > 0)
+    # Requests with valid end: release all accumulated tokens at end_ns
+    has_end = ~np.isnan(end_ns)
+
+    # A request contributes input_tokens if it has a valid start
+    # and output_tokens if it has a valid generation phase.
+    # At end_ns, we subtract whatever was added.
+    # For simplicity and correctness, handle the three event types independently.
+
+    parts_ts: list[NDArray[np.float64]] = []
+    parts_delta: list[NDArray[np.float64]] = []
+
+    # Event 1: +input_tokens at start_ns (prefill begins, tokens enter KV cache)
+    pf_valid = (
+        has_start & ~np.isnan(generation_start_ns) & (generation_start_ns > start_ns)
+    )
+    if pf_valid.any():
+        parts_ts.append(start_ns[pf_valid])
+        parts_delta.append(input_tokens[pf_valid])
+
+    # Event 2: +output_tokens at generation_start_ns (generation begins, output tokens join KV cache)
+    if has_gen.any():
+        parts_ts.append(generation_start_ns[has_gen])
+        parts_delta.append(output_tokens[has_gen])
+
+    # Event 3: -(input_tokens + output_tokens) at end_ns (request completes, KV cache freed)
+    # Only subtract tokens that were actually added
+    end_with_input = pf_valid & has_end
+    end_with_gen = has_gen & has_end
+
+    # Combine: for requests that have both input and gen, subtract both at end
+    both = end_with_input & end_with_gen
+    input_only = end_with_input & ~end_with_gen
+    gen_only = end_with_gen & ~end_with_input
+
+    if both.any():
+        parts_ts.append(end_ns[both])
+        parts_delta.append(-(input_tokens[both] + output_tokens[both]))
+    if input_only.any():
+        parts_ts.append(end_ns[input_only])
+        parts_delta.append(-input_tokens[input_only])
+    if gen_only.any():
+        parts_ts.append(end_ns[gen_only])
+        parts_delta.append(-output_tokens[gen_only])
+
+    if len(parts_ts) == 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    return _sweep_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
+
+
+def tokens_in_flight_sweep_icl(
+    start_ns: NDArray[np.float64],
+    generation_start_ns: NDArray[np.float64],
+    end_ns: NDArray[np.float64],
+    input_tokens: NDArray[np.float64],
+    output_tokens: NDArray[np.float64],
+    icl_values: NDArray[np.float64],
+    icl_record_indices: NDArray[np.int32],
+    icl_offsets: NDArray[np.int64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """ICL-aware tokens in flight: output tokens ramp up at chunk boundaries.
+
+    Instead of adding all output_tokens at generation_start_ns, this function
+    adds tokens_per_chunk at each SSE chunk boundary during generation,
+    modeling the gradual KV cache growth as tokens are generated.
+
+    Events:
+      +input_tokens                     at start_ns        (prefill loads KV cache)
+      +tokens_per_chunk                 at each chunk end  (output tokens accumulate)
+      -(input_tokens + output_tokens)   at end_ns          (KV cache freed)
+
+    Args:
+        start_ns: Request start timestamps. NaN for missing.
+        generation_start_ns: First-token wall-clock timestamps. NaN for missing.
+        end_ns: Request end timestamps. NaN for missing.
+        input_tokens: Input token counts. NaN for missing.
+        output_tokens: Output token counts. NaN for missing.
+        icl_values: Flat array of all ICL durations (M values).
+        icl_record_indices: Session_num per ICL value (M values).
+        icl_offsets: Per-session_num start offset into icl_values.
+
+    Returns:
+        Tuple of (sorted_timestamps, tokens_in_flight) in tokens.
+    """
+    if len(icl_values) == 0:
+        return tokens_in_flight_sweep(
+            start_ns, generation_start_ns, end_ns, input_tokens, output_tokens
+        )
+
+    rec_idx = icl_record_indices
+
+    # --- ICL chunk events: +tokens_per_chunk at each chunk boundary ---
+    # Wall-clock chunk boundaries (same computation as throughput_sweep_icl)
+    global_cs = np.cumsum(icl_values)
+    request_offsets = icl_offsets[rec_idx]
+    start_cs = np.where(request_offsets > 0, global_cs[request_offsets - 1], 0.0)
+    relative_cs = global_cs - start_cs
+
+    gen_start = generation_start_ns[rec_idx]
+    interval_end = gen_start + relative_cs
+
+    # Per-request ICL count → tokens per chunk
+    icl_counts = np.bincount(rec_idx, minlength=len(output_tokens)).astype(np.float64)
+    per_req_tokens = output_tokens[rec_idx]
+    per_req_icl_count = icl_counts[rec_idx]
+    tokens_per_chunk = np.where(
+        per_req_icl_count > 0, per_req_tokens / per_req_icl_count, 0.0
+    )
+
+    # Valid chunks: non-NaN gen_start, positive ICL, non-NaN output_tokens
+    chunk_valid = ~np.isnan(gen_start) & (icl_values > 0) & ~np.isnan(per_req_tokens)
+
+    parts_ts: list[NDArray[np.float64]] = []
+    parts_delta: list[NDArray[np.float64]] = []
+
+    # Chunk events: +tokens_per_chunk at each interval_end
+    if chunk_valid.any():
+        parts_ts.append(interval_end[chunk_valid])
+        parts_delta.append(tokens_per_chunk[chunk_valid])
+
+    # --- Prefill events: +input_tokens at start_ns ---
+    has_start = ~np.isnan(start_ns) & ~np.isnan(input_tokens)
+    pf_valid = (
+        has_start & ~np.isnan(generation_start_ns) & (generation_start_ns > start_ns)
+    )
+    if pf_valid.any():
+        parts_ts.append(start_ns[pf_valid])
+        parts_delta.append(input_tokens[pf_valid])
+
+    # --- End events: subtract all accumulated tokens at end_ns ---
+    has_end = ~np.isnan(end_ns)
+    # Requests that have ICL data — their output tokens were added chunk-by-chunk
+    has_icl = icl_counts > 0
+    end_with_input_and_icl = pf_valid & has_end & has_icl
+    end_with_input_only = pf_valid & has_end & ~has_icl
+    end_with_icl_only = ~pf_valid & has_end & has_icl
+
+    if end_with_input_and_icl.any():
+        parts_ts.append(end_ns[end_with_input_and_icl])
+        parts_delta.append(
+            -(
+                input_tokens[end_with_input_and_icl]
+                + output_tokens[end_with_input_and_icl]
+            )
+        )
+    if end_with_input_only.any():
+        parts_ts.append(end_ns[end_with_input_only])
+        parts_delta.append(-input_tokens[end_with_input_only])
+    if end_with_icl_only.any():
+        parts_ts.append(end_ns[end_with_icl_only])
+        parts_delta.append(-output_tokens[end_with_icl_only])
+
+    if len(parts_ts) == 0:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    return _sweep_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
 
 
 def throughput_sweep_icl(

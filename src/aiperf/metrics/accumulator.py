@@ -14,9 +14,13 @@ from numpy.typing import NDArray
 from aiperf.analysis.sweep import (
     SweepCurves,
     concurrency_sweep,
+    divide_step_functions,
     prefill_throughput_sweep,
     throughput_sweep,
     throughput_sweep_icl,
+    tokens_in_flight_sweep,
+    tokens_in_flight_sweep_icl,
+    total_throughput_sweep,
 )
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -351,6 +355,23 @@ class MetricsAccumulator(BaseMetricsProcessor):
             start_ns, generation_start_ns, input_tokens
         )
 
+        # Phase-specific concurrency (also used as divisor for per-user metrics)
+        gen_conc_ts, gen_conc = concurrency_sweep(generation_start_ns, end_ns)
+        pre_conc_ts, pre_conc = concurrency_sweep(start_ns, generation_start_ns)
+
+        total_ts, total_tput = total_throughput_sweep(
+            start_ns, generation_start_ns, end_ns, input_tokens, output_tokens
+        )
+        tpu_ts, tpu_vals = divide_step_functions(
+            sorted_t_ts, throughput, gen_conc_ts, gen_conc
+        )
+        ptpu_ts, ptpu_vals = divide_step_functions(
+            sorted_p_ts, prefill_tput, pre_conc_ts, pre_conc
+        )
+        tif_ts, tif_vals = self._icl_aware_tokens_in_flight(
+            store, start_ns, generation_start_ns, end_ns, input_tokens, output_tokens
+        )
+
         return SweepCurves(
             concurrency_ts=sorted_c_ts,
             concurrency=concurrency,
@@ -358,6 +379,18 @@ class MetricsAccumulator(BaseMetricsProcessor):
             throughput=throughput,
             prefill_throughput_ts=sorted_p_ts,
             prefill_throughput=prefill_tput,
+            generation_concurrency_ts=gen_conc_ts,
+            generation_concurrency=gen_conc,
+            prefill_concurrency_ts=pre_conc_ts,
+            prefill_concurrency=pre_conc,
+            total_throughput_ts=total_ts,
+            total_throughput=total_tput,
+            throughput_per_user_ts=tpu_ts,
+            throughput_per_user=tpu_vals,
+            prefill_throughput_per_user_ts=ptpu_ts,
+            prefill_throughput_per_user=ptpu_vals,
+            tokens_in_flight_ts=tif_ts,
+            tokens_in_flight=tif_vals,
         )
 
     def _inject_sweep_metrics(
@@ -463,6 +496,33 @@ class MetricsAccumulator(BaseMetricsProcessor):
                     icl.offsets,
                 )
         return throughput_sweep(generation_start_ns, end_ns, output_tokens)
+
+    @staticmethod
+    def _icl_aware_tokens_in_flight(
+        store: ColumnStore,
+        start_ns: NDArray[np.float64],
+        generation_start_ns: NDArray[np.float64],
+        end_ns: NDArray[np.float64],
+        input_tokens: NDArray[np.float64],
+        output_tokens: NDArray[np.float64],
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Compute tokens in flight, preferring ICL-aware when available."""
+        if "inter_chunk_latency" in store.ragged_tags():
+            icl = store.ragged("inter_chunk_latency")
+            if len(icl.values) > 0:
+                return tokens_in_flight_sweep_icl(
+                    start_ns,
+                    generation_start_ns,
+                    end_ns,
+                    input_tokens,
+                    output_tokens,
+                    icl.values,
+                    icl.record_indices,
+                    icl.offsets,
+                )
+        return tokens_in_flight_sweep(
+            start_ns, generation_start_ns, end_ns, input_tokens, output_tokens
+        )
 
     async def full_metrics(self) -> dict[MetricTagT, MetricResult]:
         """Returns the full metrics results, including derived metrics."""
