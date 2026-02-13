@@ -33,8 +33,8 @@ class MetricRecordProcessor(BaseMetricsProcessor):
         self.valid_parse_funcs: list[
             tuple[MetricTagT, Callable[[ParsedResponseRecord, MetricRecordDict], Any]]
         ] = [
-            (metric.tag, metric.parse_record)  # type: ignore
-            for metric in self._setup_metrics(
+            (metric_cls.tag, metric_cls.parse_record)  # type: ignore
+            for metric_cls in self._setup_metrics(
                 MetricType.RECORD, MetricType.AGGREGATE, exclude_error_metrics=True
             )
         ]
@@ -44,8 +44,8 @@ class MetricRecordProcessor(BaseMetricsProcessor):
         self.error_parse_funcs: list[
             tuple[MetricTagT, Callable[[ParsedResponseRecord, MetricRecordDict], Any]]
         ] = [
-            (metric.tag, metric.parse_record)  # type: ignore
-            for metric in self._setup_metrics(
+            (metric_cls.tag, metric_cls.parse_record)  # type: ignore
+            for metric_cls in self._setup_metrics(
                 MetricType.RECORD, MetricType.AGGREGATE, error_metrics_only=True
             )
         ]

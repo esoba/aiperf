@@ -21,7 +21,8 @@ class BaseDerivedMetric(
     class RequestThroughputMetric(BaseDerivedMetric[float]):
         # ... Metric attributes ...
 
-        def _derive_value(self, metric_results: MetricResultsDict) -> float:
+        @classmethod
+        def _derive_value(cls, metric_results: MetricResultsDict) -> float:
             request_count = metric_results[RequestCountMetric.tag]
             benchmark_duration = metric_results[BenchmarkDurationMetric.tag]
             return request_count / (benchmark_duration / NANOS_PER_SECOND)
@@ -30,13 +31,15 @@ class BaseDerivedMetric(
 
     type = MetricType.DERIVED
 
-    def derive_value(self, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
+    @classmethod
+    def derive_value(cls, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
         """Derive the metric value."""
-        self._check_metrics(metric_results)
-        return self._derive_value(metric_results)
+        cls._check_metrics(metric_results)
+        return cls._derive_value(metric_results)
 
+    @classmethod
     @abstractmethod
-    def _derive_value(self, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
+    def _derive_value(cls, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
         """Derive the metric value. This method is implemented by subclasses.
         This method is called after the required metrics are checked, so it can assume that the required metrics are available.
 

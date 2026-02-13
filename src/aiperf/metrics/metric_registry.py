@@ -4,7 +4,6 @@ import graphlib
 import importlib
 from collections.abc import Iterable
 from pathlib import Path
-from threading import Lock
 from typing import TYPE_CHECKING
 
 from aiperf.cli_utils import exit_on_error
@@ -38,10 +37,6 @@ class MetricRegistry:
 
     # Map of metric tags to their classes
     _metrics_map: dict[MetricTagT, type["BaseMetric"]] = {}
-
-    # Map of metric tags to their instances
-    _instances_map: dict[MetricTagT, "BaseMetric"] = {}
-    _instance_lock = Lock()
 
     def __init__(self) -> None:
         raise TypeError(
@@ -119,23 +114,6 @@ class MetricRegistry:
             return cls._metrics_map[tag]
         except KeyError as e:
             raise MetricTypeError(f"Metric class with tag '{tag}' not found") from e
-
-    @classmethod
-    def get_instance(cls, tag: MetricTagT) -> "BaseMetric":
-        """Get an instance of a metric class by its tag. This will create a new instance if it does not exist.
-
-        Raises:
-            MetricTypeError: If the metric class is not found.
-        """
-        # Check first without acquiring the lock for performance reasons. Since this is a hot path, we want to avoid
-        # acquiring the lock if we can. We can do this because we have added a secondary check after acquiring the lock.
-        if tag not in cls._instances_map:
-            with cls._instance_lock:
-                # Check again after acquiring the lock
-                if tag not in cls._instances_map:
-                    metric_class = cls.get_class(tag)
-                    cls._instances_map[tag] = metric_class()
-        return cls._instances_map[tag]
 
     @classmethod
     def tags_applicable_to(

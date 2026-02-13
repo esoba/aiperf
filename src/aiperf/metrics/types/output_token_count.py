@@ -32,8 +32,9 @@ class OutputTokenCountMetric(BaseRecordMetric[int]):
     )
     required_metrics = None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:

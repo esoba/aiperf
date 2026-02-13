@@ -28,10 +28,11 @@ class RequestThroughputMetric(BaseDerivedMetric[float]):
         BenchmarkDurationMetric.tag,
     }
 
+    @classmethod
     def _derive_value(
-        self,
+        cls,
         metric_results: MetricResultsDict,
     ) -> float:
         request_count = metric_results.get_or_raise(RequestCountMetric)
-        duration = metric_results.observation_duration(self.unit.time_unit)  # type: ignore
+        duration = metric_results.observation_duration(cls.unit.time_unit)  # type: ignore
         return request_count / duration  # type: ignore

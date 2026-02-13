@@ -130,9 +130,9 @@ class TestPostProcessorIntegration:
             RequestCountMetric.tag: AggregationKind.SUM,
         }
         accumulator._metric_classes = {
-            RequestCountMetric.tag: RequestCountMetric(),
-            RequestThroughputMetric.tag: RequestThroughputMetric(),
-            BenchmarkDurationMetric.tag: BenchmarkDurationMetric(),
+            RequestCountMetric.tag: RequestCountMetric,
+            RequestThroughputMetric.tag: RequestThroughputMetric,
+            BenchmarkDurationMetric.tag: BenchmarkDurationMetric,
         }
         accumulator._column_store.ingest(
             idx=0,

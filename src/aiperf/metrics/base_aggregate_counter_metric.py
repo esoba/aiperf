@@ -29,8 +29,9 @@ class BaseAggregateCounterMetric(
         cls.__is_abstract__ = False
         return super().__init_subclass__(**kwargs)
 
+    @classmethod
     def _parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> MetricValueTypeVarT:
         """Return the value of the counter for this record."""
         return 1  # type: ignore

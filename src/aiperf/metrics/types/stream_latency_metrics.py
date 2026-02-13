@@ -31,8 +31,9 @@ class StreamSetupLatencyMetric(BaseRecordMetric[int]):
     flags = MetricFlags.STREAMING_ONLY | MetricFlags.EXPERIMENTAL
     required_metrics = None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -75,8 +76,9 @@ class StreamPrefillLatencyMetric(BaseRecordMetric[int]):
         TTFTMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:

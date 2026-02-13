@@ -281,11 +281,11 @@ def setup_mock_registry_for_metrics(
         list of metric tags in the same order as input
     """
     metric_tags = [metric_type.tag for metric_type in metric_types]
-    metric_instances = {metric_type.tag: metric_type() for metric_type in metric_types}
+    metric_classes = {metric_type.tag: metric_type for metric_type in metric_types}
 
     mock_registry.tags_applicable_to.return_value = metric_tags
     mock_registry.create_dependency_order_for.return_value = metric_tags
-    mock_registry.get_instance.side_effect = lambda tag: metric_instances[tag]
+    mock_registry.get_class.side_effect = lambda tag: metric_classes[tag]
 
     return metric_tags
 
@@ -308,15 +308,15 @@ def setup_mock_registry_sequences(
     valid_tags = [metric_type.tag for metric_type in valid_metric_types]
     error_tags = [metric_type.tag for metric_type in error_metric_types]
 
-    # Create lookup map for all metric instances
-    all_metric_instances = {
-        metric_type.tag: metric_type()
+    # Create lookup map for all metric classes
+    all_metric_classes = {
+        metric_type.tag: metric_type
         for metric_type in valid_metric_types + error_metric_types
     }
 
     mock_registry.tags_applicable_to.side_effect = [valid_tags, error_tags]
     mock_registry.create_dependency_order_for.side_effect = [valid_tags, error_tags]
-    mock_registry.get_instance.side_effect = lambda tag: all_metric_instances[tag]
+    mock_registry.get_class.side_effect = lambda tag: all_metric_classes[tag]
 
     return valid_tags, error_tags
 
@@ -336,7 +336,7 @@ def create_accumulator_with_metrics(
 
     processor = MetricsAccumulator(user_config)
     processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
-    processor._metric_classes = {metric.tag: metric() for metric in metrics}
+    processor._metric_classes = {metric.tag: metric for metric in metrics}
     processor._aggregation_kinds = {
         metric.tag: metric.aggregation_kind
         for metric in metrics
@@ -355,7 +355,7 @@ def mock_metric_registry(monkeypatch):
     mock_registry = Mock()
     mock_registry.tags_applicable_to.return_value = []
     mock_registry.create_dependency_order_for.return_value = []
-    mock_registry.get_instance.return_value = Mock()
+    mock_registry.get_class.return_value = Mock()
     mock_registry.all_classes.return_value = []
     mock_registry.all_tags.return_value = []
 
@@ -379,8 +379,9 @@ def failing_metric_no_value_cls(mock_metric_registry: Mock) -> type[BaseRecordMe
     class FailingMetricNoValue(BaseRecordMetric[int]):
         tag = "failing_metric_no_value"
 
+        @classmethod
         def _parse_record(
-            self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+            cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
         ) -> int:
             raise NoMetricValue("No value available")
 
@@ -399,8 +400,9 @@ def failing_metric_value_error_cls(
     class FailingMetricValueError(BaseRecordMetric[int]):
         tag = "failing_metric_value_error"
 
+        @classmethod
         def _parse_record(
-            self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+            cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
         ) -> int:
             raise ValueError("Something went wrong")
 
@@ -420,12 +422,9 @@ def double_latency_test_metric_cls(
     class DoubleLatencyTestMetric(BaseRecordMetric[int]):
         tag = "double_latency_test_metric"
 
-        def __init__(self):
-            super().__init__()
-            self.base_metric_tag = RequestLatencyMetric.tag
-
+        @classmethod
         def _parse_record(
-            self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+            cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
         ) -> int:
             base_value = record_metrics.get(RequestLatencyMetric.tag, 0)
             return base_value * 2  # type: ignore
@@ -446,8 +445,9 @@ def experimental_metric_cls(mock_metric_registry: Mock) -> type[BaseRecordMetric
         unit = GenericMetricUnit.COUNT
         flags = MetricFlags.EXPERIMENTAL
 
+        @classmethod
         def _parse_record(
-            self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+            cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
         ) -> int:
             return 0
 
@@ -467,8 +467,9 @@ def dual_flag_metric_cls(mock_metric_registry: Mock) -> type[BaseRecordMetric]:
         unit = GenericMetricUnit.COUNT
         flags = MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
 
+        @classmethod
         def _parse_record(
-            self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+            cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
         ) -> int:
             return 0
 

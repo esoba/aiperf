@@ -37,8 +37,9 @@ class UsagePromptTokensMetric(BaseRecordMetric[int]):
     )
     required_metrics = None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -83,8 +84,9 @@ class UsageCompletionTokensMetric(BaseRecordMetric[int]):
     )
     required_metrics = None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -131,8 +133,9 @@ class UsageTotalTokensMetric(BaseRecordMetric[int]):
     )
     required_metrics = None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -178,8 +181,9 @@ class UsageReasoningTokensMetric(BaseRecordMetric[int]):
     )
     required_metrics = None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:

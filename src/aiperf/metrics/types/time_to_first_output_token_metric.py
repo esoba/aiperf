@@ -36,8 +36,9 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
     flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.SUPPORTS_REASONING
     required_metrics = None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:

@@ -109,8 +109,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self._derive_funcs: dict[
             MetricTagT, Callable[[MetricResultsDict], MetricValueTypeT]
         ] = {
-            metric.tag: metric.derive_value  # type: ignore
-            for metric in self._setup_metrics(MetricType.DERIVED)
+            metric_cls.tag: metric_cls.derive_value  # type: ignore
+            for metric_cls in self._setup_metrics(MetricType.DERIVED)
         }
 
         # Metric type lookup
@@ -128,8 +128,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
         }
 
         # Metric class metadata for result creation
-        self._metric_classes: dict[MetricTagT, BaseMetric] = {
-            tag: MetricRegistry.get_class(tag)() for tag in MetricRegistry.all_tags()
+        self._metric_classes: dict[MetricTagT, type[BaseMetric]] = {
+            tag: MetricRegistry.get_class(tag) for tag in MetricRegistry.all_tags()
         }
 
         # Timeslice config

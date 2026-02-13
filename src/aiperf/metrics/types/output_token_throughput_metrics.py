@@ -33,12 +33,13 @@ class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
         BenchmarkDurationMetric.tag,
     }
 
+    @classmethod
     def _derive_value(
-        self,
+        cls,
         metric_results: MetricResultsDict,
     ) -> float:
         total_osl = metric_results.get_or_raise(TotalOutputSequenceLengthMetric)
-        duration = metric_results.observation_duration(self.unit.time_unit)  # type: ignore
+        duration = metric_results.observation_duration(cls.unit.time_unit)  # type: ignore
         return total_osl / duration  # type: ignore
 
 
@@ -61,15 +62,16 @@ class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):
         InterTokenLatencyMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
         """This method calculates the output token throughput per user by computing the inverse of the inter-token latency."""
         converted_itl = record_metrics.get_converted_or_raise(
             InterTokenLatencyMetric,
-            self.unit.time_unit,  # type: ignore
+            cls.unit.time_unit,  # type: ignore
         )
         if converted_itl == 0:
             raise NoMetricValue(

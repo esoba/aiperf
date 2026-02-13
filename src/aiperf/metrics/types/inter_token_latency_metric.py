@@ -34,8 +34,9 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
         OutputSequenceLengthMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:

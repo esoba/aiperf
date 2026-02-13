@@ -87,8 +87,9 @@ class HttpBlockedMetric(BaseRecordMetric[int]):
     display_order = 2000
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -128,8 +129,9 @@ class HttpConnectionReusedMetric(BaseRecordMetric[int]):
     display_order = 2060
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -167,8 +169,9 @@ class HttpConnectingMetric(BaseRecordMetric[int]):
     display_order = 2020
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -214,8 +217,9 @@ class HttpDnsLookupMetric(BaseRecordMetric[int]):
     display_order = 2010
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -270,8 +274,9 @@ class HttpSendingMetric(BaseRecordMetric[int]):
     display_order = 2030
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -316,8 +321,9 @@ class HttpWaitingMetric(BaseRecordMetric[int]):
     display_order = 2040
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -361,8 +367,9 @@ class HttpReceivingMetric(BaseRecordMetric[int]):
     display_order = 2050
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -415,8 +422,9 @@ class HttpDurationMetric(BaseRecordMetric[int]):
     display_order = 2120
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -456,8 +464,9 @@ class HttpDataSentMetric(BaseRecordMetric[int]):
     display_order = 2070
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -486,8 +495,9 @@ class HttpDataReceivedMetric(BaseRecordMetric[int]):
     display_order = 2090
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -518,8 +528,9 @@ class HttpChunksSentMetric(BaseRecordMetric[int]):
     display_order = 2080
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -541,8 +552,9 @@ class HttpChunksReceivedMetric(BaseRecordMetric[int]):
     display_order = 2100
     flags = MetricFlags.HTTP_TRACE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -580,8 +592,9 @@ class HttpConnectionOverheadMetric(BaseRecordMetric[int]):
         "http_req_connecting",
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -623,8 +636,9 @@ class HttpTotalTimeMetric(BaseRecordMetric[int]):
         "http_req_receiving",
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:

@@ -61,8 +61,9 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
         cls._thresholds = normalized_slos
         cls.required_metrics = set(cls._thresholds) if cls._thresholds else None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:
@@ -70,19 +71,23 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
         Returns 1 if the record meets all SLOs; otherwise 0.
         If no SLOs were configured, returns 0.
         """
-        if not self._thresholds:
+        if not cls._thresholds:
             return 0
-        return 1 if self._is_good(record_metrics) else 0
+        return 1 if cls._is_good(record_metrics) else 0
 
-    def _passes(self, metric_cls, record_value: float, threshold_value: float) -> bool:
+    @classmethod
+    def _passes(
+        cls, metric_cls: type, record_value: float, threshold_value: float
+    ) -> bool:
         """Compare a record value against its SLO using the metric's directionality."""
         if metric_cls.flags.has_flags(MetricFlags.LARGER_IS_BETTER):
             return record_value >= threshold_value
         return record_value <= threshold_value
 
-    def _is_good(self, record_metrics: MetricRecordDict) -> bool:
+    @classmethod
+    def _is_good(cls, record_metrics: MetricRecordDict) -> bool:
         """Check if the record satisfies all configured SLOs."""
-        for metric_tag, threshold in self._thresholds.items():
+        for metric_tag, threshold in cls._thresholds.items():
             metric_cls = MetricRegistry.get_class(metric_tag)
 
             try:
@@ -90,7 +95,7 @@ class GoodRequestCountMetric(BaseAggregateCounterMetric):
             except NoMetricValue:
                 return False
 
-            if not self._passes(metric_cls, value, float(threshold)):
+            if not cls._passes(metric_cls, value, float(threshold)):
                 return False
 
         return True

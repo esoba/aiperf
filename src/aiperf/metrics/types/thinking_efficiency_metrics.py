@@ -49,8 +49,9 @@ class ThinkingEfficiencyMetric(BaseRecordMetric[float]):
         OutputTokenCountMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
@@ -100,8 +101,9 @@ class OverallThinkingEfficiencyMetric(BaseDerivedMetric[float]):
         TotalReasoningTokensMetric.tag,
     }
 
+    @classmethod
     def _derive_value(
-        self,
+        cls,
         metric_results: MetricResultsDict,
     ) -> float:
         total_reasoning_tokens = metric_results.get_or_raise(TotalReasoningTokensMetric)

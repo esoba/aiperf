@@ -24,7 +24,8 @@ class BaseAggregateMetric(
     class RequestCountMetric(BaseAggregateMetric[int]):
         aggregation_kind = AggregationKind.SUM
 
-        def _parse_record(self, record: ParsedResponseRecord, record_metrics: MetricRecordDict) -> int:
+        @classmethod
+        def _parse_record(cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict) -> int:
             return 1
     ```
     """
@@ -32,21 +33,23 @@ class BaseAggregateMetric(
     type = MetricType.AGGREGATE
     aggregation_kind: ClassVar[AggregationKind]
 
+    @classmethod
     def parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> MetricValueTypeVarT:
         """Parse the record and return the individual value.
 
         Raises:
             ValueError: If the metric cannot be computed for the given inputs.
         """
-        self._require_valid_record(record)
-        self._check_metrics(record_metrics)
-        return self._parse_record(record, record_metrics)
+        cls._require_valid_record(record)
+        cls._check_metrics(record_metrics)
+        return cls._parse_record(record, record_metrics)
 
+    @classmethod
     @abstractmethod
     def _parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> MetricValueTypeVarT:
         """Parse the record and *return* the individual value based on this record alone.
 

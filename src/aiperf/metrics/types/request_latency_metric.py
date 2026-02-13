@@ -25,8 +25,9 @@ class RequestLatencyMetric(BaseRecordMetric[int]):
     flags = MetricFlags.NONE
     required_metrics = None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:

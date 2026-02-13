@@ -26,11 +26,12 @@ class GoodputMetric(BaseDerivedMetric[float]):
     flags = MetricFlags.GOODPUT
     required_metrics = {GoodRequestCountMetric.tag, BenchmarkDurationMetric.tag}
 
-    def _derive_value(self, metric_results: MetricResultsDict) -> float:
+    @classmethod
+    def _derive_value(cls, metric_results: MetricResultsDict) -> float:
         tag = GoodRequestCountMetric.tag
         if tag not in metric_results:
             raise NoMetricValue(f"Metric '{tag}' is not available for the run.")
         good_request_count = metric_results[tag]
 
-        duration = metric_results.observation_duration(self.unit.time_unit)  # type: ignore
+        duration = metric_results.observation_duration(cls.unit.time_unit)  # type: ignore
         return good_request_count / duration  # type: ignore

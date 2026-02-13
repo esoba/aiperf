@@ -136,7 +136,7 @@ class TestMetricsAccumulator:
         processor._aggregation_kinds = {
             RequestCountMetric.tag: AggregationKind.SUM,
         }
-        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric()}
+        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric}
 
         for i in range(3):
             msg = create_metric_records_message(
@@ -182,7 +182,7 @@ class TestComputeResultsWindowBounds:
         processor._aggregation_kinds = {
             RequestCountMetric.tag: AggregationKind.SUM,
         }
-        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric()}
+        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric}
 
         captured: list[MetricResultsDict] = []
 
@@ -191,9 +191,7 @@ class TestComputeResultsWindowBounds:
             return 42.0
 
         processor._derive_funcs = {RequestThroughputMetric.tag: spy_derive}
-        processor._metric_classes[RequestThroughputMetric.tag] = (
-            RequestThroughputMetric()
-        )
+        processor._metric_classes[RequestThroughputMetric.tag] = RequestThroughputMetric
 
         msg = create_metric_records_message(
             x_request_id="test-1",
@@ -220,7 +218,7 @@ class TestComputeResultsWindowBounds:
         processor._aggregation_kinds = {
             RequestCountMetric.tag: AggregationKind.SUM,
         }
-        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric()}
+        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric}
 
         captured: list[MetricResultsDict] = []
 
@@ -229,9 +227,7 @@ class TestComputeResultsWindowBounds:
             return 42.0
 
         processor._derive_funcs = {RequestThroughputMetric.tag: spy_derive}
-        processor._metric_classes[RequestThroughputMetric.tag] = (
-            RequestThroughputMetric()
-        )
+        processor._metric_classes[RequestThroughputMetric.tag] = RequestThroughputMetric
 
         msg = create_metric_records_message(
             x_request_id="test-1",
@@ -361,7 +357,7 @@ class TestSummarize:
         """Test summarize returns MetricsSummary wrapping MetricResult objects."""
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {RequestLatencyMetric.tag: MetricType.RECORD}
-        processor._metric_classes = {RequestLatencyMetric.tag: RequestLatencyMetric()}
+        processor._metric_classes = {RequestLatencyMetric.tag: RequestLatencyMetric}
 
         # Inject data via process_record
         msg = create_metric_records_message(
@@ -392,7 +388,7 @@ class TestSummarize:
         processor = MetricsAccumulator(mock_user_config)
         processor._derive_funcs = {RequestThroughputMetric.tag: mock_derive_func}
         processor._metric_classes = {
-            RequestThroughputMetric.tag: RequestThroughputMetric()
+            RequestThroughputMetric.tag: RequestThroughputMetric
         }
 
         summary = await processor.summarize()
@@ -446,7 +442,7 @@ class TestTimesliceSummarize:
         mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
-        processor._metric_classes = {"test_record": RequestLatencyMetric()}
+        processor._metric_classes = {"test_record": RequestLatencyMetric}
 
         # Process records in two different 1-second windows
         msg1 = create_metric_records_message(
@@ -483,7 +479,7 @@ class TestTimesliceSummarize:
         """Test summarize returns None timeslices when slice_duration is not set."""
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
-        processor._metric_classes = {"test_record": RequestLatencyMetric()}
+        processor._metric_classes = {"test_record": RequestLatencyMetric}
 
         msg = create_metric_records_message(
             x_request_id="test-1",
@@ -503,7 +499,7 @@ class TestTimesliceSummarize:
         mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
-        processor._metric_classes = {"test_record": RequestLatencyMetric()}
+        processor._metric_classes = {"test_record": RequestLatencyMetric}
 
         # Two records in same 1-second window
         msg1 = create_metric_records_message(
@@ -539,7 +535,7 @@ class TestTimesliceSummarize:
         processor._aggregation_kinds = {
             RequestCountMetric.tag: AggregationKind.SUM,
         }
-        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric()}
+        processor._metric_classes = {RequestCountMetric.tag: RequestCountMetric}
 
         # First timeslice: 5 + 3 = 8
         msg1 = create_metric_records_message(
@@ -586,7 +582,7 @@ class TestTimesliceSummarize:
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {"max_ts": MetricType.AGGREGATE}
         processor._aggregation_kinds = {"max_ts": AggregationKind.MAX}
-        processor._metric_classes = {"max_ts": RequestLatencyMetric()}
+        processor._metric_classes = {"max_ts": RequestLatencyMetric}
 
         msg1 = create_metric_records_message(
             x_request_id="test-1",
@@ -618,7 +614,7 @@ class TestTimesliceSummarize:
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {"min_ts": MetricType.AGGREGATE}
         processor._aggregation_kinds = {"min_ts": AggregationKind.MIN}
-        processor._metric_classes = {"min_ts": RequestLatencyMetric()}
+        processor._metric_classes = {"min_ts": RequestLatencyMetric}
 
         msg1 = create_metric_records_message(
             x_request_id="test-1",
@@ -649,7 +645,7 @@ class TestTimesliceSummarize:
         mock_user_config.output = OutputConfig(slice_duration=1.0)
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
-        processor._metric_classes = {"test_record": RequestLatencyMetric()}
+        processor._metric_classes = {"test_record": RequestLatencyMetric}
 
         msg1 = create_metric_records_message(
             x_request_id="test-1",
@@ -693,7 +689,7 @@ class TestTimesliceSummarize:
         """Test timeslice_windows is None when slice_duration is not set."""
         processor = MetricsAccumulator(mock_user_config)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
-        processor._metric_classes = {"test_record": RequestLatencyMetric()}
+        processor._metric_classes = {"test_record": RequestLatencyMetric}
 
         msg = create_metric_records_message(
             x_request_id="test-1",
@@ -795,7 +791,7 @@ class TestFullMetrics:
         processor = MetricsAccumulator(mock_user_config)
         processor._derive_funcs = {RequestThroughputMetric.tag: mock_derive_func}
         processor._metric_classes = {
-            RequestThroughputMetric.tag: RequestThroughputMetric()
+            RequestThroughputMetric.tag: RequestThroughputMetric
         }
 
         full_results = await processor.full_metrics()

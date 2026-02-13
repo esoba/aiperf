@@ -86,8 +86,8 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         *metric_types: MetricType,
         error_metrics_only: bool = False,
         exclude_error_metrics: bool = False,
-    ) -> list[BaseMetric]:
-        """Get an ordered list of metrics that are applicable to the endpoint type and user config.
+    ) -> list[type[BaseMetric]]:
+        """Get an ordered list of metric classes that are applicable to the endpoint type and user config.
         The metrics are ordered based on their dependencies, ensuring proper computation order.
 
         Be sure to compute the metrics sequentially versus in parallel, as some metrics may depend on the results of previous metrics.
@@ -101,7 +101,7 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         if not self.user_config.input.goodput:
             disallowed_flags |= MetricFlags.GOODPUT
 
-        metrics: list[BaseMetric] = []
+        metric_classes: list[type[BaseMetric]] = []
         applicable_tags = MetricRegistry.tags_applicable_to(
             required_flags,
             disallowed_flags,
@@ -113,7 +113,6 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             applicable_tags,
         )
         for metric_tag in ordered_tags:
-            metric = MetricRegistry.get_instance(metric_tag)
-            metrics.append(metric)
+            metric_classes.append(MetricRegistry.get_class(metric_tag))
 
-        return metrics
+        return metric_classes

@@ -27,8 +27,9 @@ class MaxResponseTimestampMetric(BaseAggregateMetric[int]):
         RequestLatencyMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:

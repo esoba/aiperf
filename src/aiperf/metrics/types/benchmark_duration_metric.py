@@ -30,8 +30,9 @@ class BenchmarkDurationMetric(BaseDerivedMetric[int]):
         MaxResponseTimestampMetric.tag,
     }
 
+    @classmethod
     def _derive_value(
-        self,
+        cls,
         metric_results: MetricResultsDict,
     ) -> int:
         min_req_time = metric_results.get_or_raise(MinRequestTimestampMetric)

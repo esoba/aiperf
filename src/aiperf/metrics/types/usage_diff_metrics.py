@@ -62,8 +62,9 @@ class UsagePromptTokensDiffMetric(BaseRecordMetric[float]):
         InputSequenceLengthMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
@@ -127,8 +128,9 @@ class UsageCompletionTokensDiffMetric(BaseRecordMetric[float]):
         OutputSequenceLengthMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
@@ -196,8 +198,9 @@ class UsageReasoningTokensDiffMetric(BaseRecordMetric[float]):
         ReasoningTokenCountMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
@@ -274,8 +277,9 @@ class UsageDiscrepancyCountMetric(BaseAggregateCounterMetric[int]):
         UsageCompletionTokensDiffMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:

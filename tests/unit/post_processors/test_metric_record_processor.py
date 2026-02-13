@@ -41,16 +41,14 @@ class TestMetricRecordProcessor:
         assert processor.valid_parse_funcs[0][0] == RequestLatencyMetric.tag
         assert (
             processor.valid_parse_funcs[0][1]
-            == mock_metric_registry.get_instance(RequestLatencyMetric.tag).parse_record
+            == mock_metric_registry.get_class(RequestLatencyMetric.tag).parse_record
         )
 
         assert len(processor.error_parse_funcs) == 1
         assert processor.error_parse_funcs[0][0] == ErrorRequestCountMetric.tag
         assert (
             processor.error_parse_funcs[0][1]
-            == mock_metric_registry.get_instance(
-                ErrorRequestCountMetric.tag
-            ).parse_record
+            == mock_metric_registry.get_class(ErrorRequestCountMetric.tag).parse_record
         )
 
         assert mock_metric_registry.tags_applicable_to.call_count == 2

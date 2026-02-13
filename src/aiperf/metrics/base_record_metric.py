@@ -24,8 +24,9 @@ class BaseRecordMetric(
         # ... Metric attributes ...
         # ... Input validation ...
 
+        @classmethod
         def _parse_record(
-            self,
+            cls,
             record: ParsedResponseRecord,
             record_metrics: MetricRecordDict,
         ) -> int:
@@ -35,17 +36,19 @@ class BaseRecordMetric(
 
     type = MetricType.RECORD
 
+    @classmethod
     def parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> MetricValueTypeVarT:
         """Parse a single record and return the metric value."""
-        self._require_valid_record(record)
-        self._check_metrics(record_metrics)
-        return self._parse_record(record, record_metrics)
+        cls._require_valid_record(record)
+        cls._check_metrics(record_metrics)
+        return cls._parse_record(record, record_metrics)
 
+    @classmethod
     @abstractmethod
     def _parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> MetricValueTypeVarT:
         """Parse a single record and return the metric value. This method is implemented by subclasses.
         This method is called after the required metrics are checked, so it can assume that the required metrics are available.

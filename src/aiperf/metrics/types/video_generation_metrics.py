@@ -24,8 +24,9 @@ class VideoInferenceTimeMetric(BaseRecordMetric[float]):
     display_order = 310  # After request_latency (300)
     flags = MetricFlags.PRODUCES_VIDEO_ONLY
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
@@ -54,8 +55,9 @@ class VideoPeakMemoryMetric(BaseRecordMetric[float]):
     display_order = 311  # After video_inference_time (310)
     flags = MetricFlags.PRODUCES_VIDEO_ONLY
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:

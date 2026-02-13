@@ -34,8 +34,9 @@ class PrefillThroughputPerUserMetric(BaseRecordMetric[float]):
         TTFTMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> float:
@@ -44,7 +45,7 @@ class PrefillThroughputPerUserMetric(BaseRecordMetric[float]):
         isl = record_metrics.get_or_raise(InputSequenceLengthMetric)
         converted_ttft = record_metrics.get_converted_or_raise(
             TTFTMetric,
-            self.unit.time_unit,  # type: ignore
+            cls.unit.time_unit,  # type: ignore
         )
         if converted_ttft == 0:
             raise NoMetricValue(

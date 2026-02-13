@@ -25,8 +25,9 @@ class InputSequenceLengthMetric(BaseRecordMetric[int]):
     flags = MetricFlags.TOKENIZES_INPUT_ONLY | MetricFlags.LARGER_IS_BETTER
     required_metrics = None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> int:

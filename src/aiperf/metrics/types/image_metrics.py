@@ -17,8 +17,9 @@ class NumImagesMetric(BaseRecordMetric[int]):
     unit = GenericMetricUnit.IMAGES
     flags = MetricFlags.SUPPORTS_IMAGE_ONLY | MetricFlags.NO_CONSOLE
 
+    @classmethod
     def _parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> int:
         """Parse the number of images from the record by summing the number of images in each turn."""
         num_images = sum(
@@ -47,13 +48,14 @@ class ImageThroughputMetric(BaseRecordMetric[float]):
         RequestLatencyMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> float:
         """Parse the image throughput from the record by dividing the number of images by the request latency."""
         num_images = record_metrics.get_or_raise(NumImagesMetric)
         request_latency_sec = record_metrics.get_converted_or_raise(
-            RequestLatencyMetric, self.unit.time_unit
+            RequestLatencyMetric, cls.unit.time_unit
         )
         if request_latency_sec == 0:
             raise NoMetricValue("Request latency must be greater than 0.")
@@ -74,13 +76,14 @@ class ImageLatencyMetric(BaseRecordMetric[float]):
         RequestLatencyMetric.tag,
     }
 
+    @classmethod
     def _parse_record(
-        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+        cls, record: ParsedResponseRecord, record_metrics: MetricRecordDict
     ) -> float:
         """Parse the image latency from the record by dividing the request latency by the number of images."""
         num_images = record_metrics.get_or_raise(NumImagesMetric)
         request_latency_ms = record_metrics.get_converted_or_raise(
-            RequestLatencyMetric, self.unit.time_unit
+            RequestLatencyMetric, cls.unit.time_unit
         )
         if num_images == 0:
             raise NoMetricValue("Number of images must be greater than 0.")

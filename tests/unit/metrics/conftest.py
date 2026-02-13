@@ -120,9 +120,9 @@ def run_simple_metrics_pipeline(
     Returns:
         MetricResultsDict: A dictionary of the results
     """
-    # first, sort the metrics by dependency order, and create an instance of each
-    metrics = [
-        MetricRegistry.get_class(tag)()
+    # first, sort the metrics by dependency order
+    metric_classes = [
+        MetricRegistry.get_class(tag)
         for tag in MetricRegistry.create_dependency_order_for(metrics_to_test)
     ]
 
@@ -133,36 +133,42 @@ def run_simple_metrics_pipeline(
     for record in records:
         # STAGE 1: Parse the metrics for each record
         metric_dict = MetricRecordDict()
-        for metric in metrics:
-            if metric.type in [MetricType.RECORD, MetricType.AGGREGATE]:
+        for metric_cls in metric_classes:
+            if metric_cls.type in [MetricType.RECORD, MetricType.AGGREGATE]:
                 try:
-                    value = metric.parse_record(record, metric_dict)
-                    metric_dict[metric.tag] = value
+                    value = metric_cls.parse_record(record, metric_dict)
+                    metric_dict[metric_cls.tag] = value
                 except NoMetricValue:
                     pass
 
         # Collect values for aggregation / record lists
-        for metric in metrics:
-            if metric.type == MetricType.AGGREGATE and metric.tag in metric_dict:
-                aggregate_values.setdefault(metric.tag, []).append(
-                    metric_dict[metric.tag]
+        for metric_cls in metric_classes:
+            if (
+                metric_cls.type == MetricType.AGGREGATE
+                and metric_cls.tag in metric_dict
+            ):
+                aggregate_values.setdefault(metric_cls.tag, []).append(
+                    metric_dict[metric_cls.tag]
                 )
-            elif metric.type == MetricType.RECORD and metric.tag in metric_dict:
-                metric_results.setdefault(metric.tag, []).append(
-                    metric_dict[metric.tag]
+            elif metric_cls.type == MetricType.RECORD and metric_cls.tag in metric_dict:
+                metric_results.setdefault(metric_cls.tag, []).append(
+                    metric_dict[metric_cls.tag]
                 )
 
     # STAGE 2: Vectorized aggregation
-    for metric in metrics:
-        if metric.type == MetricType.AGGREGATE and metric.tag in aggregate_values:
-            kind: AggregationKind = metric.aggregation_kind
-            metric_results[metric.tag] = _AGGREGATE_FUNCS[kind](
-                np.array(aggregate_values[metric.tag])
+    for metric_cls in metric_classes:
+        if (
+            metric_cls.type == MetricType.AGGREGATE
+            and metric_cls.tag in aggregate_values
+        ):
+            kind: AggregationKind = metric_cls.aggregation_kind
+            metric_results[metric_cls.tag] = _AGGREGATE_FUNCS[kind](
+                np.array(aggregate_values[metric_cls.tag])
             )
 
     # STAGE 3: Compute all of the derived metrics
-    for metric in metrics:
-        if metric.type == MetricType.DERIVED:
-            metric_results[metric.tag] = metric.derive_value(metric_results)
+    for metric_cls in metric_classes:
+        if metric_cls.type == MetricType.DERIVED:
+            metric_results[metric_cls.tag] = metric_cls.derive_value(metric_results)
 
     return metric_results

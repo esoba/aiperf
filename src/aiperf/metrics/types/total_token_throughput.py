@@ -37,13 +37,14 @@ class TotalTokenThroughputMetric(BaseDerivedMetric[float]):
         BenchmarkDurationMetric.tag,
     }
 
+    @classmethod
     def _derive_value(
-        self,
+        cls,
         metric_results: MetricResultsDict,
     ) -> float:
         total_input_tokens = metric_results.get_or_raise(TotalInputSequenceLengthMetric)
         total_output_tokens = metric_results.get_or_raise(
             TotalOutputSequenceLengthMetric
         )
-        duration = metric_results.observation_duration(self.unit.time_unit)  # type: ignore
+        duration = metric_results.observation_duration(cls.unit.time_unit)  # type: ignore
         return (total_input_tokens + total_output_tokens) / duration  # type: ignore

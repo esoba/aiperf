@@ -36,8 +36,9 @@ class InterChunkLatencyMetric(BaseRecordMetric[list[int]]):
     flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.NO_CONSOLE
     required_metrics = None
 
+    @classmethod
     def _parse_record(
-        self,
+        cls,
         record: ParsedResponseRecord,
         record_metrics: MetricRecordDict,
     ) -> list[int]:

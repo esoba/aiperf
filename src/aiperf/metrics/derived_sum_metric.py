@@ -51,10 +51,9 @@ class DerivedSumMetric(
 
         super().__init_subclass__(**kwargs)
 
-    def _derive_value(self, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
-        value = metric_results.get(self.record_metric_type.tag)
+    @classmethod
+    def _derive_value(cls, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
+        value = metric_results.get(cls.record_metric_type.tag)
         if value is None:
-            raise ValueError(
-                f"{self.record_metric_type.tag} is missing in the metrics."
-            )
+            raise ValueError(f"{cls.record_metric_type.tag} is missing in the metrics.")
         return value

@@ -193,7 +193,7 @@ class TestBaseMetricsProcessor:
         )
 
         assert len(metrics) == len(metric_tags)
-        assert isinstance(metrics[0], metric_type)
+        assert metrics[0] is metric_type
 
         mock_metric_registry.tags_applicable_to.assert_called_once_with(
             expected_required,
@@ -279,14 +279,16 @@ class TestBaseMetricsProcessor:
 
         GoodReqCountClass = type("GoodReqCountClass", (), {})
         GoodReqCountClass.set_slos = Mock()
-        mock_metric_registry.get_class.return_value = GoodReqCountClass
+        GoodReqCountClass.tag = GOOD_REQUEST_COUNT_TAG
 
-        def _get_instance(tag):
+        def _get_class(tag):
+            if tag == GOOD_REQUEST_COUNT_TAG:
+                return GoodReqCountClass
             m = Mock()
             m.tag = tag
             return m
 
-        mock_metric_registry.get_instance.side_effect = _get_instance
+        mock_metric_registry.get_class.side_effect = _get_class
 
         processor = BaseMetricsProcessor(mock_user_config)
         metrics = processor._setup_metrics(MetricType.RECORD)
