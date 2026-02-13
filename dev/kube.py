@@ -393,32 +393,12 @@ def _docker_build(image: str, dockerfile: str, *extra_args: str) -> None:
     macOS for reliable cross-platform builds), falls back to ``docker build``.
     """
     log_step(f"Building {image}")
-    if _has_buildx():
-        sh(
-            "docker",
-            "buildx",
-            "build",
-            "--load",
-            *extra_args,
-            "-t",
-            image,
-            "-f",
-            dockerfile,
-            ".",
-            cwd=PROJECT_ROOT,
-        )
-    else:
-        sh(
-            "docker",
-            "build",
-            *extra_args,
-            "-t",
-            image,
-            "-f",
-            dockerfile,
-            ".",
-            cwd=PROJECT_ROOT,
-        )
+    cmd = (
+        ("docker", "buildx", "build", "--load")
+        if _has_buildx()
+        else ("docker", "build")
+    )
+    sh(*cmd, *extra_args, "-t", image, "-f", dockerfile, ".", cwd=PROJECT_ROOT)
     log_success(f"Built {image}")
 
 
@@ -1048,16 +1028,40 @@ def cmd_build(*, aiperf: bool = True, mock: bool = True) -> None:
         _docker_build(MOCK_SERVER_IMAGE, "dev/deploy/Dockerfile.mock-server")
 
 
+def _local_image_id(image: str) -> str | None:
+    """Get local Docker image ID (sha256:…), or None if not found."""
+    r = sh("docker", "inspect", "--format={{.Id}}", image, capture=True, check=False)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _minikube_image_id(image: str) -> str | None:
+    """Get image ID inside minikube's Docker daemon, or None if not loaded."""
+    r = minikube(
+        "ssh",
+        "--",
+        "docker",
+        "inspect",
+        "--format={{.Id}}",
+        image,
+        capture=True,
+        check=False,
+    )
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
 def cmd_load(*, aiperf: bool = True, mock: bool = True) -> None:
     require("minikube")
     require_cluster()
 
     def _load(image: str) -> None:
-        log_step(f"Loading {image} into minikube")
-        r = sh("docker", "image", "inspect", image, capture=True, check=False)
-        if r.returncode != 0:
+        local_id = _local_image_id(image)
+        if not local_id:
             log_error(f"Image {image} not found. Run 'build' first.")
             raise SystemExit(1)
+        if local_id == _minikube_image_id(image):
+            log_success(f"{image} already loaded (up to date)")
+            return
+        log_step(f"Loading {image} into minikube")
         minikube("image", "load", image)
         log_success(f"Loaded {image}")
 
@@ -2506,9 +2510,14 @@ def cmd_setup(
         return ", ".join(images)
 
     def _step_load() -> str:
-        count = 1 + (1 if build_mock else 0)
+        images = [AIPERF_IMAGE] + ([MOCK_SERVER_IMAGE] if build_mock else [])
+        already = [
+            img for img in images if _local_image_id(img) == _minikube_image_id(img)
+        ]
         cmd_load(aiperf=True, mock=build_mock)
-        return f"{count} image{'s' if count > 1 else ''} \u2192 minikube"
+        if len(already) == len(images):
+            return "already loaded (up to date)"
+        return f"{len(images)} image{'s' if len(images) > 1 else ''} \u2192 minikube"
 
     def _step_dynamo() -> str:
         r = kubectl(
