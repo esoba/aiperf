@@ -83,8 +83,36 @@ DYNAMO_CONNECTORS: list[str] = (
     else []
 )
 
-MINIKUBE_MEMORY = os.environ.get("MINIKUBE_MEMORY") or "16000mb"
-MINIKUBE_CPUS = os.environ.get("MINIKUBE_CPUS") or "8"
+
+def _detect_docker_memory_mb() -> int:
+    """Query Docker daemon for total memory (MB).  Falls back to host memory."""
+    try:
+        r = subprocess.run(
+            ["docker", "info", "--format", "{{.MemTotal}}"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        mem_bytes = int(r.stdout.strip())
+        return mem_bytes // (1024 * 1024)
+    except Exception:
+        pass
+    try:
+        mem = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+        return mem // (1024 * 1024)
+    except Exception:
+        return 4000
+
+
+_docker_mem_mb = _detect_docker_memory_mb()
+# Use 75% of Docker memory, capped at 16 GB. Don't exceed what Docker has.
+_default_memory_mb = min(
+    _docker_mem_mb, max(2000, min(_docker_mem_mb - _docker_mem_mb // 4, 16000))
+)
+
+MINIKUBE_MEMORY = os.environ.get("MINIKUBE_MEMORY") or f"{_default_memory_mb}mb"
+MINIKUBE_CPUS = os.environ.get("MINIKUBE_CPUS") or str(min(os.cpu_count() or 2, 8))
 
 # fmt: off
 _BANNER = (
