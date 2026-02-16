@@ -32,7 +32,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.markup import escape
 from rich.panel import Panel
-from rich.prompt import Confirm
+from rich.prompt import Confirm, Prompt
 from rich.rule import Rule
 from rich.spinner import Spinner
 from rich.syntax import Syntax
@@ -411,6 +411,31 @@ def _confirm(
         return Confirm.ask(prompt, default=default_yes, console=con)
     except (EOFError, KeyboardInterrupt):
         return default_yes
+
+
+def _confirm_with_all(
+    prompt: str,
+    default_yes: bool = False,
+    console: Console | None = None,
+) -> tuple[bool, bool]:
+    """Prompt for confirmation with y/n/a (a = yes to all). Returns (proceed, yes_to_all)."""
+    con = console or Console()
+    default = "y" if default_yes else "n"
+    try:
+        choice = Prompt.ask(
+            f"{prompt} [y/n/a] (a = yes to all)",
+            choices=["y", "n", "a"],
+            default=default,
+            show_choices=False,
+            show_default=True,
+            console=con,
+        )
+        return (
+            choice in ("y", "a"),
+            choice == "a",
+        )
+    except (EOFError, KeyboardInterrupt):
+        return (default_yes, False)
 
 
 def _run_install(cmds: list[str], *, console: Console | None = None) -> bool:
@@ -840,8 +865,11 @@ def _doctor_install_prompt(
     default_yes: bool,
     recipe: dict,
     console: Any,
-) -> bool:
-    """Show install prompt and run install if confirmed. Return True if installed ok."""
+    *,
+    yes_to_all: bool = False,
+    offer_all: bool = True,
+) -> tuple[bool, bool]:
+    """Show install prompt and run install if confirmed. Returns (installed_ok, set_yes_to_all)."""
     block = "\n".join(cmds)
     console.print(
         Panel(
@@ -850,15 +878,26 @@ def _doctor_install_prompt(
             border_style="green",
         )
     )
-    if not _confirm("\nRun the above?", default_yes=default_yes, console=console):
-        return False
+    if yes_to_all:
+        proceed, set_all = True, False
+    elif offer_all:
+        proceed, set_all = _confirm_with_all(
+            "\nRun the above?", default_yes=default_yes, console=console
+        )
+    else:
+        proceed, set_all = (
+            _confirm("\nRun the above?", default_yes=default_yes, console=console),
+            False,
+        )
+    if not proceed:
+        return (False, False)
     if _run_install(cmds, console=console):
         log_success(f"{tool} installed")
         for hint in recipe.get("post", []):
             log_info(f"  Note: {hint}")
-        return True
+        return (True, set_all)
     log_error(f"Failed to install {tool}")
-    return False
+    return (False, set_all)
 
 
 def _doctor_offer_installs(
@@ -868,6 +907,7 @@ def _doctor_offer_installs(
     console: Console,
     *,
     warn_no_recipe: bool = False,
+    yes_to_all: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Offer to install each tool. Returns (installed, skipped)."""
     installed: list[str] = []
@@ -880,7 +920,12 @@ def _doctor_offer_installs(
                 log_warn(f"No auto-install recipe for {tool} on this platform.")
                 skipped.append(tool)
             continue
-        if _doctor_install_prompt(tool, cmds, default_yes, recipe, console):
+        ok, set_yes_to_all = _doctor_install_prompt(
+            tool, cmds, default_yes, recipe, console, yes_to_all=yes_to_all
+        )
+        if set_yes_to_all:
+            yes_to_all = True
+        if ok:
             installed.append(tool)
         else:
             if warn_no_recipe:
@@ -891,7 +936,13 @@ def _doctor_offer_installs(
     return (installed, skipped)
 
 
-def cmd_doctor() -> None:
+def cmd_doctor(
+    *,
+    yes_to_all: Annotated[
+        bool,
+        Parameter(name=["--yes", "-y"], help="Yes to all install prompts."),
+    ] = False,
+) -> None:
     """Check prerequisites interactively. Offer to install missing tools."""
     con = Console()
     con.print(Rule("[bold cyan]Doctor — Prerequisites[/]", style="cyan"))
@@ -924,13 +975,23 @@ def cmd_doctor() -> None:
                 "All prerequisites met! Run './dev/kube.py setup' to get started."
             )
         _doctor_gpu_section(console=con)
-        _doctor_offer_installs(missing_optional, platform, True, con)
+        _doctor_offer_installs(
+            missing_optional, platform, True, con, yes_to_all=yes_to_all
+        )
+        if (
+            not missing
+            and r.returncode == 0
+            and _confirm("Run setup now?", default_yes=True, console=con)
+        ):
+            print()
+            log_info("Running setup...")
+            cmd_setup()
         return
 
     # Interactively install missing tools
     print()
     installed, skipped = _doctor_offer_installs(
-        missing, platform, False, con, warn_no_recipe=True
+        missing, platform, False, con, warn_no_recipe=True, yes_to_all=yes_to_all
     )
     if installed:
         log_success(f"Installed: {', '.join(installed)}")
@@ -940,7 +1001,11 @@ def cmd_doctor() -> None:
     elif not skipped:
         log_success("All prerequisites met! Run './dev/kube.py setup' to get started.")
 
-    _doctor_offer_installs(missing_optional, platform, True, con)
+    _doctor_offer_installs(missing_optional, platform, True, con, yes_to_all=yes_to_all)
+    if not skipped and _confirm("Run setup now?", default_yes=True, console=con):
+        print()
+        log_info("Running setup...")
+        cmd_setup()
 
 
 # ---------------------------------------------------------------------------
@@ -2456,6 +2521,7 @@ def _run_setup_steps(
             Panel(
                 f"Done in {elapsed:.0f}s\n\n"
                 "  ./dev/kube.py run              # benchmark mock server\n"
+                "  ./dev/kube.py run-local        # single-pod benchmark\n"
                 "  ./dev/kube.py deploy-vllm      # deploy real server\n"
                 "  ./dev/kube.py deploy-dynamo    # deploy Dynamo server",
                 title="[bold green]Setup complete[/]",

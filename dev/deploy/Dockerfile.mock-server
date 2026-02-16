@@ -23,7 +23,9 @@ COPY tests/aiperf_mock_server/ ./aiperf_mock_server/
 # Layer 3: Copy aiperf source and install (changes most frequently)
 COPY README.md LICENSE ./
 COPY src/ ./src/
-RUN uv sync --active --no-dev
+RUN uv sync --active --no-dev \
+    && uv pip install -e ./aiperf_mock_server \
+    && uv pip install "uvicorn[standard]>=0.24.0"
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
