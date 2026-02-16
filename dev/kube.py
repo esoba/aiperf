@@ -39,8 +39,6 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from aiperf.common.config.user_config import UserConfig
-
 _ANSI_ESCAPE = re.compile(r"\033\[[0-9;]*m")
 
 # ---------------------------------------------------------------------------
@@ -1977,48 +1975,6 @@ def cmd_run(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _user_config_to_cli_args(config: UserConfig) -> list[str]:
-    """Convert key UserConfig fields to ``aiperf profile`` CLI arguments.
-
-    Only a pre-configured subset of flags is supported — enough for the
-    common single-pod benchmarking scenarios against mock / vLLM servers.
-    """
-    args: list[str] = []
-
-    # -- Endpoint (required) --------------------------------------------------
-    for model in config.endpoint.model_names:
-        args.extend(["--model", model])
-    for url in config.endpoint.urls:
-        args.extend(["--url", url])
-    args.extend(["--endpoint-type", str(config.endpoint.type)])
-    if config.endpoint.streaming:
-        args.append("--streaming")
-
-    # -- Load generator -------------------------------------------------------
-    if config.loadgen.concurrency is not None:
-        args.extend(["--concurrency", str(config.loadgen.concurrency)])
-    if config.loadgen.request_count is not None:
-        args.extend(["--request-count", str(config.loadgen.request_count)])
-    if config.loadgen.request_rate is not None:
-        args.extend(["--request-rate", str(config.loadgen.request_rate)])
-    if config.loadgen.warmup_request_count is not None:
-        args.extend(
-            ["--warmup-request-count", str(config.loadgen.warmup_request_count)]
-        )
-    if config.loadgen.benchmark_duration is not None:
-        args.extend(["--benchmark-duration", str(config.loadgen.benchmark_duration)])
-
-    # -- Tokenizer ------------------------------------------------------------
-    if config.tokenizer.name:
-        args.extend(["--tokenizer", config.tokenizer.name])
-
-    # -- Telemetry (disabled — no DCGM / Prometheus in single-pod) ------------
-    args.append("--no-gpu-telemetry")
-    args.append("--no-server-metrics")
-
-    return args
-
-
 def _generate_single_pod_manifest(
     cli_args: list[str],
     namespace: str,
@@ -2066,20 +2022,21 @@ def _generate_single_pod_manifest(
     return "\n---\n".join(yaml.dump(doc, default_flow_style=False) for doc in documents)
 
 
-def cmd_run_local(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
-    """Run benchmark as a single pod via ``aiperf profile`` CLI flags."""
-    from aiperf.common.config.user_config import UserConfig
+def cmd_run_local(*, detach: bool, dry_run: bool, extra_args: list[str]) -> None:
+    """Run benchmark as a single pod via ``aiperf profile`` CLI flags.
 
-    config_path = Path(opts.config) if opts.config else DEFAULT_BENCHMARK_CONFIG
-    if not config_path.exists():
-        log_error(f"Config file not found: {config_path}")
+    All aiperf arguments must be passed after ``--``.
+    """
+    MOCK_SERVER_URL = "http://aiperf-mock-server.default.svc.cluster.local:8000"
+
+    if not extra_args:
+        log_error(
+            "No aiperf arguments provided. Pass them after '--', e.g.:\n"
+            f"  ./dev/kube.py run-local -- --model mock --url {MOCK_SERVER_URL} --endpoint-type chat"
+        )
         raise SystemExit(1)
 
-    # Load YAML → validate through UserConfig → extract CLI args
-    user_data = yaml.safe_load(config_path.read_text())
-    user_config = UserConfig(**(user_data or {}))
-    cli_args = _user_config_to_cli_args(user_config)
-    cli_args.extend(["--ui-type", "none"])
+    cli_args = ["--url", MOCK_SERVER_URL, *extra_args]
 
     namespace = f"aiperf-local-{int(time.time())}"
     manifest = _generate_single_pod_manifest(cli_args, namespace, AIPERF_IMAGE)
@@ -2654,17 +2611,17 @@ def _cli_run_detach(*, opts: RunOptions = _DEFAULT_RUN_OPTS) -> None:
 def _cli_dry_run(*, opts: RunOptions = _DEFAULT_RUN_OPTS) -> None:
     cmd_run(opts=opts, detach=False, dry_run=True)
 
-@app.command(name="run-local",        group=benchmark, help="Run single-pod benchmark (attach).")
-def _cli_run_local(*, opts: RunOptions = _DEFAULT_RUN_OPTS) -> None:
-    cmd_run_local(opts=opts, detach=False, dry_run=False)
+@app.command(name="run-local",        group=benchmark, help="Run single-pod benchmark (attach). Pass aiperf args after '--'.")
+def _cli_run_local(*extra_args: str) -> None:
+    cmd_run_local(detach=False, dry_run=False, extra_args=list(extra_args))
 
-@app.command(name="run-local-detach", group=benchmark, help="Run single-pod benchmark (detach).")
-def _cli_run_local_detach(*, opts: RunOptions = _DEFAULT_RUN_OPTS) -> None:
-    cmd_run_local(opts=opts, detach=True,  dry_run=False)
+@app.command(name="run-local-detach", group=benchmark, help="Run single-pod benchmark (detach). Pass aiperf args after '--'.")
+def _cli_run_local_detach(*extra_args: str) -> None:
+    cmd_run_local(detach=True,  dry_run=False, extra_args=list(extra_args))
 
-@app.command(name="dry-run-local",    group=benchmark, help="Print single-pod manifest only.")
-def _cli_dry_run_local(*, opts: RunOptions = _DEFAULT_RUN_OPTS) -> None:
-    cmd_run_local(opts=opts, detach=False, dry_run=True)
+@app.command(name="dry-run-local",    group=benchmark, help="Print single-pod manifest only. Pass aiperf args after '--'.")
+def _cli_dry_run_local(*extra_args: str) -> None:
+    cmd_run_local(detach=False, dry_run=True, extra_args=list(extra_args))
 
 @app.command(name="build", group=lowlevel, help="Build Docker images.")
 def _cli_build() -> None:
@@ -2677,4 +2634,5 @@ def _cli_load() -> None:
 
 
 if __name__ == "__main__":
+    print(_BANNER)
     app()
