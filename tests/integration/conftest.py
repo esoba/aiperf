@@ -80,8 +80,8 @@ def setup_integration_tokenizer():
 
         tokenizer_name = IntegrationTestDefaults.tokenizer
         _logger.info(f"Pre-caching tokenizer for integration tests: {tokenizer_name}")
-        Tokenizer.from_pretrained(tokenizer_name)
-        Tokenizer.from_pretrained("gpt2")  # used by a lot of tests
+        asyncio.run(Tokenizer.from_pretrained(tokenizer_name))
+        asyncio.run(Tokenizer.from_pretrained("gpt2"))  # used by a lot of tests
         _logger.info("Tokenizer cached successfully")
     except Exception as e:
         _logger.warning(f"Failed to pre-cache tokenizer: {e}")
