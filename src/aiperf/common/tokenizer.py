@@ -3,11 +3,11 @@
 
 """HuggingFace tokenizer wrapper with sensible defaults."""
 
-import asyncio
 import contextlib
 import io
 import logging
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -201,7 +201,7 @@ class Tokenizer:
         return resolve_alias(name)
 
     @classmethod
-    async def from_pretrained(
+    def from_pretrained(
         cls,
         name: str,
         trust_remote_code: bool = False,
@@ -224,11 +224,14 @@ class Tokenizer:
             AmbiguousTokenizerNameError: If the name is ambiguous.
             TokenizerError: If the tokenizer cannot be loaded.
         """
+
         max_retries = Environment.TOKENIZER.INIT_MAX_RETRIES
         base_delay = Environment.TOKENIZER.INIT_BASE_DELAY
 
-        def _load() -> "Tokenizer":
-            """Load the tokenizer (blocking operation run in thread pool)."""
+        # Retry loop with exponential backoff
+        # time.sleep is safe here: from_pretrained runs in a thread via
+        # asyncio.to_thread at all call sites, so blocking the thread is fine.
+        for attempt in range(max_retries + 1):
             try:
                 # Silence tokenizer warning on import and first use
                 with (
@@ -263,40 +266,29 @@ class Tokenizer:
                         revision=revision,
                     )
                     tokenizer_cls._resolved_name = resolved_name
+                    return tokenizer_cls
             except AmbiguousTokenizerNameError:
                 raise
             except Exception as e:
-                raise TokenizerError(
-                    f"Failed to load tokenizer '{name}'", tokenizer_name=name
-                ) from e
-            return tokenizer_cls
-
-        # Retry loop with exponential backoff
-        for attempt in range(max_retries + 1):
-            try:
-                return await asyncio.to_thread(_load)
-            except (AmbiguousTokenizerNameError, TokenizerError) as e:
-                # Check if this is a retryable network error
-                if isinstance(e, AmbiguousTokenizerNameError) or not _is_network_error(
-                    e.__cause__ or e
-                ):
-                    # Don't retry on ambiguous names or non-network errors
-                    raise
-
-                # Network error - retry if we have attempts left
+                cause = e.__cause__ or e
+                if not _is_network_error(cause):
+                    raise TokenizerError(
+                        f"Failed to load tokenizer '{name}'", tokenizer_name=name
+                    ) from e
                 if attempt < max_retries:
                     delay = base_delay * (2**attempt)
                     _logger.warning(
-                        f"Network error loading tokenizer '{name}' (attempt {attempt + 1}/{max_retries + 1}): {e.__cause__!r}. "
+                        f"Network error loading tokenizer '{name}' (attempt {attempt + 1}/{max_retries + 1}): {cause!r}. "
                         f"Retrying in {delay:.1f}s..."
                     )
-                    await asyncio.sleep(delay)
+                    time.sleep(delay)
                 else:
-                    # Exhausted all retries
                     _logger.error(
                         f"Failed to load tokenizer '{name}' after {max_retries + 1} attempts due to network errors"
                     )
-                    raise
+                    raise TokenizerError(
+                        f"Failed to load tokenizer '{name}'", tokenizer_name=name
+                    ) from e
 
     @staticmethod
     def _find_cached_model_for_alias(name: str) -> str | None:
