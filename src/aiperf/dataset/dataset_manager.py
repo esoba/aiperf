@@ -38,10 +38,6 @@ from aiperf.common.models import (
 from aiperf.common.models.dataset_models import ConversationMetadata
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
-from aiperf.dataset.public_datasets import (
-    download_public_dataset,
-    get_public_dataset,
-)
 from aiperf.dataset.utils import check_file_exists
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -241,21 +237,23 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     async def _create_public_dataset_loader(
         self, ctx: LoaderContext
     ) -> BaseDatasetLoader:
-        """Download a public dataset and return its loader (without calling load)."""
-        public_dataset_type = self.user_config.input.public_dataset
-        dataset = get_public_dataset(public_dataset_type)
-        local_path = await download_public_dataset(dataset)
+        """Create a public dataset loader (without calling load).
 
-        LoaderClass = plugins.get_class(PluginType.DATASET_LOADER, dataset.loader_type)
+        The PublicDatasetLoader handles downloading, caching, and delegating
+        to the file loader specified in the plugin metadata.
+        """
+        public_dataset_type = self.user_config.input.public_dataset
+
+        LoaderClass = plugins.get_class(PluginType.PUBLIC_DATASET, public_dataset_type)
         loader = LoaderClass(
-            filename=str(local_path),
+            public_dataset_type=public_dataset_type,
             ctx=ctx,
         )
 
-        # Set sampling strategy from loader if not user-specified
+        # Set sampling strategy from the delegate file loader if not user-specified
         if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
             self.user_config.input.dataset_sampling_strategy = (
-                loader.get_preferred_sampling_strategy()
+                loader.get_delegate_preferred_sampling_strategy()
             )
 
         return loader
@@ -282,7 +280,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
 
         # Set sampling strategy from loader if not user-specified
-        if self.user_config.input.dataset_sampling_strategy is None:
+        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
             preferred_strategy = loader.get_preferred_sampling_strategy()
             self.user_config.input.dataset_sampling_strategy = preferred_strategy
             self.info(
@@ -294,11 +292,13 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     def _create_synthetic_loader(self, ctx: LoaderContext) -> BaseDatasetLoader:
         """Create a synthetic loader (without calling load).
 
-        Selects the appropriate synthetic loader based on endpoint type.
+        Selects the appropriate synthetic loader based on endpoint type,
+        or uses explicit --dataset-type if provided.
         """
-        endpoint_type = self.user_config.endpoint.type
-
-        if self._is_rankings_endpoint(endpoint_type):
+        dataset_type = self.user_config.input.dataset_type
+        if dataset_type is not None:
+            loader_type = dataset_type
+        elif self._is_rankings_endpoint(self.user_config.endpoint.type):
             loader_type = DatasetLoaderType.SYNTHETIC_RANKINGS
         else:
             loader_type = DatasetLoaderType.SYNTHETIC_MULTIMODAL
@@ -306,15 +306,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         LoaderClass = plugins.get_class(PluginType.DATASET_LOADER, loader_type)
         loader = LoaderClass(ctx=ctx)
 
-        # Set default sampling strategy for synthetic datasets if not explicitly set
-        from aiperf.common.config.config_defaults import InputDefaults
-
-        if self.user_config.input.dataset_sampling_strategy is None:
+        # Set sampling strategy from loader if not user-specified
+        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
             self.user_config.input.dataset_sampling_strategy = (
-                InputDefaults.DATASET_SAMPLING_STRATEGY
+                loader.get_preferred_sampling_strategy()
             )
             self.info(
-                f"Using default sampling strategy for synthetic dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
+                f"Using preferred sampling strategy for {loader_type}: "
+                f"{self.user_config.input.dataset_sampling_strategy}"
             )
 
         return loader

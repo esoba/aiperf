@@ -311,6 +311,29 @@ class PlotMetadata(BaseModel):
     )
 
 
+class PublicDatasetMetadata(BaseModel):
+    """Metadata schema for public dataset plugins.
+
+    Defines download location, caching details, and which file loader to delegate to
+    after downloading. The class field points to PublicDatasetLoader which handles
+    the download-and-delegate lifecycle.
+
+    Referenced by: categories.yaml public_dataset.metadata_class
+    Used in: plugins.yaml public_dataset entries
+    """
+
+    name: str = Field(
+        description="Human-readable dataset name for logging and display."
+    )
+    url: str = Field(description="URL to download the dataset from.")
+    remote_filename: str = Field(
+        description="Filename used for local caching of the downloaded dataset."
+    )
+    file_loader: str = Field(
+        description="Key of the dataset_loader plugin to delegate to after downloading.",
+    )
+
+
 class ServiceMetadata(BaseModel):
     """Metadata schema for service plugins.
 

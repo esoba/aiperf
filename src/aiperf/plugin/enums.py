@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TypeAlias
 from aiperf.plugin import plugins
 from aiperf.plugin.extensible_enums import create_enum
 
-__all__ = ["ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetLoaderType", "DatasetLoaderTypeStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "ModelSelectionStrategyType", "ModelSelectionStrategyTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
+__all__ = ["ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetLoaderType", "DatasetLoaderTypeStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "ModelSelectionStrategyType", "ModelSelectionStrategyTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "PublicDatasetType", "PublicDatasetTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
 
 # Plugin Protocol Categories
 if TYPE_CHECKING:
@@ -52,6 +52,10 @@ DatasetSamplingStrategy = plugins.create_enum(PluginType.DATASET_SAMPLER, "Datas
 DatasetLoaderTypeStr: TypeAlias = str
 DatasetLoaderType = plugins.create_enum(PluginType.DATASET_LOADER, "DatasetLoaderType")
 """Dynamic enum for dataset loader. Example: DatasetLoaderType.MOONCAKE_TRACE, DatasetLoaderType.MULTI_TURN, DatasetLoaderType.RANDOM_POOL"""
+
+PublicDatasetTypeStr: TypeAlias = str
+PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET, "PublicDatasetType")
+"""Dynamic enum for public dataset. Example: PublicDatasetType.SHAREGPT"""
 
 ModelSelectionStrategyTypeStr: TypeAlias = str
 ModelSelectionStrategyType = plugins.create_enum(PluginType.MODEL_SELECTION_STRATEGY, "ModelSelectionStrategyType")

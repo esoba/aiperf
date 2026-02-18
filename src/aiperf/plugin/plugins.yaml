@@ -372,6 +372,25 @@ dataset_loader:
       and passage pairs for ranking model evaluation and benchmarking.
 
 # =============================================================================
+# Public Datasets
+# =============================================================================
+# Public datasets are pre-configured, downloadable datasets for benchmarking.
+# Each entry specifies the loader class and download metadata.
+# Datasets are cached locally after first download.
+# =============================================================================
+public_dataset:
+  sharegpt:
+    class: aiperf.dataset.public_datasets:PublicDatasetLoader
+    description: |
+      ShareGPT dataset from HuggingFace. Multi-turn conversational dataset
+      with user/assistant exchanges. Auto-downloaded and cached locally.
+    metadata:
+      name: ShareGPT
+      url: https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json
+      remote_filename: ShareGPT_V3_unfiltered_cleaned_split.json
+      file_loader: sharegpt
+
+# =============================================================================
 # Model Selection Strategies
 # =============================================================================
 # Model selection strategies control how models are assigned to turns.

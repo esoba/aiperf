@@ -8,7 +8,6 @@ import pytest
 
 from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import InputDefaults
-from aiperf.common.enums import PublicDatasetType
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -18,7 +17,11 @@ from aiperf.common.messages import (
 from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.dataset_manager import DatasetManager
-from aiperf.plugin.enums import DatasetLoaderType, DatasetSamplingStrategy
+from aiperf.plugin.enums import (
+    DatasetLoaderType,
+    DatasetSamplingStrategy,
+    PublicDatasetType,
+)
 
 # ============================================================================
 # Shared Fixtures
@@ -263,9 +266,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
     """Test default sampling strategy behavior for different dataset types."""
 
     @pytest.mark.asyncio
-    @patch(
-        "aiperf.dataset.dataset_manager.download_public_dataset", new_callable=AsyncMock
-    )
+    @patch("aiperf.dataset.public_datasets._download", new_callable=AsyncMock)
     @patch(
         "aiperf.dataset.loader.file.base.BaseFileLoader.load",
         new=_mock_load_dummy_conversation,
@@ -331,9 +332,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
     @pytest.mark.asyncio
-    @patch(
-        "aiperf.dataset.dataset_manager.download_public_dataset", new_callable=AsyncMock
-    )
+    @patch("aiperf.dataset.public_datasets._download", new_callable=AsyncMock)
     @patch(
         "aiperf.dataset.loader.file.base.BaseFileLoader.load",
         new=_mock_load_dummy_conversation,

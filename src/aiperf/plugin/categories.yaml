@@ -84,6 +84,15 @@ dataset_loader:
     Unified hierarchy: file loaders parse JSONL, synthetic loaders generate data.
     Auto-detection: loaders are tried in priority order based on can_load().
 
+public_dataset:
+  protocol: aiperf.dataset.protocols:DatasetLoaderProtocol
+  metadata_class: aiperf.plugin.schema.schemas:PublicDatasetMetadata
+  enum: PublicDatasetType
+  description: |
+    Public datasets are pre-configured, downloadable datasets for benchmarking.
+    Each entry specifies a download URL, cache filename, and the loader class
+    that parses the downloaded file. Datasets are cached locally after first download.
+
 model_selection_strategy:
   protocol: aiperf.dataset.model_selection_strategies:ModelSelectionStrategyProtocol
   enum: ModelSelectionStrategyType

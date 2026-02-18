@@ -30,6 +30,7 @@ from aiperf.plugin.schema.schemas import (
     PlotMetadata,
     PluginsManifest,
     PluginSpec,
+    PublicDatasetMetadata,
     ServiceMetadata,
     TransportMetadata,
 )
@@ -934,7 +935,7 @@ if TYPE_CHECKING:
     from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
     from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ConsoleExporterType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetLoaderType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, ModelSelectionStrategyType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ConsoleExporterType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetLoaderType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, ModelSelectionStrategyType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
@@ -975,6 +976,10 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.DATASET_LOADER, "dataset_loader"], name_or_class_path: DatasetLoaderType | str) -> type[DatasetLoaderProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.DATASET_LOADER, "dataset_loader"]) -> Iterator[tuple[PluginEntry, type[DatasetLoaderProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.PUBLIC_DATASET, "public_dataset"], name_or_class_path: PublicDatasetType | str) -> type[DatasetLoaderProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.PUBLIC_DATASET, "public_dataset"]) -> Iterator[tuple[PluginEntry, type[DatasetLoaderProtocol]]]: ...
     @overload
     def get_class(category: Literal[PluginType.MODEL_SELECTION_STRATEGY, "model_selection_strategy"], name_or_class_path: ModelSelectionStrategyType | str) -> type[ModelSelectionStrategyProtocol]: ...
     @overload
@@ -1160,12 +1165,25 @@ def get_service_metadata(name: str) -> ServiceMetadata:
     return get_entry("service", name).get_typed_metadata(ServiceMetadata)
 
 
+def get_public_dataset_metadata(name: str) -> PublicDatasetMetadata:
+    """Get typed metadata for a public dataset plugin.
+
+    Args:
+        name: Public dataset plugin name (e.g., 'sharegpt').
+
+    Returns:
+        Validated PublicDatasetMetadata instance.
+    """
+    return get_entry("public_dataset", name).get_typed_metadata(PublicDatasetMetadata)
+
+
 # Mapping of categories to their metadata classes (for categories with typed metadata)
 _CATEGORY_METADATA_CLASSES: dict[str, type] = {
     "endpoint": EndpointMetadata,
     "transport": TransportMetadata,
     "plot": PlotMetadata,
     "service": ServiceMetadata,
+    "public_dataset": PublicDatasetMetadata,
 }
 
 

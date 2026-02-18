@@ -66,6 +66,14 @@
         "$ref": "#/$defs/DatasetLoaderPlugin"
       }
     },
+    "public_dataset": {
+      "title": "Public Dataset Plugins",
+      "type": "object",
+      "description": "Public datasets are pre-configured, downloadable datasets for benchmarking.\nEach entry specifies a download URL, cache filename, and the loader class\nthat parses the downloaded file. Datasets are cached locally after first download.",
+      "additionalProperties": {
+        "$ref": "#/$defs/PublicDatasetPlugin"
+      }
+    },
     "model_selection_strategy": {
       "title": "Model Selection Strategy Plugins",
       "type": "object",
@@ -484,6 +492,66 @@
       ],
       "title": "Dataset Loader Plugin",
       "description": "Dataset loaders create conversation datasets from various sources.\nUnified hierarchy: file loaders parse JSONL, synthetic loaders generate data.\nAuto-detection: loaders are tried in priority order based on can_load()."
+    },
+    "PublicDatasetPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "description": "Metadata schema for public dataset plugins.\n\nDefines download location, caching details, and which file loader to delegate to\nafter downloading. The class field points to PublicDatasetLoader which handles\nthe download-and-delegate lifecycle.\n\nReferenced by: categories.yaml public_dataset.metadata_class\nUsed in: plugins.yaml public_dataset entries",
+          "properties": {
+            "name": {
+              "description": "Human-readable dataset name for logging and display.",
+              "title": "Name",
+              "type": "string"
+            },
+            "url": {
+              "description": "URL to download the dataset from.",
+              "title": "Url",
+              "type": "string"
+            },
+            "remote_filename": {
+              "description": "Filename used for local caching of the downloaded dataset.",
+              "title": "Remote Filename",
+              "type": "string"
+            },
+            "file_loader": {
+              "description": "Key of the dataset_loader plugin to delegate to after downloading.",
+              "title": "File Loader",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "url",
+            "remote_filename",
+            "file_loader"
+          ],
+          "title": "PublicDatasetMetadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Public Dataset Plugin",
+      "description": "Public datasets are pre-configured, downloadable datasets for benchmarking.\nEach entry specifies a download URL, cache filename, and the loader class\nthat parses the downloaded file. Datasets are cached locally after first download."
     },
     "ModelSelectionStrategyPlugin": {
       "type": "object",

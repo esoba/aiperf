@@ -34,7 +34,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br>_Choices: [`arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_loader`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `model_selection_strategy`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br>_Choices: [`arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_loader`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `model_selection_strategy`, `plot`, `public_dataset`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -219,12 +219,7 @@ End offset in milliseconds for fixed schedule replay. Stops issuing requests aft
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--dataset-type`. See `PublicDatasetType` enum for available datasets.
-
-**Choices:**
-
-| | | |
-|-------|:-------:|-------------|
-| `sharegpt` |  | ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges. |
+<br>_Choices: [`sharegpt`]_
 
 #### `--dataset-type`, `--custom-dataset-type` `<str>`
 
