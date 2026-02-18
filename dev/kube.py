@@ -64,9 +64,6 @@ MOCK_SERVER_MANIFEST = PROJECT_ROOT / "dev" / "deploy" / "mock-server.yaml"
 DEFAULT_BENCHMARK_CONFIG = (
     PROJECT_ROOT / "dev" / "deploy" / "test-benchmark-config.yaml"
 )
-DYNAMO_BENCHMARK_CONFIG = (
-    PROJECT_ROOT / "dev" / "deploy" / "dynamo-benchmark-config.yaml"
-)
 
 VLLM_IMAGE = os.environ.get("VLLM_IMAGE") or "vllm/vllm-openai:latest"
 VLLM_MODEL = os.environ.get("MODEL") or "Qwen/Qwen3-0.6B"
@@ -101,7 +98,7 @@ def _detect_docker_cpus() -> int:
     """Query Docker daemon for CPU count. Falls back to host CPU count.
 
     On Colima/Docker Desktop the VM may have fewer CPUs than the host,
-    so ``os.cpu_count()`` alone would over-provision.
+    so `os.cpu_count()` alone would over-provision.
     """
     try:
         r = subprocess.run(
@@ -397,8 +394,8 @@ def _has_buildx() -> bool:
 def _docker_build(image: str, dockerfile: str, *extra_args: str) -> None:
     """Build a Docker image from PROJECT_ROOT.
 
-    Uses ``docker buildx build --load`` when buildx is available (required on
-    macOS for reliable cross-platform builds), falls back to ``docker build``.
+    Uses `docker buildx build --load` when buildx is available (required on
+    macOS for reliable cross-platform builds), falls back to `docker build`.
     """
     log_step(f"Building {image}")
     cmd = (
@@ -532,11 +529,16 @@ def _detect_platform() -> str:
             os_release = Path("/etc/os-release").read_text().lower()
         except OSError:
             return "linux"
-        if "arch" in os_release:
+        # Match on ID= or ID_LIKE= to avoid false positives from URLs/descriptions
+        id_values: set[str] = set()
+        for line in os_release.splitlines():
+            if m := re.match(r"(?:id|id_like)\s*=\s*\"?([^\"]+)\"?", line):
+                id_values.update(m.group(1).split())
+        if "arch" in id_values:
             return "arch"
-        if any(d in os_release for d in ("debian", "ubuntu", "mint", "pop")):
+        if id_values & {"debian", "ubuntu", "mint", "pop"}:
             return "debian"
-        if any(d in os_release for d in ("fedora", "rhel", "centos", "rocky", "alma")):
+        if id_values & {"fedora", "rhel", "centos", "rocky", "alma"}:
             return "fedora"
     return "linux"
 
@@ -557,7 +559,7 @@ def _detect_linux_arch() -> str:
 
 def _resolve_recipe_cmds(cmds: list[str], platform: str) -> list[str]:
     """Substitute {arch} and {install_prefix} in Linux recipe commands."""
-    if platform != "linux":
+    if platform not in ("linux", "arch", "debian", "fedora"):
         return cmds
     arch = _detect_linux_arch()
     install_prefix = os.environ.get("INSTALL_PREFIX", "/usr/local")
@@ -986,10 +988,8 @@ def cmd_doctor(
         _doctor_offer_installs(
             missing_optional, platform, True, con, yes_to_all=yes_to_all
         )
-        if (
-            not missing
-            and r.returncode == 0
-            and _confirm("Run setup now?", default_yes=True, console=con)
+        if r.returncode == 0 and _confirm(
+            "Run setup now?", default_yes=True, console=con
         ):
             print()
             log_info("Running setup...")
@@ -1055,8 +1055,6 @@ def cmd_cluster_create() -> str:
         MINIKUBE_MEMORY,
         "--cpus",
         MINIKUBE_CPUS,
-        "--profile",
-        CLUSTER_NAME,
     )
     kubectl("cluster-info", capture=True)
 
@@ -1731,9 +1729,9 @@ def _generate_dynamo_manifest(
     return "\n---\n".join(_yaml_dump(doc) for doc in documents)
 
 
-def _wait_for_dynamo_ready(timeout: int = 600) -> None:
+def _wait_for_dynamo_ready(mode: str, timeout: int = 600) -> None:
     """Wait for all Dynamo pods to be Ready."""
-    deploy_name = f"dynamo-{DYNAMO_MODE}"
+    deploy_name = f"dynamo-{mode}"
     log_info(f"Waiting for Dynamo pods to be ready (timeout={timeout}s)...")
     deadline = time.time() + timeout
 
@@ -1758,10 +1756,8 @@ def _wait_for_dynamo_ready(timeout: int = 600) -> None:
                     1
                     for p in pods
                     if p.get("status", {}).get("phase") == "Running"
-                    and all(
-                        cs.get("ready", False)
-                        for cs in p.get("status", {}).get("containerStatuses", [])
-                    )
+                    and (css := p.get("status", {}).get("containerStatuses"))
+                    and all(cs.get("ready", False) for cs in css)
                 )
                 if ready_count == len(pods):
                     log_success(f"All {len(pods)} Dynamo pod(s) ready")
@@ -1821,7 +1817,7 @@ def cmd_deploy_dynamo(
         connectors=dynamo_opts.connectors,
     )
     kubectl("apply", "-f", "-", input=manifest, text=True)
-    _wait_for_dynamo_ready(timeout=600)
+    _wait_for_dynamo_ready(dynamo_opts.mode, timeout=600)
 
     deploy_name = f"dynamo-{dynamo_opts.mode}"
     endpoint = (
@@ -1990,7 +1986,7 @@ def _generate_single_pod_manifest(
     namespace: str,
     image: str,
 ) -> str:
-    """Generate Namespace + Job YAML for a single-pod ``aiperf profile`` run."""
+    """Generate Namespace + Job YAML for a single-pod `aiperf profile` run."""
     documents: list[dict] = [
         {
             "apiVersion": "v1",
@@ -2033,9 +2029,9 @@ def _generate_single_pod_manifest(
 
 
 def cmd_run_local(*, detach: bool, dry_run: bool, extra_args: list[str]) -> None:
-    """Run benchmark as a single pod via ``aiperf profile`` CLI flags.
+    """Run benchmark as a single pod via `aiperf profile` CLI flags.
 
-    All aiperf arguments must be passed after ``--``.
+    All aiperf arguments must be passed after `--`.
     """
     MOCK_SERVER_URL = "http://aiperf-mock-server.default.svc.cluster.local:8000"
 
@@ -2398,6 +2394,22 @@ def _run_setup_steps(
     con_file = os.fdopen(con_fd, "w", buffering=1)
     con = Console(file=con_file)
 
+    try:
+        _run_setup_steps_inner(
+            steps, con=con, continue_on_error=continue_on_error, has_gpu=has_gpu
+        )
+    finally:
+        con_file.close()
+
+
+def _run_setup_steps_inner(
+    steps: list[_SetupStep],
+    *,
+    con: Console,
+    continue_on_error: bool,
+    has_gpu: bool,
+) -> None:
+    """Inner logic for _run_setup_steps (separated so con_file cleanup is guaranteed)."""
     con.print(Rule("[bold cyan]Setup — aiperf minikube cluster[/]", style="cyan"))
 
     # Environment summary
