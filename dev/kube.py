@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import orjson
-import yaml
 from cyclopts import App, Group, Parameter
 from pydantic import BaseModel, Field
 from rich.console import Console
@@ -38,8 +37,19 @@ from rich.spinner import Spinner
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
+from ruamel.yaml import YAML
 
 _ANSI_ESCAPE = re.compile(r"\033\[[0-9;]*m")
+
+_yaml = YAML()
+_yaml.default_flow_style = False
+
+
+def _yaml_dump(doc: dict) -> str:
+    stream = io.StringIO()
+    _yaml.dump(doc, stream)
+    return stream.getvalue()
+
 
 # ---------------------------------------------------------------------------
 # Constants (overridable via env vars)
@@ -1718,7 +1728,7 @@ def _generate_dynamo_manifest(
         },
     ]
 
-    return "\n---\n".join(yaml.dump(doc, default_flow_style=False) for doc in documents)
+    return "\n---\n".join(_yaml_dump(doc) for doc in documents)
 
 
 def _wait_for_dynamo_ready(timeout: int = 600) -> None:
@@ -1874,7 +1884,7 @@ def _generate_lora_manifest(name: str, base_model: str, source: str) -> str:
             "source": {"uri": source},
         },
     }
-    return yaml.dump(doc, default_flow_style=False)
+    return _yaml_dump(doc)
 
 
 @app.command(
@@ -2019,7 +2029,7 @@ def _generate_single_pod_manifest(
             },
         },
     ]
-    return "\n---\n".join(yaml.dump(doc, default_flow_style=False) for doc in documents)
+    return "\n---\n".join(_yaml_dump(doc) for doc in documents)
 
 
 def cmd_run_local(*, detach: bool, dry_run: bool, extra_args: list[str]) -> None:
