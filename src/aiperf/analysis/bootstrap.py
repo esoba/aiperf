@@ -10,7 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from aiperf.analysis.ramp_detection import detect_steady_state_window
-from aiperf.analysis.sweep import concurrency_sweep, throughput_sweep
+from aiperf.analysis.sweepline import concurrency_sweep_line, throughput_sweep_line
 
 
 @dataclass(frozen=True)
@@ -100,7 +100,7 @@ def bootstrap_detection(
         lat = latency[idx]
         tt = ttft[idx]
 
-        sorted_ts, conc = concurrency_sweep(s_ns, e_ns)
+        sorted_ts, conc = concurrency_sweep_line(s_ns, e_ns)
         if len(sorted_ts) == 0:
             continue
 
@@ -109,7 +109,7 @@ def bootstrap_detection(
         if has_tput:
             gen_ns = generation_start_ns[idx]  # type: ignore[index]
             out_tok = output_tokens[idx]  # type: ignore[index]
-            s_tput_ts, tput = throughput_sweep(gen_ns, e_ns, out_tok)
+            s_tput_ts, tput = throughput_sweep_line(gen_ns, e_ns, out_tok)
             if len(s_tput_ts) == 0:
                 s_tput_ts = None
                 tput = None

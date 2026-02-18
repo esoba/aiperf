@@ -9,7 +9,7 @@ Input arrays are expected to be session_num-indexed (from ColumnStore).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
@@ -17,8 +17,12 @@ from numpy.typing import NDArray
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.models import MetricResult
 
+FloatArray: TypeAlias = NDArray[np.float64]
+Int64Array: TypeAlias = NDArray[np.int64]
+Int32Array: TypeAlias = NDArray[np.int32]
 
-class SweepStats(NamedTuple):
+
+class SweepLineStats(NamedTuple):
     """Time-weighted statistics from a sweep-line step function."""
 
     avg: float
@@ -31,12 +35,12 @@ class SweepStats(NamedTuple):
     std: float
 
 
-ZERO_SWEEP_STATS = SweepStats(
+ZERO_SWEEP_LINE_STATS = SweepLineStats(
     avg=0.0, min=0.0, max=0.0, p50=0.0, p90=0.0, p95=0.0, p99=0.0, std=0.0
 )
 
 
-class SweepMetricSpec(NamedTuple):
+class SweepLineMetricSpec(NamedTuple):
     """Specification for a sweep-line metric (tag, header, unit, scale)."""
 
     tag: str
@@ -45,48 +49,50 @@ class SweepMetricSpec(NamedTuple):
     scale: float
 
 
-SWEEP_METRIC_SPECS: tuple[SweepMetricSpec, ...] = (
-    SweepMetricSpec("effective_concurrency", "Effective Concurrency", "requests", 1.0),
-    SweepMetricSpec(
+SWEEP_LINE_METRIC_SPECS: tuple[SweepLineMetricSpec, ...] = (
+    SweepLineMetricSpec(
+        "effective_concurrency", "Effective Concurrency", "requests", 1.0
+    ),
+    SweepLineMetricSpec(
         "effective_throughput", "Effective Throughput", "tokens/sec", NANOS_PER_SECOND
     ),
-    SweepMetricSpec(
+    SweepLineMetricSpec(
         "effective_prefill_throughput",
         "Effective Prefill Throughput",
         "tokens/sec",
         NANOS_PER_SECOND,
     ),
-    SweepMetricSpec(
+    SweepLineMetricSpec(
         "effective_generation_concurrency",
         "Effective Generation Concurrency",
         "requests",
         1.0,
     ),
-    SweepMetricSpec(
+    SweepLineMetricSpec(
         "effective_prefill_concurrency",
         "Effective Prefill Concurrency",
         "requests",
         1.0,
     ),
-    SweepMetricSpec(
+    SweepLineMetricSpec(
         "effective_total_throughput",
         "Effective Total Throughput",
         "tokens/sec",
         NANOS_PER_SECOND,
     ),
-    SweepMetricSpec(
+    SweepLineMetricSpec(
         "effective_throughput_per_user",
         "Effective Throughput Per User",
         "tokens/sec/user",
         NANOS_PER_SECOND,
     ),
-    SweepMetricSpec(
+    SweepLineMetricSpec(
         "effective_prefill_throughput_per_user",
         "Effective Prefill Throughput Per User",
         "tokens/sec/user",
         NANOS_PER_SECOND,
     ),
-    SweepMetricSpec(
+    SweepLineMetricSpec(
         "tokens_in_flight",
         "Tokens In Flight",
         "tokens",
@@ -96,32 +102,32 @@ SWEEP_METRIC_SPECS: tuple[SweepMetricSpec, ...] = (
 
 
 @dataclass(frozen=True, slots=True)
-class SweepCurves:
+class SweepLineCurves:
     """Pre-computed sweep-line curves for concurrency, throughput, and prefill throughput."""
 
-    concurrency_ts: NDArray[np.float64]
-    concurrency: NDArray[np.float64]
-    throughput_ts: NDArray[np.float64]
-    throughput: NDArray[np.float64]
-    prefill_throughput_ts: NDArray[np.float64]
-    prefill_throughput: NDArray[np.float64]
-    generation_concurrency_ts: NDArray[np.float64]
-    generation_concurrency: NDArray[np.float64]
-    prefill_concurrency_ts: NDArray[np.float64]
-    prefill_concurrency: NDArray[np.float64]
-    total_throughput_ts: NDArray[np.float64]
-    total_throughput: NDArray[np.float64]
-    throughput_per_user_ts: NDArray[np.float64]
-    throughput_per_user: NDArray[np.float64]
-    prefill_throughput_per_user_ts: NDArray[np.float64]
-    prefill_throughput_per_user: NDArray[np.float64]
-    tokens_in_flight_ts: NDArray[np.float64]
-    tokens_in_flight: NDArray[np.float64]
+    concurrency_ts: FloatArray
+    concurrency: FloatArray
+    throughput_ts: FloatArray
+    throughput: FloatArray
+    prefill_throughput_ts: FloatArray
+    prefill_throughput: FloatArray
+    generation_concurrency_ts: FloatArray
+    generation_concurrency: FloatArray
+    prefill_concurrency_ts: FloatArray
+    prefill_concurrency: FloatArray
+    total_throughput_ts: FloatArray
+    total_throughput: FloatArray
+    throughput_per_user_ts: FloatArray
+    throughput_per_user: FloatArray
+    prefill_throughput_per_user_ts: FloatArray
+    prefill_throughput_per_user: FloatArray
+    tokens_in_flight_ts: FloatArray
+    tokens_in_flight: FloatArray
 
     def curves(
         self,
-    ) -> tuple[tuple[NDArray[np.float64], NDArray[np.float64]], ...]:
-        """Return (ts, values) pairs in SWEEP_METRIC_SPECS order."""
+    ) -> tuple[tuple[FloatArray, FloatArray], ...]:
+        """Return (ts, values) pairs in SWEEP_LINE_METRIC_SPECS order."""
         return (
             (self.concurrency_ts, self.concurrency),
             (self.throughput_ts, self.throughput),
@@ -137,20 +143,22 @@ class SweepCurves:
     def compute_metrics(
         self, window_start: float, window_end: float
     ) -> dict[str, MetricResult]:
-        """Compute all sweep MetricResults for a time window."""
+        """Compute all sweep-line MetricResults for a time window."""
         results: dict[str, MetricResult] = {}
-        for spec, (ts, values) in zip(SWEEP_METRIC_SPECS, self.curves(), strict=True):
+        for spec, (ts, values) in zip(
+            SWEEP_LINE_METRIC_SPECS, self.curves(), strict=True
+        ):
             stats = compute_time_weighted_stats(ts, values, window_start, window_end)
-            results[spec.tag] = metric_result_from_sweep_stats(
+            results[spec.tag] = metric_result_from_sweep_line_stats(
                 spec.tag, spec.header, spec.unit, stats, scale=spec.scale
             )
         return results
 
 
-def _sweep_cumsum(
-    timestamps: NDArray[np.float64],
-    deltas: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def _sweep_line_cumsum(
+    timestamps: FloatArray,
+    deltas: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Sort events by timestamp (ends before starts at ties) and cumsum deltas."""
     # lexsort: primary key = timestamps, secondary key = event_type (0=end, 1=start).
     # Ends sort before starts at the same timestamp.
@@ -160,21 +168,21 @@ def _sweep_cumsum(
 
 
 def _step_lookup(
-    event_ts: NDArray[np.float64],
-    event_vals: NDArray[np.float64],
-    query_ts: NDArray[np.float64],
-) -> NDArray[np.float64]:
+    event_ts: FloatArray,
+    event_vals: FloatArray,
+    query_ts: FloatArray,
+) -> FloatArray:
     """Look up step-function values at query timestamps (0 before first event)."""
     idx = np.searchsorted(event_ts, query_ts, side="right").astype(np.intp) - 1
     return np.where(idx >= 0, event_vals[np.clip(idx, 0, len(event_vals) - 1)], 0.0)
 
 
 def add_step_functions(
-    a_ts: NDArray[np.float64],
-    a_vals: NDArray[np.float64],
-    b_ts: NDArray[np.float64],
-    b_vals: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    a_ts: FloatArray,
+    a_vals: FloatArray,
+    b_ts: FloatArray,
+    b_vals: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Add two step functions, returning a new step function on merged timestamps.
 
     Args:
@@ -198,11 +206,11 @@ def add_step_functions(
 
 
 def divide_step_functions(
-    num_ts: NDArray[np.float64],
-    num_vals: NDArray[np.float64],
-    den_ts: NDArray[np.float64],
-    den_vals: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    num_ts: FloatArray,
+    num_vals: FloatArray,
+    den_ts: FloatArray,
+    den_vals: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Divide two step functions, returning a new step function on merged timestamps.
 
     Where denominator is zero the result is zero (safe division).
@@ -228,12 +236,12 @@ def divide_step_functions(
     return merged_ts, result
 
 
-def throughput_per_user_sweep(
-    generation_start_ns: NDArray[np.float64],
-    end_ns: NDArray[np.float64],
-    tput_ts: NDArray[np.float64],
-    tput_vals: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def throughput_per_user_sweep_line(
+    generation_start_ns: FloatArray,
+    end_ns: FloatArray,
+    tput_ts: FloatArray,
+    tput_vals: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Compute per-user throughput by dividing aggregate throughput by generation-phase concurrency.
 
     Args:
@@ -245,16 +253,16 @@ def throughput_per_user_sweep(
     Returns:
         Tuple of (timestamps, per_user_throughput) in tokens/ns/user.
     """
-    conc_ts, conc_vals = concurrency_sweep(generation_start_ns, end_ns)
+    conc_ts, conc_vals = concurrency_sweep_line(generation_start_ns, end_ns)
     return divide_step_functions(tput_ts, tput_vals, conc_ts, conc_vals)
 
 
-def prefill_throughput_per_user_sweep(
-    start_ns: NDArray[np.float64],
-    generation_start_ns: NDArray[np.float64],
-    ptput_ts: NDArray[np.float64],
-    ptput_vals: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def prefill_throughput_per_user_sweep_line(
+    start_ns: FloatArray,
+    generation_start_ns: FloatArray,
+    ptput_ts: FloatArray,
+    ptput_vals: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Compute per-user prefill throughput by dividing aggregate prefill throughput by prefill-phase concurrency.
 
     Args:
@@ -266,14 +274,14 @@ def prefill_throughput_per_user_sweep(
     Returns:
         Tuple of (timestamps, per_user_prefill_throughput) in tokens/ns/user.
     """
-    conc_ts, conc_vals = concurrency_sweep(start_ns, generation_start_ns)
+    conc_ts, conc_vals = concurrency_sweep_line(start_ns, generation_start_ns)
     return divide_step_functions(ptput_ts, ptput_vals, conc_ts, conc_vals)
 
 
-def concurrency_sweep(
-    start_ns: NDArray[np.float64],
-    end_ns: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def concurrency_sweep_line(
+    start_ns: FloatArray,
+    end_ns: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Compute exact instantaneous concurrency at every event boundary.
 
     Args:
@@ -295,15 +303,15 @@ def concurrency_sweep(
         [np.ones(k, dtype=np.float64), -np.ones(k, dtype=np.float64)]
     )
 
-    sorted_ts, concurrency = _sweep_cumsum(timestamps, deltas)
+    sorted_ts, concurrency = _sweep_line_cumsum(timestamps, deltas)
     return sorted_ts, concurrency
 
 
-def throughput_sweep(
-    generation_start_ns: NDArray[np.float64],
-    end_ns: NDArray[np.float64],
-    output_tokens: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def throughput_sweep_line(
+    generation_start_ns: FloatArray,
+    end_ns: FloatArray,
+    output_tokens: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Compute exact instantaneous throughput (tokens/ns) at every event boundary.
 
     Uses uniform per-request rate: (output_tokens - 1) / generation_duration.
@@ -327,15 +335,15 @@ def throughput_sweep(
     timestamps = np.concatenate([generation_start_ns[valid], end_ns[valid]])
     deltas = np.concatenate([rates, -rates])
 
-    sorted_ts, throughput = _sweep_cumsum(timestamps, deltas)
+    sorted_ts, throughput = _sweep_line_cumsum(timestamps, deltas)
     return sorted_ts, throughput
 
 
-def prefill_throughput_sweep(
-    start_ns: NDArray[np.float64],
-    generation_start_ns: NDArray[np.float64],
-    input_tokens: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def prefill_throughput_sweep_line(
+    start_ns: FloatArray,
+    generation_start_ns: FloatArray,
+    input_tokens: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Compute exact instantaneous prefill throughput (tokens/ns) at every event boundary.
 
     During prefill [start_ns, generation_start_ns), the model processes
@@ -366,17 +374,17 @@ def prefill_throughput_sweep(
     timestamps = np.concatenate([start_ns[valid], generation_start_ns[valid]])
     deltas = np.concatenate([rates, -rates])
 
-    sorted_ts, prefill_tput = _sweep_cumsum(timestamps, deltas)
+    sorted_ts, prefill_tput = _sweep_line_cumsum(timestamps, deltas)
     return sorted_ts, prefill_tput
 
 
-def total_throughput_sweep(
-    start_ns: NDArray[np.float64],
-    generation_start_ns: NDArray[np.float64],
-    end_ns: NDArray[np.float64],
-    input_tokens: NDArray[np.float64],
-    output_tokens: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def total_throughput_sweep_line(
+    start_ns: FloatArray,
+    generation_start_ns: FloatArray,
+    end_ns: FloatArray,
+    input_tokens: FloatArray,
+    output_tokens: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Compute total throughput (prefill + generation) in a single sweep pass.
 
     Combines prefill rate events [start_ns, generation_start_ns) and generation
@@ -411,8 +419,8 @@ def total_throughput_sweep(
     if pf_k == 0 and gn_k == 0:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
 
-    parts_ts: list[NDArray[np.float64]] = []
-    parts_delta: list[NDArray[np.float64]] = []
+    parts_ts: list[FloatArray] = []
+    parts_delta: list[FloatArray] = []
 
     if pf_k > 0:
         pf_rates = input_tokens[pf_valid] / prefill_dur[pf_valid]
@@ -424,16 +432,16 @@ def total_throughput_sweep(
         parts_ts.extend([generation_start_ns[gn_valid], end_ns[gn_valid]])
         parts_delta.extend([gn_rates, -gn_rates])
 
-    return _sweep_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
+    return _sweep_line_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
 
 
-def tokens_in_flight_sweep(
-    start_ns: NDArray[np.float64],
-    generation_start_ns: NDArray[np.float64],
-    end_ns: NDArray[np.float64],
-    input_tokens: NDArray[np.float64],
-    output_tokens: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def tokens_in_flight_sweep_line(
+    start_ns: FloatArray,
+    generation_start_ns: FloatArray,
+    end_ns: FloatArray,
+    input_tokens: FloatArray,
+    output_tokens: FloatArray,
+) -> tuple[FloatArray, FloatArray]:
     """Compute instantaneous KV cache token load at every event boundary.
 
     Models the total tokens held in server memory (KV cache) per request:
@@ -478,8 +486,8 @@ def tokens_in_flight_sweep(
     # At end_ns, we subtract whatever was added.
     # For simplicity and correctness, handle the three event types independently.
 
-    parts_ts: list[NDArray[np.float64]] = []
-    parts_delta: list[NDArray[np.float64]] = []
+    parts_ts: list[FloatArray] = []
+    parts_delta: list[FloatArray] = []
 
     # Event 1: +input_tokens at start_ns (prefill begins, tokens enter KV cache)
     pf_valid = (
@@ -517,19 +525,19 @@ def tokens_in_flight_sweep(
     if len(parts_ts) == 0:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
 
-    return _sweep_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
+    return _sweep_line_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
 
 
-def tokens_in_flight_sweep_icl(
-    start_ns: NDArray[np.float64],
-    generation_start_ns: NDArray[np.float64],
-    end_ns: NDArray[np.float64],
-    input_tokens: NDArray[np.float64],
-    output_tokens: NDArray[np.float64],
-    icl_values: NDArray[np.float64],
-    icl_record_indices: NDArray[np.int32],
-    icl_offsets: NDArray[np.int64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def tokens_in_flight_sweep_line_icl(
+    start_ns: FloatArray,
+    generation_start_ns: FloatArray,
+    end_ns: FloatArray,
+    input_tokens: FloatArray,
+    output_tokens: FloatArray,
+    icl_values: FloatArray,
+    icl_record_indices: Int32Array,
+    icl_offsets: Int64Array,
+) -> tuple[FloatArray, FloatArray]:
     """ICL-aware tokens in flight: output tokens ramp up at chunk boundaries.
 
     Instead of adding all output_tokens at generation_start_ns, this function
@@ -555,7 +563,7 @@ def tokens_in_flight_sweep_icl(
         Tuple of (sorted_timestamps, tokens_in_flight) in tokens.
     """
     if len(icl_values) == 0:
-        return tokens_in_flight_sweep(
+        return tokens_in_flight_sweep_line(
             start_ns, generation_start_ns, end_ns, input_tokens, output_tokens
         )
 
@@ -582,8 +590,8 @@ def tokens_in_flight_sweep_icl(
     # Valid chunks: non-NaN gen_start, positive ICL, non-NaN output_tokens
     chunk_valid = ~np.isnan(gen_start) & (icl_values > 0) & ~np.isnan(per_req_tokens)
 
-    parts_ts: list[NDArray[np.float64]] = []
-    parts_delta: list[NDArray[np.float64]] = []
+    parts_ts: list[FloatArray] = []
+    parts_delta: list[FloatArray] = []
 
     # Chunk events: +tokens_per_chunk at each interval_end
     if chunk_valid.any():
@@ -625,16 +633,16 @@ def tokens_in_flight_sweep_icl(
     if len(parts_ts) == 0:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
 
-    return _sweep_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
+    return _sweep_line_cumsum(np.concatenate(parts_ts), np.concatenate(parts_delta))
 
 
-def throughput_sweep_icl(
-    generation_start_ns: NDArray[np.float64],
-    output_tokens: NDArray[np.float64],
-    icl_values: NDArray[np.float64],
-    icl_record_indices: NDArray[np.int32],
-    icl_offsets: NDArray[np.int64],
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def throughput_sweep_line_icl(
+    generation_start_ns: FloatArray,
+    output_tokens: FloatArray,
+    icl_values: FloatArray,
+    icl_record_indices: Int32Array,
+    icl_offsets: Int64Array,
+) -> tuple[FloatArray, FloatArray]:
     """Compute ICL-aware instantaneous throughput at every chunk boundary.
 
     Uses per-request rescaled rates: each ICL interval carries
@@ -686,16 +694,16 @@ def throughput_sweep_icl(
     timestamps = np.concatenate([interval_start[valid], interval_end[valid]])
     deltas = np.concatenate([rates[valid], -rates[valid]])
 
-    sorted_ts, throughput = _sweep_cumsum(timestamps, deltas)
+    sorted_ts, throughput = _sweep_line_cumsum(timestamps, deltas)
     return sorted_ts, throughput
 
 
 def compute_time_weighted_stats(
-    sorted_ts: NDArray[np.float64],
-    values: NDArray[np.float64],
+    sorted_ts: FloatArray,
+    values: FloatArray,
     window_start: float,
     window_end: float,
-) -> SweepStats:
+) -> SweepLineStats:
     """Compute time-weighted statistics over a step-function within a window.
 
     The sweep-line output defines a step function: value[i] is held from
@@ -713,7 +721,7 @@ def compute_time_weighted_stats(
     """
     total_dur = window_end - window_start
     if len(sorted_ts) == 0 or total_dur <= 0:
-        return ZERO_SWEEP_STATS
+        return ZERO_SWEEP_LINE_STATS
 
     # Narrow to events relevant to [window_start, window_end] via searchsorted,
     # avoiding full-array operations on events entirely outside the window.
@@ -751,7 +759,7 @@ def compute_time_weighted_stats(
     # Filter to segments with positive duration
     mask = durations > 0
     if not mask.any():
-        return ZERO_SWEEP_STATS
+        return ZERO_SWEEP_LINE_STATS
 
     dur = durations[mask]
     val = seg_values[mask]
@@ -777,16 +785,16 @@ def compute_time_weighted_stats(
     np.minimum(indices, len(sorted_val) - 1, out=indices)
     p50, p90, p95, p99 = sorted_val[indices].tolist()
 
-    return SweepStats(
+    return SweepLineStats(
         avg=avg, min=mn, max=mx, p50=p50, p90=p90, p95=p95, p99=p99, std=std
     )
 
 
-def metric_result_from_sweep_stats(
+def metric_result_from_sweep_line_stats(
     tag: str,
     header: str,
     unit: str,
-    stats: SweepStats,
+    stats: SweepLineStats,
     scale: float = 1.0,
 ) -> MetricResult:
     """Build a MetricResult from compute_time_weighted_stats output."""

@@ -11,7 +11,7 @@ import pytest
 
 from aiperf.analysis.bootstrap import BootstrapResult, bootstrap_detection
 from aiperf.analysis.ramp_detection import detect_steady_state_window
-from aiperf.analysis.sweep import concurrency_sweep
+from aiperf.analysis.sweepline import concurrency_sweep_line
 from tests.unit.analysis.profiles import clean_ramp
 
 
@@ -78,7 +78,7 @@ class TestBootstrapCleanRamp:
 class TestBootstrapContainsPointEstimate:
     def test_point_estimate_within_ci(self, clean_profile) -> None:
         """Point estimate from single detection falls within bootstrap CI."""
-        sorted_ts, conc = concurrency_sweep(
+        sorted_ts, conc = concurrency_sweep_line(
             clean_profile.start_ns, clean_profile.end_ns
         )
         w_start, w_end, _ = detect_steady_state_window(

@@ -7,32 +7,32 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from aiperf.analysis.sweep import (
+from aiperf.analysis.sweepline import (
     add_step_functions,
     compute_time_weighted_stats,
-    concurrency_sweep,
+    concurrency_sweep_line,
     divide_step_functions,
-    prefill_throughput_per_user_sweep,
-    prefill_throughput_sweep,
-    throughput_per_user_sweep,
-    throughput_sweep,
-    throughput_sweep_icl,
-    tokens_in_flight_sweep,
-    tokens_in_flight_sweep_icl,
-    total_throughput_sweep,
+    prefill_throughput_per_user_sweep_line,
+    prefill_throughput_sweep_line,
+    throughput_per_user_sweep_line,
+    throughput_sweep_line,
+    throughput_sweep_line_icl,
+    tokens_in_flight_sweep_line,
+    tokens_in_flight_sweep_line_icl,
+    total_throughput_sweep_line,
 )
 
 
 class TestConcurrencySweep:
     def test_empty_input(self) -> None:
-        ts, conc = concurrency_sweep(
+        ts, conc = concurrency_sweep_line(
             np.array([], dtype=np.float64), np.array([], dtype=np.float64)
         )
         assert len(ts) == 0
         assert len(conc) == 0
 
     def test_all_nan(self) -> None:
-        ts, conc = concurrency_sweep(
+        ts, conc = concurrency_sweep_line(
             np.array([np.nan, np.nan]), np.array([np.nan, np.nan])
         )
         assert len(ts) == 0
@@ -40,7 +40,7 @@ class TestConcurrencySweep:
     def test_single_request(self) -> None:
         start = np.array([100.0])
         end = np.array([200.0])
-        ts, conc = concurrency_sweep(start, end)
+        ts, conc = concurrency_sweep_line(start, end)
         assert len(ts) == 2
         assert ts[0] == 100.0
         assert ts[1] == 200.0
@@ -51,7 +51,7 @@ class TestConcurrencySweep:
         """Sequential requests: concurrency always 0 or 1."""
         start = np.array([100.0, 300.0, 500.0])
         end = np.array([200.0, 400.0, 600.0])
-        ts, conc = concurrency_sweep(start, end)
+        ts, conc = concurrency_sweep_line(start, end)
         # All concurrency values should be 0 or 1
         assert np.all((conc == 0) | (conc == 1))
         assert float(np.max(conc)) == 1.0
@@ -60,13 +60,13 @@ class TestConcurrencySweep:
         """10 overlapping requests → peak concurrency is 10."""
         start = np.array([float(i) for i in range(10)])
         end = np.array([float(i + 100) for i in range(10)])
-        ts, conc = concurrency_sweep(start, end)
+        ts, conc = concurrency_sweep_line(start, end)
         assert float(np.max(conc)) == 10.0
 
     def test_nan_records_excluded(self) -> None:
         start = np.array([100.0, np.nan, 300.0])
         end = np.array([200.0, np.nan, 400.0])
-        ts, conc = concurrency_sweep(start, end)
+        ts, conc = concurrency_sweep_line(start, end)
         # Only 2 valid records
         assert len(ts) == 4  # 2 records * 2 events each
         assert float(np.max(conc)) <= 2.0
@@ -75,13 +75,13 @@ class TestConcurrencySweep:
         """3 fully overlapping requests."""
         start = np.array([0.0, 0.0, 0.0])
         end = np.array([100.0, 100.0, 100.0])
-        ts, conc = concurrency_sweep(start, end)
+        ts, conc = concurrency_sweep_line(start, end)
         assert float(np.max(conc)) == 3.0
 
 
 class TestThroughputSweep:
     def test_empty_input(self) -> None:
-        ts, tput = throughput_sweep(
+        ts, tput = throughput_sweep_line(
             np.array([], dtype=np.float64),
             np.array([], dtype=np.float64),
             np.array([], dtype=np.float64),
@@ -93,7 +93,7 @@ class TestThroughputSweep:
         gen_start = np.array([0.0])
         end = np.array([100.0])
         output_tokens = np.array([101.0])
-        ts, tput = throughput_sweep(gen_start, end, output_tokens)
+        ts, tput = throughput_sweep_line(gen_start, end, output_tokens)
         assert len(ts) == 2
         assert tput[0] == pytest.approx(1.0)  # rate added at start
         assert tput[1] == pytest.approx(0.0)  # rate removed at end
@@ -103,7 +103,7 @@ class TestThroughputSweep:
         gen_start = np.array([0.0, 50.0])
         end = np.array([100.0, 150.0])
         output_tokens = np.array([1.0, 11.0])  # First: (1-1)/100=0, Second: 10/100=0.1
-        ts, tput = throughput_sweep(gen_start, end, output_tokens)
+        ts, tput = throughput_sweep_line(gen_start, end, output_tokens)
         # First request has rate 0, so only 1 valid request contributes
         # (1-1)/100 = 0 rate for first, so it's technically valid but 0 duration check handles it
         assert len(ts) > 0
@@ -112,13 +112,13 @@ class TestThroughputSweep:
         gen_start = np.array([0.0, np.nan])
         end = np.array([100.0, 200.0])
         output_tokens = np.array([11.0, np.nan])
-        ts, tput = throughput_sweep(gen_start, end, output_tokens)
+        ts, tput = throughput_sweep_line(gen_start, end, output_tokens)
         assert len(ts) == 2  # Only 1 valid request
 
 
 class TestPrefillThroughputSweep:
     def test_empty_input(self) -> None:
-        ts, tput = prefill_throughput_sweep(
+        ts, tput = prefill_throughput_sweep_line(
             np.array([], dtype=np.float64),
             np.array([], dtype=np.float64),
             np.array([], dtype=np.float64),
@@ -131,7 +131,7 @@ class TestPrefillThroughputSweep:
         start = np.array([0.0])
         gen_start = np.array([50.0])
         input_tokens = np.array([100.0])
-        ts, tput = prefill_throughput_sweep(start, gen_start, input_tokens)
+        ts, tput = prefill_throughput_sweep_line(start, gen_start, input_tokens)
         assert len(ts) == 2
         assert tput[0] == pytest.approx(2.0)  # rate added at start
         assert tput[1] == pytest.approx(0.0)  # rate removed at gen_start
@@ -141,7 +141,7 @@ class TestPrefillThroughputSweep:
         start = np.array([0.0, 0.0, 0.0])
         gen_start = np.array([50.0, np.nan, 50.0])
         input_tokens = np.array([100.0, 100.0, np.nan])
-        ts, tput = prefill_throughput_sweep(start, gen_start, input_tokens)
+        ts, tput = prefill_throughput_sweep_line(start, gen_start, input_tokens)
         # Only 1 valid record
         assert len(ts) == 2
 
@@ -150,7 +150,7 @@ class TestPrefillThroughputSweep:
         start = np.array([100.0])
         gen_start = np.array([100.0])
         input_tokens = np.array([50.0])
-        ts, tput = prefill_throughput_sweep(start, gen_start, input_tokens)
+        ts, tput = prefill_throughput_sweep_line(start, gen_start, input_tokens)
         assert len(ts) == 0
         assert len(tput) == 0
 
@@ -162,14 +162,14 @@ class TestPrefillThroughputSweep:
         start = np.array([0.0, 10.0])
         gen_start = np.array([50.0, 60.0])
         input_tokens = np.array([100.0, 150.0])
-        ts, tput = prefill_throughput_sweep(start, gen_start, input_tokens)
+        ts, tput = prefill_throughput_sweep_line(start, gen_start, input_tokens)
         assert float(np.max(tput)) == pytest.approx(5.0)
 
 
 class TestTotalThroughputSweep:
     def test_empty_input(self) -> None:
         empty = np.array([], dtype=np.float64)
-        ts, tput = total_throughput_sweep(empty, empty, empty, empty, empty)
+        ts, tput = total_throughput_sweep_line(empty, empty, empty, empty, empty)
         assert len(ts) == 0
 
     def test_single_request_combines_phases(self) -> None:
@@ -182,7 +182,7 @@ class TestTotalThroughputSweep:
         input_tokens = np.array([100.0])
         output_tokens = np.array([101.0])
 
-        ts, tput = total_throughput_sweep(
+        ts, tput = total_throughput_sweep_line(
             start, gen_start, end, input_tokens, output_tokens
         )
         assert len(ts) > 0
@@ -199,17 +199,17 @@ class TestTotalThroughputSweep:
         output_tokens = np.array([101.0, 51.0, 76.0])
 
         # Single-pass
-        ts1, vals1 = total_throughput_sweep(
+        ts1, vals1 = total_throughput_sweep_line(
             start, gen_start, end, input_tokens, output_tokens
         )
 
         # Two-pass + add
-        pts, pvals = prefill_throughput_sweep(start, gen_start, input_tokens)
-        tts, tvals = throughput_sweep(gen_start, end, output_tokens)
+        pts, pvals = prefill_throughput_sweep_line(start, gen_start, input_tokens)
+        tts, tvals = throughput_sweep_line(gen_start, end, output_tokens)
         ts2, vals2 = add_step_functions(pts, pvals, tts, tvals)
 
         # Both should give same time-weighted avg over the full window
-        from aiperf.analysis.sweep import compute_time_weighted_stats
+        from aiperf.analysis.sweepline import compute_time_weighted_stats
 
         w_start = min(float(ts1[0]), float(ts2[0]))
         w_end = max(float(ts1[-1]), float(ts2[-1]))
@@ -226,7 +226,7 @@ class TestTotalThroughputSweep:
         input_tokens = np.array([100.0])
         output_tokens = np.array([np.nan])
 
-        ts, tput = total_throughput_sweep(
+        ts, tput = total_throughput_sweep_line(
             start, gen_start, end, input_tokens, output_tokens
         )
         assert len(ts) > 0
@@ -240,7 +240,7 @@ class TestTotalThroughputSweep:
         input_tokens = np.array([np.nan])
         output_tokens = np.array([101.0])
 
-        ts, tput = total_throughput_sweep(
+        ts, tput = total_throughput_sweep_line(
             start, gen_start, end, input_tokens, output_tokens
         )
         assert len(ts) > 0
@@ -249,7 +249,7 @@ class TestTotalThroughputSweep:
 
 class TestThroughputSweepIcl:
     def test_empty_input(self) -> None:
-        ts, tput = throughput_sweep_icl(
+        ts, tput = throughput_sweep_line_icl(
             np.array([], dtype=np.float64),
             np.array([], dtype=np.float64),
             np.array([], dtype=np.float64),
@@ -266,7 +266,7 @@ class TestThroughputSweepIcl:
         icl_record_indices = np.array([0, 0, 0], dtype=np.int32)
         icl_offsets = np.array([0], dtype=np.int64)
 
-        ts, tput = throughput_sweep_icl(
+        ts, tput = throughput_sweep_line_icl(
             gen_start, output_tokens, icl_values, icl_record_indices, icl_offsets
         )
         assert len(ts) == 6  # 3 chunks * 2 events each
@@ -282,7 +282,7 @@ class TestThroughputSweepIcl:
         icl_record_indices = np.array([0], dtype=np.int32)
         icl_offsets = np.array([0], dtype=np.int64)
 
-        ts, tput = throughput_sweep_icl(
+        ts, tput = throughput_sweep_line_icl(
             gen_start, output_tokens, icl_values, icl_record_indices, icl_offsets
         )
         assert len(ts) == 0
@@ -297,7 +297,7 @@ class TestThroughputSweepIcl:
         icl_record_indices = np.array([0, 0, 1, 1], dtype=np.int32)
         icl_offsets = np.array([0, 2], dtype=np.int64)
 
-        ts, tput = throughput_sweep_icl(
+        ts, tput = throughput_sweep_line_icl(
             gen_start, output_tokens, icl_values, icl_record_indices, icl_offsets
         )
         assert len(ts) == 8  # 4 chunks * 2 events
@@ -312,7 +312,7 @@ class TestThroughputSweepIcl:
         icl_record_indices = np.array([0, 0, 0], dtype=np.int32)
         icl_offsets = np.array([0], dtype=np.int64)
 
-        ts, tput = throughput_sweep_icl(
+        ts, tput = throughput_sweep_line_icl(
             gen_start, output_tokens, icl_values, icl_record_indices, icl_offsets
         )
         assert len(ts) == 6
@@ -563,8 +563,10 @@ class TestThroughputPerUserSweep:
         gen_start = np.array([0.0])
         end = np.array([100.0])
         # Throughput sweep for this request: rate = (101-1)/100 = 1.0 tokens/ns
-        tput_ts, tput_vals = throughput_sweep(gen_start, end, np.array([101.0]))
-        ts, per_user = throughput_per_user_sweep(gen_start, end, tput_ts, tput_vals)
+        tput_ts, tput_vals = throughput_sweep_line(gen_start, end, np.array([101.0]))
+        ts, per_user = throughput_per_user_sweep_line(
+            gen_start, end, tput_ts, tput_vals
+        )
         assert len(ts) > 0
         # With concurrency 1, per-user should equal aggregate
         max_val = float(np.max(per_user))
@@ -576,8 +578,10 @@ class TestThroughputPerUserSweep:
         end = np.array([100.0, 100.0, 100.0, 100.0, 100.0])
         output_tokens = np.array([101.0, 101.0, 101.0, 101.0, 101.0])
         # Each request: rate = 1.0 tokens/ns, aggregate = 5.0
-        tput_ts, tput_vals = throughput_sweep(gen_start, end, output_tokens)
-        ts, per_user = throughput_per_user_sweep(gen_start, end, tput_ts, tput_vals)
+        tput_ts, tput_vals = throughput_sweep_line(gen_start, end, output_tokens)
+        ts, per_user = throughput_per_user_sweep_line(
+            gen_start, end, tput_ts, tput_vals
+        )
         assert len(ts) > 0
         # Peak aggregate = 5.0, concurrency = 5 → per-user = 1.0
         max_val = float(np.max(per_user))
@@ -588,8 +592,10 @@ class TestThroughputPerUserSweep:
         gen_start = np.array([0.0, np.nan])
         end = np.array([100.0, np.nan])
         output_tokens = np.array([101.0, np.nan])
-        tput_ts, tput_vals = throughput_sweep(gen_start, end, output_tokens)
-        ts, per_user = throughput_per_user_sweep(gen_start, end, tput_ts, tput_vals)
+        tput_ts, tput_vals = throughput_sweep_line(gen_start, end, output_tokens)
+        ts, per_user = throughput_per_user_sweep_line(
+            gen_start, end, tput_ts, tput_vals
+        )
         # Only 1 valid request → concurrency 1 → per-user = aggregate
         if len(ts) > 0:
             max_val = float(np.max(per_user))
@@ -601,7 +607,9 @@ class TestThroughputPerUserSweep:
         end = np.array([], dtype=np.float64)
         tput_ts = np.zeros(0, dtype=np.float64)
         tput_vals = np.zeros(0, dtype=np.float64)
-        ts, per_user = throughput_per_user_sweep(gen_start, end, tput_ts, tput_vals)
+        ts, per_user = throughput_per_user_sweep_line(
+            gen_start, end, tput_ts, tput_vals
+        )
         assert len(ts) == 0
 
 
@@ -612,8 +620,10 @@ class TestPrefillThroughputPerUserSweep:
         gen_start = np.array([50.0])
         input_tokens = np.array([100.0])
         # Prefill rate = 100/50 = 2.0 tokens/ns
-        ptput_ts, ptput_vals = prefill_throughput_sweep(start, gen_start, input_tokens)
-        ts, per_user = prefill_throughput_per_user_sweep(
+        ptput_ts, ptput_vals = prefill_throughput_sweep_line(
+            start, gen_start, input_tokens
+        )
+        ts, per_user = prefill_throughput_per_user_sweep_line(
             start, gen_start, ptput_ts, ptput_vals
         )
         assert len(ts) > 0
@@ -626,8 +636,10 @@ class TestPrefillThroughputPerUserSweep:
         gen_start = np.array([50.0, 50.0, 50.0])
         input_tokens = np.array([100.0, 100.0, 100.0])
         # Each prefill: rate = 2.0, aggregate = 6.0, concurrency = 3
-        ptput_ts, ptput_vals = prefill_throughput_sweep(start, gen_start, input_tokens)
-        ts, per_user = prefill_throughput_per_user_sweep(
+        ptput_ts, ptput_vals = prefill_throughput_sweep_line(
+            start, gen_start, input_tokens
+        )
+        ts, per_user = prefill_throughput_per_user_sweep_line(
             start, gen_start, ptput_ts, ptput_vals
         )
         assert len(ts) > 0
@@ -639,8 +651,10 @@ class TestPrefillThroughputPerUserSweep:
         start = np.array([0.0, np.nan])
         gen_start = np.array([50.0, np.nan])
         input_tokens = np.array([100.0, np.nan])
-        ptput_ts, ptput_vals = prefill_throughput_sweep(start, gen_start, input_tokens)
-        ts, per_user = prefill_throughput_per_user_sweep(
+        ptput_ts, ptput_vals = prefill_throughput_sweep_line(
+            start, gen_start, input_tokens
+        )
+        ts, per_user = prefill_throughput_per_user_sweep_line(
             start, gen_start, ptput_ts, ptput_vals
         )
         if len(ts) > 0:
@@ -653,7 +667,7 @@ class TestPrefillThroughputPerUserSweep:
         gen_start = np.array([], dtype=np.float64)
         ptput_ts = np.zeros(0, dtype=np.float64)
         ptput_vals = np.zeros(0, dtype=np.float64)
-        ts, per_user = prefill_throughput_per_user_sweep(
+        ts, per_user = prefill_throughput_per_user_sweep_line(
             start, gen_start, ptput_ts, ptput_vals
         )
         assert len(ts) == 0
@@ -662,7 +676,7 @@ class TestPrefillThroughputPerUserSweep:
 class TestTokensInFlightSweep:
     def test_empty_input(self) -> None:
         empty = np.array([], dtype=np.float64)
-        ts, tif = tokens_in_flight_sweep(empty, empty, empty, empty, empty)
+        ts, tif = tokens_in_flight_sweep_line(empty, empty, empty, empty, empty)
         assert len(ts) == 0
         assert len(tif) == 0
 
@@ -674,7 +688,9 @@ class TestTokensInFlightSweep:
         input_tok = np.array([100.0])
         output_tok = np.array([50.0])
 
-        ts, tif = tokens_in_flight_sweep(start, gen_start, end, input_tok, output_tok)
+        ts, tif = tokens_in_flight_sweep_line(
+            start, gen_start, end, input_tok, output_tok
+        )
         assert len(ts) > 0
 
         # During prefill [0, 10): 100 input tokens in KV cache
@@ -696,7 +712,9 @@ class TestTokensInFlightSweep:
         input_tok = np.array([100.0, 200.0])
         output_tok = np.array([50.0, 80.0])
 
-        ts, tif = tokens_in_flight_sweep(start, gen_start, end, input_tok, output_tok)
+        ts, tif = tokens_in_flight_sweep_line(
+            start, gen_start, end, input_tok, output_tok
+        )
 
         # At t=7 (both in prefill): 100 + 200 = 300
         idx = np.searchsorted(ts, 7.0, side="right") - 1
@@ -718,7 +736,9 @@ class TestTokensInFlightSweep:
         input_tok = np.array([100.0, 200.0])
         output_tok = np.array([50.0, 80.0])
 
-        ts, tif = tokens_in_flight_sweep(start, gen_start, end, input_tok, output_tok)
+        ts, tif = tokens_in_flight_sweep_line(
+            start, gen_start, end, input_tok, output_tok
+        )
 
         # Only req0 contributes prefill (req1 has NaN start → no input_tokens added)
         # But req1 has valid gen_start and end, so +80 at t=15, -80 at t=65
@@ -734,7 +754,9 @@ class TestTokensInFlightSweep:
         input_tok = np.array([100.0])
         output_tok = np.array([50.0])
 
-        ts, tif = tokens_in_flight_sweep(start, gen_start, end, input_tok, output_tok)
+        ts, tif = tokens_in_flight_sweep_line(
+            start, gen_start, end, input_tok, output_tok
+        )
         assert len(ts) > 0
         # Input tokens added at start, never freed (NaN end)
         # gen phase invalid (NaN end → gen_dur invalid), so only +100 at t=0
@@ -748,7 +770,9 @@ class TestTokensInFlightSweep:
         input_tok = np.array([100.0])
         output_tok = np.array([50.0])
 
-        ts, tif = tokens_in_flight_sweep(start, gen_start, end, input_tok, output_tok)
+        ts, tif = tokens_in_flight_sweep_line(
+            start, gen_start, end, input_tok, output_tok
+        )
         assert len(ts) > 0
         # Only output_tokens: +50 at gen_start, -50 at end
         assert float(np.max(tif)) == pytest.approx(50.0)
@@ -762,7 +786,9 @@ class TestTokensInFlightSweep:
         input_tok = np.array([4096.0])
         output_tok = np.array([2048.0])
 
-        ts, tif = tokens_in_flight_sweep(start, gen_start, end, input_tok, output_tok)
+        ts, tif = tokens_in_flight_sweep_line(
+            start, gen_start, end, input_tok, output_tok
+        )
 
         # Peak during generation = 4096 + 2048 = 6144
         assert float(np.max(tif)) == pytest.approx(6144.0)
@@ -780,7 +806,7 @@ class TestTokensInFlightSweepIcl:
         input_tok = np.array([100.0])
         output_tok = np.array([50.0])
 
-        ts_icl, tif_icl = tokens_in_flight_sweep_icl(
+        ts_icl, tif_icl = tokens_in_flight_sweep_line_icl(
             start,
             gen_start,
             end,
@@ -790,7 +816,7 @@ class TestTokensInFlightSweepIcl:
             icl_record_indices=np.zeros(0, dtype=np.int32),
             icl_offsets=np.zeros(0, dtype=np.int64),
         )
-        ts_coarse, tif_coarse = tokens_in_flight_sweep(
+        ts_coarse, tif_coarse = tokens_in_flight_sweep_line(
             start, gen_start, end, input_tok, output_tok
         )
         np.testing.assert_array_equal(ts_icl, ts_coarse)
@@ -809,7 +835,7 @@ class TestTokensInFlightSweepIcl:
         icl_rec = np.array([0, 0, 0, 0, 0], dtype=np.int32)
         icl_off = np.array([0], dtype=np.int64)
 
-        ts, tif = tokens_in_flight_sweep_icl(
+        ts, tif = tokens_in_flight_sweep_line_icl(
             start,
             gen_start,
             end,
@@ -848,7 +874,7 @@ class TestTokensInFlightSweepIcl:
         icl_rec = np.array([0, 0, 0, 0, 0], dtype=np.int32)
         icl_off = np.array([0], dtype=np.int64)
 
-        ts, tif = tokens_in_flight_sweep_icl(
+        ts, tif = tokens_in_flight_sweep_line_icl(
             start,
             gen_start,
             end,
@@ -877,7 +903,7 @@ class TestTokensInFlightSweepIcl:
         icl_rec = np.array([0, 0, 1, 1], dtype=np.int32)
         icl_off = np.array([0, 2], dtype=np.int64)
 
-        ts, tif = tokens_in_flight_sweep_icl(
+        ts, tif = tokens_in_flight_sweep_line_icl(
             start,
             gen_start,
             end,
@@ -908,7 +934,7 @@ class TestTokensInFlightSweepIcl:
         icl_rec = np.zeros(10, dtype=np.int32)
         icl_off = np.array([0], dtype=np.int64)
 
-        ts_icl, tif_icl = tokens_in_flight_sweep_icl(
+        ts_icl, tif_icl = tokens_in_flight_sweep_line_icl(
             start,
             gen_start,
             end,
@@ -918,7 +944,7 @@ class TestTokensInFlightSweepIcl:
             icl_rec,
             icl_off,
         )
-        ts_coarse, tif_coarse = tokens_in_flight_sweep(
+        ts_coarse, tif_coarse = tokens_in_flight_sweep_line(
             start, gen_start, end, input_tok, output_tok
         )
 

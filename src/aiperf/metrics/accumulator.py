@@ -6,21 +6,21 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
 
-from aiperf.analysis.sweep import (
-    SweepCurves,
-    concurrency_sweep,
+from aiperf.analysis.sweepline import (
+    SweepLineCurves,
+    concurrency_sweep_line,
     divide_step_functions,
-    prefill_throughput_sweep,
-    throughput_sweep,
-    throughput_sweep_icl,
-    tokens_in_flight_sweep,
-    tokens_in_flight_sweep_icl,
-    total_throughput_sweep,
+    prefill_throughput_sweep_line,
+    throughput_sweep_line,
+    throughput_sweep_line_icl,
+    tokens_in_flight_sweep_line,
+    tokens_in_flight_sweep_line_icl,
+    total_throughput_sweep_line,
 )
 from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -42,6 +42,12 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
+
+
+FloatArray: TypeAlias = NDArray[np.float64]
+Int64Array: TypeAlias = NDArray[np.int64]
+Int32Array: TypeAlias = NDArray[np.int32]
+BoolArray: TypeAlias = NDArray[np.bool_]
 
 
 _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
@@ -124,7 +130,6 @@ class MetricsAccumulator(BaseMetricsProcessor):
             metric.tag: metric.aggregation_kind
             for metric in _all_metric_classes
             if metric.type == MetricType.AGGREGATE
-            and hasattr(metric, "aggregation_kind")
         }
 
         # Metric class metadata for result creation
@@ -183,7 +188,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
             },
         )
 
-    def query_time_range(self, start_ns: int, end_ns: int) -> NDArray[np.bool_]:
+    def query_time_range(self, start_ns: int, end_ns: int) -> BoolArray:
         """Return a boolean mask where True marks records in [start_ns, end_ns)."""
         n = self._column_store.count
         if n == 0:
@@ -206,7 +211,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     def _compute_results(
         self,
-        mask: NDArray[np.bool_] | None = None,
+        mask: BoolArray | None = None,
         *,
         window_start_ns: int | None = None,
         window_end_ns: int | None = None,
@@ -221,7 +226,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         scalar_dict: MetricResultsDict = MetricResultsDict()
         scalar_dict.window_start_ns = window_start_ns
         scalar_dict.window_end_ns = window_end_ns
-        record_arrays: dict[MetricTagT, tuple[NDArray[np.float64], float]] = {}
+        record_arrays: dict[MetricTagT, tuple[FloatArray, float]] = {}
 
         self._collect_scalars_and_arrays(mask, scalar_dict, record_arrays)
         self._resolve_derived_metrics(scalar_dict)
@@ -229,9 +234,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     def _collect_scalars_and_arrays(
         self,
-        mask: NDArray[np.bool_] | None,
+        mask: BoolArray | None,
         scalar_dict: MetricResultsDict,
-        record_arrays: dict[MetricTagT, tuple[NDArray[np.float64], float]],
+        record_arrays: dict[MetricTagT, tuple[FloatArray, float]],
     ) -> None:
         """Iterate columns, populating scalar_dict and record_arrays in-place."""
         store = self._column_store
@@ -280,7 +285,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
     def _build_metric_results(
         self,
         scalar_dict: MetricResultsDict,
-        record_arrays: dict[MetricTagT, tuple[NDArray[np.float64], float]],
+        record_arrays: dict[MetricTagT, tuple[FloatArray, float]],
     ) -> dict[MetricTagT, MetricResult]:
         """Convert scalar_dict + record_arrays into a MetricResult dict."""
         output: dict[MetricTagT, MetricResult] = {}
@@ -305,7 +310,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     def compute_results_for_mask(
         self,
-        mask: NDArray[np.bool_],
+        mask: BoolArray,
         *,
         window_start_ns: int | None = None,
         window_end_ns: int | None = None,
@@ -349,7 +354,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         """Export final metrics results. Delegates to summarize()."""
         return await self.summarize()
 
-    def _compute_sweeps(self) -> SweepCurves:
+    def _compute_sweeps(self) -> SweepLineCurves:
         """Compute concurrency, throughput, and prefill throughput sweep curves."""
         store = self._column_store
         n = store.count
@@ -360,22 +365,22 @@ class MetricsAccumulator(BaseMetricsProcessor):
         input_tokens = store.numeric("input_sequence_length")
 
         # Base sweeps
-        concurrency_ts, concurrency_vals = concurrency_sweep(start_ns, end_ns)
+        concurrency_ts, concurrency_vals = concurrency_sweep_line(start_ns, end_ns)
         throughput_ts, throughput_vals = self._icl_aware_throughput(
             store, generation_start_ns, end_ns, output_tokens
         )
-        prefill_throughput_ts, prefill_throughput_vals = prefill_throughput_sweep(
+        prefill_throughput_ts, prefill_throughput_vals = prefill_throughput_sweep_line(
             start_ns, generation_start_ns, input_tokens
         )
 
         # Phase-specific concurrency (also used as divisor for per-user metrics)
-        gen_conc_ts, gen_conc_vals = concurrency_sweep(generation_start_ns, end_ns)
-        prefill_conc_ts, prefill_conc_vals = concurrency_sweep(
+        gen_conc_ts, gen_conc_vals = concurrency_sweep_line(generation_start_ns, end_ns)
+        prefill_conc_ts, prefill_conc_vals = concurrency_sweep_line(
             start_ns, generation_start_ns
         )
 
         # Derived sweeps (division, totals, tokens-in-flight)
-        total_throughput_ts, total_throughput_vals = total_throughput_sweep(
+        total_throughput_ts, total_throughput_vals = total_throughput_sweep_line(
             start_ns, generation_start_ns, end_ns, input_tokens, output_tokens
         )
         tput_per_user_ts, tput_per_user_vals = divide_step_functions(
@@ -391,7 +396,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
             store, start_ns, generation_start_ns, end_ns, input_tokens, output_tokens
         )
 
-        return SweepCurves(
+        return SweepLineCurves(
             concurrency_ts=concurrency_ts,
             concurrency=concurrency_vals,
             throughput_ts=throughput_ts,
@@ -415,7 +420,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
     def _inject_sweep_metrics(
         self,
         results: dict[MetricTagT, MetricResult],
-        sweeps: SweepCurves,
+        sweeps: SweepLineCurves,
     ) -> None:
         """Inject time-weighted sweep metrics into results."""
         if len(sweeps.concurrency_ts) == 0:
@@ -426,7 +431,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     def _compute_timeslices(
         self,
-        sweeps: SweepCurves,
+        sweeps: SweepLineCurves,
     ) -> tuple[
         dict[TimeSliceT, dict[MetricTagT, MetricResult]],
         dict[TimeSliceT, TimesliceWindow],
@@ -508,35 +513,35 @@ class MetricsAccumulator(BaseMetricsProcessor):
     @staticmethod
     def _icl_aware_throughput(
         store: ColumnStore,
-        generation_start_ns: NDArray[np.float64],
-        end_ns: NDArray[np.float64],
-        output_tokens: NDArray[np.float64],
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        generation_start_ns: FloatArray,
+        end_ns: FloatArray,
+        output_tokens: FloatArray,
+    ) -> tuple[FloatArray, FloatArray]:
         """Compute throughput sweep, preferring ICL-aware when available."""
         icl = MetricsAccumulator._get_icl_data(store)
         if icl is not None:
-            return throughput_sweep_icl(
+            return throughput_sweep_line_icl(
                 generation_start_ns,
                 output_tokens,
                 icl.values,
                 icl.record_indices,
                 icl.offsets,
             )
-        return throughput_sweep(generation_start_ns, end_ns, output_tokens)
+        return throughput_sweep_line(generation_start_ns, end_ns, output_tokens)
 
     @staticmethod
     def _icl_aware_tokens_in_flight(
         store: ColumnStore,
-        start_ns: NDArray[np.float64],
-        generation_start_ns: NDArray[np.float64],
-        end_ns: NDArray[np.float64],
-        input_tokens: NDArray[np.float64],
-        output_tokens: NDArray[np.float64],
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        start_ns: FloatArray,
+        generation_start_ns: FloatArray,
+        end_ns: FloatArray,
+        input_tokens: FloatArray,
+        output_tokens: FloatArray,
+    ) -> tuple[FloatArray, FloatArray]:
         """Compute tokens in flight, preferring ICL-aware when available."""
         icl = MetricsAccumulator._get_icl_data(store)
         if icl is not None:
-            return tokens_in_flight_sweep_icl(
+            return tokens_in_flight_sweep_line_icl(
                 start_ns,
                 generation_start_ns,
                 end_ns,
@@ -546,7 +551,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 icl.record_indices,
                 icl.offsets,
             )
-        return tokens_in_flight_sweep(
+        return tokens_in_flight_sweep_line(
             start_ns, generation_start_ns, end_ns, input_tokens, output_tokens
         )
 

@@ -17,13 +17,13 @@ from aiperf.analysis.ramp_detection import (
     mser5_boundary_ns,
 )
 from aiperf.analysis.stationarity import batch_means_trend_test
-from aiperf.analysis.sweep import (
-    SweepCurves,
-    concurrency_sweep,
+from aiperf.analysis.sweepline import (
+    SweepLineCurves,
+    concurrency_sweep_line,
     divide_step_functions,
-    prefill_throughput_sweep,
-    throughput_sweep,
-    total_throughput_sweep,
+    prefill_throughput_sweep_line,
+    throughput_sweep_line,
+    total_throughput_sweep_line,
 )
 from aiperf.common.config import UserConfig
 from aiperf.common.environment import Environment
@@ -310,12 +310,14 @@ class SteadyStateAnalyzer:
         ttft = store.numeric("time_to_first_token")
 
         # Concurrency curve (needed for both detection and stats)
-        sorted_c_ts, concurrency = concurrency_sweep(start_ns, end_ns)
+        sorted_c_ts, concurrency = concurrency_sweep_line(start_ns, end_ns)
 
         # Throughput curve (needed for Signal 4: CUSUM on throughput)
         generation_start_ns = store.generation_start_ns[:n]
         output_tokens = store.numeric("output_tokens")
-        sorted_t_ts, tput = throughput_sweep(generation_start_ns, end_ns, output_tokens)
+        sorted_t_ts, tput = throughput_sweep_line(
+            generation_start_ns, end_ns, output_tokens
+        )
 
         # Per-signal diagnostics
         cusum_start_ns: float | None = None
@@ -368,15 +370,15 @@ class SteadyStateAnalyzer:
         )
 
         input_tokens = store.numeric("input_sequence_length")
-        sorted_p_ts, prefill_tput = prefill_throughput_sweep(
+        sorted_p_ts, prefill_tput = prefill_throughput_sweep_line(
             start_ns, generation_start_ns, input_tokens
         )
 
         # Phase-specific concurrency (also used as divisor for per-user metrics)
-        gen_conc_ts, gen_conc = concurrency_sweep(generation_start_ns, end_ns)
-        pre_conc_ts, pre_conc = concurrency_sweep(start_ns, generation_start_ns)
+        gen_conc_ts, gen_conc = concurrency_sweep_line(generation_start_ns, end_ns)
+        pre_conc_ts, pre_conc = concurrency_sweep_line(start_ns, generation_start_ns)
 
-        total_ts, total_tput = total_throughput_sweep(
+        total_ts, total_tput = total_throughput_sweep_line(
             start_ns, generation_start_ns, end_ns, input_tokens, output_tokens
         )
         tpu_ts, tpu_vals = divide_step_functions(
@@ -390,7 +392,7 @@ class SteadyStateAnalyzer:
         )
 
         # Build unified sweep curves and compute all metrics in one call
-        sweeps = SweepCurves(
+        sweeps = SweepLineCurves(
             concurrency_ts=sorted_c_ts,
             concurrency=concurrency,
             throughput_ts=tput_ts,

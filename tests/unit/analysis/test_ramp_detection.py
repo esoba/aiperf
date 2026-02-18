@@ -14,7 +14,7 @@ from aiperf.analysis.ramp_detection import (
     mser5_boundary_ns,
     mser5_truncation_point,
 )
-from aiperf.analysis.sweep import concurrency_sweep, throughput_sweep
+from aiperf.analysis.sweepline import concurrency_sweep_line, throughput_sweep_line
 
 
 class TestCusumSteadyStateWindow:
@@ -30,7 +30,7 @@ class TestCusumSteadyStateWindow:
         n = 100
         start_ns = np.zeros(n)
         end_ns = np.full(n, 1000.0)
-        sorted_ts, concurrency = concurrency_sweep(start_ns, end_ns)
+        sorted_ts, concurrency = concurrency_sweep_line(start_ns, end_ns)
 
         window_start, window_end = cusum_steady_state_window(sorted_ts, concurrency)
         assert window_start <= 100.0
@@ -41,7 +41,7 @@ class TestCusumSteadyStateWindow:
         n_steady = 50
         start_ns = np.linspace(0, 100, n_steady)
         end_ns = np.linspace(900, 1000, n_steady)
-        sorted_ts, concurrency = concurrency_sweep(start_ns, end_ns)
+        sorted_ts, concurrency = concurrency_sweep_line(start_ns, end_ns)
 
         window_start, window_end = cusum_steady_state_window(
             sorted_ts, concurrency, min_window_pct=10.0
@@ -54,7 +54,7 @@ class TestCusumSteadyStateWindow:
         """Window below min_window_pct → falls back to full range."""
         start_ns = np.array([0.0, 1.0, 2.0])
         end_ns = np.array([3.0, 4.0, 5.0])
-        sorted_ts, concurrency = concurrency_sweep(start_ns, end_ns)
+        sorted_ts, concurrency = concurrency_sweep_line(start_ns, end_ns)
 
         window_start, window_end = cusum_steady_state_window(
             sorted_ts, concurrency, min_window_pct=90.0
@@ -172,9 +172,11 @@ class TestDetectSteadyStateWindowCombined:
         # Throughput data
         generation_start_ns = start_ns + np.abs(ttft) * 0.1
         output_tokens = rng.integers(50, 200, n).astype(np.float64)
-        sorted_t_ts, tput = throughput_sweep(generation_start_ns, end_ns, output_tokens)
+        sorted_t_ts, tput = throughput_sweep_line(
+            generation_start_ns, end_ns, output_tokens
+        )
 
-        sorted_ts, concurrency = concurrency_sweep(start_ns, end_ns)
+        sorted_ts, concurrency = concurrency_sweep_line(start_ns, end_ns)
         return (
             sorted_ts,
             concurrency,
@@ -273,7 +275,7 @@ class TestDetectSteadyStateWindowCombined:
         latency = np.linspace(10, 1000, n)
         ttft = np.full(n, np.nan)
 
-        sorted_ts, conc = concurrency_sweep(start_ns, end_ns)
+        sorted_ts, conc = concurrency_sweep_line(start_ns, end_ns)
         ws, we, method = detect_steady_state_window(
             sorted_ts, conc, start_ns, end_ns, latency, ttft, min_window_pct=5.0
         )
