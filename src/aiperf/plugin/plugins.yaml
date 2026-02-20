@@ -448,6 +448,52 @@ dataset_client_store:
       files with O(1) lookup performance.
 
 # =============================================================================
+# Trace Generators
+# =============================================================================
+# Trace generators create synthetic trace datasets in mooncake-style JSONL format.
+# Each generator implements a different load pattern. Used by the gen-trace CLI.
+# =============================================================================
+trace_generator:
+  sin:
+    class: aiperf.dataset.synthesis.sin_trace_generator:SinTraceGenerator
+    metadata:
+      config_class: aiperf.dataset.synthesis.sin_trace_config:SinTraceConfig
+    description: |
+      Sinusoidal trace generator with configurable request rate and ISL/OSL ratio
+      following sinusoidal patterns with phase shift starting from minimum.
+
+# =============================================================================
+# Trace Converters
+# =============================================================================
+# Trace converters transform real-world trace data from various formats into
+# mooncake-style JSONL. Used by the convert CLI command.
+# =============================================================================
+trace_converter:
+  burstgpt:
+    class: aiperf.dataset.converters.burstgpt_converter:BurstGptConverter
+    metadata:
+      config_class: aiperf.dataset.converters.burstgpt_config:BurstGptConfig
+    description: |
+      Convert BurstGPT CSV (real ChatGPT/GPT-4 logs) to mooncake JSONL.
+      Supports model/log-type filtering, timestamp speed adjustment, and row sub-sampling.
+
+  nat:
+    class: aiperf.dataset.converters.nat_converter:NatConverter
+    metadata:
+      config_class: aiperf.dataset.converters.nat_config:NatConfig
+    description: |
+      Convert NAT profiler JSON traces to mooncake JSONL.
+      Extracts LLM calls, tokenizes prompt text, produces multi-turn session records.
+
+  telemetry:
+    class: aiperf.dataset.converters.telemetry_converter:TelemetryConverter
+    metadata:
+      config_class: aiperf.dataset.converters.telemetry_config:TelemetryConfig
+    description: |
+      Convert OpenAI-style telemetry JSONL to mooncake JSONL.
+      Classifies agent types, tokenizes messages, adds priority annotations.
+
+# =============================================================================
 # Timing Strategies
 # =============================================================================
 # Timing strategies control request scheduling and credit issuance.

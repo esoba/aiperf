@@ -238,6 +238,18 @@ class RandomGenerator:
         """
         return self._numpy_rng.normal(loc, scale, size)
 
+    def poisson(self, lam: float = 1.0, size=None):
+        """Draw samples from a Poisson distribution.
+
+        Args:
+            lam: Expected number of events (lambda >= 0), default 1.0
+            size: Output shape, optional
+
+        Returns:
+            Random sample(s) from Poisson distribution
+        """
+        return self._numpy_rng.poisson(lam, size=size)
+
     def sample_normal(
         self, mean: float, stddev: float, lower: float = -np.inf, upper: float = np.inf
     ) -> float:

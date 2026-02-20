@@ -74,6 +74,22 @@
         "$ref": "#/$defs/CustomDatasetLoaderPlugin"
       }
     },
+    "trace_generator": {
+      "title": "Trace Generator Plugins",
+      "type": "object",
+      "description": "Trace generators create synthetic trace datasets in mooncake-style JSONL format.\nEach generator implements a different load pattern (sinusoidal, constant, step, etc.).\nUsed by the gen-trace CLI command for offline dataset generation.",
+      "additionalProperties": {
+        "$ref": "#/$defs/TraceGeneratorPlugin"
+      }
+    },
+    "trace_converter": {
+      "title": "Trace Converter Plugins",
+      "type": "object",
+      "description": "Trace converters transform real-world trace data from various formats\ninto mooncake-style JSONL for use with aiperf profile --input-file.\nUsed by the convert CLI command for one-time preprocessing.",
+      "additionalProperties": {
+        "$ref": "#/$defs/TraceConverterPlugin"
+      }
+    },
     "endpoint": {
       "title": "Endpoint Plugins",
       "type": "object",
@@ -525,6 +541,88 @@
       ],
       "title": "Custom Dataset Loader Plugin",
       "description": "Custom dataset loaders parse different JSONL file formats into conversations.\nSupports single-turn, multi-turn, random-pool, and trace formats.\nAuto-detection: loaders are tried in priority order based on can_load()."
+    },
+    "TraceGeneratorPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Trace Generator Plugin",
+      "description": "Trace generators create synthetic trace datasets in mooncake-style JSONL format.\nEach generator implements a different load pattern (sinusoidal, constant, step, etc.).\nUsed by the gen-trace CLI command for offline dataset generation."
+    },
+    "TraceConverterPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Trace Converter Plugin",
+      "description": "Trace converters transform real-world trace data from various formats\ninto mooncake-style JSONL for use with aiperf profile --input-file.\nUsed by the convert CLI command for one-time preprocessing."
     },
     "EndpointPlugin": {
       "type": "object",

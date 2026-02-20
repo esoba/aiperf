@@ -10,7 +10,12 @@ from aiperf.dataset.synthesis.models import AnalysisStats, MetricStats, Synthesi
 from aiperf.dataset.synthesis.prefix_analyzer import PrefixAnalyzer
 from aiperf.dataset.synthesis.radix_tree import RadixNode, RadixTree, RadixTreeStats
 from aiperf.dataset.synthesis.rolling_hasher import RollingHasher
+from aiperf.dataset.synthesis.sin_trace_config import SinTraceConfig
 from aiperf.dataset.synthesis.synthesizer import Synthesizer
+from aiperf.dataset.synthesis.trace_generator import (
+    TraceGeneratorConfig,
+    TraceGeneratorProtocol,
+)
 
 __all__ = [
     "AnalysisStats",
@@ -22,6 +27,9 @@ __all__ = [
     "RadixTree",
     "RadixTreeStats",
     "RollingHasher",
+    "SinTraceConfig",
     "Synthesizer",
     "SynthesisParams",
+    "TraceGeneratorConfig",
+    "TraceGeneratorProtocol",
 ]

@@ -925,12 +925,14 @@ if TYPE_CHECKING:
     from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol, ServiceProtocol
     from aiperf.controller.protocols import ServiceManagerProtocol
     from aiperf.dataset.composer.base import BaseDatasetComposer
+    from aiperf.dataset.converters.trace_converter import TraceConverterProtocol
     from aiperf.dataset.protocols import CustomDatasetLoaderProtocol, DatasetBackingStoreProtocol, DatasetClientStoreProtocol, DatasetSamplingStrategyProtocol
+    from aiperf.dataset.synthesis.trace_generator import TraceGeneratorProtocol
     from aiperf.endpoints.protocols import EndpointProtocol
     from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
     from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ResultsProcessorType, ServiceRunType, ServiceType, TimingMode, TraceConverterType, TraceGeneratorType, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
@@ -975,6 +977,14 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.CUSTOM_DATASET_LOADER, "custom_dataset_loader"], name_or_class_path: CustomDatasetType | str) -> type[CustomDatasetLoaderProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.CUSTOM_DATASET_LOADER, "custom_dataset_loader"]) -> Iterator[tuple[PluginEntry, type[CustomDatasetLoaderProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.TRACE_GENERATOR, "trace_generator"], name_or_class_path: TraceGeneratorType | str) -> type[TraceGeneratorProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.TRACE_GENERATOR, "trace_generator"]) -> Iterator[tuple[PluginEntry, type[TraceGeneratorProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.TRACE_CONVERTER, "trace_converter"], name_or_class_path: TraceConverterType | str) -> type[TraceConverterProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.TRACE_CONVERTER, "trace_converter"]) -> Iterator[tuple[PluginEntry, type[TraceConverterProtocol]]]: ...
     @overload
     def get_class(category: Literal[PluginType.ENDPOINT, "endpoint"], name_or_class_path: EndpointType | str) -> type[EndpointProtocol]: ...
     @overload

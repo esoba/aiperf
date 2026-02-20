@@ -56,9 +56,25 @@ def _register_trace_commands() -> None:
     app.command(analyze_app)
 
 
+def _register_gen_trace_command() -> None:
+    """Register the gen-trace dataset generation command."""
+    from aiperf.cli_commands.gen_trace import gen_trace_app
+
+    app.command(gen_trace_app)
+
+
+def _register_convert_trace_command() -> None:
+    """Register the convert-trace command."""
+    from aiperf.cli_commands.convert import convert_app
+
+    app.command(convert_app)
+
+
 # Register subcommands
 _register_trace_commands()
 _register_service_command()
+_register_gen_trace_command()
+_register_convert_trace_command()
 
 
 @app.command(name="profile")

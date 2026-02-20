@@ -92,6 +92,22 @@ custom_dataset_loader:
     Supports single-turn, multi-turn, random-pool, and trace formats.
     Auto-detection: loaders are tried in priority order based on can_load().
 
+trace_generator:
+  protocol: aiperf.dataset.synthesis.trace_generator:TraceGeneratorProtocol
+  enum: TraceGeneratorType
+  description: |
+    Trace generators create synthetic trace datasets in mooncake-style JSONL format.
+    Each generator implements a different load pattern (sinusoidal, constant, step, etc.).
+    Used by the gen-trace CLI command for offline dataset generation.
+
+trace_converter:
+  protocol: aiperf.dataset.converters.trace_converter:TraceConverterProtocol
+  enum: TraceConverterType
+  description: |
+    Trace converters transform real-world trace data from various formats
+    into mooncake-style JSONL for use with aiperf profile --input-file.
+    Used by the convert CLI command for one-time preprocessing.
+
 # =============================================================================
 # Endpoint and Transport Categories
 # =============================================================================
