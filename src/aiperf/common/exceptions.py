@@ -189,6 +189,10 @@ class PluginDisabled(AIPerfError):
     """Raised when initializing an accumulator or stream exporter to indicate it is disabled and should not be loaded."""
 
 
+class PostProcessorDisabled(AIPerfError):
+    """Raised when initializing a post processor to indicate it is disabled and should not be loaded."""
+
+
 class ProxyError(AIPerfError):
     """Exception raised when a proxy encounters an error."""
 

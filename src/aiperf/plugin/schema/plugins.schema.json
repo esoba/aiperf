@@ -122,6 +122,22 @@
         "$ref": "#/$defs/AnalyzerPlugin"
       }
     },
+    "accuracy_grader": {
+      "title": "Accuracy Grader Plugins",
+      "type": "object",
+      "description": "Accuracy graders evaluate LLM responses against ground truth answers.\nSupports exact match, math expression, multiple choice, and code execution grading.\nOne-to-one mapping based on grader configuration or benchmark default.",
+      "additionalProperties": {
+        "$ref": "#/$defs/AccuracyGraderPlugin"
+      }
+    },
+    "accuracy_benchmark": {
+      "title": "Accuracy Benchmark Plugins",
+      "type": "object",
+      "description": "Accuracy benchmarks provide standardized problem sets for evaluating LLM correctness.\nSupports MMLU, AIME, HellaSwag, BigBench, Math500, GPQA Diamond, and more.\nOne-to-one mapping based on accuracy benchmark configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/AccuracyBenchmarkPlugin"
+      }
+    },
     "data_exporter": {
       "title": "Data Exporter Plugins",
       "type": "object",
@@ -912,6 +928,88 @@
       ],
       "title": "Analyzer Plugin",
       "description": "Analyzers derive results from accumulators at summarization time.\nThey declare accumulator dependencies and receive a SummaryContext\nwith accumulator references and prior outputs. No record ingestion.\nOne-to-many mapping: multiple analyzers loaded simultaneously."
+    },
+    "AccuracyGraderPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Accuracy Grader Plugin",
+      "description": "Accuracy graders evaluate LLM responses against ground truth answers.\nSupports exact match, math expression, multiple choice, and code execution grading.\nOne-to-one mapping based on grader configuration or benchmark default."
+    },
+    "AccuracyBenchmarkPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Accuracy Benchmark Plugin",
+      "description": "Accuracy benchmarks provide standardized problem sets for evaluating LLM correctness.\nSupports MMLU, AIME, HellaSwag, BigBench, Math500, GPQA Diamond, and more.\nOne-to-one mapping based on accuracy benchmark configuration."
     },
     "DataExporterPlugin": {
       "type": "object",

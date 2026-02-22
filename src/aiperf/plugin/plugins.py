@@ -922,6 +922,7 @@ if TYPE_CHECKING:
     # <generated-imports>
     # fmt: off
     # ruff: noqa: I001
+    from aiperf.accuracy.protocols import AccuracyBenchmarkProtocol, AccuracyGraderProtocol
     from aiperf.common.accumulator_protocols import AccumulatorProtocol, AnalyzerProtocol, StreamExporterProtocol
     from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol, ServiceProtocol
     from aiperf.controller.protocols import ServiceManagerProtocol
@@ -931,7 +932,7 @@ if TYPE_CHECKING:
     from aiperf.exporters.protocols import ArtifactPublisherProtocol, ConsoleExporterProtocol, DataExporterProtocol
     from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import AccumulatorType, AnalyzerType, ArrivalPattern, ArtifactPublisherType, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ServiceRunType, ServiceType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, AnalyzerType, ArrivalPattern, ArtifactPublisherType, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, RampType, RecordProcessorType, ServiceRunType, ServiceType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.protocols import RecordProcessorProtocol
     from aiperf.timing.intervals import IntervalGeneratorProtocol
     from aiperf.timing.ramping import RampStrategyProtocol
@@ -999,6 +1000,14 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.ANALYZER, "analyzer"], name_or_class_path: AnalyzerType | str) -> type[AnalyzerProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.ANALYZER, "analyzer"]) -> Iterator[tuple[PluginEntry, type[AnalyzerProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.ACCURACY_GRADER, "accuracy_grader"], name_or_class_path: AccuracyGraderType | str) -> type[AccuracyGraderProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.ACCURACY_GRADER, "accuracy_grader"]) -> Iterator[tuple[PluginEntry, type[AccuracyGraderProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.ACCURACY_BENCHMARK, "accuracy_benchmark"], name_or_class_path: AccuracyBenchmarkType | str) -> type[AccuracyBenchmarkProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.ACCURACY_BENCHMARK, "accuracy_benchmark"]) -> Iterator[tuple[PluginEntry, type[AccuracyBenchmarkProtocol]]]: ...
     @overload
     def get_class(category: Literal[PluginType.DATA_EXPORTER, "data_exporter"], name_or_class_path: DataExporterType | str) -> type[DataExporterProtocol]: ...
     @overload
