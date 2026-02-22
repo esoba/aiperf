@@ -28,6 +28,8 @@ MetricDictValueTypeVarT = TypeVar(
 
 _PERCENTILE_QS = np.array([1, 5, 10, 25, 50, 75, 90, 95, 99], dtype=np.float64)
 
+_logger = AIPerfLogger(__name__)
+
 
 def metric_result_from_array(
     tag: MetricTagT,
@@ -78,9 +80,6 @@ def metric_result_from_array(
         p99=pcts[8],
         count=n,
     )
-
-
-_logger = AIPerfLogger(__name__)
 
 
 class BaseMetricDict(

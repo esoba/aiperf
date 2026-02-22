@@ -5,7 +5,7 @@ import sys
 import time
 from abc import ABC, abstractmethod
 from functools import cached_property
-from typing import Any, AnyStr, Protocol, runtime_checkable
+from typing import Any, AnyStr, NamedTuple, Protocol, runtime_checkable
 
 import orjson
 from pydantic import (
@@ -27,7 +27,7 @@ from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
-from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT, TimesliceWindow
+from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
@@ -135,6 +135,16 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
+    )
+
+
+class TimesliceWindow(NamedTuple):
+    """Per-timeslice temporal boundaries, matching BaseTimeslice pattern."""
+
+    start_ns: int
+    end_ns: int
+    is_complete: bool | None = (
+        None  # None = complete (space-efficient, matches BaseTimeslice)
     )
 
 

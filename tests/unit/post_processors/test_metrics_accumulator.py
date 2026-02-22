@@ -13,8 +13,7 @@ from aiperf.common.config import OutputConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import AggregationKind, MetricType
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models import MetricResult
-from aiperf.common.types import TimesliceWindow
+from aiperf.common.models import MetricResult, TimesliceWindow
 from aiperf.metrics.accumulator import (
     _AGGREGATE_FUNCS,
     MetricsAccumulator,

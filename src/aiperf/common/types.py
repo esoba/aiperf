@@ -7,7 +7,7 @@ helps with type hinting.
 
 from collections.abc import Awaitable, Callable
 from types import UnionType
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias, TypeVar, Union
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, Union
 
 from aiperf.common.enums import (
     CaseInsensitiveStrEnum,
@@ -67,16 +67,4 @@ SelfT = TypeVar("SelfT", bound=Any)
 ServiceProtocolT = TypeVar("ServiceProtocolT", bound="ServiceProtocol")
 ServiceTypeT: TypeAlias = ServiceType | str
 TimeSliceT: TypeAlias = int
-
-
-class TimesliceWindow(NamedTuple):
-    """Per-timeslice temporal boundaries, matching BaseTimeslice pattern."""
-
-    start_ns: int
-    end_ns: int
-    is_complete: bool | None = (
-        None  # None = complete (space-efficient, matches BaseTimeslice)
-    )
-
-
 TransportTypeT: TypeAlias = TransportType | str

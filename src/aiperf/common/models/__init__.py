@@ -79,6 +79,7 @@ from aiperf.common.models.record_models import (
     SSEMessage,
     TextResponse,
     TextResponseData,
+    TimesliceWindow,
     TokenCounts,
     VideoResponseData,
 )
@@ -234,6 +235,7 @@ __all__ = [
     "TimeRangeFilter",
     "TimesliceCollectionExportData",
     "TimesliceData",
+    "TimesliceWindow",
     "TokenCounts",
     "TraceDataExport",
     "Turn",

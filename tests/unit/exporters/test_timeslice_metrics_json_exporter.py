@@ -12,9 +12,8 @@ import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.exceptions import DataExporterDisabled
-from aiperf.common.models import MetricResult
+from aiperf.common.models import MetricResult, TimesliceWindow
 from aiperf.common.models.export_models import TimesliceCollectionExportData
-from aiperf.common.types import TimesliceWindow
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
 from aiperf.exporters.timeslice_metrics_json_exporter import (

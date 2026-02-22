@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.models import MetricResult, ProfileResults
-from aiperf.common.types import TimesliceWindow
+from aiperf.common.models import MetricResult, ProfileResults, TimesliceWindow
 
 
 class TestProfileResults:

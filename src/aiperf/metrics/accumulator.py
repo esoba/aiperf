@@ -31,8 +31,8 @@ from aiperf.common.enums import (
 )
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.messages.inference_messages import MetricRecordsData
-from aiperf.common.models import MetricResult
-from aiperf.common.types import MetricTagT, TimeSliceT, TimesliceWindow
+from aiperf.common.models import MetricResult, TimesliceWindow
+from aiperf.common.types import MetricTagT, TimeSliceT
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.column_store import ColumnStore
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
