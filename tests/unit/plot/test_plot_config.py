@@ -411,12 +411,12 @@ visualization:
 
 
 class TestExperimentClassificationOverride:
-    """Tests for automatic groups override when experiment classification is enabled."""
+    """Tests that experiment_classification provides a default for groups, never an override."""
 
-    def test_classification_enabled_overrides_groups_to_experiment_type(
+    def test_explicit_groups_respected_even_with_classification(
         self, tmp_path: Path
     ) -> None:
-        """Test that when classification is enabled, groups are overridden to experiment_group."""
+        """Explicit groups must never be overridden, even when classification patterns exist."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
             """
@@ -445,8 +445,7 @@ visualization:
         specs = config.get_multi_run_plot_specs()
 
         assert len(specs) == 1
-        # Should override to experiment_group
-        assert specs[0].group_by == "experiment_group"
+        assert specs[0].group_by == "model"
 
     def test_classification_disabled_respects_original_groups(
         self, tmp_path: Path
@@ -475,11 +474,10 @@ visualization:
         specs = config.get_multi_run_plot_specs()
 
         assert len(specs) == 1
-        # Should keep original groups setting
         assert specs[0].group_by == "model"
 
-    def test_classification_overrides_all_group_types(self, tmp_path: Path) -> None:
-        """Test that classification overrides groups regardless of original value."""
+    def test_explicit_groups_preserved_for_all_plots(self, tmp_path: Path) -> None:
+        """Explicit groups are preserved for each plot even with classification patterns."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
             """
@@ -520,14 +518,14 @@ visualization:
         specs = config.get_multi_run_plot_specs()
 
         assert len(specs) == 3
-        # All should be overridden to experiment_group
-        for spec in specs:
-            assert spec.group_by == "experiment_group"
+        assert specs[0].group_by == "model"
+        assert specs[1].group_by == "run_name"
+        assert specs[2].group_by == "concurrency"
 
-    def test_classification_with_nested_directory_structure(
+    def test_omitted_groups_defaults_to_experiment_group_with_patterns(
         self, tmp_path: Path
     ) -> None:
-        """Test that classification works with nested baseline/treatment directories."""
+        """When groups is omitted and classification patterns exist, default to experiment_group."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text(
             """
@@ -546,7 +544,6 @@ visualization:
       type: scatter_line
       x: request_latency_avg
       y: request_throughput_avg
-      groups: [model]
   single_run_defaults: []
   single_run_plots: {}
 """
@@ -555,10 +552,8 @@ visualization:
         config = PlotConfig(config_file)
         specs = config.get_multi_run_plot_specs()
 
-        # Verify override happens
         assert specs[0].group_by == "experiment_group"
 
-        # Verify classification config is accessible
         classification = config.get_experiment_classification_config()
         assert classification is not None
         assert "*baseline*" in classification.baselines

@@ -2445,10 +2445,12 @@ def register_custom_plot_callbacks(app: dash.Dash, runs: list, plot_config: Plot
     def open_custom_plot_modal(n_clicks):
         """Open custom plot creation modal and reset all form fields."""
         if n_clicks and n_clicks > 0:
-            # Check if experimental classification is enabled
             exp_class_config = plot_config.get_experiment_classification_config()
             default_group_by = (
-                "experiment_group" if exp_class_config is not None else None
+                "experiment_group"
+                if exp_class_config is not None
+                and PlotConfig._has_classification_patterns(exp_class_config)
+                else None
             )
 
             return (

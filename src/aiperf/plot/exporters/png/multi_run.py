@@ -149,7 +149,10 @@ class MultiRunPNGExporter(BasePNGExporter):
             if "input_config" in run.aggregated:
                 config = run.aggregated["input_config"]
                 flattened = flatten_config(config)
-                row.update(flattened)
+                metadata_keys = row.keys()
+                row.update(
+                    {k: v for k, v in flattened.items() if k not in metadata_keys}
+                )
 
             for key, value in run.aggregated.items():
                 if key in NON_METRIC_KEYS:

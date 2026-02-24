@@ -125,7 +125,7 @@ class PlotSpec(AIPerfBaseModel):
         default=None,
         description="Column to use for grouping data into separate series (single column only). "
         "Must be provided as a single-element list in YAML (e.g., [model]). "
-        "Note: When experiment_classification is enabled, this is auto-overridden to 'experiment_group'.",
+        "When omitted and experiment_classification patterns are defined, defaults to 'experiment_group'.",
     )
 
     @field_validator("label_by", "group_by", mode="before")

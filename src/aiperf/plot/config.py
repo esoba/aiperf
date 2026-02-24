@@ -364,6 +364,13 @@ class PlotConfig:
                 f"Failed to parse experiment_classification config: {e}"
             ) from e
 
+    @staticmethod
+    def _has_classification_patterns(
+        config: ExperimentClassificationConfig,
+    ) -> bool:
+        """Check if classification config has any baseline or treatment patterns defined."""
+        return bool(config.baselines or config.treatments)
+
     def get_downsampling_config(self) -> dict:
         """
         Get server metrics downsampling configuration.
@@ -437,21 +444,24 @@ class PlotConfig:
         if not metrics:
             raise ValueError(f"No metrics defined in preset '{name}'")
 
-        exp_class_config = self.get_experiment_classification_config()
-        if exp_class_config is not None:
-            # When experiment classification is enabled, ALWAYS use experiment_group
-            groups = "experiment_group"
-            _logger.info(
-                f"Classification enabled for plot '{name}': forcing groups={groups}"
-            )
+        yaml_groups = preset.get("groups")
+        has_explicit_groups = yaml_groups is not None and yaml_groups != []
+
+        if has_explicit_groups:
+            groups = yaml_groups
+            _logger.info(f"Plot '{name}': using explicit groups={groups}")
         else:
-            # When classification disabled, use explicit YAML setting or default
-            groups = preset.get("groups")
-            if groups is None or groups == []:
+            exp_class_config = self.get_experiment_classification_config()
+            if exp_class_config is not None and self._has_classification_patterns(
+                exp_class_config
+            ):
+                groups = "experiment_group"
+                _logger.info(
+                    f"Plot '{name}': defaulting to experiment_group (classification patterns defined)"
+                )
+            else:
                 groups = ["run_name"]
-            _logger.info(
-                f"Classification disabled for plot '{name}': using groups={groups}"
-            )
+                _logger.info(f"Plot '{name}': defaulting to groups={groups}")
 
         spec_kwargs = {
             "name": name,

@@ -345,7 +345,10 @@ def aggregate_gpu_telemetry(run: RunData) -> pd.DataFrame:
 
 def flatten_config(config: dict, parent_key: str = "") -> dict[str, Any]:
     """
-    Flatten nested config dictionary into dot-notation keys.
+    Flatten a nested config dictionary into dot-notation keys.
+
+    Only called on `input_config` (serialized UserConfig), which is purely
+    structural — it never contains metric-style leaf dicts.
 
     Args:
         config: Nested configuration dictionary
@@ -354,11 +357,11 @@ def flatten_config(config: dict, parent_key: str = "") -> dict[str, Any]:
     Returns:
         Flattened dictionary with dot-notation keys
     """
-    items = {}
+    items: dict[str, Any] = {}
     for key, value in config.items():
         new_key = f"{parent_key}.{key}" if parent_key else key
 
-        if isinstance(value, dict) and not _is_leaf_config(value):
+        if isinstance(value, dict):
             items.update(flatten_config(value, new_key))
         elif isinstance(value, list) and len(value) == 1:
             items[new_key] = value[0]
@@ -366,18 +369,3 @@ def flatten_config(config: dict, parent_key: str = "") -> dict[str, Any]:
             items[new_key] = value
 
     return items
-
-
-def _is_leaf_config(value: dict) -> bool:
-    """
-    Check if a dict is a leaf config node (contains 'value', 'unit', etc).
-
-    Args:
-        value: Dictionary to check
-
-    Returns:
-        True if this is a leaf config node, False otherwise
-    """
-    # Leaf nodes typically have keys like 'value', 'unit', 'description'
-    leaf_keys = {"value", "unit", "description", "type"}
-    return any(k in value for k in leaf_keys)

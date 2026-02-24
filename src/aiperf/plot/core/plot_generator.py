@@ -200,6 +200,7 @@ class PlotGenerator:
         y_label: str,
         hovermode: str | None = None,
         autoscale: str = "none",
+        legend_title: str | None = None,
     ) -> dict:
         """
         Get base layout configuration with NVIDIA branding.
@@ -214,6 +215,7 @@ class PlotGenerator:
             y_label: Y-axis label text
             hovermode: Optional hover mode (e.g., "x unified")
             autoscale: Which axes to autoscale ("none", "x", "y", "both")
+            legend_title: Optional title for the legend (e.g., "Concurrency")
 
         Returns:
             Dictionary of layout configuration ready for fig.update_layout()
@@ -272,6 +274,16 @@ class PlotGenerator:
                 "yanchor": "top",
             },
         }
+
+        if legend_title:
+            layout["legend"]["title"] = {
+                "text": f"<b>{legend_title}</b>",
+                "font": {
+                    "size": 12,
+                    "family": PLOT_FONT_FAMILY,
+                    "color": self.colors["text"],
+                },
+            }
 
         if hovermode:
             layout["hovermode"] = hovermode
@@ -392,6 +404,11 @@ class PlotGenerator:
                     f"Plot contains {n_traces} traces, which exceeds the recommended "
                     f"maximum of 4 for clarity."
                 )
+
+    @staticmethod
+    def _format_legend_title(name: str) -> str:
+        """Convert a snake_case column name to a display-friendly legend title."""
+        return name.replace("_", " ").title()
 
     def _get_metric_direction(self, metric_tag: str) -> PlotMetricDirection | str:
         """
@@ -702,7 +719,10 @@ class PlotGenerator:
             )
 
         # Apply NVIDIA branding layout
-        layout = self._get_base_layout(title, x_label, y_label)
+        legend_title = self._format_legend_title(group_by) if group_by else None
+        layout = self._get_base_layout(
+            title, x_label, y_label, legend_title=legend_title
+        )
         fig.update_layout(layout)
 
         return fig
@@ -815,7 +835,10 @@ class PlotGenerator:
             )
 
         # Apply NVIDIA branding layout
-        layout = self._get_base_layout(title, x_label, y_label)
+        legend_title = self._format_legend_title(group_by) if group_by else None
+        layout = self._get_base_layout(
+            title, x_label, y_label, legend_title=legend_title
+        )
         fig.update_layout(layout)
 
         return fig
