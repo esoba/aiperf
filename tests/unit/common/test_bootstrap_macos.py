@@ -136,3 +136,41 @@ class TestBootstrapMacOSFixes:
                 )
             except OSError:
                 pytest.fail("Exception should have been caught and handled")
+
+    @pytest.mark.parametrize("capsys", [None], indirect=True)
+    def test_none_stdout_stderr_set_to_devnull(
+        self,
+        capsys,
+        service_config_no_uvloop: ServiceConfig,
+        user_config: UserConfig,
+        mock_log_queue,
+        mock_darwin_child_process,
+    ):
+        """Test that None stdout/stderr (spawned children with closed FDs) are set to devnull.
+
+        On macOS with FD_CLOEXEC, spawned children may inherit closed terminal FDs,
+        leaving sys.stdout/stderr as None. billiard's ProcessPoolExecutor workers
+        (forked from this process) call sys.stdout.flush() and would raise
+        AttributeError if stdout is None.
+        """
+        import sys
+
+        with (
+            capsys.disabled(),
+            patch("sys.stdin") as mock_stdin,
+            patch("sys.stdout", None),
+            patch("sys.stderr", None),
+        ):
+            mock_stdin.fileno.return_value = 0
+
+            bootstrap_and_run_service(
+                "test_dummy",
+                service_config=service_config_no_uvloop,
+                user_config=user_config,
+                log_queue=mock_log_queue,
+                service_id="test_service",
+            )
+
+            # After bootstrap, stdout/stderr must not be None (set to devnull in except block)
+            assert sys.stdout is not None
+            assert sys.stderr is not None

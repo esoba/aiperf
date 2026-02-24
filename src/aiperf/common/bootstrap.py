@@ -130,21 +130,31 @@ def bootstrap_and_run_service(
         # processes inherit terminal file descriptors and interfere with Textual's
         # terminal management, causing ASCII garbage and freezing when mouse events occur.
         # Only apply this in spawned child processes, NOT in the main process where Textual runs.
+        # With FD_CLOEXEC, spawned children may inherit closed FDs, leaving sys.stdout/stderr
+        # as None. We must always set them to devnull so billiard's ProcessPoolExecutor workers
+        # (forked from this process) have valid streams when they call sys.stdout.flush().
         if platform.system() == "Darwin" and is_child_process:
             try:
                 # Close and redirect stdin to prevent reading terminal input (mouse events, etc.)
-                sys.stdin.close()
+                if sys.stdin is not None:
+                    sys.stdin.close()
                 sys.stdin = open(os.devnull)  # noqa: SIM115
 
-                # Close and redirect stdout/stderr to prevent writing to terminal
-                # All logging goes through the log_queue instead
-                sys.stdout.close()
-                sys.stderr.close()
+                # Close and redirect stdout/stderr - ensure they're never None.
+                # Spawned children on macOS may have None when terminal FDs were closed.
+                if sys.stdout is not None:
+                    sys.stdout.close()
                 sys.stdout = open(os.devnull, "w")  # noqa: SIM115
+
+                if sys.stderr is not None:
+                    sys.stderr.close()
                 sys.stderr = open(os.devnull, "w")  # noqa: SIM115
             except Exception:
-                # Silently continue if FD operations fail
-                pass
+                # FD operations may fail (e.g. sys.stdout is None when FDs were closed).
+                # Always ensure streams exist so billiard workers can call sys.stdout.flush().
+                sys.stdin = open(os.devnull)  # noqa: SIM115
+                sys.stdout = open(os.devnull, "w")  # noqa: SIM115
+                sys.stderr = open(os.devnull, "w")  # noqa: SIM115
 
         # Initialize global RandomGenerator for reproducible random number generation
         from aiperf.common import random_generator as rng
