@@ -335,6 +335,34 @@ class Tokenizer:
         self._require_init()
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
 
+    def batch_decode(self, token_sequences: list[list[int]], **kwargs) -> list[str]:
+        """
+        Decode multiple token sequences in a single batch.
+
+        For fast (Rust-backed) tokenizers, calls the Rust decode_batch which
+        uses Rayon thread-based parallelism. Falls back to the Python-level
+        batch_decode (sequential loop) for slow tokenizers.
+
+        Args:
+            token_sequences: List of token ID lists to decode.
+
+        Returns:
+            List of decoded strings in the same order as input.
+        """
+        self._require_init()
+        merged = {**self._decode_args, **kwargs}
+        skip = merged.pop("skip_special_tokens", True)
+
+        # Fast path: Rust tokenizer with Rayon thread parallelism
+        if hasattr(self._tokenizer, "backend_tokenizer"):
+            return self._tokenizer.backend_tokenizer.decode_batch(
+                token_sequences, skip_special_tokens=skip
+            )
+
+        return self._tokenizer.batch_decode(
+            token_sequences, skip_special_tokens=skip, **merged
+        )
+
     @property
     def bos_token_id(self) -> int:
         """

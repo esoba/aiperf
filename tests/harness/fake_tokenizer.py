@@ -51,6 +51,10 @@ class FakeTokenizer:
         """Decode token IDs to string."""
         return TOKEN * len(token_ids)
 
+    def batch_decode(self, token_sequences, **kwargs) -> list[str]:
+        """Decode multiple token sequences to strings."""
+        return [TOKEN * len(ids) for ids in token_sequences]
+
     @property
     def bos_token_id(self) -> int:
         return 1
