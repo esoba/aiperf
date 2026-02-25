@@ -225,7 +225,11 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
                 f"({len(data)} conversations)"
             )
             token_sequences = [p[2] for p in pending_decodes]
-            decoded_prompts = parallel_decode(token_sequences, self._tokenizer_name)
+            decoded_prompts = parallel_decode(
+                token_sequences,
+                self._tokenizer_name,
+                tokenizer=self.prompt_generator.tokenizer,
+            )
 
             # Fill in placeholders and update cache
             for (session_id, idx, _, cache_key), prompt in zip(

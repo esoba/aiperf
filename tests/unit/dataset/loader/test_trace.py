@@ -839,7 +839,7 @@ class TestMooncakeTraceReproducibility:
         from aiperf.dataset.generator import PromptGenerator
 
         # Mock parallel_decode to return deterministic results based on input
-        def deterministic_decode(token_sequences, tokenizer_name):
+        def deterministic_decode(token_sequences, tokenizer_name, **kwargs):
             return [
                 f"decoded_prompt_{i}_{len(seq)}"
                 for i, seq in enumerate(token_sequences)
