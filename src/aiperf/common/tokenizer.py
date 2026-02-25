@@ -353,10 +353,19 @@ class Tokenizer:
         merged = {**self._decode_args, **kwargs}
         skip = merged.pop("skip_special_tokens", True)
 
-        # Fast path: Rust tokenizer with Rayon thread parallelism
-        if hasattr(self._tokenizer, "backend_tokenizer"):
+        # Fast path: Rust tokenizer with Rayon thread parallelism.
+        # Only used when no extra kwargs are present, since the Rust
+        # decode_batch only accepts skip_special_tokens.
+        if hasattr(self._tokenizer, "backend_tokenizer") and not merged:
             return self._tokenizer.backend_tokenizer.decode_batch(
                 token_sequences, skip_special_tokens=skip
+            )
+
+        if merged and hasattr(self._tokenizer, "backend_tokenizer"):
+            _logger.debug(
+                "batch_decode falling back to Python path due to extra "
+                "decode kwargs: %s",
+                list(merged),
             )
 
         return self._tokenizer.batch_decode(
