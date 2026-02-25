@@ -189,15 +189,12 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
     @property
     def include_image(self) -> bool:
-        return (
-            self.config.input.image.width.mean > 0
-            and self.config.input.image.height.mean > 0
-        )
+        return self.config.input.image.images_enabled()
 
     @property
     def include_audio(self) -> bool:
-        return self.config.input.audio.length.mean > 0
+        return self.config.input.audio.audio_enabled()
 
     @property
     def include_video(self) -> bool:
-        return bool(self.config.input.video.width and self.config.input.video.height)
+        return self.config.input.video.videos_enabled()
