@@ -76,6 +76,17 @@ class SynthesisConfig(BaseConfig):
         CLIParameter(name=("--synthesis-max-osl",), group=_CLI_GROUP),
     ] = None
 
+    min_requests: Annotated[
+        int,
+        Field(
+            default=2,
+            ge=1,
+            description="Minimum number of requests per trace. Traces with fewer requests after "
+            "flattening and truncation are skipped.",
+        ),
+        CLIParameter(name=("--synthesis-min-requests",), group=_CLI_GROUP),
+    ] = 2
+
     def should_synthesize(self) -> bool:
         """Check if synthesis should be auto-triggered based on non-default values.
 

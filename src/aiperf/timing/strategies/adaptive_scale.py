@@ -67,6 +67,8 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         self._max_delay_sec = config.max_delay_sec
         self._time_scale = config.time_scale or 1.0
         self._recycle = config.recycle_sessions
+        self._stagger_sec = (config.stagger_ms or 50.0) / MILLIS_PER_SECOND
+        self._scaling_formula = config.scaling_formula or "conservative"
 
         # Active state
         self._active_users = 0
@@ -82,7 +84,6 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             raise RuntimeError("started_at_perf_ns is not set in the lifecycle")
 
         # Issue first-turn credits for start_users with stagger
-        stagger_sec = 0.5  # 500ms between initial users
         for i in range(self._start_users):
             if not self._stop_checker.can_send_any_turn():
                 return
@@ -95,7 +96,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
                 await self._credit_issuer.issue_credit(turn)
             else:
                 self._scheduler.schedule_later(
-                    stagger_sec * i,
+                    self._stagger_sec * i,
                     self._credit_issuer.issue_credit(turn),
                 )
 
@@ -136,7 +137,8 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
 
         # Calculate headroom-based scaling
         headroom_ratio = 1.0 - (metric_value / self._max_ttft_sec)
-        users_to_add = max(1, int(self._active_users * headroom_ratio * 0.5))
+        headroom_pct = headroom_ratio * 100.0
+        users_to_add = self._compute_users_to_add(headroom_ratio, headroom_pct)
 
         if self._max_users is not None:
             users_to_add = min(users_to_add, self._max_users - self._active_users)
@@ -154,7 +156,6 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             f"adding {users_to_add} users (total={self._active_users + users_to_add})"
         )
 
-        stagger_sec = 0.5
         for i in range(users_to_add):
             if not self._stop_checker.can_send_any_turn():
                 return
@@ -164,9 +165,19 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             self._active_users += 1
 
             self._scheduler.schedule_later(
-                stagger_sec * i,
+                self._stagger_sec * i,
                 self._credit_issuer.issue_credit(turn),
             )
+
+    def _compute_users_to_add(self, headroom_ratio: float, headroom_pct: float) -> int:
+        """Compute the number of users to add based on the configured formula."""
+        match self._scaling_formula:
+            case "aggressive":
+                return max(2, 2 + int(headroom_pct / 10))
+            case "linear":
+                return max(1, int(headroom_pct / 5))
+            case _:  # conservative
+                return max(1, int(self._active_users * headroom_ratio * 0.5))
 
     def _compute_ttft_metric(self, samples: list[float]) -> float:
         """Compute the configured TTFT metric from samples."""

@@ -26,7 +26,11 @@ from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader
-from aiperf.dataset.loader.models import CodingTrace, CodingTraceRequest
+from aiperf.dataset.loader.models import (
+    CodingTrace,
+    CodingTraceRequest,
+    TraceStatistics,
+)
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
@@ -70,6 +74,7 @@ class CodingTraceLoader(BaseFileLoader):
         super().__init__(filename=filename, user_config=user_config, **kwargs)
         self.prompt_generator = prompt_generator
         self._max_isl = user_config.input.synthesis.max_isl
+        self._min_requests = user_config.input.synthesis.min_requests
         self._warm_prefix_pct = user_config.input.warm_prefix_pct
         self._skipped_max_isl = 0
         self._skipped_min_requests = 0
@@ -142,7 +147,7 @@ class CodingTraceLoader(BaseFileLoader):
                 self._skipped_max_isl += skipped
                 flat_requests = truncated
 
-            if len(flat_requests) < 2:
+            if len(flat_requests) < self._min_requests:
                 self._skipped_min_requests += 1
                 continue
 
@@ -160,24 +165,35 @@ class CodingTraceLoader(BaseFileLoader):
             )
         if self._skipped_min_requests > 0:
             self.info(
-                f"Skipped {self._skipped_min_requests} traces with fewer than 2 requests"
+                f"Skipped {self._skipped_min_requests} traces with fewer than "
+                f"{self._min_requests} requests"
             )
         self.info(f"Loaded {len(result)} coding traces with flattened requests")
+        self._log_trace_statistics(result)
 
         return result
 
     def _flatten_requests(
-        self, requests: list[CodingTraceRequest]
+        self,
+        requests: list[CodingTraceRequest],
+        base_time: float = 0.0,
     ) -> list[CodingTraceRequest]:
-        """Recursively flatten nested subagent requests into a linear sequence."""
+        """Recursively flatten nested subagent requests into a chronological sequence.
+
+        Converts subagent-relative timestamps to absolute time and sorts the
+        result chronologically so inter-request delays are computed correctly.
+        """
         flat: list[CodingTraceRequest] = []
         for req in requests:
+            abs_time = base_time + req.t
             # Skip container-only entries (subagent wrappers with no token counts)
             if req.input_tokens > 0:
+                req.t = abs_time
                 flat.append(req)
             # Recursively flatten nested subagent requests
             if req.requests:
-                flat.extend(self._flatten_requests(req.requests))
+                flat.extend(self._flatten_requests(req.requests, base_time=abs_time))
+        flat.sort(key=lambda r: r.t)
         return flat
 
     def convert_to_conversations(
@@ -209,6 +225,9 @@ class CodingTraceLoader(BaseFileLoader):
             f"({total_requests} requests) to conversations"
         )
 
+        # Compute warm prefix token count for first-turn adjustment
+        prefix_tokens = self._compute_prefix_tokens(data) if warm_prefix_text else 0
+
         # Compute deltas for all requests across all conversations
         start = time.perf_counter()
         deltas_by_trace: dict[str, list[int]] = {}
@@ -219,7 +238,7 @@ class CodingTraceLoader(BaseFileLoader):
             trace_deltas: list[int] = []
             for i, req in enumerate(trace.requests):
                 if i == 0:
-                    delta = req.input_tokens
+                    delta = max(1, req.input_tokens - prefix_tokens)
                 else:
                     prev = trace.requests[i - 1]
                     delta = max(
@@ -280,6 +299,69 @@ class CodingTraceLoader(BaseFileLoader):
             conversations.append(conversation)
 
         return conversations
+
+    @staticmethod
+    def _compute_trace_statistics(trace: CodingTrace) -> TraceStatistics:
+        """Compute derived statistics for a single trace."""
+        requests = trace.requests
+        total_in = sum(r.input_tokens for r in requests)
+        total_out = sum(r.output_tokens for r in requests)
+        max_in = max((r.input_tokens for r in requests), default=0)
+
+        # Estimate cache hit ratio from consecutive hash_id overlap
+        total_blocks = 0
+        hit_blocks = 0
+        prev_hash_set: set[int] = set()
+        for req in requests:
+            current_hash_set = set(req.hash_ids)
+            if prev_hash_set and current_hash_set:
+                hits = len(current_hash_set & prev_hash_set)
+                total_blocks += len(current_hash_set)
+                hit_blocks += hits
+            elif current_hash_set:
+                total_blocks += len(current_hash_set)
+            prev_hash_set = current_hash_set
+
+        cache_hit_ratio = hit_blocks / total_blocks if total_blocks > 0 else 0.0
+
+        return TraceStatistics(
+            total_input_tokens=total_in,
+            total_output_tokens=total_out,
+            num_requests=len(requests),
+            max_input_tokens=max_in,
+            estimated_cache_hit_ratio=cache_hit_ratio,
+        )
+
+    def _log_trace_statistics(self, data: dict[str, list[CodingTrace]]) -> None:
+        """Compute and log aggregate statistics across all loaded traces."""
+        if not data:
+            return
+
+        stats = [self._compute_trace_statistics(t[0]) for t in data.values()]
+        total_in = sum(s.total_input_tokens for s in stats)
+        total_out = sum(s.total_output_tokens for s in stats)
+        total_reqs = sum(s.num_requests for s in stats)
+        max_in = max(s.max_input_tokens for s in stats)
+        avg_cache_hit = sum(s.estimated_cache_hit_ratio for s in stats) / len(stats)
+
+        self.info(
+            f"Trace statistics: {total_reqs} total requests, "
+            f"{total_in:,} total input tokens, "
+            f"{total_out:,} total output tokens, "
+            f"max single request={max_in:,} input tokens, "
+            f"avg cache hit ratio={avg_cache_hit:.1%}"
+        )
+
+    def _compute_prefix_tokens(self, data: dict[str, list[CodingTrace]]) -> int:
+        """Compute warm prefix size in tokens (same formula as _generate_warm_prefix)."""
+        max_context_tokens = 0
+        for traces in data.values():
+            trace = traces[0]
+            context = trace.tool_tokens + trace.system_tokens
+            max_context_tokens = max(max_context_tokens, context)
+        if max_context_tokens == 0:
+            return 0
+        return max(0, int(max_context_tokens * self._warm_prefix_pct))
 
     def _generate_warm_prefix(self, data: dict[str, list[CodingTrace]]) -> str | None:
         """Generate a shared warm prefix for KV cache pre-fill.

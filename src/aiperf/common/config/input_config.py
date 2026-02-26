@@ -367,13 +367,13 @@ class InputConfig(BaseConfig):
         Field(
             ge=1,
             description="Maximum number of concurrent users for adaptive scale mode. "
-            "If None, scaling is limited only by available conversations.",
+            "Default is 50. Set to None to limit only by available conversations.",
         ),
         CLIParameter(
             name=("--adaptive-scale-max-users",),
             group=_CLI_GROUP,
         ),
-    ] = None
+    ] = 50
 
     adaptive_scale_max_ttft: Annotated[
         float,
@@ -416,13 +416,13 @@ class InputConfig(BaseConfig):
         Field(
             ge=0,
             description="Maximum inter-request delay in seconds. Delays from traces exceeding "
-            "this value are clamped. If None, trace delays are used as-is.",
+            "this value are clamped. Default is 60.0s. Set to None for unclamped trace delays.",
         ),
         CLIParameter(
             name=("--adaptive-scale-max-delay",),
             group=_CLI_GROUP,
         ),
-    ] = None
+    ] = 60.0
 
     adaptive_scale_time_scale: Annotated[
         float,
@@ -448,6 +448,33 @@ class InputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = False
+
+    adaptive_scale_stagger_ms: Annotated[
+        float,
+        Field(
+            ge=0,
+            description="Delay in milliseconds between launching new users during adaptive scaling. "
+            "Lower values ramp up faster and collect more data per assessment period.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-stagger-ms",),
+            group=_CLI_GROUP,
+        ),
+    ] = 50.0
+
+    adaptive_scale_formula: Annotated[
+        str,
+        Field(
+            description="Scaling formula for computing users to add per assessment period. "
+            "'conservative': max(1, active * headroom * 0.5) - scales proportional to current users. "
+            "'aggressive': max(2, 2 + headroom_pct / 10) - fast ramp regardless of current users. "
+            "'linear': max(1, headroom_pct / 5) - linear ramp based on headroom percentage.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-formula",),
+            group=_CLI_GROUP,
+        ),
+    ] = "conservative"
 
     warm_prefix_pct: Annotated[
         float,

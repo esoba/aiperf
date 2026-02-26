@@ -273,6 +273,25 @@ class CodingTrace(AIPerfBaseModel):
         return self
 
 
+class TraceStatistics(AIPerfBaseModel):
+    """Derived statistics for a coding trace, computed at load time."""
+
+    total_input_tokens: int = Field(
+        description="Sum of input_tokens across all requests."
+    )
+    total_output_tokens: int = Field(
+        description="Sum of output_tokens across all requests."
+    )
+    num_requests: int = Field(description="Number of requests in the trace.")
+    max_input_tokens: int = Field(
+        description="Maximum input_tokens in any single request."
+    )
+    estimated_cache_hit_ratio: float = Field(
+        description="Estimated cache hit ratio based on hash_id overlap between "
+        "consecutive requests (0.0 = no hits, 1.0 = all hits)."
+    )
+
+
 class MooncakeTrace(AIPerfBaseModel):
     """Defines the schema for Mooncake trace data.
 

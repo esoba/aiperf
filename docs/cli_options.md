@@ -321,8 +321,9 @@ Initial number of concurrent users for adaptive scale mode.
 
 #### `--adaptive-scale-max-users` `<int>`
 
-Maximum number of concurrent users for adaptive scale mode. If None, scaling is limited only by available conversations.
+Maximum number of concurrent users for adaptive scale mode. Default is 50. Set to None to limit only by available conversations.
 <br>_Constraints: ≥ 1_
+<br>_Default: `50`_
 
 #### `--adaptive-scale-max-ttft` `<float>`
 
@@ -343,8 +344,9 @@ Period in seconds between scaling assessments.
 
 #### `--adaptive-scale-max-delay` `<float>`
 
-Maximum inter-request delay in seconds. Delays from traces exceeding this value are clamped. If None, trace delays are used as-is.
+Maximum inter-request delay in seconds. Delays from traces exceeding this value are clamped. Default is 60.0s. Set to None for unclamped trace delays.
 <br>_Constraints: ≥ 0_
+<br>_Default: `60.0`_
 
 #### `--adaptive-scale-time-scale` `<float>`
 
@@ -356,6 +358,17 @@ Time scale factor applied to trace delays. Values < 1.0 compress delays (faster 
 
 Recycle completed sessions by sampling new conversations. When disabled, each conversation is replayed at most once.
 <br>_Flag (no value required)_
+
+#### `--adaptive-scale-stagger-ms` `<float>`
+
+Delay in milliseconds between launching new users during adaptive scaling. Lower values ramp up faster and collect more data per assessment period.
+<br>_Constraints: ≥ 0_
+<br>_Default: `50.0`_
+
+#### `--adaptive-scale-formula` `<str>`
+
+Scaling formula for computing users to add per assessment period. 'conservative': max(1, active * headroom * 0.5) - scales proportional to current users. 'aggressive': max(2, 2 + headroom_pct / 10) - fast ramp regardless of current users. 'linear': max(1, headroom_pct / 5) - linear ramp based on headroom percentage.
+<br>_Default: `conservative`_
 
 #### `--warm-prefix-pct` `<float>`
 
@@ -684,6 +697,12 @@ Maximum input sequence length for filtering. Traces with input_length > max_isl 
 
 Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.
 <br>_Constraints: ≥ 1_
+
+#### `--synthesis-min-requests` `<int>`
+
+Minimum number of requests per trace. Traces with fewer requests after flattening and truncation are skipped.
+<br>_Constraints: ≥ 1_
+<br>_Default: `2`_
 
 ### Conversation Input
 

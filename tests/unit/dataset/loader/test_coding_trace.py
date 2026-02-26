@@ -619,3 +619,323 @@ class TestCodingTraceLoader:
             CodingTraceLoader.get_preferred_sampling_strategy()
             == DatasetSamplingStrategy.SEQUENTIAL
         )
+
+    def test_configurable_min_requests(self, tmp_path, mock_prompt_generator):
+        """Traces with fewer than min_requests are skipped after flattening."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        trace = {
+            "id": "trace_short",
+            "block_size": 64,
+            "requests": [
+                {"t": 0.0, "type": "s", "in": 100, "out": 50},
+                {"t": 1.0, "type": "n", "in": 200, "out": 100},
+                {"t": 2.0, "type": "n", "in": 300, "out": 150},
+            ],
+        }
+        path = tmp_path / "trace.json"
+        path.write_text(json.dumps(trace))
+
+        config = UserConfig.model_construct(
+            endpoint=EndpointConfig.model_construct(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.0,
+                synthesis=SynthesisConfig(min_requests=5),
+                custom_dataset_type=CustomDatasetType.CODING_TRACE,
+                file=str(path),
+            ),
+        )
+
+        loader = CodingTraceLoader(
+            filename=str(path),
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        data = loader.load_dataset()
+        # Trace has 3 requests but min_requests=5, so it's skipped
+        assert len(data) == 0
+
+    def test_configurable_min_requests_passes(self, tmp_path, mock_prompt_generator):
+        """Traces meeting min_requests threshold are kept."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        trace = {
+            "id": "trace_ok",
+            "block_size": 64,
+            "requests": [
+                {"t": 0.0, "type": "s", "in": 100, "out": 50},
+                {"t": 1.0, "type": "n", "in": 200, "out": 100},
+                {"t": 2.0, "type": "n", "in": 300, "out": 150},
+            ],
+        }
+        path = tmp_path / "trace.json"
+        path.write_text(json.dumps(trace))
+
+        config = UserConfig.model_construct(
+            endpoint=EndpointConfig.model_construct(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.0,
+                synthesis=SynthesisConfig(min_requests=3),
+                custom_dataset_type=CustomDatasetType.CODING_TRACE,
+                file=str(path),
+            ),
+        )
+
+        loader = CodingTraceLoader(
+            filename=str(path),
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        data = loader.load_dataset()
+        assert len(data) == 1
+
+    def test_warm_prefix_reduces_first_turn_delta(
+        self, tmp_path, mock_prompt_generator
+    ):
+        """First-turn delta is reduced by prefix_tokens when warm prefix is enabled.
+
+        Trace: in=[1000, 3000], out=[500, 1000]
+        tool_tokens=5000, system_tokens=3000 -> context=8000
+        warm_prefix_pct=0.5 -> prefix_tokens=4000
+
+        Turn 0 delta: max(1, 1000 - 4000) = 1  (prefix covers first turn)
+        Turn 1 delta: max(1, 3000 - 1000 - 500) = 1500  (no prefix effect)
+        """
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        trace = {
+            "id": "trace_prefix",
+            "block_size": 64,
+            "tool_tokens": 5000,
+            "system_tokens": 3000,
+            "requests": [
+                {"t": 0.0, "type": "s", "in": 1000, "out": 500},
+                {"t": 10.0, "type": "n", "in": 3000, "out": 1000},
+            ],
+        }
+        path = tmp_path / "trace.json"
+        path.write_text(json.dumps(trace))
+
+        # 1 char per token
+        mock_prompt_generator.generate_prompt.return_value = "x" * 1500
+        mock_prompt_generator.generate.return_value = "warm prefix text"
+
+        config = UserConfig.model_construct(
+            endpoint=EndpointConfig.model_construct(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.5,
+                file=str(path),
+            ),
+        )
+
+        loader = CodingTraceLoader(
+            filename=str(path),
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        conv = conversations[0]
+        # Turn 0: delta = max(1, 1000 - 4000) = 1 (floored)
+        assert len(conv.turns[0].texts[0].contents[0]) == 1
+        # Turn 1: delta = max(1, 3000 - 1000 - 500) = 1500 (unaffected by prefix)
+        assert len(conv.turns[1].texts[0].contents[0]) == 1500
+
+    def test_warm_prefix_smaller_than_first_turn(self, tmp_path, mock_prompt_generator):
+        """First-turn delta is partially reduced when prefix < input_tokens.
+
+        Trace: in=[1000, 3000], out=[500, 1000]
+        tool_tokens=1000, system_tokens=1000 -> context=2000
+        warm_prefix_pct=0.25 -> prefix_tokens=500
+
+        Turn 0 delta: max(1, 1000 - 500) = 500
+        Turn 1 delta: max(1, 3000 - 1000 - 500) = 1500
+        max_delta=1500, chars_per_token = 1500/1500 = 1.0
+        """
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        trace = {
+            "id": "trace_small_prefix",
+            "block_size": 64,
+            "tool_tokens": 1000,
+            "system_tokens": 1000,
+            "requests": [
+                {"t": 0.0, "type": "s", "in": 1000, "out": 500},
+                {"t": 10.0, "type": "n", "in": 3000, "out": 1000},
+            ],
+        }
+        path = tmp_path / "trace.json"
+        path.write_text(json.dumps(trace))
+
+        # 1 char per token
+        mock_prompt_generator.generate_prompt.return_value = "x" * 1500
+        mock_prompt_generator.generate.return_value = "warm prefix text"
+
+        config = UserConfig.model_construct(
+            endpoint=EndpointConfig.model_construct(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.25,
+                file=str(path),
+            ),
+        )
+
+        loader = CodingTraceLoader(
+            filename=str(path),
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        conv = conversations[0]
+        # Turn 0: delta = max(1, 1000 - 500) = 500
+        assert len(conv.turns[0].texts[0].contents[0]) == 500
+        # Turn 1: delta = max(1, 3000 - 1000 - 500) = 1500
+        assert len(conv.turns[1].texts[0].contents[0]) == 1500
+
+    def test_flatten_converts_subagent_timestamps_to_absolute(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Subagent timestamps are converted from relative to absolute time.
+
+        Main: t=10.0
+          Subagent container: t=5.0 (abs: 10+5=15)
+            Child: t=1.0 (abs: 15+1=16)
+            Child: t=3.0 (abs: 15+3=18)
+        """
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        loader = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=default_user_config,
+        )
+
+        nested = [
+            CodingTraceRequest.model_validate(
+                {
+                    "t": 10.0,
+                    "type": "s",
+                    "in": 1000,
+                    "out": 500,
+                    "requests": [
+                        {
+                            "t": 5.0,
+                            "type": "subagent",
+                            "requests": [
+                                {"t": 1.0, "type": "n", "in": 200, "out": 100},
+                                {"t": 3.0, "type": "n", "in": 300, "out": 150},
+                            ],
+                        },
+                    ],
+                }
+            )
+        ]
+
+        flat = loader._flatten_requests(nested)
+        assert len(flat) == 3
+        # Results sorted by absolute time
+        assert flat[0].t == 10.0  # main: 0 + 10
+        assert flat[0].input_tokens == 1000
+        assert flat[1].t == 16.0  # 0 + 10 + 5 + 1
+        assert flat[1].input_tokens == 200
+        assert flat[2].t == 18.0  # 0 + 10 + 5 + 3
+        assert flat[2].input_tokens == 300
+
+    def test_flatten_sorts_by_absolute_time(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Flattened requests are sorted chronologically by absolute time."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        loader = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=default_user_config,
+        )
+
+        # Two top-level requests where the second appears earlier in absolute time
+        # than nested children of the first
+        nested = [
+            CodingTraceRequest.model_validate(
+                {
+                    "t": 0.0,
+                    "type": "s",
+                    "in": 100,
+                    "out": 50,
+                    "requests": [
+                        {"t": 10.0, "type": "n", "in": 200, "out": 100},
+                    ],
+                }
+            ),
+            CodingTraceRequest.model_validate(
+                {"t": 5.0, "type": "n", "in": 300, "out": 150}
+            ),
+        ]
+
+        flat = loader._flatten_requests(nested)
+        assert len(flat) == 3
+        # Should be sorted: t=0, t=5, t=10
+        assert flat[0].t == 0.0
+        assert flat[1].t == 5.0
+        assert flat[2].t == 10.0
+
+    def test_compute_trace_statistics(self, mock_prompt_generator, default_user_config):
+        """Verify trace statistics computation."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        trace = CodingTrace.model_validate(
+            {
+                "id": "trace_stats",
+                "block_size": 64,
+                "requests": [
+                    {
+                        "t": 0.0,
+                        "type": "s",
+                        "in": 1000,
+                        "out": 500,
+                        "hash_ids": [1, 2, 3, 4, 5],
+                    },
+                    {
+                        "t": 1.0,
+                        "type": "n",
+                        "in": 2000,
+                        "out": 800,
+                        "hash_ids": [3, 4, 5, 6, 7],
+                    },
+                ],
+            }
+        )
+
+        stats = CodingTraceLoader._compute_trace_statistics(trace)
+        assert stats.total_input_tokens == 3000
+        assert stats.total_output_tokens == 1300
+        assert stats.num_requests == 2
+        assert stats.max_input_tokens == 2000
+        # total_blocks = 5 (first) + 5 (second) = 10, hits = 3 overlap
+        assert stats.estimated_cache_hit_ratio == pytest.approx(0.3)
+
+    def test_compute_trace_statistics_no_hash_ids(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Cache hit ratio is 0 when no hash_ids are present."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        trace = CodingTrace.model_validate(
+            {
+                "id": "trace_no_hash",
+                "block_size": 64,
+                "requests": [
+                    {"t": 0.0, "type": "s", "in": 100, "out": 50},
+                    {"t": 1.0, "type": "n", "in": 200, "out": 100},
+                ],
+            }
+        )
+
+        stats = CodingTraceLoader._compute_trace_statistics(trace)
+        assert stats.estimated_cache_hit_ratio == 0.0

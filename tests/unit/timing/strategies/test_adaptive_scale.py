@@ -268,3 +268,93 @@ class TestAdaptiveScaleStrategy:
         # Should issue new credit for recycled session
         assert scheduler.execute_async.call_count == 1
         assert strategy._active_users == 3  # unchanged when recycling
+
+    def test_stagger_from_config(self):
+        """Stagger delay is read from config and converted to seconds."""
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.ADAPTIVE_SCALE,
+            expected_duration_sec=120.0,
+            stagger_ms=200.0,
+        )
+        strategy = AdaptiveScaleStrategy(
+            config=cfg,
+            conversation_source=MagicMock(),
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=MagicMock(),
+            lifecycle=MagicMock(),
+        )
+        assert strategy._stagger_sec == pytest.approx(0.2)
+
+    def test_stagger_default_50ms(self):
+        """Default stagger is 50ms when not specified in config."""
+        strategy, _, _, _ = make_strategy()
+        # make_strategy doesn't pass stagger_ms, so config has None,
+        # which falls back to 50.0ms -> 0.05s
+        assert strategy._stagger_sec == pytest.approx(0.05)
+
+    def test_scaling_formula_default_conservative(self):
+        """Default scaling formula is conservative."""
+        strategy, _, _, _ = make_strategy()
+        assert strategy._scaling_formula == "conservative"
+
+    def test_compute_users_to_add_conservative(self):
+        """Conservative formula: max(1, active * headroom * 0.5)."""
+        strategy, _, _, _ = make_strategy()
+        strategy._active_users = 10
+        # 50% headroom -> max(1, 10 * 0.5 * 0.5) = max(1, 2) = 2
+        result = strategy._compute_users_to_add(0.5, 50.0)
+        assert result == 2
+
+    def test_compute_users_to_add_aggressive(self):
+        """Aggressive formula: max(2, 2 + headroom_pct / 10)."""
+        strategy, _, _, _ = make_strategy()
+        strategy._scaling_formula = "aggressive"
+        # 50% headroom -> max(2, 2 + 50/10) = max(2, 7) = 7
+        result = strategy._compute_users_to_add(0.5, 50.0)
+        assert result == 7
+
+    def test_compute_users_to_add_linear(self):
+        """Linear formula: max(1, headroom_pct / 5)."""
+        strategy, _, _, _ = make_strategy()
+        strategy._scaling_formula = "linear"
+        # 50% headroom -> max(1, 50/5) = max(1, 10) = 10
+        result = strategy._compute_users_to_add(0.5, 50.0)
+        assert result == 10
+
+    def test_compute_users_to_add_conservative_low_headroom(self):
+        """Conservative with low headroom floors at 1."""
+        strategy, _, _, _ = make_strategy()
+        strategy._active_users = 2
+        # 5% headroom -> max(1, 2 * 0.05 * 0.5) = max(1, 0) = 1
+        result = strategy._compute_users_to_add(0.05, 5.0)
+        assert result == 1
+
+    def test_compute_users_to_add_aggressive_low_headroom(self):
+        """Aggressive with low headroom floors at 2."""
+        strategy, _, _, _ = make_strategy()
+        strategy._scaling_formula = "aggressive"
+        # 5% headroom -> max(2, 2 + 5/10) = max(2, 2) = 2
+        result = strategy._compute_users_to_add(0.05, 5.0)
+        assert result == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_phase_uses_stagger_delay(self):
+        """Initial users beyond the first are staggered by stagger_sec."""
+        strategy, scheduler, issuer, stop_checker = make_strategy(start_users=3)
+        strategy._stagger_sec = 0.1
+        stop_checker.can_send_any_turn = MagicMock(
+            side_effect=[True, True, True, False]
+        )
+
+        await strategy.setup_phase()
+        await strategy.execute_phase()
+
+        # First user awaited directly, remaining 2 scheduled with stagger
+        assert scheduler.schedule_later.call_count == 2
+        # Verify stagger delays: 0.1*1=0.1 and 0.1*2=0.2
+        first_call_delay = scheduler.schedule_later.call_args_list[0][0][0]
+        second_call_delay = scheduler.schedule_later.call_args_list[1][0][0]
+        assert first_call_delay == pytest.approx(0.1)
+        assert second_call_delay == pytest.approx(0.2)

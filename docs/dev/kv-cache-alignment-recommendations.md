@@ -18,45 +18,45 @@ detailed feature-by-feature comparison this document builds on.
 These affect the correctness of benchmark results. Without them, AIPerf's coding trace
 replay produces measurements that don't reflect the intended workload.
 
-### P0-1: Runtime Response Token Accounting (Shortfall Tracking)
+### P0-1: Response Token Shortfall Compensation
 
 **Problem:** AIPerf computes deltas at load time using `prev.output_tokens` from the trace.
 If the model generates fewer tokens than expected, cumulative context drifts shorter than
 intended. Over a 20-turn conversation, a consistent 20% undergeneration compounds into
 a ~60% context deficit by the final turn.
 
+**Existing capability:** AIPerf already detects output token mismatches via OSL mismatch
+metrics (`osl_mismatch_metrics.py`), which track `actual_osl` vs `requested_osl` and report
+percentage differences. The gap is not detection but **compensation** — adjusting subsequent
+turns to make up for shortfalls.
+
 **kv-cache-tester approach:** `UserSession.record_shortfall()` fires when actual output is
 < 80% of expected. The full deficit (`expected - actual`) carries forward as
 `token_shortfall` and is added to the next turn's user message budget. Reset to 0 after
 each compensation.
 
-**Recommended implementation:**
+**Recommended implementation (Option A — pre-computed with runtime truncation):**
 
-1. Track `stored_response_tokens` per session in `UserSession` (actual token count from
-   the model's response, not the trace's expected count).
-2. After each response, compare actual vs expected. If `actual < expected * 0.8`, set
+1. At load time, pre-compute prompts at `delta + max_possible_shortfall` (oversized).
+2. Track `token_shortfall` per session in `UserSession`.
+3. After each response, compare actual vs expected. If `actual < expected * 0.8`, set
    `shortfall = expected - actual`.
-3. On the next turn, increase the user message size by `shortfall` tokens.
-4. This requires **runtime prompt generation** for compensating turns, not pre-computed
-   prompts. Two options:
-   - **Option A (minimal change):** Pre-compute prompts at `delta + max_possible_shortfall`
-     and truncate at runtime based on actual shortfall. Wastes some mmap space but
-     preserves the pre-computation architecture.
-   - **Option B (full runtime):** Generate prompts at request time like kv-cache-tester.
-     More accurate but requires tokenizer access in workers (already available via
-     `InferenceClient.endpoint.tokenizer`).
+4. On the next turn, truncate the oversized prompt to `delta + shortfall` characters
+   (using the existing character-ratio approach).
+5. Store expected `output_tokens` per turn in `Conversation` metadata for comparison.
+
+This preserves the pre-computation architecture while supporting compensation. Wastes
+some mmap space but avoids runtime prompt generation entirely.
 
 **Files to modify:**
-- `src/aiperf/workers/session_manager.py` — add `stored_response_tokens: int` and
-  `token_shortfall: int` to `UserSession`
+- `src/aiperf/workers/session_manager.py` — add `token_shortfall: int` to `UserSession`
 - `src/aiperf/workers/worker.py` — after `store_response()`, count actual tokens and
-  call `record_shortfall(expected, actual)`
-- `src/aiperf/dataset/loader/coding_trace.py` — if Option A, generate oversized prompts;
-  if Option B, defer prompt generation to runtime
+  compute shortfall
+- `src/aiperf/dataset/loader/coding_trace.py` — generate oversized prompts with headroom
 - `src/aiperf/dataset/loader/models.py` — store expected `output_tokens` per turn in
   `Conversation` metadata for runtime comparison
 
-**Complexity:** Medium (Option A) / High (Option B)
+**Complexity:** Medium
 
 ---
 
@@ -120,34 +120,34 @@ In `CodingTraceLoader._flatten_requests()`:
 
 These are features that meaningfully improve the quality and realism of the benchmark.
 
-### P1-1: Admission Control (Max Concurrent Requests)
+### P1-1: Default Concurrency Limit for Adaptive Scale
 
-**Problem:** AIPerf has no global cap on in-flight requests. Against fast mock servers,
-adaptive scaling can launch hundreds of concurrent requests, overwhelming the benchmark
-infrastructure rather than finding the server's TTFT ceiling.
+**Existing capability:** AIPerf already has a full three-layer concurrency control system
+(`DynamicConcurrencyLimit`, `GlobalPhaseConcurrencyLimiter`, `ConcurrencyManager`) that
+tracks both session concurrency and prefill concurrency. Configured via `--concurrency`
+(max in-flight requests) and `--prefill-concurrency` (max requests awaiting first token),
+enforced in `CreditIssuer.issue_credit()` before any credit is issued. Prefill slots are
+released via `FirstToken` messages from workers.
+
+**Problem:** When adaptive scale mode auto-enables for coding traces, `--concurrency`
+defaults to `None` (unlimited). Against fast mock servers, scaling can launch hundreds of
+concurrent requests without hitting any cap. kv-cache-tester defaults to 50.
 
 **kv-cache-tester approach:** `--max-concurrent-requests` (default 50) gates every dispatch.
-Tracks `in_flight_requests`, `in_flight_prefilling` (= in_flight - in_flight_decoding), and
-`in_flight_decoding` separately. User scaling is also suppressed when at capacity.
 
 **Recommended implementation:**
 
-Add admission control to `AdaptiveScaleStrategy`:
-1. New config: `--adaptive-scale-max-concurrent-requests` (default 50)
-2. Track `in_flight_requests` counter, incremented on credit issue, decremented on
-   `CreditReturn`
-3. In `execute_phase()` / `handle_credit_return()`, check capacity before issuing next
-   credit
-4. Track prefill vs decode counts using existing `FirstToken` messages:
-   `in_flight_prefilling = in_flight - in_flight_decoding`
-5. In `_assess_and_scale()`, skip scaling when at capacity
+Set a sensible default concurrency for adaptive scale mode:
+1. When `timing_mode == ADAPTIVE_SCALE` and `concurrency` is not explicitly set,
+   default to 50
+2. Suppress scaling in `_assess_and_scale()` when concurrency slots are exhausted
+3. Log when scaling is suppressed due to concurrency limits
 
 **Files to modify:**
-- `src/aiperf/timing/strategies/adaptive_scale.py` — add counter and gate logic
-- `src/aiperf/timing/config.py` — add `max_concurrent_requests` to `CreditPhaseConfig`
-- `src/aiperf/common/config/user_config.py` — add CLI option
+- `src/aiperf/timing/config.py` — default `concurrency` to 50 for adaptive scale
+- `src/aiperf/timing/strategies/adaptive_scale.py` — check slot availability before scaling
 
-**Complexity:** Medium
+**Complexity:** Low
 
 ---
 
@@ -257,24 +257,21 @@ pull-back, clears the entire conversation and regenerates a single user message 
 
 **Recommended implementation:**
 
-This requires runtime prompt generation (same as P0-1 Option B). If implementing P0-1
-with Option B:
-1. Store previous request's `hash_ids` in `UserSession`
-2. On each turn, compute `removed = prev_hash_ids - current_hash_ids`
-3. If `len(removed) > 0.1 * len(prev_hash_ids)`: pull-back detected
-4. Clear `turn_list`, generate new user message at `input_tokens - kept_tokens`
-5. Store `prev_hash_ids` for next comparison
-
-If using Option A (pre-computed prompts), pull-back can be approximated by pre-computing
-a "reset prompt" at the pull-back turn's full `input_tokens - estimated_kept_tokens`.
+Detect pull-backs at load time and pre-compute reset prompts:
+1. In `convert_to_conversations()`, compare each request's `hash_ids` with the previous
+2. If `len(removed) > 0.1 * len(prev_hash_ids)`: mark as pull-back
+3. For pull-back turns, pre-compute a "reset prompt" sized to
+   `input_tokens - estimated_kept_tokens` (where kept = intersection of hash_ids *
+   block_size)
+4. Store pull-back metadata per turn so workers know to clear `turn_list` before this turn
 
 **Files to modify:**
-- `src/aiperf/workers/session_manager.py` — add `prev_hash_ids` tracking
-- `src/aiperf/workers/worker.py` — detect pull-back, reset conversation
-- `src/aiperf/dataset/loader/coding_trace.py` — store hash_ids per turn in conversation
-  metadata
+- `src/aiperf/dataset/loader/coding_trace.py` — detect pull-backs, pre-compute reset
+  prompts, store hash_ids per turn in conversation metadata
+- `src/aiperf/dataset/loader/models.py` — add pull-back metadata to turn model
+- `src/aiperf/workers/session_manager.py` — handle pull-back by clearing `turn_list`
 
-**Complexity:** High (depends on P0-1)
+**Complexity:** Medium-High
 
 ---
 
@@ -582,26 +579,26 @@ configurable via `--min-requests` (default 1).
 |---|---|---|---|
 | P0-2 | First-turn warm prefix accounting | Low | -- |
 | P0-3 | Subagent timestamp normalization | Low | -- |
-| P0-1 | Shortfall tracking | Medium-High | Architecture decision (Option A vs B) |
+| P0-1 | Shortfall compensation | Medium | -- |
 
-P0-2 and P0-3 are independent quick wins. P0-1 is the most impactful and should be
-prototyped early to inform the architecture decision for P1-5 and P1-6.
+P0-2 and P0-3 are independent quick wins. P0-1 uses pre-computed oversized prompts
+with runtime truncation (Option A) to avoid runtime prompt generation.
 
 ### Phase 2: Core Missing Features (P1) — Unblock Real Benchmarks
 
 | ID | Change | Effort | Depends On |
 |---|---|---|---|
-| P1-1 | Admission control | Medium | -- |
-| P1-3 | Per-period token budget | Low-Medium | P1-1 (shares counter infrastructure) |
+| P1-1 | Default concurrency for adaptive scale | Low | -- |
+| P1-3 | Per-period token budget | Low-Medium | -- |
 | P1-4 | Circuit breaker | Low-Medium | -- |
 | P1-7 | Request pair detection | Medium | -- |
-| P1-2 | Working set budget | Medium-High | P1-1 |
-| P1-5 | Pull-back detection | High | P0-1 (Option B) |
+| P1-2 | Working set budget | Medium-High | -- |
+| P1-5 | Pull-back detection | Medium-High | -- |
 | P1-6 | Coding prompt content | Medium | -- |
 
-P1-1 (admission control) and P1-4 (circuit breaker) are independent and high-value.
-P1-3 builds on P1-1's counter infrastructure. P1-5 depends on P0-1's runtime prompt
-generation.
+P1-1 (default concurrency) is a config change leveraging existing infrastructure.
+P1-4 (circuit breaker) is independent and high-value. P1-3 is independent (uses its
+own counter). P1-5 uses load-time pull-back detection with pre-computed reset prompts.
 
 ### Phase 3: Observability and Polish (P2)
 
@@ -614,9 +611,9 @@ generation.
 | P2-1 | Configurable scaling formula | Low | -- |
 | P2-5 | Cache hit rate metrics | Medium | -- |
 | P2-9 | Trace metadata enrichment | Low | -- |
-| P2-6 | Assessment period metrics | Medium | P1-1 |
+| P2-6 | Assessment period metrics | Medium | -- |
 | P2-7 | User lifecycle events | Low-Medium | -- |
-| P2-8 | Rate limiting | Medium | P1-1 |
+| P2-8 | Rate limiting | Medium | -- |
 | P2-10 | Interactive graphs | Medium | P2-6, P2-7 |
 
 P2-2 through P2-4 and P2-11 are trivial config changes that can ship immediately.
@@ -627,31 +624,16 @@ cluster.
 
 ## Architecture Considerations
 
-### Runtime vs Pre-Computed Prompts
+### Pre-Computed Prompts with Runtime Truncation
 
-The biggest architectural decision is whether to move from pre-computed (mmap) prompts
-to runtime prompt generation. This affects P0-1, P1-5, and P1-6.
+All features use the pre-computed (mmap) prompt architecture. No runtime prompt generation.
 
-**Keep pre-computed (Option A):**
-- Pro: No tokenizer in hot path, deterministic, memory-efficient via mmap sharing
-- Con: Can't adapt to runtime model behavior, shortfall compensation is approximate
-- Approach: Over-allocate prompts by max expected shortfall, truncate at runtime
-
-**Move to runtime (Option B):**
-- Pro: Exact shortfall compensation, pull-back support, coding-specific content
-- Con: Tokenizer overhead per request, requires prompt generator in worker processes
-- Approach: Workers generate prompts on demand using conversation state
-
-**Hybrid recommendation:** Keep mmap for the base conversation structure. Add a
-`RuntimePromptAdjuster` that can extend the last user turn by shortfall tokens at
-request time. This avoids full runtime generation while supporting compensation:
-
-```
-stored_prompt = mmap_conversation.get_turn(i)  # pre-computed base
-if shortfall > 0:
-    extension = prompt_generator.generate_prompt(shortfall)
-    stored_prompt.texts.append(extension)
-```
+- **Shortfall compensation (P0-1):** Over-allocate prompts at load time, truncate at
+  runtime based on actual shortfall using the existing character-ratio approach.
+- **Pull-back detection (P1-5):** Detect at load time via hash_id comparison, pre-compute
+  reset prompts for pull-back turns.
+- **Coding prompt content (P1-6):** New prompt generator plugin used at load time, same
+  as the existing `PromptGenerator` interface.
 
 ### Multi-Process Working Set Tracking
 
@@ -667,7 +649,8 @@ Recommendation: Start with option 3 (estimates for admission, actuals for metric
 ### Credit System Integration
 
 Most P1 features integrate through the existing credit system:
-- **Admission control:** Gate in `AdaptiveScaleStrategy` before `issue_credit()`
+- **Concurrency (P1-1):** Already implemented via `ConcurrencyManager` +
+  `CreditIssuer.issue_credit()`. Just needs a default for adaptive scale mode.
 - **Working set/token budgets:** Check in `AdaptiveScaleStrategy.handle_credit_return()`
   before issuing next session
 - **Circuit breaker:** Worker-level, publishes `WorkerShutdown` message

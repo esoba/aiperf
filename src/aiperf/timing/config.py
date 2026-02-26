@@ -221,6 +221,15 @@ class CreditPhaseConfig(AIPerfBaseModel):
         default=False,
         description="Whether to recycle completed sessions by sampling new conversations.",
     )
+    stagger_ms: float | None = Field(
+        default=None,
+        ge=0,
+        description="Delay in milliseconds between launching new users in adaptive scale.",
+    )
+    scaling_formula: str | None = Field(
+        default=None,
+        description="Scaling formula preset: 'conservative', 'aggressive', or 'linear'.",
+    )
 
 
 def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
@@ -315,4 +324,6 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
         max_delay_sec=input.adaptive_scale_max_delay if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
         time_scale=input.adaptive_scale_time_scale if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
         recycle_sessions=input.adaptive_scale_recycle if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else False,
+        stagger_ms=input.adaptive_scale_stagger_ms if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        scaling_formula=input.adaptive_scale_formula if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
     )  # fmt: skip
