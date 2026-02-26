@@ -16,15 +16,17 @@ AIPerf determines how to schedule requests based on which CLI options you specif
 | `--concurrency` (alone) | Saturation/throughput testing | Send requests as fast as possible within concurrency limits |
 | `--fixed-schedule` | Trace replay | Replay requests at exact timestamps from dataset |
 | `--user-centric-rate` | KV cache benchmarking | Per-user rate limiting with consistent turn gaps |
+| `--adaptive-scale` | Coding trace replay | Auto-scale concurrent users based on TTFT headroom |
 
 ### Option Priority
 
 When multiple options are specified, AIPerf uses this priority:
 
-1. `--fixed-schedule` or mooncake_trace dataset → Timestamp-based scheduling
-2. `--user-centric-rate` → Per-user turn gap scheduling
-3. `--request-rate` → Rate-based scheduling with arrival patterns
-4. `--concurrency` only → Burst mode (as fast as possible within limits)
+1. `--adaptive-scale` or coding_trace dataset → Adaptive user scaling based on TTFT
+2. `--fixed-schedule` or mooncake_trace dataset → Timestamp-based scheduling
+3. `--user-centric-rate` → Per-user turn gap scheduling
+4. `--request-rate` → Rate-based scheduling with arrival patterns
+5. `--concurrency` only → Burst mode (as fast as possible within limits)
 
 ---
 
@@ -38,28 +40,29 @@ When multiple options are specified, AIPerf uses this priority:
 
 ### Scheduling Options
 
-| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
-|--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--request-rate` | ✅ | ❌ | ❌ | Conflicts with `--user-centric-rate` |
-| `--user-centric-rate` | ❌ | ❌ | 🔧 | Requires `--num-users` |
-| `--fixed-schedule` | ❌ | 🔧 | ❌ | Requires trace dataset with timestamps |
-| `--num-users` | ❌ | ❌ | 🔧 | Required with `--user-centric-rate`; **raises error** otherwise |
-| `--request-rate-ramp-duration` | ✅ | ❌ | ❌ | **Raises error** with `--fixed-schedule` or `--user-centric-rate` |
+| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | `--adaptive-scale` | Notes |
+|--------|:----------------:|:------------------:|:---------------------:|:-------------------:|-------|
+| `--request-rate` | ✅ | ❌ | ❌ | ❌ | Conflicts with `--user-centric-rate` and `--adaptive-scale` |
+| `--user-centric-rate` | ❌ | ❌ | 🔧 | ❌ | Requires `--num-users` |
+| `--fixed-schedule` | ❌ | 🔧 | ❌ | ❌ | Requires trace dataset with timestamps |
+| `--adaptive-scale` | ❌ | ❌ | ❌ | 🔧 | Requires `--streaming` and `--benchmark-duration` |
+| `--num-users` | ❌ | ❌ | 🔧 | ❌ | Required with `--user-centric-rate`; **raises error** otherwise |
+| `--request-rate-ramp-duration` | ✅ | ❌ | ❌ | ❌ | **Raises error** with `--fixed-schedule`, `--user-centric-rate`, or `--adaptive-scale` |
 
 ### Stop Conditions (at least one required)
 
-| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
-|--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--request-count` | ✅ | ✅ | ✅ | Mutually exclusive with `--num-sessions` |
-| `--num-sessions` | ✅ | ✅ | ✅ | Mutually exclusive with `--request-count` |
-| `--benchmark-duration` | ✅ | ✅ | ✅ | Enables `--benchmark-grace-period` |
+| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | `--adaptive-scale` | Notes |
+|--------|:----------------:|:------------------:|:---------------------:|:-------------------:|-------|
+| `--request-count` | ✅ | ✅ | ✅ | ✅ | Mutually exclusive with `--num-sessions` |
+| `--num-sessions` | ✅ | ✅ | ✅ | ✅ | Mutually exclusive with `--request-count` |
+| `--benchmark-duration` | ✅ | ✅ | ✅ | 🔧 | Enables `--benchmark-grace-period`; **required** for `--adaptive-scale` |
 
 ### Arrival Pattern Options
 
-| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
-|--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--arrival-pattern` | ✅ | ❌ | ❌ | Conflicts with `--user-centric-rate`; values: `constant`, `poisson`, `gamma` |
-| `--arrival-smoothness` | ⚠️ | ❌ | ❌ | Only with `--arrival-pattern gamma` |
+| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | `--adaptive-scale` | Notes |
+|--------|:----------------:|:------------------:|:---------------------:|:-------------------:|-------|
+| `--arrival-pattern` | ✅ | ❌ | ❌ | ❌ | Conflicts with `--user-centric-rate`; values: `constant`, `poisson`, `gamma` |
+| `--arrival-smoothness` | ⚠️ | ❌ | ❌ | ❌ | Only with `--arrival-pattern gamma` |
 
 **Arrival Pattern Values:**
 - `constant` - Fixed inter-arrival times (1/rate)
@@ -69,18 +72,19 @@ When multiple options are specified, AIPerf uses this priority:
 
 ### Concurrency Options
 
-| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
-|--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--concurrency` | ✅ | ✅ | ✅ | Limits concurrent sessions with any scheduling option |
-| `--prefill-concurrency` | ⚠️ | ⚠️ | ⚠️ | Requires `--streaming`; must be ≤ `--concurrency` |
-| `--concurrency-ramp-duration` | ✅ | ✅ | ✅ | Works with any scheduling option |
-| `--prefill-concurrency-ramp-duration` | ⚠️ | ⚠️ | ⚠️ | Requires `--streaming`; works with any scheduling option |
+| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | `--adaptive-scale` | Notes |
+|--------|:----------------:|:------------------:|:---------------------:|:-------------------:|-------|
+| `--concurrency` | ✅ | ✅ | ✅ | ✅ | Limits concurrent sessions with any scheduling option |
+| `--prefill-concurrency` | ⚠️ | ⚠️ | ⚠️ | ⚠️ | Requires `--streaming`; must be ≤ `--concurrency` |
+| `--concurrency-ramp-duration` | ✅ | ✅ | ✅ | ✅ | Works with any scheduling option |
+| `--prefill-concurrency-ramp-duration` | ⚠️ | ⚠️ | ⚠️ | ⚠️ | Requires `--streaming`; works with any scheduling option |
 
 **Concurrency behavior by configuration:**
 - **With `--request-rate`**: Concurrency acts as a ceiling; requests scheduled by rate are blocked if at limit
 - **With `--concurrency` only** (no rate options): Concurrency is the primary driver; sends as fast as possible within limit
 - **With `--fixed-schedule`**: Concurrency acts as a ceiling; requests fire at scheduled times but blocked if at limit
 - **With `--user-centric-rate`**: Concurrency acts as a ceiling; user turns fire based on turn_gap but blocked if at limit
+- **With `--adaptive-scale`**: Concurrency acts as a ceiling; adaptive strategy manages user count independently
 
 > **Important**: If `--concurrency` is not set, session concurrency limiting is **disabled** (unlimited). For `--user-centric-rate` mode, consider setting `--concurrency` to at least `--num-users` to ensure all users can have in-flight requests.
 
@@ -88,37 +92,37 @@ When multiple options are specified, AIPerf uses this priority:
 
 ### Grace Period Options
 
-| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
-|--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--benchmark-grace-period` | ⚠️ | ⚠️ | ⚠️ | Requires `--benchmark-duration`; default: 30s (`--user-centric-rate` defaults to ∞ when duration-based) |
+| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | `--adaptive-scale` | Notes |
+|--------|:----------------:|:------------------:|:---------------------:|:-------------------:|-------|
+| `--benchmark-grace-period` | ⚠️ | ⚠️ | ⚠️ | ⚠️ | Requires `--benchmark-duration`; default: 30s (`--user-centric-rate` defaults to ∞ when duration-based) |
 
 ### Fixed Schedule Options
 
-| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
-|--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--fixed-schedule-auto-offset` | ❌ | ✅ | ❌ | **Raises error** without `--fixed-schedule`; conflicts with `--fixed-schedule-start-offset` |
-| `--fixed-schedule-start-offset` | ❌ | ✅ | ❌ | **Raises error** without `--fixed-schedule`; conflicts with `--fixed-schedule-auto-offset` |
-| `--fixed-schedule-end-offset` | ❌ | ✅ | ❌ | **Raises error** without `--fixed-schedule`; must be ≥ start offset |
+| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | `--adaptive-scale` | Notes |
+|--------|:----------------:|:------------------:|:---------------------:|:-------------------:|-------|
+| `--fixed-schedule-auto-offset` | ❌ | ✅ | ❌ | ❌ | **Raises error** without `--fixed-schedule`; conflicts with `--fixed-schedule-start-offset` |
+| `--fixed-schedule-start-offset` | ❌ | ✅ | ❌ | ❌ | **Raises error** without `--fixed-schedule`; conflicts with `--fixed-schedule-auto-offset` |
+| `--fixed-schedule-end-offset` | ❌ | ✅ | ❌ | ❌ | **Raises error** without `--fixed-schedule`; must be ≥ start offset |
 
 ### Request Cancellation Options
 
-| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
-|--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--request-cancellation-rate` | ✅ | ✅ | ✅ | Percentage (0-100) |
-| `--request-cancellation-delay` | ⚠️ | ⚠️ | ⚠️ | Requires `--request-cancellation-rate`; **raises error** otherwise |
+| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | `--adaptive-scale` | Notes |
+|--------|:----------------:|:------------------:|:---------------------:|:-------------------:|-------|
+| `--request-cancellation-rate` | ✅ | ✅ | ✅ | ✅ | Percentage (0-100) |
+| `--request-cancellation-delay` | ⚠️ | ⚠️ | ⚠️ | ⚠️ | Requires `--request-cancellation-rate`; **raises error** otherwise |
 
 ### Dataset Options
 
-| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
-|--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--dataset-sampling-strategy` | ✅ | ❌ | ✅ | Not compatible with `--fixed-schedule` |
+| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | `--adaptive-scale` | Notes |
+|--------|:----------------:|:------------------:|:---------------------:|:-------------------:|-------|
+| `--dataset-sampling-strategy` | ✅ | ❌ | ✅ | ❌ | Not compatible with `--fixed-schedule` or `--adaptive-scale` |
 
 ### Session Configuration
 
-| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
-|--------|:----------------:|:------------------:|:---------------------:|-------|
-| `--session-turns-mean` | ✅ | ✅ | ⚠️ | `--user-centric-rate` requires ≥ 2 |
-| `--session-turns-stddev` | ✅ | ✅ | ✅ | |
+| Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | `--adaptive-scale` | Notes |
+|--------|:----------------:|:------------------:|:---------------------:|:-------------------:|-------|
+| `--session-turns-mean` | ✅ | ✅ | ⚠️ | ✅ | `--user-centric-rate` requires ≥ 2 |
+| `--session-turns-stddev` | ✅ | ✅ | ✅ | ✅ | |
 
 ---
 
@@ -201,6 +205,33 @@ aiperf profile --url localhost:8000 --model llama \
     --fixed-schedule-end-offset 120000
 ```
 
+### Using `--adaptive-scale` (Coding Trace Replay)
+
+Auto-scales concurrent users based on TTFT headroom. Designed for replaying agentic coding traces.
+
+```bash
+# Basic adaptive scale with coding traces
+aiperf profile --url localhost:8000 --model llama \
+    --input-file traces/ \
+    --custom-dataset-type coding_trace \
+    --streaming \
+    --adaptive-scale \
+    --benchmark-duration 300
+
+# Aggressive scaling with custom TTFT threshold
+aiperf profile --url localhost:8000 --model llama \
+    --input-file traces/ \
+    --custom-dataset-type coding_trace \
+    --streaming \
+    --adaptive-scale \
+    --adaptive-scale-formula aggressive \
+    --adaptive-scale-max-ttft 1.0 \
+    --adaptive-scale-max-users 100 \
+    --benchmark-duration 600
+```
+
+> **See also**: [Coding Trace Replay](coding-trace-replay.md) for the complete guide including trace format, adaptive scale formulas, and advanced examples.
+
 ### Using `--user-centric-rate` (KV Cache Benchmarking)
 
 Per-user rate limiting for KV cache benchmarking. Each user has a consistent gap between their turns.
@@ -231,7 +262,7 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 | `--user-centric-rate requires --num-users to be set` | Missing required option | Add `--num-users` |
 | `--user-centric-rate requires multi-turn conversations (--session-turns-mean >= 2)` | Single-turn with `--user-centric-rate` | Use `--request-rate` for single-turn or increase `--session-turns-mean` |
 | `--benchmark-grace-period can only be used with duration-based benchmarking` | Grace period without duration | Add `--benchmark-duration` |
-| `--warmup-grace-period can only be used when warmup is enabled` | Warmup grace without warmup | Add `--warmup-request-count`, `--warmup-duration`, or `--num-warmup-sessions` |
+| `--warmup-grace-period can only be used when --warmup-duration is set` | Warmup grace without warmup duration | Add `--warmup-duration` |
 | `--prefill-concurrency requires --streaming to be enabled` | Prefill without streaming | Add `--streaming` |
 | `--arrival-smoothness can only be used with --arrival-pattern gamma` | Wrong arrival pattern | Change to `--arrival-pattern gamma` |
 | `Dataset sampling strategy is not compatible with fixed schedule mode` | Sampling with `--fixed-schedule` | Remove `--dataset-sampling-strategy` |
@@ -240,31 +271,35 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 | `--num-users can only be used with --user-centric-rate` | `--num-users` without `--user-centric-rate` | Add `--user-centric-rate` or remove `--num-users` |
 | `--request-cancellation-delay can only be used with --request-cancellation-rate` | Delay without cancellation rate | Add `--request-cancellation-rate` or remove `--request-cancellation-delay` |
 | `--fixed-schedule-* can only be used with --fixed-schedule` | Fixed schedule options without `--fixed-schedule` | Add `--fixed-schedule` or remove the offset options |
-| `--request-rate-ramp-duration cannot be used with --user-centric-rate` | Rate ramping with `--user-centric-rate` | Remove `--request-rate-ramp-duration` |
-| `--request-rate-ramp-duration cannot be used with --fixed-schedule` | Rate ramping with `--fixed-schedule` | Remove `--request-rate-ramp-duration` |
+| `--request-rate-ramp-duration can only be used with --request-rate scheduling` | Rate ramping with non-rate scheduling | Remove `--request-rate-ramp-duration` |
+| `--adaptive-scale requires --benchmark-duration to be set` | Adaptive scale without duration | Add `--benchmark-duration` |
+| `--adaptive-scale requires --streaming to be enabled` | Adaptive scale without streaming | Add `--streaming` |
 
 ---
 
 ## Quick Reference: Which Options to Use
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Which options should I use?                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  Replaying a trace with timestamps?                             │
-│  └─► --fixed-schedule (with mooncake_trace dataset)             │
-│                                                                  │
-│  Multi-turn KV cache benchmarking?                              │
-│  └─► --user-centric-rate + --num-users                          │
-│                                                                  │
-│  Controlled request rate testing?                               │
-│  └─► --request-rate (+ optional --arrival-pattern)              │
-│                                                                  │
-│  Maximum throughput / saturation testing?                       │
-│  └─► --concurrency only (no rate options)                       │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                    Which options should I use?                        │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  Replaying agentic coding traces with auto-scaling?                  │
+│  └─► --adaptive-scale (with coding_trace dataset)                    │
+│                                                                       │
+│  Replaying a trace with timestamps?                                  │
+│  └─► --fixed-schedule (with mooncake_trace dataset)                  │
+│                                                                       │
+│  Multi-turn KV cache benchmarking?                                   │
+│  └─► --user-centric-rate + --num-users                               │
+│                                                                       │
+│  Controlled request rate testing?                                    │
+│  └─► --request-rate (+ optional --arrival-pattern)                   │
+│                                                                       │
+│  Maximum throughput / saturation testing?                             │
+│  └─► --concurrency only (no rate options)                            │
+│                                                                       │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -331,6 +366,23 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 | `--fixed-schedule-auto-offset` | bool | false | Auto-offset timestamps to start at 0 (requires `--fixed-schedule`) |
 | `--fixed-schedule-start-offset` | int | None | Start offset in milliseconds (requires `--fixed-schedule`) |
 | `--fixed-schedule-end-offset` | int | None | End offset in milliseconds (requires `--fixed-schedule`) |
+
+### Adaptive Scale Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--adaptive-scale` | bool | false | Enable adaptive user scaling based on TTFT headroom |
+| `--adaptive-scale-start-users` | int | 1 | Initial concurrent users |
+| `--adaptive-scale-max-users` | int \| None | 50 | Maximum concurrent users (None for unlimited) |
+| `--adaptive-scale-max-ttft` | float | 2.0 | TTFT threshold in seconds |
+| `--adaptive-scale-ttft-metric` | enum | p95 | TTFT metric: `p95`, `avg`, `max` |
+| `--adaptive-scale-assessment-period` | float | 30.0 | Seconds between scaling assessments |
+| `--adaptive-scale-max-delay` | float \| None | 60.0 | Max inter-request delay in seconds (None for unclamped) |
+| `--adaptive-scale-time-scale` | float | 1.0 | Multiplier for trace delays |
+| `--adaptive-scale-recycle` | bool | false | Recycle completed sessions |
+| `--adaptive-scale-stagger-ms` | float | 50 | Milliseconds between new user launches |
+| `--adaptive-scale-formula` | enum | conservative | Scaling formula: `conservative`, `aggressive`, `linear` |
+| `--adaptive-scale-max-new-tokens-per-period` | int \| None | 500000 | Per-period token budget for new sessions (None to disable) |
 
 ### Session Configuration
 

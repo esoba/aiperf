@@ -196,7 +196,7 @@ class CodingTraceRequest(AIPerfBaseModel):
         description="Relative timestamp within the trace in seconds."
     )
     type: str = Field(
-        description="Request type (e.g. 's' for start, 'n' for next, 'tool_result')."
+        description="Request type (e.g. 's' for streaming, 'n' for non-streaming, 'tool_result')."
     )
     model: str | None = Field(
         default=None, description="Model name used for this request."
