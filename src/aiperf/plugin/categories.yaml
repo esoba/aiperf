@@ -21,6 +21,19 @@
 schema_version: "1.0"
 
 # =============================================================================
+# API Router Category
+# =============================================================================
+
+api_router:
+  protocol: fastapi.routing:APIRouter
+  enum: APIRouterType
+  description: |
+    API routers provide HTTP/WebSocket endpoints for the FastAPI service.
+    Each router is a FastAPI APIRouter instance included at startup.
+    One-to-many mapping: all registered routers are loaded.
+
+
+# =============================================================================
 # Timing Categories
 # =============================================================================
 

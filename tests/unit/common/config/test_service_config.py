@@ -282,3 +282,38 @@ class TestUITypeFromTTY:
 
         config = ServiceConfig(ui_type=UIType.DASHBOARD)
         assert config.ui_type == UIType.DASHBOARD
+
+
+class TestServiceConfigAPIFields:
+    """Test api_port, api_host fields and api_enabled property."""
+
+    def test_api_port_default_none(self) -> None:
+        config = ServiceConfig()
+        assert config.api_port is None
+
+    def test_api_host_default_none(self) -> None:
+        config = ServiceConfig()
+        assert config.api_host is None
+
+    def test_api_enabled_false_by_default(self, monkeypatch) -> None:
+        monkeypatch.delenv("AIPERF_API_SERVER_PORT", raising=False)
+        config = ServiceConfig()
+        assert config.api_enabled is False
+
+    def test_api_enabled_true_when_port_set(self) -> None:
+        config = ServiceConfig(api_port=8080)
+        assert config.api_enabled is True
+
+    def test_api_enabled_true_from_env(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "aiperf.common.environment.Environment.API_SERVER",
+            type("_FakeAPI", (), {"PORT": 9090})(),
+        )
+        config = ServiceConfig()
+        assert config.api_enabled is True
+
+    def test_api_port_and_host_set(self) -> None:
+        config = ServiceConfig(api_port=8080, api_host="0.0.0.0")
+        assert config.api_port == 8080
+        assert config.api_host == "0.0.0.0"
+        assert config.api_enabled is True

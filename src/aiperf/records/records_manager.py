@@ -487,9 +487,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     @background_task(interval=None, immediate=True)
     async def _report_realtime_inference_metrics_task(self) -> None:
-        """Report inference metrics at regular intervals (dashboard only)."""
+        """Report inference metrics at regular intervals (dashboard or API service)."""
         if (
             self.service_config.ui_type != UIType.DASHBOARD
+            and not self.service_config.api_enabled
             and not Environment.UI.REALTIME_METRICS_ENABLED
         ):
             return

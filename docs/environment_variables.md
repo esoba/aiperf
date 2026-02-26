@@ -21,6 +21,16 @@ export AIPERF_ZMQ_RCVTIMEO=600000
 > Environment variable names, default values, and definitions are subject to change.
 > These settings may be modified, renamed, or removed in future releases.
 
+## APISERVER
+
+API server settings. Controls the host and port of the API server.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_API_SERVER_HOST` | `'127.0.0.1'` | — | Host to bind the API server to |
+| `AIPERF_API_SERVER_PORT` | `None` | — | Port to bind the API server to |
+| `AIPERF_API_SERVER_CORS_ORIGINS` | `['*']` | — | List of CORS origins to allow |
+
 ## COMPRESSION
 
 Compression settings for streaming file transfers. Controls chunk size and compression levels for zstd and gzip encodings used in dataset and results file transfers.

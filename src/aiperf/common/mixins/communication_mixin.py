@@ -4,6 +4,7 @@
 from abc import ABC
 
 from aiperf.common.config import ServiceConfig
+from aiperf.common.enums import LifecycleState
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.protocols import CommunicationProtocol
 from aiperf.plugin import plugins
@@ -24,4 +25,7 @@ class CommunicationMixin(AIPerfLifecycleMixin, ABC):
         self.comms: CommunicationProtocol = CommClass(
             config=self.service_config.comm_config
         )
-        self.attach_child_lifecycle(self.comms)
+        # Guard: only attach if comms hasn't been attached by another mixin sharing
+        # the same singleton (e.g. RouterComponent children of a service).
+        if self.comms.state == LifecycleState.CREATED:
+            self.attach_child_lifecycle(self.comms)

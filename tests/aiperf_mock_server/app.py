@@ -57,9 +57,18 @@ from aiperf_mock_server.utils import (
     with_error_injection,
 )
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from starlette.requests import Request
+
+
+class ORJSONResponse(JSONResponse):
+    """JSON response using orjson for fast serialization.
+    Alternative to deprecated ORJSONResponse from fastapi."""
+
+    def render(self, content: Any) -> bytes:
+        return orjson.dumps(content)
+
 
 dcgm_fakers: list[DCGMFaker] = []
 server_start_time: float = 0.0

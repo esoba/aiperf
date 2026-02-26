@@ -51,6 +51,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         self._file_lock = asyncio.Lock()
         self._buffer: list[bytes] = []  # Store bytes for binary mode
         self._batch_size = batch_size
+        self._closed = False
 
     @on_init
     async def _open_file(self) -> None:
@@ -85,9 +86,10 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         Args:
             record: A Pydantic BaseModel instance to write
         """
+        if self._closed:
+            return
+
         try:
-            # Serialize to bytes using orjson (faster for large records)
-            # Use exclude_none=True to omit None fields (smaller output)
             json_bytes = orjson.dumps(record.model_dump(exclude_none=True, mode="json"))
 
             buffer_to_flush = None
@@ -118,7 +120,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             return
         async with self._file_lock:
             if self._file_handle is None:
-                self.error(
+                self.warning(
                     f"Tried to flush buffer, but file handle is not open: {self.output_file}"
                 )
                 return
@@ -136,6 +138,8 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
     @on_stop
     async def _close_file(self) -> None:
         """Flush remaining buffer and close the file handle (called automatically on shutdown)."""
+        self._closed = True
+
         # Wait for any pending flush tasks to complete
         if self.tasks:
             try:

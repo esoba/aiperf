@@ -170,6 +170,35 @@ class ServiceConfig(BaseConfig):
         ),
     ] = ServiceDefaults.UI_TYPE
 
+    api_port: Annotated[
+        int | None,
+        Field(
+            description="AIPerf API port (enables HTTP + WebSocket endpoints)",
+        ),
+        CLIParameter(
+            name="--api-port",
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    api_host: Annotated[
+        str | None,
+        Field(
+            description="AIPerf API host (requires --api-port)",
+        ),
+        CLIParameter(
+            name="--api-host",
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    @property
+    def api_enabled(self) -> bool:
+        """Whether the API server is enabled (port configured via CLI or environment)."""
+        from aiperf.common.environment import Environment
+
+        return (self.api_port or Environment.API_SERVER.PORT) is not None
+
     @property
     def comm_config(self) -> BaseZMQCommunicationConfig:
         """Get the communication configuration."""
