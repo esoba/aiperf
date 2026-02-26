@@ -58,7 +58,7 @@ from aiperf.credit.messages import (
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, TimingMode
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.session_manager import UserSession, UserSessionManager
 
@@ -163,8 +163,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self.attach_child_lifecycle(self.inference_client)
         self.debug(
-            lambda: f"Created inference client for {self.model_endpoint.endpoint.type}, "
-            f"class: {self.inference_client.__class__.__name__}",
+            lambda: (
+                f"Created inference client for {self.model_endpoint.endpoint.type}, "
+                f"class: {self.inference_client.__class__.__name__}"
+            ),
         )
 
         # Identity must be unique - ZMQ ROUTER uses it to address messages to specific
@@ -193,6 +195,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._prefill_concurrency_enabled: bool = (
             self.user_config.loadgen.prefill_concurrency is not None
             or self.user_config.loadgen.warmup_prefill_concurrency is not None
+        )
+
+        # Track TTFT when prefill concurrency needs slot management OR adaptive
+        # scale needs TTFT for pacing decisions. Skip SSE parsing overhead otherwise.
+        self._ttft_tracking_enabled: bool = (
+            self._prefill_concurrency_enabled
+            or self.user_config.timing_mode == TimingMode.ADAPTIVE_SCALE
         )
 
         # Only used as a fallback when dataset client is not initialized
@@ -233,7 +242,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         await self._dataset_client.initialize()
         self._dataset_configured_event.set()
         self.debug(
-            lambda: f"Dataset client initialized: type={msg.client_metadata.client_type}"
+            lambda: (
+                f"Dataset client initialized: type={msg.client_metadata.client_type}"
+            )
         )
 
     @on_stop
@@ -244,7 +255,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 WorkerShutdown(worker_id=self.service_id)
             )
             self.debug(
-                lambda: f"Sent WorkerShutdown for graceful disconnect ({self.service_id})"
+                lambda: (
+                    f"Sent WorkerShutdown for graceful disconnect ({self.service_id})"
+                )
             )
         except Exception as e:
             self.warning(
@@ -322,8 +335,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Credit was NOT returned - this means the task was cancelled before it started
         # or failed in some way that prevented the finally block from sending the return
         self.debug(
-            lambda id=credit_id: f"Credit {id} task done but NOT returned! "
-            f"Task likely was cancelled before finally block could execute. Returning now."
+            lambda id=credit_id: (
+                f"Credit {id} task done but NOT returned! "
+                f"Task likely was cancelled before finally block could execute. Returning now."
+            )
         )
 
         # Update credit_context with cancellation status
@@ -335,6 +350,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             cancelled=credit_context.cancelled,
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
+            ttft_ns=credit_context.ttft_ns,
         )
         self.execute_async(self.credit_dealer_client.send(credit_return))
         credit_context.returned = True
@@ -353,7 +369,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 task.cancel()
             else:
                 self.debug(
-                    lambda id=credit_id: f"Task for credit {id} not found (already completed?)"
+                    lambda id=credit_id: (
+                        f"Task for credit {id} not found (already completed?)"
+                    )
                 )
 
     async def _on_credit_drop_message_task(self, credit_context: CreditContext) -> None:
@@ -388,6 +406,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 cancelled=credit_context.cancelled,
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
+                ttft_ns=credit_context.ttft_ns,
             )
             await self.credit_dealer_client.send(credit_return)
             # Mark as returned AFTER send succeeds
@@ -419,29 +438,29 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         x_correlation_id = credit_context.credit.x_correlation_id
         credit = credit_context.credit
 
-        # First token callback - only needed when prefill concurrency is enabled
-        # Sends FirstToken to router for prefill concurrency slot release
-        # Returns True when meaningful content is found to stop looking for first token
+        # First token callback captures TTFT and optionally sends FirstToken
+        # for prefill slot release. Only defined when TTFT tracking is needed
+        # to avoid SSE parsing overhead in modes that don't use it.
         first_token_callback = None
-        if self._prefill_concurrency_enabled:
+        if self._ttft_tracking_enabled:
 
             async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
-                # Use endpoint to check if message has meaningful content
                 parsed = self.inference_client.endpoint.parse_response(message)
                 if parsed is None or parsed.data is None:
-                    return False  # Keep looking for meaningful content
+                    return False
 
-                # Meaningful content found - send FirstToken to router
-                await self.credit_dealer_client.send(
-                    FirstToken(
-                        credit_id=credit.id,
-                        phase=credit.phase,
-                        ttft_ns=ttft_ns,
+                credit_context.ttft_ns = ttft_ns
+
+                if self._prefill_concurrency_enabled:
+                    credit_context.first_token_sent = True
+                    await self.credit_dealer_client.send(
+                        FirstToken(
+                            credit_id=credit.id,
+                            phase=credit.phase,
+                            ttft_ns=ttft_ns,
+                        )
                     )
-                )
-                # Track that FirstToken was sent so CreditReturn can report it
-                credit_context.first_token_sent = True
-                return True  # Stop looking, first token found
+                return True
 
         try:
             session = self.session_manager.get(x_correlation_id)

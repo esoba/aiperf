@@ -293,7 +293,7 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br>_Choices: [`mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
+<br>_Choices: [`coding_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -307,6 +307,61 @@ Random seed for deterministic data generation. When set, makes synthetic prompts
 #### `--goodput` `<str>`
 
 Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric's display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
+
+#### `--adaptive-scale`
+
+Enable adaptive user scaling based on TTFT headroom. Automatically scales up the number of concurrent users while TTFT remains below the threshold. Designed for coding trace replay workloads.
+<br>_Flag (no value required)_
+
+#### `--adaptive-scale-start-users` `<int>`
+
+Initial number of concurrent users for adaptive scale mode.
+<br>_Constraints: ≥ 1_
+<br>_Default: `1`_
+
+#### `--adaptive-scale-max-users` `<int>`
+
+Maximum number of concurrent users for adaptive scale mode. If None, scaling is limited only by available conversations.
+<br>_Constraints: ≥ 1_
+
+#### `--adaptive-scale-max-ttft` `<float>`
+
+Maximum TTFT threshold in seconds for adaptive scale mode. When the measured TTFT metric exceeds this value, user scaling stops.
+<br>_Constraints: > 0_
+<br>_Default: `2.0`_
+
+#### `--adaptive-scale-ttft-metric` `<str>`
+
+TTFT metric to use for scaling decisions: 'p95', 'avg', or 'max'.
+<br>_Default: `p95`_
+
+#### `--adaptive-scale-assessment-period` `<float>`
+
+Period in seconds between scaling assessments.
+<br>_Constraints: > 0_
+<br>_Default: `30.0`_
+
+#### `--adaptive-scale-max-delay` `<float>`
+
+Maximum inter-request delay in seconds. Delays from traces exceeding this value are clamped. If None, trace delays are used as-is.
+<br>_Constraints: ≥ 0_
+
+#### `--adaptive-scale-time-scale` `<float>`
+
+Time scale factor applied to trace delays. Values < 1.0 compress delays (faster replay), > 1.0 stretch them.
+<br>_Constraints: > 0_
+<br>_Default: `1.0`_
+
+#### `--adaptive-scale-recycle`
+
+Recycle completed sessions by sampling new conversations. When disabled, each conversation is replayed at most once.
+<br>_Flag (no value required)_
+
+#### `--warm-prefix-pct` `<float>`
+
+Percentage of max(tool_tokens + system_tokens) to use as a warm prefix for KV cache pre-fill in coding trace replay. Set to 0 to disable.
+<br>_Constraints: ≥ 0, ≤ 1_
+<br>_Default: `0.5`_
 
 ### Audio Input
 

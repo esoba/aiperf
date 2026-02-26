@@ -98,11 +98,14 @@ class PhaseRunner(TaskManagerMixin):
         self._config = config
         self._conversation_source = conversation_source
 
-        # For FIXED_SCHEDULE mode, use actual dataset size instead of config values.
-        # Config values may reflect pre-filtered file size, but dataset_metadata
-        # reflects the actual filtered dataset after start/end offset filtering.
+        # For FIXED_SCHEDULE and ADAPTIVE_SCALE modes, use actual dataset size
+        # instead of config values. Config values may reflect pre-filtered file
+        # size, but dataset_metadata reflects the actual filtered dataset.
         metadata = conversation_source.dataset_metadata
-        if config.timing_mode == TimingMode.FIXED_SCHEDULE and metadata:
+        if (
+            config.timing_mode in (TimingMode.FIXED_SCHEDULE, TimingMode.ADAPTIVE_SCALE)
+            and metadata
+        ):
             self._config = config.model_copy(
                 update={
                     "total_expected_requests": metadata.total_turn_count,

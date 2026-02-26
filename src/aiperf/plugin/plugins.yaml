@@ -379,6 +379,13 @@ dataset_composer:
 # Auto-detection: the custom composer tries loaders in priority order based on can_load().
 # =============================================================================
 custom_dataset_loader:
+  coding_trace:
+    class: aiperf.dataset.loader.coding_trace:CodingTraceLoader
+    description: |
+      Coding trace dataset loader for agentic coding session replay. Loads
+      kv-cache-tester format traces from JSON files with KV cache block hashing
+      and nested subagent request flattening. Designed for adaptive_scale timing mode.
+
   mooncake_trace:
     class: aiperf.dataset.loader.mooncake_trace:MooncakeTraceDatasetLoader
     description: |
@@ -468,6 +475,13 @@ dataset_client_store:
 # or user-centric patterns. One-to-one mapping per benchmark phase.
 # =============================================================================
 timing_strategy:
+  adaptive_scale:
+    class: aiperf.timing.strategies.adaptive_scale:AdaptiveScaleStrategy
+    description: |
+      Adaptive user scaling based on TTFT headroom for trace replay workloads.
+      Starts with a small number of concurrent users and scales up while TTFT
+      remains below a configured threshold. Designed for coding trace replay.
+
   fixed_schedule:
     class: aiperf.timing.strategies.fixed_schedule:FixedScheduleStrategy
     description: |

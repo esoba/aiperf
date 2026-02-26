@@ -185,6 +185,94 @@ class RandomPool(AIPerfBaseModel):
         return self
 
 
+class CodingTraceRequest(AIPerfBaseModel):
+    """A single request within a coding trace.
+
+    Represents one LLM API call in an agentic coding session, with token counts,
+    KV cache block hashes, and optional nested subagent requests.
+    """
+
+    t: int | float = Field(
+        description="Relative timestamp within the trace in seconds."
+    )
+    type: str = Field(
+        description="Request type (e.g. 's' for start, 'n' for next, 'tool_result')."
+    )
+    model: str | None = Field(
+        default=None, description="Model name used for this request."
+    )
+    input_tokens: int = Field(
+        default=0, alias="in", description="Number of input tokens for this request."
+    )
+    output_tokens: int = Field(
+        default=0, alias="out", description="Number of output tokens for this request."
+    )
+    hash_ids: list[int] = Field(
+        default_factory=list, description="KV cache block hash IDs for prefix sharing."
+    )
+    input_types: list[str] = Field(
+        default_factory=list, description="Types of input content blocks."
+    )
+    output_types: list[str] = Field(
+        default_factory=list, description="Types of output content blocks."
+    )
+    stop: str | None = Field(
+        default=None,
+        description="Stop reason for this request (e.g. 'end_turn', 'tool_use').",
+    )
+    requests: list["CodingTraceRequest"] = Field(
+        default_factory=list, description="Nested subagent requests."
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class CodingTrace(AIPerfBaseModel):
+    """Defines the schema for a single agentic coding trace (kv-cache-tester format).
+
+    Each trace represents one coding session with a sequence of LLM requests,
+    including nested subagent calls. Loaded from JSON files in a directory.
+
+    Example:
+    ```json
+    {
+      "id": "trace-001",
+      "models": ["claude-sonnet-4-20250514"],
+      "block_size": 64,
+      "tool_tokens": 5000,
+      "system_tokens": 3000,
+      "requests": [
+        {"t": 0.0, "type": "init", "in": 1000, "out": 500, "hash_ids": [1, 2, 3], ...}
+      ]
+    }
+    ```
+    """
+
+    type: Literal[CustomDatasetType.CODING_TRACE] = CustomDatasetType.CODING_TRACE
+
+    id: str = Field(description="Unique identifier for the coding trace.")
+    models: list[str] = Field(
+        default_factory=list, description="Model names used in this trace."
+    )
+    block_size: int = Field(default=64, description="KV cache block size in tokens.")
+    tool_tokens: int = Field(
+        default=0, description="Estimated token count for tool definitions."
+    )
+    system_tokens: int = Field(
+        default=0, description="Estimated token count for system prompt."
+    )
+    requests: list[CodingTraceRequest] = Field(
+        default_factory=list, description="Sequence of LLM requests in this trace."
+    )
+
+    @model_validator(mode="after")
+    def validate_has_requests(self) -> "CodingTrace":
+        """Ensure the trace has at least one request."""
+        if not self.requests:
+            raise ValueError("A coding trace must have at least one request")
+        return self
+
+
 class MooncakeTrace(AIPerfBaseModel):
     """Defines the schema for Mooncake trace data.
 
@@ -252,6 +340,7 @@ class MooncakeTrace(AIPerfBaseModel):
 
 
 CustomDatasetT = TypeVar(
-    "CustomDatasetT", bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace
+    "CustomDatasetT",
+    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | CodingTrace,
 )
 """A union type of all custom data types."""

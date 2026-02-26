@@ -108,7 +108,22 @@ class UserConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_timing_mode(self) -> Self:
         """Set the timing mode based on the user config. Will be called after all user config is set."""
-        if self.input.fixed_schedule:
+        if self.input.adaptive_scale:
+            self._timing_mode = TimingMode.ADAPTIVE_SCALE
+            if self.loadgen.benchmark_duration is None:
+                raise ValueError(
+                    "--adaptive-scale requires --benchmark-duration to be set"
+                )
+        elif self._should_use_adaptive_scale_for_coding_trace():
+            self._timing_mode = TimingMode.ADAPTIVE_SCALE
+            _logger.info(
+                "Automatically enabling adaptive scale mode for coding_trace dataset"
+            )
+            if self.loadgen.benchmark_duration is None:
+                raise ValueError(
+                    "coding_trace dataset requires --benchmark-duration to be set"
+                )
+        elif self.input.fixed_schedule:
             self._timing_mode = TimingMode.FIXED_SCHEDULE
             if (
                 self.loadgen.request_count is None
@@ -347,6 +362,10 @@ class UserConfig(BaseConfig):
             )
 
         return self
+
+    def _should_use_adaptive_scale_for_coding_trace(self) -> bool:
+        """Check if coding_trace dataset should use adaptive scale mode."""
+        return self.input.custom_dataset_type == CustomDatasetType.CODING_TRACE
 
     def _should_use_fixed_schedule_for_mooncake_trace(self) -> bool:
         """Check if mooncake_trace dataset has timestamps and should use fixed schedule.
@@ -740,6 +759,13 @@ class UserConfig(BaseConfig):
                 return "-".join(stimulus)
             case TimingMode.FIXED_SCHEDULE:
                 return "fixed_schedule"
+            case TimingMode.ADAPTIVE_SCALE:
+                stimulus = ["adaptive_scale"]
+                if self.input.adaptive_scale_start_users > 1:
+                    stimulus.append(f"start{self.input.adaptive_scale_start_users}")
+                if self.input.adaptive_scale_max_users is not None:
+                    stimulus.append(f"max{self.input.adaptive_scale_max_users}")
+                return "-".join(stimulus)
             case TimingMode.USER_CENTRIC_RATE:
                 stimulus = ["user_centric"]
                 if self.loadgen.num_users is not None:
@@ -864,14 +890,34 @@ class UserConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_adaptive_scale_requires_streaming(self) -> Self:
+        """Validate that adaptive scale mode requires streaming.
+
+        Adaptive scale relies on TTFT measurements from FirstToken events
+        to make scaling decisions. These events are only available with
+        streaming responses.
+        """
+        if (
+            self.timing_mode == TimingMode.ADAPTIVE_SCALE
+            and not self.endpoint.streaming
+        ):
+            raise ValueError(
+                "--adaptive-scale requires --streaming to be enabled. "
+                "Adaptive scale relies on TTFT measurements which are only "
+                "available with streaming responses."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_dataset_sampling_strategy(self) -> Self:
         """Validate that the dataset sampling strategy is compatible with the timing mode."""
         if (
-            self.timing_mode == TimingMode.FIXED_SCHEDULE
+            self.timing_mode in (TimingMode.FIXED_SCHEDULE, TimingMode.ADAPTIVE_SCALE)
             and self.input.dataset_sampling_strategy is not None
         ):
             raise ValueError(
-                "Dataset sampling strategy is not compatible with fixed schedule mode. "
+                "Dataset sampling strategy is not compatible with "
+                f"{self.timing_mode} mode. "
                 "Please remove the --dataset-sampling-strategy option."
             )
         return self

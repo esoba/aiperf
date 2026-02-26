@@ -176,9 +176,9 @@ class CustomDatasetComposer(BaseDatasetComposer):
         Raises:
             ValueError: If synthesis options are set but dataset type is not mooncake_trace.
         """
-        if (
-            self.config.input.synthesis.should_synthesize()
-            and dataset_type != CustomDatasetType.MOONCAKE_TRACE
+        if self.config.input.synthesis.should_synthesize() and dataset_type not in (
+            CustomDatasetType.MOONCAKE_TRACE,
+            CustomDatasetType.CODING_TRACE,
         ):
             raise ValueError(
                 f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
@@ -194,10 +194,13 @@ class CustomDatasetComposer(BaseDatasetComposer):
             dataset_type: The type of custom dataset to create.
         """
         kwargs = {}
-        if dataset_type == CustomDatasetType.MOONCAKE_TRACE:
+        if dataset_type in (
+            CustomDatasetType.MOONCAKE_TRACE,
+            CustomDatasetType.CODING_TRACE,
+        ):
             if self.prompt_generator is None:
                 raise ValueError(
-                    "Mooncake trace datasets require a tokenizer for prompt synthesis. "
+                    f"{dataset_type} datasets require a tokenizer for prompt synthesis. "
                     "Ensure the endpoint supports tokenization or provide a --tokenizer."
                 )
             kwargs["prompt_generator"] = self.prompt_generator

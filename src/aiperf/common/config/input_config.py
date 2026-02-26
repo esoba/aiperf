@@ -118,7 +118,8 @@ class InputConfig(BaseConfig):
                 or self.synthesis.max_osl is not None
             )
             and self.custom_dataset_type is not None
-            and self.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
+            and self.custom_dataset_type
+            not in (CustomDatasetType.MOONCAKE_TRACE, CustomDatasetType.CODING_TRACE)
         ):
             raise ValueError(
                 "Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
@@ -336,6 +337,131 @@ class InputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.GOODPUT
+
+    adaptive_scale: Annotated[
+        bool,
+        Field(
+            description="Enable adaptive user scaling based on TTFT headroom. Automatically scales up the number of "
+            "concurrent users while TTFT remains below the threshold. Designed for coding trace replay workloads."
+        ),
+        CLIParameter(
+            name=("--adaptive-scale",),
+            group=_CLI_GROUP,
+        ),
+    ] = False
+
+    adaptive_scale_start_users: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Initial number of concurrent users for adaptive scale mode.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-start-users",),
+            group=_CLI_GROUP,
+        ),
+    ] = 1
+
+    adaptive_scale_max_users: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description="Maximum number of concurrent users for adaptive scale mode. "
+            "If None, scaling is limited only by available conversations.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-max-users",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    adaptive_scale_max_ttft: Annotated[
+        float,
+        Field(
+            gt=0,
+            description="Maximum TTFT threshold in seconds for adaptive scale mode. "
+            "When the measured TTFT metric exceeds this value, user scaling stops.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-max-ttft",),
+            group=_CLI_GROUP,
+        ),
+    ] = 2.0
+
+    adaptive_scale_ttft_metric: Annotated[
+        str,
+        Field(
+            description="TTFT metric to use for scaling decisions: 'p95', 'avg', or 'max'.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-ttft-metric",),
+            group=_CLI_GROUP,
+        ),
+    ] = "p95"
+
+    adaptive_scale_assessment_period: Annotated[
+        float,
+        Field(
+            gt=0,
+            description="Period in seconds between scaling assessments.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-assessment-period",),
+            group=_CLI_GROUP,
+        ),
+    ] = 30.0
+
+    adaptive_scale_max_delay: Annotated[
+        float | None,
+        Field(
+            ge=0,
+            description="Maximum inter-request delay in seconds. Delays from traces exceeding "
+            "this value are clamped. If None, trace delays are used as-is.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-max-delay",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    adaptive_scale_time_scale: Annotated[
+        float,
+        Field(
+            gt=0,
+            description="Time scale factor applied to trace delays. Values < 1.0 compress "
+            "delays (faster replay), > 1.0 stretch them.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-time-scale",),
+            group=_CLI_GROUP,
+        ),
+    ] = 1.0
+
+    adaptive_scale_recycle: Annotated[
+        bool,
+        Field(
+            description="Recycle completed sessions by sampling new conversations. "
+            "When disabled, each conversation is replayed at most once.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-recycle",),
+            group=_CLI_GROUP,
+        ),
+    ] = False
+
+    warm_prefix_pct: Annotated[
+        float,
+        Field(
+            ge=0,
+            le=1,
+            description="Percentage of max(tool_tokens + system_tokens) to use as a warm prefix "
+            "for KV cache pre-fill in coding trace replay. Set to 0 to disable.",
+        ),
+        CLIParameter(
+            name=("--warm-prefix-pct",),
+            group=_CLI_GROUP,
+        ),
+    ] = 0.5
 
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()

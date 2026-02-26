@@ -182,6 +182,45 @@ class CreditPhaseConfig(AIPerfBaseModel):
         ge=0,
         description="The fixed schedule end offset of the timing manager.",
     )
+    # Adaptive scale config
+    start_users: int | None = Field(
+        default=None,
+        ge=1,
+        description="Initial number of concurrent users for adaptive scale mode.",
+    )
+    max_users: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum number of concurrent users for adaptive scale mode.",
+    )
+    max_ttft_sec: float | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum TTFT threshold in seconds for adaptive scale scaling decisions.",
+    )
+    ttft_metric: str | None = Field(
+        default=None,
+        description="TTFT metric to use for scaling: 'p95', 'avg', or 'max'.",
+    )
+    assessment_period_sec: float | None = Field(
+        default=None,
+        gt=0,
+        description="Period in seconds between scaling assessments.",
+    )
+    max_delay_sec: float | None = Field(
+        default=None,
+        ge=0,
+        description="Maximum inter-request delay in seconds (clamp trace delays).",
+    )
+    time_scale: float | None = Field(
+        default=None,
+        gt=0,
+        description="Time scale factor for trace delays.",
+    )
+    recycle_sessions: bool = Field(
+        default=False,
+        description="Whether to recycle completed sessions by sampling new conversations.",
+    )
 
 
 def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
@@ -267,4 +306,13 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
         auto_offset_timestamps=input.fixed_schedule_auto_offset,
         fixed_schedule_start_offset=input.fixed_schedule_start_offset,
         fixed_schedule_end_offset=input.fixed_schedule_end_offset,
+        # Adaptive scale config
+        start_users=input.adaptive_scale_start_users if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        max_users=input.adaptive_scale_max_users if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        max_ttft_sec=input.adaptive_scale_max_ttft if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        ttft_metric=input.adaptive_scale_ttft_metric if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        assessment_period_sec=input.adaptive_scale_assessment_period if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        max_delay_sec=input.adaptive_scale_max_delay if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        time_scale=input.adaptive_scale_time_scale if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        recycle_sessions=input.adaptive_scale_recycle if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else False,
     )  # fmt: skip
