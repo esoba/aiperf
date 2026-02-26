@@ -9,6 +9,7 @@ import asyncio
 import pathlib
 from typing import Annotated, Any
 
+import aiofiles.os as aio_os
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -74,15 +75,14 @@ async def _stream_dataset_file(
     file_type: str,
 ) -> StreamingResponse:
     """Stream a dataset file with compression support."""
-    compress_only_mode = (
-        precompressed_path is not None
-        and precompressed_path.exists()
-        and not file_path.exists()
+    file_exists = await aio_os.path.exists(file_path)
+    precompressed_exists = precompressed_path is not None and await aio_os.path.exists(
+        precompressed_path
     )
 
-    if not file_path.exists() and not (
-        precompressed_path and precompressed_path.exists()
-    ):
+    compress_only_mode = precompressed_exists and not file_exists
+
+    if not file_exists and not precompressed_exists:
         raise HTTPException(
             status_code=404, detail=f"{file_type} file not found: {file_path.name}"
         )
@@ -99,11 +99,7 @@ async def _stream_dataset_file(
         encoding = CompressionEncoding.ZSTD
     else:
         encoding = select_encoding(accept_encoding)
-        if (
-            encoding == CompressionEncoding.ZSTD
-            and precompressed_path is not None
-            and precompressed_path.exists()
-        ):
+        if encoding == CompressionEncoding.ZSTD and precompressed_exists:
             stream = stream_file_compressed(
                 precompressed_path, CompressionEncoding.IDENTITY
             )

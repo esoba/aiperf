@@ -71,8 +71,8 @@ class _APIServerSettings(BaseSettings):
         description="Port to bind the API server to",
     )
     CORS_ORIGINS: list[str] = Field(
-        default=["*"],
-        description="List of CORS origins to allow",
+        default=[],
+        description="List of CORS origins to allow (empty = no CORS, ['*'] = all origins)",
     )
 
 

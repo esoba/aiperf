@@ -29,7 +29,7 @@ API server settings. Controls the host and port of the API server.
 |----------------------|---------|-------------|-------------|
 | `AIPERF_API_SERVER_HOST` | `'127.0.0.1'` | — | Host to bind the API server to |
 | `AIPERF_API_SERVER_PORT` | `None` | — | Port to bind the API server to |
-| `AIPERF_API_SERVER_CORS_ORIGINS` | `['*']` | — | List of CORS origins to allow |
+| `AIPERF_API_SERVER_CORS_ORIGINS` | `[]` | — | List of CORS origins to allow (empty = no CORS, ['*'] = all origins) |
 
 ## COMPRESSION
 

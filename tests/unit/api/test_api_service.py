@@ -152,8 +152,16 @@ class TestFastAPIServiceCORSMiddleware:
     """Test CORS middleware is added when cors_origins is set."""
 
     def test_cors_middleware_added_when_origins_set(
-        self, mock_zmq, api_user_config
+        self, mock_zmq, api_user_config, monkeypatch
     ) -> None:
+        monkeypatch.setattr(
+            "aiperf.common.environment.Environment.API_SERVER",
+            type(
+                "_Fake",
+                (),
+                {"HOST": "127.0.0.1", "PORT": 8080, "CORS_ORIGINS": ["*"]},
+            )(),
+        )
         sc = ServiceConfig(api_port=8080)
         service = FastAPIService(
             service_config=sc,
@@ -270,14 +278,19 @@ class TestFastAPIServiceStartStop:
 
         assert mock_server.should_exit is True
 
-    def test_on_server_task_done_reraises_exception(self, api_service) -> None:
-        """Test _on_server_task_done re-raises exceptions from the server task."""
+    async def test_on_server_task_done_schedules_stop_on_exception(
+        self, api_service
+    ) -> None:
+        """Test _on_server_task_done schedules stop when server task fails."""
         task = MagicMock()
         task.cancelled.return_value = False
         task.exception.return_value = RuntimeError("server crashed")
 
-        with pytest.raises(RuntimeError, match="server crashed"):
+        with patch.object(api_service, "stop", new_callable=AsyncMock) as mock_stop:
             api_service._on_server_task_done(task)
+            assert api_service._stop_task is not None
+            await asyncio.sleep(0)
+            mock_stop.assert_called_once()
 
     def test_on_server_task_done_ignores_cancelled(self, api_service) -> None:
         """Test _on_server_task_done does nothing for cancelled tasks."""
@@ -285,6 +298,15 @@ class TestFastAPIServiceStartStop:
         task.cancelled.return_value = True
         api_service._on_server_task_done(task)
         task.exception.assert_not_called()
+        assert api_service._stop_task is None
+
+    def test_on_server_task_done_no_exception(self, api_service) -> None:
+        """Test _on_server_task_done does nothing when task succeeds."""
+        task = MagicMock()
+        task.cancelled.return_value = False
+        task.exception.return_value = None
+        api_service._on_server_task_done(task)
+        assert api_service._stop_task is None
 
 
 class TestFastAPIServiceLifespan:

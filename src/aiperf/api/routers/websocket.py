@@ -146,14 +146,16 @@ class WebSocketManager(AIPerfLoggerMixin):
             return set()
         return set().union(*self._subscriptions.values())
 
-    async def _send_text(self, client_id: str, ws: WebSocket, json_str: str) -> bool:
+    async def _send_text(
+        self, client_id: str, ws: WebSocket, json_str: str
+    ) -> str | None:
+        """Send text to a WebSocket client. Returns client_id on failure, None on success."""
         try:
             await ws.send_text(json_str)
-            return True
+            return None
         except Exception as e:
             self.warning(f"Send failed for {client_id}: {e}")
-            self.remove(client_id)
-            return False
+            return client_id
 
     async def broadcast(self, message: Message) -> int:
         """Broadcast to clients subscribed to a message type."""
@@ -176,7 +178,12 @@ class WebSocketManager(AIPerfLoggerMixin):
             *(self._send_text(cid, ws, json_str) for cid, ws in targets),
             return_exceptions=True,
         )
-        return sum(1 for r in results if r is True)
+
+        for result in results:
+            if isinstance(result, str):
+                self.remove(result)
+
+        return sum(1 for r in results if r is None)
 
     async def close_all(self) -> None:
         """Close all connections gracefully using snapshot."""

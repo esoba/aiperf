@@ -107,7 +107,7 @@ class TestAPIServerSettings:
         settings = _APIServerSettings()
         assert settings.HOST == "127.0.0.1"
         assert settings.PORT is None
-        assert settings.CORS_ORIGINS == ["*"]
+        assert settings.CORS_ORIGINS == []
 
     def test_port_from_env(self, monkeypatch) -> None:
         monkeypatch.setenv("AIPERF_API_SERVER_PORT", "8080")

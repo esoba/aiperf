@@ -10,6 +10,7 @@ Provides reusable test utilities for testing the AIPerf API module including:
 - UserConfig builders with common variations
 """
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -89,7 +90,7 @@ def make_metric_result(
     p95: float | None = None,
     p99: float | None = None,
     std: float | None = None,
-    **kwargs,
+    **kwargs: Any,
 ) -> MetricResult:
     """Create a MetricResult with sensible defaults.
 

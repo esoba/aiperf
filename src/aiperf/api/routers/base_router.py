@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from starlette.requests import HTTPConnection
 
-from aiperf.common.config import UserConfig
+from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 
 
@@ -26,10 +26,12 @@ class BaseRouter(AIPerfLifecycleMixin):
     def __init__(
         self,
         user_config: UserConfig,
+        service_config: ServiceConfig | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.user_config = user_config
+        self.service_config = service_config
 
     @abstractmethod
     def get_router(self) -> APIRouter:

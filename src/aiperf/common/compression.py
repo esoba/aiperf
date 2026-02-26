@@ -23,6 +23,7 @@ Usage::
 
 from __future__ import annotations
 
+import functools
 import pathlib
 import re
 import zlib
@@ -53,6 +54,7 @@ class CompressionEncoding(CaseInsensitiveStrEnum):
     """No compression."""
 
 
+@functools.lru_cache(maxsize=1)
 def is_zstd_available() -> bool:
     """Check if zstandard library is available."""
     try:

@@ -71,6 +71,7 @@ class FastAPIService(BaseComponentService):
 
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
+        self._stop_task: asyncio.Task | None = None
 
         self._routers: dict[str, BaseRouter] = {}
         self._load_routers()
@@ -145,20 +146,22 @@ class FastAPIService(BaseComponentService):
         self._server_task.add_done_callback(self._on_server_task_done)
 
         self.info(f"AIPerf FastAPI started at {self._base_url}/")
-        routes = " | ".join(
-            f"{r.path}"
-            for r in self.app.routes
-            if hasattr(r, "methods") and r.path not in ("/openapi.json",)
+        self.info(
+            lambda: "  Routes: "
+            + " | ".join(
+                r.path
+                for r in self.app.routes
+                if hasattr(r, "methods") and r.path not in ("/openapi.json",)
+            )
         )
-        self.info(lambda: f"  Routes: {routes}")
 
     def _on_server_task_done(self, task: asyncio.Task) -> None:
-        """Surface unhandled server errors."""
+        """Surface unhandled server errors and trigger graceful shutdown."""
         if task.cancelled():
             return
         if exc := task.exception():
             self.exception(f"FastAPI server failed: {exc!r}")
-            raise exc
+            self._stop_task = asyncio.get_running_loop().create_task(self.stop())
 
     @on_stop
     async def _stop_api_server(self) -> None:
