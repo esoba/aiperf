@@ -131,8 +131,9 @@ class CodingTraceLoader(BaseFileLoader):
         for raw in raw_traces:
             trace = CodingTrace.model_validate(raw)
 
-            # Flatten nested subagent requests
+            # Flatten nested subagent requests and detect streaming/non-streaming pairs
             flat_requests = self._flatten_requests(trace.requests)
+            self._detect_request_pairs(flat_requests)
 
             # Truncate conversation at first request exceeding max_isl.
             # Unlike per-request filtering, this preserves conversation continuity:
@@ -196,6 +197,29 @@ class CodingTraceLoader(BaseFileLoader):
         flat.sort(key=lambda r: r.t)
         return flat
 
+    @staticmethod
+    def _detect_request_pairs(requests: list[CodingTraceRequest]) -> int:
+        """Detect consecutive streaming/non-streaming pairs with identical hash_ids.
+
+        When a trace contains a streaming request immediately followed by a
+        non-streaming request with the same hash_ids, the second is a repeat.
+        Mark it so convert_to_conversations() can set delta=0 (re-send same content).
+
+        Returns the number of pairs detected.
+        """
+        pairs_found = 0
+        for i in range(1, len(requests)):
+            prev, curr = requests[i - 1], requests[i]
+            if (
+                prev.hash_ids
+                and curr.hash_ids
+                and prev.hash_ids == curr.hash_ids
+                and curr.type == "n"
+            ):
+                curr.is_pair_repeat = True
+                pairs_found += 1
+        return pairs_found
+
     def convert_to_conversations(
         self, data: dict[str, list[CodingTrace]]
     ) -> list[Conversation]:
@@ -237,7 +261,10 @@ class CodingTraceLoader(BaseFileLoader):
             trace = traces[0]
             trace_deltas: list[int] = []
             for i, req in enumerate(trace.requests):
-                if i == 0:
+                if req.is_pair_repeat:
+                    # Paired request re-sends the same conversation; minimal delta
+                    delta = 1
+                elif i == 0:
                     delta = max(1, req.input_tokens - prefix_tokens)
                 else:
                     prev = trace.requests[i - 1]
@@ -292,6 +319,7 @@ class CodingTraceLoader(BaseFileLoader):
                 turn = Turn(
                     delay=delay_ms,
                     max_tokens=req.output_tokens,
+                    input_tokens=req.input_tokens,
                     texts=[Text(name="text", contents=[prompt])],
                 )
                 conversation.turns.append(turn)

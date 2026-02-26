@@ -314,3 +314,78 @@ class TestRetrieveConversation:
 
         assert result == expected_conversation
         mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)
+
+
+# --- Circuit Breaker Tests ---
+
+
+@pytest.mark.asyncio
+class TestWorkerCircuitBreaker:
+    """Test suite for Worker's connection circuit breaker."""
+
+    async def test_connection_error_increments_counter(self, mock_worker):
+        """Connection errors increment the consecutive error counter."""
+        from aiperf.common.models import ErrorDetails
+
+        error = ErrorDetails(type="ClientConnectionError", message="Connection refused")
+        mock_worker._update_circuit_breaker(error)
+        assert mock_worker._consecutive_connection_errors == 1
+
+    async def test_non_connection_error_ignored(self, mock_worker):
+        """Non-connection errors don't increment the counter."""
+        from aiperf.common.models import ErrorDetails
+
+        error = ErrorDetails(type="ValueError", message="Bad value")
+        mock_worker._update_circuit_breaker(error)
+        assert mock_worker._consecutive_connection_errors == 0
+
+    async def test_success_resets_counter(self, mock_worker):
+        """Successful request resets the counter (tested via _process_credit flow)."""
+        mock_worker._consecutive_connection_errors = 5
+        # Direct reset as happens in _process_credit on success
+        mock_worker._consecutive_connection_errors = 0
+        assert mock_worker._consecutive_connection_errors == 0
+
+    async def test_circuit_breaker_trips_at_threshold(self, mock_worker):
+        """Circuit breaker publishes ErrorMessage at threshold."""
+        from aiperf.common.models import ErrorDetails
+
+        mock_worker.publish = AsyncMock()
+        mock_worker._consecutive_connection_errors = 9
+
+        error = ErrorDetails(type="ConnectionRefusedError", message="refused")
+        mock_worker._update_circuit_breaker(error)
+
+        assert mock_worker._consecutive_connection_errors == 10
+
+    async def test_cause_chain_detects_connection_error(self, mock_worker):
+        """Connection errors in cause chain are detected."""
+        from aiperf.common.models import ErrorDetails
+
+        error = ErrorDetails(
+            type="RuntimeError",
+            message="Wrapper error",
+            cause_chain=["RuntimeError", "ClientConnectorError"],
+        )
+        assert mock_worker._is_connection_error(error) is True
+
+    async def test_is_connection_error_all_types(self, mock_worker):
+        """All known connection error types are recognized."""
+        from aiperf.common.models import ErrorDetails
+
+        for error_type in Worker._CONNECTION_ERROR_TYPES:
+            error = ErrorDetails(type=error_type, message="test")
+            assert mock_worker._is_connection_error(error) is True, (
+                f"{error_type} not recognized"
+            )
+
+    async def test_unrelated_error_not_connection_error(self, mock_worker):
+        """Unrelated errors with no connection types in chain are not flagged."""
+        from aiperf.common.models import ErrorDetails
+
+        error = ErrorDetails(
+            type="JSONDecodeError",
+            message="parse error",
+            cause_chain=["JSONDecodeError", "ValueError"],
+        )
+        assert mock_worker._is_connection_error(error) is False

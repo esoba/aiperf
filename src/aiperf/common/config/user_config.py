@@ -114,6 +114,7 @@ class UserConfig(BaseConfig):
                 raise ValueError(
                     "--adaptive-scale requires --benchmark-duration to be set"
                 )
+            self._set_adaptive_scale_concurrency_default()
         elif self._should_use_adaptive_scale_for_coding_trace():
             self._timing_mode = TimingMode.ADAPTIVE_SCALE
             _logger.info(
@@ -123,6 +124,7 @@ class UserConfig(BaseConfig):
                 raise ValueError(
                     "coding_trace dataset requires --benchmark-duration to be set"
                 )
+            self._set_adaptive_scale_concurrency_default()
         elif self.input.fixed_schedule:
             self._timing_mode = TimingMode.FIXED_SCHEDULE
             if (
@@ -362,6 +364,15 @@ class UserConfig(BaseConfig):
             )
 
         return self
+
+    def _set_adaptive_scale_concurrency_default(self) -> None:
+        """Set default concurrency for adaptive scale mode if not explicitly provided."""
+        if "concurrency" not in self.loadgen.model_fields_set:
+            self.loadgen.concurrency = 50
+            _logger.info(
+                "Adaptive scale mode: defaulting --concurrency to 50 "
+                "(override with --concurrency)"
+            )
 
     def _should_use_adaptive_scale_for_coding_trace(self) -> bool:
         """Check if coding_trace dataset should use adaptive scale mode."""

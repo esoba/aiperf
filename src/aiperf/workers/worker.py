@@ -149,6 +149,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self.credit_tasks: dict[int, asyncio.Task] = {}
 
+        # Circuit breaker: stop the worker after consecutive connection errors
+        self._consecutive_connection_errors = 0
+        self._circuit_breaker_threshold = 10
+
         self.inference_results_push_client: PushClientProtocol = (
             self.comms.create_push_client(
                 CommAddress.RAW_INFERENCE_PROXY_FRONTEND,
@@ -495,6 +499,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Copy request-level errors to credit context for CreditReturn tracking
             if record.error is not None:
                 credit_context.error = record.error
+                self._update_circuit_breaker(record.error)
+            else:
+                self._consecutive_connection_errors = 0
 
             if resp_turn := await self._process_response(record):
                 session.store_response(resp_turn)
@@ -505,11 +512,60 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             raise
         except Exception as e:
             credit_context.error = ErrorDetails.from_exception(e)
+            self._update_circuit_breaker(credit_context.error)
             self.exception(f"Error processing credit: {e!r}")
         finally:
             # Evict session on final turn OR if cancelled (no retry expected)
             if credit_context.credit.is_final_turn or credit_context.cancelled:
                 self.session_manager.evict(x_correlation_id)
+
+    _CONNECTION_ERROR_TYPES = frozenset(
+        {
+            "ClientConnectionError",
+            "ClientConnectorError",
+            "ClientOSError",
+            "ConnectionRefusedError",
+            "ConnectionResetError",
+            "ConnectionAbortedError",
+            "ServerDisconnectedError",
+            "OSError",
+        }
+    )
+
+    def _is_connection_error(self, error: ErrorDetails) -> bool:
+        """Check if an error represents a connection failure (server unreachable)."""
+        if error.type in self._CONNECTION_ERROR_TYPES:
+            return True
+        if error.cause_chain:
+            return bool(self._CONNECTION_ERROR_TYPES & set(error.cause_chain))
+        return False
+
+    def _update_circuit_breaker(self, error: ErrorDetails) -> None:
+        """Increment consecutive connection errors and trip breaker at threshold."""
+        if not self._is_connection_error(error):
+            return
+
+        self._consecutive_connection_errors += 1
+        if self._consecutive_connection_errors >= self._circuit_breaker_threshold:
+            self.error(
+                f"Circuit breaker tripped: {self._consecutive_connection_errors} "
+                f"consecutive connection errors. Requesting stop."
+            )
+            self.execute_async(
+                self.publish(
+                    ErrorMessage(
+                        service_id=self.service_id,
+                        error=ErrorDetails(
+                            type="CircuitBreakerTripped",
+                            message=(
+                                f"Worker {self.service_id} hit "
+                                f"{self._consecutive_connection_errors} consecutive "
+                                f"connection errors. Last error: {error.message}"
+                            ),
+                        ),
+                    )
+                )
+            )
 
     def _create_request_info(
         self,

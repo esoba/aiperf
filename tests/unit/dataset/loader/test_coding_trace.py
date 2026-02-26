@@ -939,3 +939,106 @@ class TestCodingTraceLoader:
 
         stats = CodingTraceLoader._compute_trace_statistics(trace)
         assert stats.estimated_cache_hit_ratio == 0.0
+
+    def test_detect_request_pairs(self, mock_prompt_generator, default_user_config):
+        """Consecutive requests with identical hash_ids and type='n' are marked as pairs."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        requests = [
+            CodingTraceRequest.model_validate(
+                {"t": 0.0, "type": "s", "in": 1000, "out": 500, "hash_ids": [1, 2, 3]}
+            ),
+            CodingTraceRequest.model_validate(
+                {"t": 1.0, "type": "n", "in": 1000, "out": 500, "hash_ids": [1, 2, 3]}
+            ),
+            CodingTraceRequest.model_validate(
+                {"t": 2.0, "type": "s", "in": 2000, "out": 800, "hash_ids": [4, 5, 6]}
+            ),
+        ]
+
+        pairs = CodingTraceLoader._detect_request_pairs(requests)
+        assert pairs == 1
+        assert requests[0].is_pair_repeat is False
+        assert requests[1].is_pair_repeat is True
+        assert requests[2].is_pair_repeat is False
+
+    def test_detect_request_pairs_no_match(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Consecutive requests with different hash_ids are not paired."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        requests = [
+            CodingTraceRequest.model_validate(
+                {"t": 0.0, "type": "s", "in": 1000, "out": 500, "hash_ids": [1, 2, 3]}
+            ),
+            CodingTraceRequest.model_validate(
+                {"t": 1.0, "type": "n", "in": 2000, "out": 800, "hash_ids": [4, 5, 6]}
+            ),
+        ]
+
+        pairs = CodingTraceLoader._detect_request_pairs(requests)
+        assert pairs == 0
+        assert requests[0].is_pair_repeat is False
+        assert requests[1].is_pair_repeat is False
+
+    def test_detect_request_pairs_requires_type_n(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Pair detection requires the second request to be type='n'."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        requests = [
+            CodingTraceRequest.model_validate(
+                {"t": 0.0, "type": "s", "in": 1000, "out": 500, "hash_ids": [1, 2, 3]}
+            ),
+            CodingTraceRequest.model_validate(
+                {"t": 1.0, "type": "s", "in": 1000, "out": 500, "hash_ids": [1, 2, 3]}
+            ),
+        ]
+
+        pairs = CodingTraceLoader._detect_request_pairs(requests)
+        assert pairs == 0
+
+    def test_pair_repeat_gets_minimal_delta(self, tmp_path, mock_prompt_generator):
+        """Paired requests get delta=1 (minimal content) in conversion."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        trace = {
+            "id": "trace_pair",
+            "block_size": 64,
+            "requests": [
+                {"t": 0.0, "type": "s", "in": 1000, "out": 500, "hash_ids": [1, 2, 3]},
+                {"t": 1.0, "type": "n", "in": 1000, "out": 500, "hash_ids": [1, 2, 3]},
+                {"t": 2.0, "type": "s", "in": 3000, "out": 1000, "hash_ids": [4, 5, 6]},
+            ],
+        }
+        path = tmp_path / "trace.json"
+        path.write_text(json.dumps(trace))
+
+        # 1 char per token
+        mock_prompt_generator.generate_prompt.return_value = "x" * 1500
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.0,
+            ),
+        )
+
+        loader = CodingTraceLoader(
+            filename=str(path),
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        conv = conversations[0]
+        # Turn 0: delta=1000
+        assert len(conv.turns[0].texts[0].contents[0]) == 1000
+        # Turn 1 (pair repeat): delta=1, minimal prompt
+        assert len(conv.turns[1].texts[0].contents[0]) == 1
+        # Turn 2: delta = max(1, 3000 - 1000 - 500) = 1500
+        assert len(conv.turns[2].texts[0].contents[0]) == 1500

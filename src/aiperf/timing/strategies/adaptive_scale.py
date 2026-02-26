@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
     from aiperf.timing.config import CreditPhaseConfig
-    from aiperf.timing.conversation_source import ConversationSource
+    from aiperf.timing.conversation_source import ConversationSource, SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
 
@@ -69,11 +69,13 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         self._recycle = config.recycle_sessions
         self._stagger_sec = (config.stagger_ms or 50.0) / MILLIS_PER_SECOND
         self._scaling_formula = config.scaling_formula or "conservative"
+        self._max_new_tokens_per_period = config.max_new_tokens_per_period
 
         # Active state
         self._active_users = 0
         self._period_ttft_samples: list[float] = []
         self._all_ttft_samples: list[float] = []
+        self._period_new_tokens = 0
 
     async def setup_phase(self) -> None:
         """Nothing to pre-compute; conversations are sampled on demand."""
@@ -126,6 +128,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         metric_value = self._compute_ttft_metric(samples)
         self._all_ttft_samples.extend(samples)
         self._period_ttft_samples = []
+        self._period_new_tokens = 0
 
         if metric_value >= self._max_ttft_sec:
             self.info(
@@ -156,18 +159,48 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             f"adding {users_to_add} users (total={self._active_users + users_to_add})"
         )
 
+        actually_added = 0
         for i in range(users_to_add):
             if not self._stop_checker.can_send_any_turn():
-                return
+                break
 
             session = self._conversation_source.next()
+
+            if not self._check_token_budget(session):
+                break
+
             turn = session.build_first_turn()
             self._active_users += 1
+            actually_added += 1
 
             self._scheduler.schedule_later(
                 self._stagger_sec * i,
                 self._credit_issuer.issue_credit(turn),
             )
+
+        if actually_added < users_to_add and actually_added > 0:
+            self.debug(
+                f"Token budget limited new users to {actually_added}/{users_to_add}"
+            )
+
+    def _check_token_budget(self, session: SampledSession) -> bool:
+        """Check if a new session's first request fits within the per-period token budget.
+
+        Returns True if the session can be issued, False if budget exhausted.
+        """
+        if self._max_new_tokens_per_period is None:
+            return True
+
+        first_turn_tokens = 0
+        if session.metadata.turns:
+            first_turn_tokens = session.metadata.turns[0].input_tokens or 0
+
+        remaining = self._max_new_tokens_per_period - self._period_new_tokens
+        if first_turn_tokens > remaining:
+            return False
+
+        self._period_new_tokens += first_turn_tokens
+        return True
 
     def _compute_users_to_add(self, headroom_ratio: float, headroom_pct: float) -> int:
         """Compute the number of users to add based on the configured formula."""

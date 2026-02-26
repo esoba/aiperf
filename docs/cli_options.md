@@ -370,6 +370,12 @@ Delay in milliseconds between launching new users during adaptive scaling. Lower
 Scaling formula for computing users to add per assessment period. 'conservative': max(1, active * headroom * 0.5) - scales proportional to current users. 'aggressive': max(2, 2 + headroom_pct / 10) - fast ramp regardless of current users. 'linear': max(1, headroom_pct / 5) - linear ramp based on headroom percentage.
 <br>_Default: `conservative`_
 
+#### `--adaptive-scale-max-new-tokens-per-period` `<int>`
+
+Maximum new input tokens from newly started sessions per assessment period. Prevents TTFT spikes from bursts of cache-miss tokens. Initial start_users bypass this check. Set to None to disable.
+<br>_Constraints: ≥ 0_
+<br>_Default: `500000`_
+
 #### `--warm-prefix-pct` `<float>`
 
 Percentage of max(tool_tokens + system_tokens) to use as a warm prefix for KV cache pre-fill in coding trace replay. Set to 0 to disable.

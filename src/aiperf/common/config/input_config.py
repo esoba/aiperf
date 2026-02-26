@@ -476,6 +476,20 @@ class InputConfig(BaseConfig):
         ),
     ] = "conservative"
 
+    adaptive_scale_max_new_tokens_per_period: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            description="Maximum new input tokens from newly started sessions per assessment period. "
+            "Prevents TTFT spikes from bursts of cache-miss tokens. Initial start_users bypass "
+            "this check. Set to None to disable.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-max-new-tokens-per-period",),
+            group=_CLI_GROUP,
+        ),
+    ] = 500_000
+
     warm_prefix_pct: Annotated[
         float,
         Field(

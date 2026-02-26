@@ -223,6 +223,11 @@ class CodingTraceRequest(AIPerfBaseModel):
     requests: list["CodingTraceRequest"] = Field(
         default_factory=list, description="Nested subagent requests."
     )
+    is_pair_repeat: bool = Field(
+        default=False,
+        description="True if this request is the second of a streaming/non-streaming pair "
+        "with identical hash_ids. These requests re-send the same conversation.",
+    )
 
     model_config = {"populate_by_name": True}
 

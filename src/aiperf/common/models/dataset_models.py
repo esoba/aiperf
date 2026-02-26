@@ -114,6 +114,11 @@ class TurnMetadata(AIPerfBaseModel):
         default=None,
         description="The delay of the turn in the conversation (in milliseconds).",
     )
+    input_tokens: int | None = Field(
+        default=None,
+        description="Expected input token count for this turn (from trace data). "
+        "Used by adaptive scale for per-period token budget enforcement.",
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -149,11 +154,17 @@ class Turn(AIPerfBaseModel):
         default=[], description="Collection of video data in each turn."
     )
 
+    input_tokens: int | None = Field(
+        default=None,
+        description="Expected input token count for this turn (from trace data).",
+    )
+
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
         return TurnMetadata(
             timestamp_ms=self.timestamp,
             delay_ms=self.delay,
+            input_tokens=self.input_tokens,
         )
 
     def copy_with_stripped_media(self) -> "Turn":
