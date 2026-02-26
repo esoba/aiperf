@@ -187,7 +187,7 @@ class CreditCallbackHandler:
         if credit_return.ttft_ns is not None and hasattr(
             handler.strategy, "on_ttft_sample"
         ):
-            handler.strategy.on_ttft_sample(credit_return.ttft_ns)
+            handler.strategy.on_ttft_sample(credit_return.ttft_ns, credit=credit)
 
         # 6. Notify timing strategy for subsequent turns when phase can still send
         # Timing strategy queues subsequent turns for rate-limited issuance.

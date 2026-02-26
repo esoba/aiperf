@@ -70,12 +70,23 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         self._stagger_sec = (config.stagger_ms or 50.0) / MILLIS_PER_SECOND
         self._scaling_formula = config.scaling_formula or "conservative"
         self._max_new_tokens_per_period = config.max_new_tokens_per_period
+        self._enable_rate_limiting = config.enable_rate_limiting
 
         # Active state
         self._active_users = 0
         self._period_ttft_samples: list[float] = []
         self._all_ttft_samples: list[float] = []
         self._period_new_tokens = 0
+
+        # Per-session rate limiting state
+        self._rate_limit_counts: dict[str, int] = {}
+        self._session_backoffs: dict[str, float] = {}
+
+        # Working set budget tracking
+        self._max_working_set_tokens = config.max_working_set_tokens
+        self._block_size = config.block_size or 64
+        self._active_hash_ids: set[int] = set()
+        self._session_hash_ids: dict[str, set[int]] = {}
 
     async def setup_phase(self) -> None:
         """Nothing to pre-compute; conversations are sampled on demand."""
@@ -184,22 +195,35 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             )
 
     def _check_token_budget(self, session: SampledSession) -> bool:
-        """Check if a new session's first request fits within the per-period token budget.
+        """Check if a new session fits within token budget and working set budget.
+
+        Checks all conditions before committing any side effects to avoid
+        partial state updates when a later check fails.
 
         Returns True if the session can be issued, False if budget exhausted.
         """
-        if self._max_new_tokens_per_period is None:
-            return True
+        first_turn = session.metadata.turns[0] if session.metadata.turns else None
 
-        first_turn_tokens = 0
-        if session.metadata.turns:
-            first_turn_tokens = session.metadata.turns[0].input_tokens or 0
+        # Check token budget
+        first_turn_tokens = (first_turn.input_tokens or 0) if first_turn else 0
+        if self._max_new_tokens_per_period is not None:
+            remaining = self._max_new_tokens_per_period - self._period_new_tokens
+            if first_turn_tokens > remaining:
+                return False
 
-        remaining = self._max_new_tokens_per_period - self._period_new_tokens
-        if first_turn_tokens > remaining:
-            return False
+        # Check working set budget
+        new_ids = set(first_turn.hash_ids) if first_turn else set()
+        if self._max_working_set_tokens is not None and new_ids:
+            projected = len(self._active_hash_ids | new_ids) * self._block_size
+            if projected > self._max_working_set_tokens:
+                return False
 
+        # All checks passed — commit side effects
         self._period_new_tokens += first_turn_tokens
+        if new_ids and self._max_working_set_tokens is not None:
+            self._active_hash_ids |= new_ids
+            self._session_hash_ids[session.x_correlation_id] = new_ids
+
         return True
 
     def _compute_users_to_add(self, headroom_ratio: float, headroom_pct: float) -> int:
@@ -232,6 +256,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
     async def handle_credit_return(self, credit: Credit) -> None:
         """Dispatch next turn with trace delay, or recycle on completion."""
         if credit.is_final_turn:
+            self._cleanup_session(credit.x_correlation_id)
             if self._recycle and self._stop_checker.can_send_any_turn():
                 session = self._conversation_source.next()
                 turn = session.build_first_turn()
@@ -252,6 +277,9 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             if self._max_delay_sec is not None:
                 delay_sec = min(delay_sec, self._max_delay_sec)
 
+        session_backoff = self._session_backoffs.get(credit.x_correlation_id, 0.0)
+        delay_sec += session_backoff
+
         if delay_sec > 0:
             self._scheduler.schedule_later(
                 delay_sec,
@@ -262,6 +290,37 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
                 self._credit_issuer.issue_credit(turn),
             )
 
-    def on_ttft_sample(self, ttft_ns: int) -> None:
-        """Receive TTFT sample from credit callback handler."""
-        self._period_ttft_samples.append(ttft_ns / NS_PER_SEC)
+    def _cleanup_session(self, corr_id: str) -> None:
+        """Remove all per-session tracking state for a completed session."""
+        self._rate_limit_counts.pop(corr_id, None)
+        self._session_backoffs.pop(corr_id, None)
+        removed_ids = self._session_hash_ids.pop(corr_id, None)
+        if removed_ids is not None:
+            self._active_hash_ids = (
+                set().union(*self._session_hash_ids.values())
+                if self._session_hash_ids
+                else set()
+            )
+
+    def on_ttft_sample(self, ttft_ns: int, credit: Credit | None = None) -> None:
+        """Receive a TTFT sample and optionally apply per-session rate limiting.
+
+        When rate limiting is enabled and credit is provided, sessions with TTFT
+        above the threshold receive exponential backoff on subsequent turn delays.
+        """
+        ttft_sec = ttft_ns / NS_PER_SEC
+        self._period_ttft_samples.append(ttft_sec)
+
+        if not self._enable_rate_limiting or credit is None:
+            return
+
+        corr_id = credit.x_correlation_id
+        if ttft_sec > self._max_ttft_sec:
+            count = self._rate_limit_counts.get(corr_id, 0)
+            backoff = min(ttft_sec / self._max_ttft_sec - 1.0, 10.0)
+            actual = backoff * (1.5**count)
+            self._session_backoffs[corr_id] = actual
+            self._rate_limit_counts[corr_id] = count + 1
+        else:
+            self._session_backoffs.pop(corr_id, None)
+            self._rate_limit_counts.pop(corr_id, None)

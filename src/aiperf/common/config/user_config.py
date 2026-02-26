@@ -124,6 +124,8 @@ class UserConfig(BaseConfig):
                 raise ValueError(
                     "coding_trace dataset requires --benchmark-duration to be set"
                 )
+            if "adaptive_scale_formula" not in self.input.model_fields_set:
+                self.input.adaptive_scale_formula = "aggressive"
             self._set_adaptive_scale_concurrency_default()
         elif self.input.fixed_schedule:
             self._timing_mode = TimingMode.FIXED_SCHEDULE

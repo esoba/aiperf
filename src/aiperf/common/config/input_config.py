@@ -476,6 +476,19 @@ class InputConfig(BaseConfig):
         ),
     ] = "conservative"
 
+    adaptive_scale_enable_rate_limiting: Annotated[
+        bool,
+        Field(
+            description="Enable per-session rate limiting in adaptive scale mode. "
+            "When enabled, applies exponential backoff to individual sessions whose "
+            "TTFT exceeds the threshold, slowing down their request rate.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-enable-rate-limiting",),
+            group=_CLI_GROUP,
+        ),
+    ] = True
+
     adaptive_scale_max_new_tokens_per_period: Annotated[
         int | None,
         Field(
@@ -489,6 +502,36 @@ class InputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = 500_000
+
+    adaptive_scale_max_working_set_tokens: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            description="Maximum total KV cache working set in tokens across all active sessions. "
+            "When set, new sessions are rejected if their hash_ids would push the total "
+            "working set beyond this budget. Set to None to disable.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-max-working-set-tokens",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    output_token_budget_ratio: Annotated[
+        float,
+        Field(
+            gt=0,
+            le=1,
+            description="Expected ratio of actual to requested output tokens for coding trace replay. "
+            "Adjusts delta calculations to compensate for model undergeneration. "
+            "At 0.8 (default), expects 80% of trace output tokens, making deltas ~20% larger. "
+            "Set to 1.0 to disable compensation.",
+        ),
+        CLIParameter(
+            name=("--output-token-budget-ratio",),
+            group=_CLI_GROUP,
+        ),
+    ] = 0.8
 
     warm_prefix_pct: Annotated[
         float,

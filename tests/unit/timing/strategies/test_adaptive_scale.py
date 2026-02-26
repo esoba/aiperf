@@ -358,3 +358,145 @@ class TestAdaptiveScaleStrategy:
         second_call_delay = scheduler.schedule_later.call_args_list[1][0][0]
         assert first_call_delay == pytest.approx(0.1)
         assert second_call_delay == pytest.approx(0.2)
+
+    def test_ttft_rate_limiting_applies_backoff(self):
+        """Backoff applied when TTFT exceeds threshold."""
+        strategy, scheduler, issuer, _ = make_strategy(max_ttft_sec=2.0)
+        strategy._enable_rate_limiting = True
+
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="conv_0",
+            x_correlation_id="xcorr-1",
+            turn_index=0,
+            num_turns=5,
+            issued_at_ns=0,
+        )
+        # TTFT of 4s exceeds 2s threshold
+        strategy.on_ttft_sample(4_000_000_000, credit=credit)
+
+        assert "xcorr-1" in strategy._session_backoffs
+        assert strategy._session_backoffs["xcorr-1"] > 0
+
+    def test_ttft_rate_limiting_resets_on_good_ttft(self):
+        """Backoff resets when TTFT drops below threshold."""
+        strategy, _, _, _ = make_strategy(max_ttft_sec=2.0)
+        strategy._enable_rate_limiting = True
+
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="conv_0",
+            x_correlation_id="xcorr-1",
+            turn_index=0,
+            num_turns=5,
+            issued_at_ns=0,
+        )
+        # First sample: TTFT exceeds threshold
+        strategy.on_ttft_sample(4_000_000_000, credit=credit)
+        assert "xcorr-1" in strategy._session_backoffs
+
+        # Second sample: TTFT drops below threshold
+        strategy.on_ttft_sample(1_000_000_000, credit=credit)
+        assert "xcorr-1" not in strategy._session_backoffs
+        assert "xcorr-1" not in strategy._rate_limit_counts
+
+    @pytest.mark.asyncio
+    async def test_ttft_backoff_added_to_delay(self):
+        """Session backoff is added to trace delay in handle_credit_return."""
+        strategy, scheduler, issuer, _ = make_strategy()
+        await strategy.setup_phase()
+
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="conv_0",
+            x_correlation_id="xcorr-1",
+            turn_index=0,
+            num_turns=5,
+            issued_at_ns=0,
+        )
+        strategy._session_backoffs["xcorr-1"] = 5.0
+
+        await strategy.handle_credit_return(credit)
+
+        # Should schedule with delay including backoff
+        assert scheduler.schedule_later.call_count == 1
+        scheduled_delay = scheduler.schedule_later.call_args_list[0][0][0]
+        # Delay should include the session backoff (at least 5.0)
+        assert scheduled_delay >= 5.0
+
+    @pytest.mark.asyncio
+    async def test_session_cleanup_on_final_turn(self):
+        """Rate limiting and working set state cleaned up on final turn."""
+        strategy, _, _, _ = make_strategy(recycle=False)
+        strategy._active_users = 3
+
+        corr_id = "xcorr-cleanup"
+        strategy._rate_limit_counts[corr_id] = 3
+        strategy._session_backoffs[corr_id] = 2.5
+        strategy._session_hash_ids[corr_id] = {1, 2, 3}
+        strategy._active_hash_ids = {1, 2, 3, 4, 5}
+        strategy._session_hash_ids["other"] = {4, 5}
+
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="conv_0",
+            x_correlation_id=corr_id,
+            turn_index=4,
+            num_turns=5,
+            issued_at_ns=0,
+        )
+        await strategy.handle_credit_return(credit)
+
+        assert corr_id not in strategy._rate_limit_counts
+        assert corr_id not in strategy._session_backoffs
+        assert corr_id not in strategy._session_hash_ids
+        assert strategy._active_hash_ids == {4, 5}
+        assert strategy._active_users == 2
+
+    def test_working_set_budget_rejects_over_budget(self):
+        """New session rejected when hash_ids would exceed working set budget."""
+        strategy, _, _, _ = make_strategy()
+        strategy._max_working_set_tokens = 640  # 10 blocks * 64 tokens/block
+        strategy._block_size = 64
+        strategy._active_hash_ids = set(range(8))  # 8 blocks = 512 tokens
+
+        ds = make_conversations(20)
+        # Give first turn hash_ids that would push over budget
+        ds.conversations[0].turns[0].hash_ids = list(range(20, 24))  # 4 new blocks
+
+        from aiperf.timing.conversation_source import SampledSession
+
+        session = SampledSession(
+            conversation_id="conv_0",
+            metadata=ds.conversations[0],
+            x_correlation_id="xcorr-budget",
+        )
+
+        # 8 existing + 4 new = 12 blocks * 64 = 768 > 640
+        assert not strategy._check_token_budget(session)
+
+    def test_working_set_budget_accepts_within_budget(self):
+        """New session accepted when hash_ids fit within working set budget."""
+        strategy, _, _, _ = make_strategy()
+        strategy._max_working_set_tokens = 1280  # 20 blocks * 64 tokens/block
+        strategy._block_size = 64
+        strategy._active_hash_ids = set(range(8))  # 8 blocks = 512 tokens
+
+        ds = make_conversations(20)
+        ds.conversations[0].turns[0].hash_ids = list(range(20, 24))  # 4 new blocks
+
+        from aiperf.timing.conversation_source import SampledSession
+
+        session = SampledSession(
+            conversation_id="conv_0",
+            metadata=ds.conversations[0],
+            x_correlation_id="xcorr-budget",
+        )
+
+        # 8 existing + 4 new = 12 blocks * 64 = 768 < 1280
+        assert strategy._check_token_budget(session)
+        assert strategy._active_hash_ids == set(range(8)) | set(range(20, 24))

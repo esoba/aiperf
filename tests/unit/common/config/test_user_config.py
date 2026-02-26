@@ -27,6 +27,7 @@ from aiperf.common.config.prompt_config import InputTokensConfig
 from aiperf.common.enums import GPUTelemetryMode
 from aiperf.plugin.enums import (
     ArrivalPattern,
+    CustomDatasetType,
     DatasetSamplingStrategy,
     EndpointType,
     GPUTelemetryCollectorType,
@@ -1495,3 +1496,46 @@ class TestNonTokenEndpointTokenizerValidation:
             tokenizer=TokenizerConfig(name="some-tokenizer"),
         )
         assert config.tokenizer.name == "some-tokenizer"
+
+
+class TestCodingTraceDefaults:
+    @pytest.fixture
+    def coding_trace_dir(self, tmp_path):
+        """Create a minimal coding trace file for config validation."""
+        trace = {
+            "id": "trace_0",
+            "requests": [{"t": 0.0, "type": "s", "in": 100, "out": 50}],
+        }
+        import json
+
+        (tmp_path / "trace.json").write_text(json.dumps(trace))
+        return tmp_path
+
+    def test_aggressive_formula_auto_selected_for_coding_trace(self, coding_trace_dir):
+        """Coding trace auto-selects aggressive scaling formula."""
+        config = make_config(
+            endpoint=make_endpoint(streaming=True),
+            input_config=InputConfig.model_construct(
+                custom_dataset_type=CustomDatasetType.CODING_TRACE,
+                file=str(coding_trace_dir),
+            ),
+            loadgen=LoadGeneratorConfig(benchmark_duration=60),
+        )
+        assert config.timing_mode == TimingMode.ADAPTIVE_SCALE
+        assert config.input.adaptive_scale_formula == "aggressive"
+
+    def test_explicit_formula_preserved_for_coding_trace(self, coding_trace_dir):
+        """User-specified formula is not overridden for coding traces."""
+        input_cfg = InputConfig.model_construct(
+            custom_dataset_type=CustomDatasetType.CODING_TRACE,
+            adaptive_scale_formula="linear",
+            file=str(coding_trace_dir),
+        )
+        input_cfg.model_fields_set.add("adaptive_scale_formula")
+        config = make_config(
+            endpoint=make_endpoint(streaming=True),
+            input_config=input_cfg,
+            loadgen=LoadGeneratorConfig(benchmark_duration=60),
+        )
+        assert config.timing_mode == TimingMode.ADAPTIVE_SCALE
+        assert config.input.adaptive_scale_formula == "linear"

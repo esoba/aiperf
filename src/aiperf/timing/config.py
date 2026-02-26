@@ -235,6 +235,19 @@ class CreditPhaseConfig(AIPerfBaseModel):
         ge=0,
         description="Maximum new input tokens from new sessions per assessment period.",
     )
+    enable_rate_limiting: bool = Field(
+        default=True,
+        description="Enable per-session TTFT-responsive rate limiting in adaptive scale mode.",
+    )
+    max_working_set_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        description="Maximum total KV cache working set in tokens across all active sessions.",
+    )
+    block_size: int = Field(
+        default=64,
+        description="KV cache block size in tokens for working set calculation.",
+    )
 
 
 def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
@@ -332,4 +345,6 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
         stagger_ms=input.adaptive_scale_stagger_ms if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
         scaling_formula=input.adaptive_scale_formula if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
         max_new_tokens_per_period=input.adaptive_scale_max_new_tokens_per_period if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        enable_rate_limiting=input.adaptive_scale_enable_rate_limiting if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else True,
+        max_working_set_tokens=input.adaptive_scale_max_working_set_tokens if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
     )  # fmt: skip

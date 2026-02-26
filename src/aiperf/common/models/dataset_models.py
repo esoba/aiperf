@@ -119,6 +119,10 @@ class TurnMetadata(AIPerfBaseModel):
         description="Expected input token count for this turn (from trace data). "
         "Used by adaptive scale for per-period token budget enforcement.",
     )
+    hash_ids: list[int] = Field(
+        default_factory=list,
+        description="KV cache block hash IDs for working set tracking.",
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -158,6 +162,10 @@ class Turn(AIPerfBaseModel):
         default=None,
         description="Expected input token count for this turn (from trace data).",
     )
+    hash_ids: list[int] = Field(
+        default_factory=list,
+        description="KV cache block hash IDs for working set tracking.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -165,6 +173,7 @@ class Turn(AIPerfBaseModel):
             timestamp_ms=self.timestamp,
             delay_ms=self.delay,
             input_tokens=self.input_tokens,
+            hash_ids=self.hash_ids,
         )
 
     def copy_with_stripped_media(self) -> "Turn":

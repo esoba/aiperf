@@ -180,6 +180,7 @@ class TestCodingTraceLoader:
             input=InputConfig.model_construct(
                 prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
                 warm_prefix_pct=0.0,
+                output_token_budget_ratio=1.0,
             ),
         )
 
@@ -307,7 +308,9 @@ class TestCodingTraceLoader:
         conversations = loader.convert_to_conversations(data)
 
         for conv in conversations:
-            assert conv.system_message == "warm prefix text"
+            assert conv.system_message is None
+            first_text = conv.turns[0].texts[0].contents[0]
+            assert first_text.startswith("warm prefix text")
 
     def test_flatten_requests(self, mock_prompt_generator, default_user_config):
         from aiperf.dataset.loader.coding_trace import CodingTraceLoader
@@ -489,6 +492,7 @@ class TestCodingTraceLoader:
             input=InputConfig.model_construct(
                 prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
                 warm_prefix_pct=0.0,
+                output_token_budget_ratio=1.0,
             ),
         )
 
@@ -541,6 +545,7 @@ class TestCodingTraceLoader:
             input=InputConfig.model_construct(
                 prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
                 warm_prefix_pct=0.0,
+                output_token_budget_ratio=1.0,
             ),
         )
 
@@ -702,6 +707,8 @@ class TestCodingTraceLoader:
 
         Turn 0 delta: max(1, 1000 - 4000) = 1  (prefix covers first turn)
         Turn 1 delta: max(1, 3000 - 1000 - 500) = 1500  (no prefix effect)
+
+        Warm prefix is prepended to first turn content.
         """
         from aiperf.dataset.loader.coding_trace import CodingTraceLoader
 
@@ -718,15 +725,17 @@ class TestCodingTraceLoader:
         path = tmp_path / "trace.json"
         path.write_text(json.dumps(trace))
 
+        warm_prefix = "W" * 100
         # 1 char per token
         mock_prompt_generator.generate_prompt.return_value = "x" * 1500
-        mock_prompt_generator.generate.return_value = "warm prefix text"
+        mock_prompt_generator.generate.return_value = warm_prefix
 
         config = UserConfig.model_construct(
             endpoint=EndpointConfig.model_construct(model_names=["test-model"]),
             input=InputConfig.model_construct(
                 prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
                 warm_prefix_pct=0.5,
+                output_token_budget_ratio=1.0,
                 file=str(path),
             ),
         )
@@ -740,8 +749,10 @@ class TestCodingTraceLoader:
         conversations = loader.convert_to_conversations(data)
 
         conv = conversations[0]
-        # Turn 0: delta = max(1, 1000 - 4000) = 1 (floored)
-        assert len(conv.turns[0].texts[0].contents[0]) == 1
+        # Turn 0: delta=1 (floored), content = warm_prefix + delta_prompt
+        first_text = conv.turns[0].texts[0].contents[0]
+        assert first_text.startswith(warm_prefix)
+        assert len(first_text) == len(warm_prefix) + 1
         # Turn 1: delta = max(1, 3000 - 1000 - 500) = 1500 (unaffected by prefix)
         assert len(conv.turns[1].texts[0].contents[0]) == 1500
 
@@ -755,6 +766,8 @@ class TestCodingTraceLoader:
         Turn 0 delta: max(1, 1000 - 500) = 500
         Turn 1 delta: max(1, 3000 - 1000 - 500) = 1500
         max_delta=1500, chars_per_token = 1500/1500 = 1.0
+
+        Warm prefix prepended to first turn content.
         """
         from aiperf.dataset.loader.coding_trace import CodingTraceLoader
 
@@ -771,15 +784,17 @@ class TestCodingTraceLoader:
         path = tmp_path / "trace.json"
         path.write_text(json.dumps(trace))
 
+        warm_prefix = "W" * 100
         # 1 char per token
         mock_prompt_generator.generate_prompt.return_value = "x" * 1500
-        mock_prompt_generator.generate.return_value = "warm prefix text"
+        mock_prompt_generator.generate.return_value = warm_prefix
 
         config = UserConfig.model_construct(
             endpoint=EndpointConfig.model_construct(model_names=["test-model"]),
             input=InputConfig.model_construct(
                 prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
                 warm_prefix_pct=0.25,
+                output_token_budget_ratio=1.0,
                 file=str(path),
             ),
         )
@@ -793,8 +808,10 @@ class TestCodingTraceLoader:
         conversations = loader.convert_to_conversations(data)
 
         conv = conversations[0]
-        # Turn 0: delta = max(1, 1000 - 500) = 500
-        assert len(conv.turns[0].texts[0].contents[0]) == 500
+        # Turn 0: delta=500, content = warm_prefix + delta_prompt
+        first_text = conv.turns[0].texts[0].contents[0]
+        assert first_text.startswith(warm_prefix)
+        assert len(first_text) == len(warm_prefix) + 500
         # Turn 1: delta = max(1, 3000 - 1000 - 500) = 1500
         assert len(conv.turns[1].texts[0].contents[0]) == 1500
 
@@ -1010,7 +1027,13 @@ class TestCodingTraceLoader:
             "requests": [
                 {"t": 0.0, "type": "s", "in": 1000, "out": 500, "hash_ids": [1, 2, 3]},
                 {"t": 1.0, "type": "n", "in": 1000, "out": 500, "hash_ids": [1, 2, 3]},
-                {"t": 2.0, "type": "s", "in": 3000, "out": 1000, "hash_ids": [4, 5, 6]},
+                {
+                    "t": 2.0,
+                    "type": "s",
+                    "in": 3000,
+                    "out": 1000,
+                    "hash_ids": [1, 2, 3, 4, 5, 6],
+                },
             ],
         }
         path = tmp_path / "trace.json"
@@ -1024,6 +1047,7 @@ class TestCodingTraceLoader:
             input=InputConfig.model_construct(
                 prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
                 warm_prefix_pct=0.0,
+                output_token_budget_ratio=1.0,
             ),
         )
 
@@ -1042,3 +1066,210 @@ class TestCodingTraceLoader:
         assert len(conv.turns[1].texts[0].contents[0]) == 1
         # Turn 2: delta = max(1, 3000 - 1000 - 500) = 1500
         assert len(conv.turns[2].texts[0].contents[0]) == 1500
+
+    @pytest.mark.parametrize(
+        "ratio,expected_delta_0,expected_delta_1",
+        [
+            (1.0, 1000, 1500),  # turn1: 3000 - 1000 - 500 = 1500
+            (0.8, 1000, 1600),  # turn1: 3000 - 1000 - 400 = 1600
+            (0.5, 1000, 1750),  # turn1: 3000 - 1000 - 250 = 1750
+        ],
+    )
+    def test_output_token_budget_ratio(
+        self, tmp_path, mock_prompt_generator, ratio, expected_delta_0, expected_delta_1
+    ):
+        """Output token budget ratio adjusts delta for model undergeneration.
+
+        Verifies that delta values change with ratio by checking relative
+        prompt lengths (delta ratios are preserved regardless of chars_per_token).
+        """
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        trace = {
+            "id": "trace_ratio",
+            "block_size": 64,
+            "requests": [
+                {"t": 0.0, "type": "s", "in": 1000, "out": 500},
+                {"t": 10.0, "type": "n", "in": 3000, "out": 1000},
+            ],
+        }
+        path = tmp_path / "trace.json"
+        path.write_text(json.dumps(trace))
+
+        # Generate prompt at max_delta for 1 char/token ratio
+        mock_prompt_generator.generate_prompt.return_value = "x" * expected_delta_1
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.0,
+                output_token_budget_ratio=ratio,
+            ),
+        )
+
+        loader = CodingTraceLoader(
+            filename=str(path),
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        conv = conversations[0]
+        # generate_prompt called with max delta (which is expected_delta_1)
+        mock_prompt_generator.generate_prompt.assert_called_once_with(expected_delta_1)
+        assert len(conv.turns[0].texts[0].contents[0]) == expected_delta_0
+        assert len(conv.turns[1].texts[0].contents[0]) == expected_delta_1
+
+    def test_pullback_detection_splits_trace(self, tmp_path, mock_prompt_generator):
+        """Trace with >10% hash_id removal splits into segments."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        # req0 -> req1: hash_ids grow (no removal), no split
+        # req1 -> req2: hash_ids completely change (100% removal), split!
+        # req2 -> req3: hash_ids grow (no removal), no split
+        # Result: 2 segments: [req0, req1] and [req2, req3]
+        trace = {
+            "id": "trace_pullback",
+            "block_size": 64,
+            "requests": [
+                {
+                    "t": 0.0,
+                    "type": "s",
+                    "in": 1000,
+                    "out": 500,
+                    "hash_ids": list(range(10)),
+                },
+                {
+                    "t": 10.0,
+                    "type": "n",
+                    "in": 2000,
+                    "out": 800,
+                    "hash_ids": list(range(15)),
+                },
+                {
+                    "t": 20.0,
+                    "type": "n",
+                    "in": 500,
+                    "out": 200,
+                    "hash_ids": list(range(200, 210)),
+                },
+                {
+                    "t": 30.0,
+                    "type": "n",
+                    "in": 1000,
+                    "out": 400,
+                    "hash_ids": list(range(200, 220)),
+                },
+            ],
+        }
+        path = tmp_path / "trace.json"
+        path.write_text(json.dumps(trace))
+
+        mock_prompt_generator.generate_prompt.return_value = "x" * 2000
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.0,
+                output_token_budget_ratio=1.0,
+                synthesis=SynthesisConfig(min_requests=2),
+            ),
+        )
+
+        loader = CodingTraceLoader(
+            filename=str(path),
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        data = loader.load_dataset()
+
+        # req1 -> req2 triggers pullback (100% hash_id removal)
+        # Segments: [req0, req1] and [req2, req3]
+        assert len(data) == 2
+        assert "trace_pullback_seg0" in data
+        assert "trace_pullback_seg1" in data
+
+    def test_pullback_detection_no_split_without_removal(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """No split when hash_ids grow incrementally."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        requests = [
+            CodingTraceRequest.model_validate(
+                {"t": 0.0, "type": "s", "in": 100, "out": 50, "hash_ids": [1, 2, 3]}
+            ),
+            CodingTraceRequest.model_validate(
+                {
+                    "t": 1.0,
+                    "type": "n",
+                    "in": 200,
+                    "out": 100,
+                    "hash_ids": [1, 2, 3, 4, 5],
+                }
+            ),
+            CodingTraceRequest.model_validate(
+                {
+                    "t": 2.0,
+                    "type": "n",
+                    "in": 300,
+                    "out": 150,
+                    "hash_ids": [1, 2, 3, 4, 5, 6, 7],
+                }
+            ),
+        ]
+
+        segments = CodingTraceLoader._detect_pullbacks(requests)
+        assert len(segments) == 1
+        assert len(segments[0]) == 3
+
+    def test_hash_ids_propagated_to_turns(self, tmp_path, mock_prompt_generator):
+        """Hash IDs from trace requests are propagated to Turn objects."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        trace = {
+            "id": "trace_hash",
+            "block_size": 64,
+            "requests": [
+                {"t": 0.0, "type": "s", "in": 1000, "out": 500, "hash_ids": [1, 2, 3]},
+                {
+                    "t": 10.0,
+                    "type": "n",
+                    "in": 3000,
+                    "out": 1000,
+                    "hash_ids": [1, 2, 3, 4, 5],
+                },
+            ],
+        }
+        path = tmp_path / "trace.json"
+        path.write_text(json.dumps(trace))
+
+        mock_prompt_generator.generate_prompt.return_value = "x" * 2000
+
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.0,
+                output_token_budget_ratio=1.0,
+            ),
+        )
+
+        loader = CodingTraceLoader(
+            filename=str(path),
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        conv = conversations[0]
+        assert conv.turns[0].hash_ids == [1, 2, 3]
+        assert conv.turns[1].hash_ids == [1, 2, 3, 4, 5]
+        # Verify metadata also carries hash_ids
+        meta = conv.metadata()
+        assert meta.turns[0].hash_ids == [1, 2, 3]
+        assert meta.turns[1].hash_ids == [1, 2, 3, 4, 5]

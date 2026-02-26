@@ -33,6 +33,9 @@ from aiperf.dataset.loader.models import (
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
+# Fraction of previous hash_ids that must be removed to detect a context reset
+_PULLBACK_THRESHOLD = 0.10
+
 
 class CodingTraceLoader(BaseFileLoader):
     """Dataset loader for agentic coding traces (kv-cache-tester format).
@@ -76,6 +79,7 @@ class CodingTraceLoader(BaseFileLoader):
         self._max_isl = user_config.input.synthesis.max_isl
         self._min_requests = user_config.input.synthesis.min_requests
         self._warm_prefix_pct = user_config.input.warm_prefix_pct
+        self._output_token_budget_ratio = user_config.input.output_token_budget_ratio
         self._skipped_max_isl = 0
         self._skipped_min_requests = 0
 
@@ -148,16 +152,18 @@ class CodingTraceLoader(BaseFileLoader):
                 self._skipped_max_isl += skipped
                 flat_requests = truncated
 
-            if len(flat_requests) < self._min_requests:
-                self._skipped_min_requests += 1
-                continue
+            # Split at context resets (pull-backs)
+            segments = self._detect_pullbacks(flat_requests)
 
-            # Replace trace requests with flattened version
-            trace.requests = flat_requests
+            for seg_idx, segment in enumerate(segments):
+                if len(segment) < self._min_requests:
+                    self._skipped_min_requests += 1
+                    continue
 
-            # Use trace id as conversation id
-            conv_id = trace.id
-            result[conv_id] = [trace]
+                seg_trace = trace.model_copy(update={"requests": segment})
+
+                conv_id = f"{trace.id}_seg{seg_idx}" if len(segments) > 1 else trace.id
+                result[conv_id] = [seg_trace]
 
         if self._skipped_max_isl > 0:
             self.info(
@@ -220,6 +226,35 @@ class CodingTraceLoader(BaseFileLoader):
                 pairs_found += 1
         return pairs_found
 
+    @staticmethod
+    def _detect_pullbacks(
+        requests: list[CodingTraceRequest],
+    ) -> list[list[CodingTraceRequest]]:
+        """Split requests at context resets (pull-backs).
+
+        A pull-back occurs when >10% of the previous request's hash_ids are
+        removed in the next request, indicating the context was reset.
+        Each segment becomes a separate conversation.
+
+        Returns list of request segments (at least one).
+        """
+        if not requests:
+            return []
+
+        segments: list[list[CodingTraceRequest]] = [[requests[0]]]
+        for i in range(1, len(requests)):
+            prev_ids = set(requests[i - 1].hash_ids)
+            curr_ids = set(requests[i].hash_ids)
+
+            if prev_ids and curr_ids:
+                removed = prev_ids - curr_ids
+                if len(removed) / len(prev_ids) > _PULLBACK_THRESHOLD:
+                    segments.append([])
+
+            segments[-1].append(requests[i])
+
+        return segments
+
     def convert_to_conversations(
         self, data: dict[str, list[CodingTrace]]
     ) -> list[Conversation]:
@@ -228,17 +263,17 @@ class CodingTraceLoader(BaseFileLoader):
         Uses delta-based prompt sizing: each turn's prompt covers only the NEW
         tokens needed beyond what prior turns already contribute. Since AIPerf's
         worker accumulates all previous user + assistant turns, the delta is:
-          turn 0: delta = input_tokens (full, no history)
-          turn N: delta = max(1, input_tokens - prev_input_tokens - prev_output_tokens)
+          turn 0: delta = input_tokens - prefix_tokens
+          turn N: delta = input_tokens - prev_input - (prev_output * budget_ratio)
+
+        Expected output shortfall is compensated via output_token_budget_ratio
+        (default 0.8), which inflates deltas to account for model undergeneration.
+
+        A warm prefix (if configured) is prepended to the first turn's user
+        content to enable KV cache pre-fill across conversations.
 
         A single base prompt is generated at max(deltas) and truncated for smaller
         deltas to avoid per-request tokenizer calls.
-
-        Args:
-            data: Dictionary of conversation_id to list of CodingTrace.
-
-        Returns:
-            List of Conversation objects.
         """
         warm_prefix_text = self._generate_warm_prefix(data)
 
@@ -268,8 +303,11 @@ class CodingTraceLoader(BaseFileLoader):
                     delta = max(1, req.input_tokens - prefix_tokens)
                 else:
                     prev = trace.requests[i - 1]
+                    effective_prev_output = int(
+                        prev.output_tokens * self._output_token_budget_ratio
+                    )
                     delta = max(
-                        1, req.input_tokens - prev.input_tokens - prev.output_tokens
+                        1, req.input_tokens - prev.input_tokens - effective_prev_output
                     )
                 trace_deltas.append(delta)
                 unique_deltas.add(delta)
@@ -302,9 +340,6 @@ class CodingTraceLoader(BaseFileLoader):
             trace = traces[0]
             conversation = Conversation(session_id=conv_id)
 
-            if warm_prefix_text:
-                conversation.system_message = warm_prefix_text
-
             trace_deltas = deltas_by_trace[conv_id]
             prev_t = None
             for i, req in enumerate(trace.requests):
@@ -321,8 +356,18 @@ class CodingTraceLoader(BaseFileLoader):
                     max_tokens=req.output_tokens,
                     input_tokens=req.input_tokens,
                     texts=[Text(name="text", contents=[prompt])],
+                    hash_ids=req.hash_ids,
                 )
                 conversation.turns.append(turn)
+
+            if warm_prefix_text and conversation.turns:
+                first_turn = conversation.turns[0]
+                original_text = (
+                    first_turn.texts[0].contents[0] if first_turn.texts else ""
+                )
+                first_turn.texts = [
+                    Text(name="text", contents=[warm_prefix_text + original_text])
+                ]
 
             conversations.append(conversation)
 

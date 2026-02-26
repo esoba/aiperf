@@ -370,11 +370,28 @@ Delay in milliseconds between launching new users during adaptive scaling. Lower
 Scaling formula for computing users to add per assessment period. 'conservative': max(1, active * headroom * 0.5) - scales proportional to current users. 'aggressive': max(2, 2 + headroom_pct / 10) - fast ramp regardless of current users. 'linear': max(1, headroom_pct / 5) - linear ramp based on headroom percentage.
 <br>_Default: `conservative`_
 
+#### `--adaptive-scale-enable-rate-limiting`
+
+Enable per-session rate limiting in adaptive scale mode. When enabled, applies exponential backoff to individual sessions whose TTFT exceeds the threshold, slowing down their request rate.
+<br>_Flag (no value required)_
+<br>_Default: `True`_
+
 #### `--adaptive-scale-max-new-tokens-per-period` `<int>`
 
 Maximum new input tokens from newly started sessions per assessment period. Prevents TTFT spikes from bursts of cache-miss tokens. Initial start_users bypass this check. Set to None to disable.
 <br>_Constraints: ≥ 0_
 <br>_Default: `500000`_
+
+#### `--adaptive-scale-max-working-set-tokens` `<int>`
+
+Maximum total KV cache working set in tokens across all active sessions. When set, new sessions are rejected if their hash_ids would push the total working set beyond this budget. Set to None to disable.
+<br>_Constraints: ≥ 0_
+
+#### `--output-token-budget-ratio` `<float>`
+
+Expected ratio of actual to requested output tokens for coding trace replay. Adjusts delta calculations to compensate for model undergeneration. At 0.8 (default), expects 80% of trace output tokens, making deltas ~20% larger. Set to 1.0 to disable compensation.
+<br>_Constraints: > 0, ≤ 1_
+<br>_Default: `0.8`_
 
 #### `--warm-prefix-pct` `<float>`
 
