@@ -7,6 +7,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.environment import (
+    _APIServerSettings,
     _CompressionSettings,
     _Environment,
     _ServiceSettings,
@@ -97,6 +98,38 @@ class TestProfileConfigureTimeout:
             )
             assert profile_timeout == env.SERVICE.PROFILE_CONFIGURE_TIMEOUT
             assert dataset_timeout == env.DATASET.CONFIGURATION_TIMEOUT
+
+
+class TestAPIServerSettings:
+    """Test _APIServerSettings defaults and env var overrides."""
+
+    def test_defaults(self) -> None:
+        settings = _APIServerSettings()
+        assert settings.HOST == "127.0.0.1"
+        assert settings.PORT is None
+        assert settings.CORS_ORIGINS == []
+
+    def test_port_from_env(self, monkeypatch) -> None:
+        monkeypatch.setenv("AIPERF_API_SERVER_PORT", "8080")
+        settings = _APIServerSettings()
+        assert settings.PORT == 8080
+
+    def test_host_from_env(self, monkeypatch) -> None:
+        monkeypatch.setenv("AIPERF_API_SERVER_HOST", "0.0.0.0")
+        settings = _APIServerSettings()
+        assert settings.HOST == "0.0.0.0"
+
+    def test_cors_origins_from_env(self, monkeypatch) -> None:
+        monkeypatch.setenv(
+            "AIPERF_API_SERVER_CORS_ORIGINS", '["http://localhost:3000"]'
+        )
+        settings = _APIServerSettings()
+        assert settings.CORS_ORIGINS == ["http://localhost:3000"]
+
+    def test_environment_has_api_server_subsystem(self) -> None:
+        env = _Environment()
+        assert hasattr(env, "API_SERVER")
+        assert isinstance(env.API_SERVER, _APIServerSettings)
 
 
 class TestCompressionSettings:
