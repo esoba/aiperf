@@ -293,7 +293,7 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br>_Choices: [`mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
+<br>_Choices: [`bailian_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -512,8 +512,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
-Token block size for hash-based prompt caching in `mooncake_trace` datasets. When `hash_ids` are provided in trace entries, prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`.
-<br>_Default: `512`_
+Token block size for hash-based prompt caching in trace datasets (`mooncake_trace`, `bailian_trace`). When `hash_ids` are provided in trace entries, prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`. When not set, the trace loader's `default_block_size` from plugin metadata is used (e.g. 16 for `bailian_trace`, 512 for `mooncake_trace`).
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`
 

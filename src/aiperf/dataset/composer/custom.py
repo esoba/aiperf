@@ -167,23 +167,24 @@ class CustomDatasetComposer(BaseDatasetComposer):
             )
 
     def _validate_synthesis_config(self, dataset_type: CustomDatasetType) -> None:
-        """Validate that synthesis options are only used with mooncake_trace.
+        """Validate that synthesis options are only used with trace datasets.
 
         Args:
             dataset_type: The determined dataset type.
 
         Raises:
-            ValueError: If synthesis options are set but dataset type is not mooncake_trace.
+            ValueError: If synthesis options are set but dataset type is not a trace format.
         """
         if (
             self.config.input.synthesis.should_synthesize()
-            and dataset_type != CustomDatasetType.MOONCAKE_TRACE
+            and not plugins.is_trace_dataset(dataset_type)
         ):
             raise ValueError(
                 f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
                 f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
-                f"are only supported with mooncake_trace datasets, but got {dataset_type.value}. "
-                f"Either remove synthesis options or use --custom-dataset-type mooncake_trace."
+                f"are only supported with trace datasets, "
+                f"but got {dataset_type.value}. "
+                f"Either remove synthesis options or use a trace dataset type."
             )
 
     def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
@@ -192,9 +193,14 @@ class CustomDatasetComposer(BaseDatasetComposer):
         Args:
             dataset_type: The type of custom dataset to create.
         """
-        kwargs = {}
-        if dataset_type == CustomDatasetType.MOONCAKE_TRACE:
+        kwargs: dict[str, Any] = {}
+        loader_metadata = plugins.get_dataset_loader_metadata(dataset_type)
+        if loader_metadata.is_trace:
             kwargs["prompt_generator"] = self.prompt_generator
+
+            if loader_metadata.default_block_size is not None:
+                kwargs["default_block_size"] = loader_metadata.default_block_size
+
         elif dataset_type == CustomDatasetType.RANDOM_POOL:
             kwargs["num_conversations"] = self.config.input.conversation.num
 

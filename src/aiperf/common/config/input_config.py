@@ -26,6 +26,7 @@ from aiperf.common.config.synthesis_config import SynthesisConfig
 from aiperf.common.config.video_config import VideoConfig
 from aiperf.common.enums import PublicDatasetType
 from aiperf.common.exceptions import InvalidStateError, MetricTypeError
+from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     CustomDatasetType,
     DatasetSamplingStrategy,
@@ -104,10 +105,10 @@ class InputConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
-    def validate_synthesis_requires_mooncake_trace(self) -> Self:
-        """Validate that synthesis options require mooncake_trace dataset type.
+    def validate_synthesis_requires_trace_dataset(self) -> Self:
+        """Validate that synthesis options require a trace dataset type.
 
-        Only validates when custom_dataset_type is explicitly set to a non-mooncake
+        Only validates when custom_dataset_type is explicitly set to a non-trace
         type. If custom_dataset_type is None (auto-detect), we allow synthesis
         options and defer validation to runtime when the actual type is determined.
         """
@@ -118,13 +119,13 @@ class InputConfig(BaseConfig):
                 or self.synthesis.max_osl is not None
             )
             and self.custom_dataset_type is not None
-            and self.custom_dataset_type != CustomDatasetType.MOONCAKE_TRACE
+            and not plugins.is_trace_dataset(self.custom_dataset_type)
         ):
             raise ValueError(
                 "Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
                 "--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier, "
                 "--synthesis-max-isl, --synthesis-max-osl) "
-                "require --custom-dataset-type mooncake_trace"
+                "require a trace dataset type (e.g., mooncake_trace, bailian_trace)"
             )
         return self
 
