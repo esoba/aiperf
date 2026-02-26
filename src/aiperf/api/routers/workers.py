@@ -14,7 +14,7 @@ from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.mixins.worker_tracker_mixin import WorkerTrackerMixin
 from aiperf.common.models import AIPerfBaseModel, WorkerStats
 
-WorkersDep = Annotated["WorkersRouterComponent", component_dependency("workers")]
+WorkersDep = Annotated["WorkersRouter", component_dependency("workers")]
 
 workers_router = APIRouter()
 
@@ -25,7 +25,7 @@ class WorkersResponse(AIPerfBaseModel):
     workers: dict[str, WorkerStats] = Field(description="Per-worker stats")
 
 
-class WorkersRouterComponent(WorkerTrackerMixin, BaseRouter):
+class WorkersRouter(WorkerTrackerMixin, BaseRouter):
     """Owns worker tracker state and exposes /api/workers."""
 
     def get_router(self) -> APIRouter:

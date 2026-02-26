@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for WorkersRouterComponent."""
+"""Tests for WorkersRouter."""
 
 from __future__ import annotations
 
@@ -10,27 +10,27 @@ from fastapi import FastAPI
 from pytest import param
 from starlette.testclient import TestClient
 
-from aiperf.api.routers.workers import WorkersRouterComponent
+from aiperf.api.routers.workers import WorkersRouter
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import WorkerStatus
 from aiperf.common.models import WorkerStats
 
 
 @pytest.fixture
-def workers_component(
-    mock_zmq, component_service_config: ServiceConfig, component_user_config: UserConfig
-) -> WorkersRouterComponent:
-    return WorkersRouterComponent(
-        service_config=component_service_config,
-        user_config=component_user_config,
+def workers_router(
+    mock_zmq, router_service_config: ServiceConfig, router_user_config: UserConfig
+) -> WorkersRouter:
+    return WorkersRouter(
+        service_config=router_service_config,
+        user_config=router_user_config,
     )
 
 
 @pytest.fixture
-def workers_client(workers_component: WorkersRouterComponent) -> TestClient:
+def workers_client(workers_router: WorkersRouter) -> TestClient:
     app = FastAPI()
-    app.state.workers = workers_component
-    app.include_router(workers_component.get_router())
+    app.state.workers = workers_router
+    app.include_router(workers_router.get_router())
     return TestClient(app)
 
 
@@ -59,11 +59,11 @@ class TestWorkersEndpoint:
     def test_workers_active_count(
         self,
         workers_client: TestClient,
-        workers_component: WorkersRouterComponent,
+        workers_router: WorkersRouter,
         statuses: list[WorkerStatus],
         expected_active: int,
     ) -> None:
-        workers_component._worker_tracker._workers_stats = {
+        workers_router._worker_tracker._workers_stats = {
             f"worker-{i}": WorkerStats(worker_id=f"worker-{i}", status=status)
             for i, status in enumerate(statuses)
         }

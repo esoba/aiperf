@@ -26,6 +26,6 @@ class CommunicationMixin(AIPerfLifecycleMixin, ABC):
             config=self.service_config.comm_config
         )
         # Guard: only attach if comms hasn't been attached by another mixin sharing
-        # the same singleton (e.g. RouterComponent children of a service).
+        # the same singleton (e.g. Router children of a service).
         if self.comms.state == LifecycleState.CREATED:
             self.attach_child_lifecycle(self.comms)

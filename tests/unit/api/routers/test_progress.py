@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for ProgressRouterComponent."""
+"""Tests for ProgressRouter."""
 
 from __future__ import annotations
 
@@ -9,27 +9,27 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from aiperf.api.routers.progress import ProgressRouterComponent
+from aiperf.api.routers.progress import ProgressRouter
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CreditPhase
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 
 
 @pytest.fixture
-def progress_component(
-    mock_zmq, component_service_config: ServiceConfig, component_user_config: UserConfig
-) -> ProgressRouterComponent:
-    return ProgressRouterComponent(
-        service_config=component_service_config,
-        user_config=component_user_config,
+def progress_router(
+    mock_zmq, router_service_config: ServiceConfig, router_user_config: UserConfig
+) -> ProgressRouter:
+    return ProgressRouter(
+        service_config=router_service_config,
+        user_config=router_user_config,
     )
 
 
 @pytest.fixture
-def progress_client(progress_component: ProgressRouterComponent) -> TestClient:
+def progress_client(progress_router: ProgressRouter) -> TestClient:
     app = FastAPI()
-    app.state.progress = progress_component
-    app.include_router(progress_component.get_router())
+    app.state.progress = progress_router
+    app.include_router(progress_router.get_router())
     return TestClient(app)
 
 
@@ -43,9 +43,9 @@ class TestProgressEndpoint:
         assert data["phases"] == {}
 
     def test_progress_with_phases(
-        self, progress_client: TestClient, progress_component: ProgressRouterComponent
+        self, progress_client: TestClient, progress_router: ProgressRouter
     ) -> None:
-        progress_component._progress_tracker._phases = {
+        progress_router._progress_tracker._phases = {
             CreditPhase.WARMUP: CombinedPhaseStats(
                 phase=CreditPhase.WARMUP,
                 total_expected_requests=100,

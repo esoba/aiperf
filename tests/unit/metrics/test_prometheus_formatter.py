@@ -4,6 +4,7 @@
 """Tests for the Prometheus formatter."""
 
 import math
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -22,11 +23,85 @@ from aiperf.metrics.prometheus_formatter import (
     format_labels,
     sanitize_metric_name,
 )
-from tests.unit.api.conftest import (
-    make_info_labels,
-    make_latency_metric,
-    make_metric_result,
-)
+
+
+def make_metric_result(
+    tag: str = "test_metric",
+    header: str = "Test Metric",
+    unit: str = "ms",
+    avg: float | None = None,
+    min: float | None = None,
+    max: float | None = None,
+    sum: float | None = None,
+    p50: float | None = None,
+    p95: float | None = None,
+    p99: float | None = None,
+    std: float | None = None,
+    **kwargs: Any,
+) -> MetricResult:
+    """Create a MetricResult with sensible defaults."""
+    return MetricResult(
+        tag=tag,
+        header=header,
+        unit=unit,
+        avg=avg,
+        min=min,
+        max=max,
+        sum=sum,
+        p50=p50,
+        p95=p95,
+        p99=p99,
+        std=std,
+        **kwargs,
+    )
+
+
+def make_latency_metric(
+    avg: float = 100.0,
+    min: float = 50.0,
+    max: float = 200.0,
+    p50: float = 95.0,
+    p95: float = 180.0,
+    p99: float = 195.0,
+) -> MetricResult:
+    """Create a typical latency metric for testing."""
+    return MetricResult(
+        tag="latency",
+        header="Latency",
+        unit="ms",
+        avg=avg,
+        min=min,
+        max=max,
+        p50=p50,
+        p95=p95,
+        p99=p99,
+    )
+
+
+def make_info_labels(
+    model: str = "test-model",
+    endpoint_type: str = "chat",
+    streaming: str = "false",
+    benchmark_id: str | None = None,
+    concurrency: str | None = None,
+    request_rate: str | None = None,
+    config: dict | None = None,
+) -> dict[str, str]:
+    """Create info labels dict for Prometheus/JSON metrics testing."""
+    labels: dict[str, str] = {
+        "model": model,
+        "endpoint_type": endpoint_type,
+        "streaming": streaming,
+    }
+    if benchmark_id:
+        labels["benchmark_id"] = benchmark_id
+    if concurrency:
+        labels["concurrency"] = concurrency
+    if request_rate:
+        labels["request_rate"] = request_rate
+    if config:
+        labels["config"] = config
+    return labels
 
 
 class TestSanitizeMetricName:

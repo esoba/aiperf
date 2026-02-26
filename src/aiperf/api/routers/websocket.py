@@ -27,12 +27,12 @@ from aiperf.common.mixins.aiperf_logger_mixin import AIPerfLoggerMixin
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.zmq.zmq_defaults import WILDCARD_TOPIC
 
-WebSocketDep = Annotated["WebSocketRouterComponent", component_dependency("websocket")]
+WebSocketDep = Annotated["WebSocketRouter", component_dependency("websocket")]
 
 ws_router = APIRouter(tags=["WebSocket"])
 
 
-class WebSocketRouterComponent(MessageBusClientMixin, BaseRouter):
+class WebSocketRouter(MessageBusClientMixin, BaseRouter):
     """Owns WebSocket connections and forwards ZMQ messages to connected clients."""
 
     def __init__(self, **kwargs: Any) -> None:

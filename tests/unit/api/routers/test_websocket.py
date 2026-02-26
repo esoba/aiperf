@@ -11,10 +11,22 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketState
 
 from aiperf.api.api_service import FastAPIService
-from aiperf.api.routers.websocket import WebSocketManager, WebSocketRouterComponent
+from aiperf.api.routers.websocket import WebSocketManager, WebSocketRouter
 from aiperf.common.enums import MessageType
 from aiperf.common.messages import Message
-from tests.unit.api.conftest import make_mock_websocket
+
+
+def make_mock_websocket(
+    closed: bool = False,
+    send_side_effect: Exception | None = None,
+) -> AsyncMock:
+    """Create a mock WebSocket with configurable behavior."""
+    ws = AsyncMock()
+    ws.closed = closed
+    if send_side_effect:
+        ws.send_text.side_effect = send_side_effect
+        ws.send_str.side_effect = send_side_effect
+    return ws
 
 
 class TestWebSocketManager:
@@ -352,50 +364,44 @@ class TestWebSocketUnknownMessageType:
             assert response["type"] == "pong"
 
 
-class TestWebSocketRouterComponentLifecycle:
-    """Test WebSocketRouterComponent lifecycle hooks."""
+class TestWebSocketRouterLifecycle:
+    """Test WebSocketRouter lifecycle hooks."""
 
     @pytest.fixture
-    def ws_component(
-        self, mock_zmq, component_service_config, component_user_config
-    ) -> WebSocketRouterComponent:
-        return WebSocketRouterComponent(
-            service_config=component_service_config,
-            user_config=component_user_config,
+    def ws_router(
+        self, mock_zmq, router_service_config, router_user_config
+    ) -> WebSocketRouter:
+        return WebSocketRouter(
+            service_config=router_service_config,
+            user_config=router_user_config,
         )
 
     @pytest.mark.asyncio
     async def test_subscribe_to_all_message_types(
-        self, ws_component: WebSocketRouterComponent
+        self, ws_router: WebSocketRouter
     ) -> None:
         """Test @on_init subscribes to wildcard topic."""
-        ws_component.subscribe = AsyncMock()
-        await ws_component._subscribe_to_all_message_types()
-        ws_component.subscribe.assert_called_once_with(
-            "*", ws_component._forward_message
-        )
+        ws_router.subscribe = AsyncMock()
+        await ws_router._subscribe_to_all_message_types()
+        ws_router.subscribe.assert_called_once_with("*", ws_router._forward_message)
 
     @pytest.mark.asyncio
-    async def test_forward_message_broadcasts(
-        self, ws_component: WebSocketRouterComponent
-    ) -> None:
+    async def test_forward_message_broadcasts(self, ws_router: WebSocketRouter) -> None:
         """Test _forward_message broadcasts to ws_manager."""
-        ws_component.ws_manager.broadcast = AsyncMock(return_value=2)
-        ws_component.debug = MagicMock()
+        ws_router.ws_manager.broadcast = AsyncMock(return_value=2)
+        ws_router.debug = MagicMock()
 
         msg = Message(service_id="test", message_type=MessageType.HEARTBEAT)
-        await ws_component._forward_message(msg)
+        await ws_router._forward_message(msg)
 
-        ws_component.ws_manager.broadcast.assert_called_once_with(msg)
+        ws_router.ws_manager.broadcast.assert_called_once_with(msg)
 
     @pytest.mark.asyncio
-    async def test_close_all_connections(
-        self, ws_component: WebSocketRouterComponent
-    ) -> None:
+    async def test_close_all_connections(self, ws_router: WebSocketRouter) -> None:
         """Test @on_stop closes all WebSocket connections."""
-        ws_component.ws_manager.close_all = AsyncMock()
-        await ws_component._close_all_connections()
-        ws_component.ws_manager.close_all.assert_called_once()
+        ws_router.ws_manager.close_all = AsyncMock()
+        await ws_router._close_all_connections()
+        ws_router.ws_manager.close_all.assert_called_once()
 
 
 class TestWebSocketEndpointExceptionHandler:
@@ -404,9 +410,9 @@ class TestWebSocketEndpointExceptionHandler:
     def test_generic_exception_logged(
         self, api_test_client: TestClient, mock_fastapi_service: FastAPIService
     ) -> None:
-        """Test that a non-disconnect exception is logged via component.exception."""
-        ws_component = mock_fastapi_service._routers["websocket"]
-        ws_component.exception = MagicMock()
+        """Test that a non-disconnect exception is logged via router.exception."""
+        ws_router = mock_fastapi_service._routers["websocket"]
+        ws_router.exception = MagicMock()
 
         with (
             patch(
@@ -417,5 +423,5 @@ class TestWebSocketEndpointExceptionHandler:
         ):
             pass
 
-        ws_component.exception.assert_called_once()
-        assert "boom" in ws_component.exception.call_args[0][0]
+        ws_router.exception.assert_called_once()
+        assert "boom" in ws_router.exception.call_args[0][0]

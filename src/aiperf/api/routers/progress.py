@@ -18,7 +18,7 @@ from aiperf.common.mixins.progress_tracker_mixin import (
 )
 from aiperf.common.models import AIPerfBaseModel
 
-ProgressDep = Annotated["ProgressRouterComponent", component_dependency("progress")]
+ProgressDep = Annotated["ProgressRouter", component_dependency("progress")]
 
 progress_router = APIRouter()
 
@@ -31,7 +31,7 @@ class ProgressResponse(AIPerfBaseModel):
     )
 
 
-class ProgressRouterComponent(ProgressTrackerMixin, BaseRouter):
+class ProgressRouter(ProgressTrackerMixin, BaseRouter):
     """Owns benchmark progress state and exposes /api/progress."""
 
     def get_router(self) -> APIRouter:

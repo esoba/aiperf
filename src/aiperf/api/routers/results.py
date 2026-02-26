@@ -26,7 +26,7 @@ from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.record_models import ProcessRecordsResult
 
-ResultsDep = Annotated["ResultsRouterComponent", component_dependency("results")]
+ResultsDep = Annotated["ResultsRouter", component_dependency("results")]
 
 results_router = APIRouter(tags=["Results"])
 
@@ -74,7 +74,7 @@ _CONTENT_TYPES: dict[str, str] = {
 }
 
 
-class ResultsRouterComponent(MessageBusClientMixin, BaseRouter):
+class ResultsRouter(MessageBusClientMixin, BaseRouter):
     """Owns final benchmark results and exposes /api/results endpoints."""
 
     def __init__(self, **kwargs: Any) -> None:

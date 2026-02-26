@@ -20,7 +20,7 @@ from aiperf.common.models import MetricResult
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.metrics.prometheus_formatter import InfoLabels, format_as_prometheus
 
-MetricsDep = Annotated["MetricsRouterComponent", component_dependency("metrics")]
+MetricsDep = Annotated["MetricsRouter", component_dependency("metrics")]
 
 
 class MetricsResponse(AIPerfBaseModel):
@@ -43,7 +43,7 @@ class MetricsResponse(AIPerfBaseModel):
 metrics_router = APIRouter()
 
 
-class MetricsRouterComponent(RealtimeMetricsMixin, BaseRouter):
+class MetricsRouter(RealtimeMetricsMixin, BaseRouter):
     """Owns real-time metrics state and exposes /metrics and /api/metrics."""
 
     def __init__(

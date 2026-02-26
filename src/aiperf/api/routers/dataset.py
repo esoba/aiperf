@@ -26,12 +26,12 @@ from aiperf.common.messages import DatasetConfiguredNotification
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models import MemoryMapClientMetadata
 
-DatasetDep = Annotated["DatasetRouterComponent", component_dependency("dataset")]
+DatasetDep = Annotated["DatasetRouter", component_dependency("dataset")]
 
 dataset_router = APIRouter(tags=["Dataset"], include_in_schema=False)
 
 
-class DatasetRouterComponent(MessageBusClientMixin, BaseRouter):
+class DatasetRouter(MessageBusClientMixin, BaseRouter):
     """Owns dataset metadata and exposes /api/dataset endpoints."""
 
     def __init__(self, **kwargs: Any) -> None:
@@ -116,7 +116,7 @@ async def _stream_dataset_file(
     )
 
 
-async def _wait_for_dataset_metadata(component: DatasetRouterComponent) -> None:
+async def _wait_for_dataset_metadata(component: DatasetRouter) -> None:
     """Wait for dataset configuration with timeout."""
     if not component.dataset_configured.is_set():
         try:

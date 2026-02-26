@@ -20,7 +20,7 @@ from aiperf.common.config import UserConfig
 core_router = APIRouter()
 
 
-class CoreRouterComponent(BaseRouter):
+class CoreRouter(BaseRouter):
     """Config, health, and readiness endpoints."""
 
     def get_router(self) -> APIRouter:

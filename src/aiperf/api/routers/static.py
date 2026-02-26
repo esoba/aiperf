@@ -21,7 +21,7 @@ static_router = APIRouter(tags=["Static"])
 _STATIC_DIR = (pathlib.Path(__file__).parent.parent / "static").resolve()
 
 
-class StaticRouterComponent(BaseRouter):
+class StaticRouter(BaseRouter):
     """Static HTML file serving for dashboard and index pages."""
 
     def get_router(self) -> APIRouter:

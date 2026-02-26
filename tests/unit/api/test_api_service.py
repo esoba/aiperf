@@ -7,11 +7,26 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from aiperf.api.api_service import FastAPIService, get_service
+from aiperf.api.routers.core import core_router
+from aiperf.api.routers.static import static_router
 from aiperf.common.config import ServiceConfig
-from tests.unit.api.conftest import create_test_app
+
+
+def create_test_app(service: FastAPIService | None = None) -> FastAPI:
+    """Create a FastAPI app for testing with only plain routers."""
+    app = FastAPI()
+    app.state.service = service
+    for router in (
+        core_router,
+        static_router,
+    ):
+        app.include_router(router)
+    return app
+
 
 # =============================================================================
 # Test app factory and dependency injection

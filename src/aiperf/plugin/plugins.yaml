@@ -130,37 +130,37 @@ service:
 # One-to-many mapping: all registered routers are loaded at startup.
 # =============================================================================
 api_router:
+  core:
+    class: aiperf.api.routers.core:CoreRouter
+    description: Config, health, and readiness endpoints.
+
+  dataset:
+    class: aiperf.api.routers.dataset:DatasetRouter
+    description: Dataset metadata and file streaming with compression support.
+
   metrics:
-    class: aiperf.api.routers.metrics:MetricsRouterComponent
+    class: aiperf.api.routers.metrics:MetricsRouter
     description: Real-time metrics state and Prometheus/JSON endpoints.
 
   progress:
-    class: aiperf.api.routers.progress:ProgressRouterComponent
+    class: aiperf.api.routers.progress:ProgressRouter
     description: Benchmark progress tracking and /api/progress endpoint.
 
-  workers:
-    class: aiperf.api.routers.workers:WorkersRouterComponent
-    description: Worker health tracking and /api/workers endpoint.
-
   results:
-    class: aiperf.api.routers.results:ResultsRouterComponent
+    class: aiperf.api.routers.results:ResultsRouter
     description: Final benchmark results and artifact file downloads.
 
-  dataset:
-    class: aiperf.api.routers.dataset:DatasetRouterComponent
-    description: Dataset metadata and file streaming with compression support.
-
-  core:
-    class: aiperf.api.routers.core:CoreRouterComponent
-    description: Config, health, and readiness endpoints.
-
   static:
-    class: aiperf.api.routers.static:StaticRouterComponent
+    class: aiperf.api.routers.static:StaticRouter
     description: Static HTML file serving for dashboard and index pages.
 
   websocket:
-    class: aiperf.api.routers.websocket:WebSocketRouterComponent
+    class: aiperf.api.routers.websocket:WebSocketRouter
     description: WebSocket endpoint for real-time ZMQ message streaming.
+
+  workers:
+    class: aiperf.api.routers.workers:WorkersRouter
+    description: Worker health tracking and /api/workers endpoint.
 
 # =============================================================================
 # Service Managers
