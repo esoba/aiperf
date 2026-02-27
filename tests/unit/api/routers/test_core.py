@@ -59,6 +59,7 @@ class TestReadyzEndpoint:
             param(LifecycleState.RUNNING, 200, "ok", id="running-ready"),
             param(LifecycleState.CREATED, 503, "not ready", id="created-not-ready"),
             param(LifecycleState.INITIALIZING, 503, "not ready", id="initializing-not-ready"),
+            param(LifecycleState.INITIALIZED, 503, "not ready", id="initialized-not-ready"),
             param(LifecycleState.STARTING, 503, "not ready", id="starting-not-ready"),
             param(LifecycleState.STOPPING, 503, "not ready", id="stopping-not-ready"),
             param(LifecycleState.STOPPED, 503, "not ready", id="stopped-not-ready"),
