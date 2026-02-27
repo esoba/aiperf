@@ -12,6 +12,8 @@ Designed for adaptive_scale timing mode without requiring real trace files.
 
 from __future__ import annotations
 
+import math
+
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
 from aiperf.common.config.coding_session_config import CodingSessionConfig
@@ -53,6 +55,8 @@ class CodingSessionComposer(BaseDatasetComposer):
         self._hash_id_rng = rng.derive("coding_session.hash_ids")
         self._language_rng = rng.derive("coding_session.language")
         self._content_type_rng = rng.derive("coding_session.content_type")
+        self._parallel_rng = rng.derive("coding_session.parallel")
+        self._branch_tokens_rng = rng.derive("coding_session.branch_tokens")
 
     def create_dataset(self) -> list[Conversation]:
         cfg = self._coding_config
@@ -129,6 +133,8 @@ class CodingSessionComposer(BaseDatasetComposer):
         self._finalize_turn(turn)
         conversation.turns.append(turn)
 
+        parallel_group_counter = 0
+
         # Subsequent turns: grow context until max_prompt_tokens
         while cumulative_tokens < cfg.max_prompt_tokens:
             new_tokens = self._new_tokens_rng.sample_lognormal_integer(
@@ -166,7 +172,103 @@ class CodingSessionComposer(BaseDatasetComposer):
             self._finalize_turn(turn)
             conversation.turns.append(turn)
 
+            # Parallel fan-out: after each sequential turn, potentially spawn branches
+            if (
+                cfg.parallel_probability > 0
+                and self._parallel_rng.random() < cfg.parallel_probability
+                and cumulative_tokens < cfg.max_prompt_tokens
+            ):
+                group_id = f"g{parallel_group_counter}"
+                parallel_group_counter += 1
+
+                fan_out = self._sample_fan_out(cfg)
+                branch_token_sum = 0
+
+                for branch_idx in range(fan_out):
+                    branch_tokens = self._branch_tokens_rng.sample_lognormal_integer(
+                        cfg.parallel_branch_tokens_mean,
+                        cfg.parallel_branch_tokens_median,
+                    )
+                    branch_input = min(
+                        cumulative_tokens + branch_tokens, cfg.max_prompt_tokens
+                    )
+
+                    # Each branch extends parent hash_ids with a unique tail
+                    branch_blocks = max(1, branch_input // block_size)
+                    branch_new = branch_blocks - len(hash_ids)
+                    branch_hash_ids = list(hash_ids)
+                    if branch_new > 0:
+                        branch_hash_ids.extend(
+                            self._generate_hash_ids(branch_new, offset=len(hash_ids))
+                        )
+
+                    branch_gen = self._gen_length_rng.sample_lognormal_integer(
+                        cfg.generation_length_mean, cfg.generation_length_median
+                    )
+                    branch_content_type = self._select_content_type(cfg)
+                    branch_prompt = self._content_generator.generate_language_prompt(
+                        branch_tokens, branch_content_type, session_language
+                    )
+
+                    branch_turn = Turn(
+                        max_tokens=branch_gen,
+                        input_tokens=branch_input,
+                        texts=[Text(name="text", contents=[branch_prompt])],
+                        hash_ids=branch_hash_ids,
+                        parallel_group=group_id,
+                        parallel_branch=branch_idx,
+                    )
+                    self._finalize_turn(branch_turn)
+                    conversation.turns.append(branch_turn)
+                    branch_token_sum += branch_tokens
+
+                # Join turn: cumulative grows by sum of branch deltas + join delta
+                join_delta = self._new_tokens_rng.sample_lognormal_integer(
+                    cfg.new_tokens_mean, cfg.new_tokens_median
+                )
+                cumulative_tokens += branch_token_sum + join_delta
+                if cumulative_tokens > cfg.max_prompt_tokens:
+                    cumulative_tokens = cfg.max_prompt_tokens
+
+                num_blocks = max(1, cumulative_tokens // block_size)
+                new_block_count = num_blocks - len(hash_ids)
+                if new_block_count > 0:
+                    new_ids = self._generate_hash_ids(
+                        new_block_count, offset=len(hash_ids)
+                    )
+                    hash_ids.extend(new_ids)
+
+                join_gen = self._gen_length_rng.sample_lognormal_integer(
+                    cfg.generation_length_mean, cfg.generation_length_median
+                )
+                join_content_type = self._select_content_type(cfg)
+                join_prompt = self._content_generator.generate_language_prompt(
+                    max(1, join_delta), join_content_type, session_language
+                )
+                join_turn = Turn(
+                    max_tokens=join_gen,
+                    input_tokens=cumulative_tokens,
+                    texts=[Text(name="text", contents=[join_prompt])],
+                    hash_ids=list(hash_ids),
+                )
+                self._finalize_turn(join_turn)
+                conversation.turns.append(join_turn)
+
         return conversation
+
+    def _sample_fan_out(self, cfg: CodingSessionConfig) -> int:
+        """Sample fan-out count clamped to [2, parallel_fan_out_max].
+
+        Uses Knuth's algorithm for Poisson sampling with the underlying RNG.
+        """
+        lam = cfg.parallel_fan_out_mean
+        limit = math.exp(-lam)
+        k = 0
+        p = 1.0
+        while p > limit:
+            k += 1
+            p *= self._parallel_rng.random()
+        return max(2, min(k - 1, cfg.parallel_fan_out_max))
 
     def _generate_hash_ids(self, count: int, offset: int = 0) -> list[int]:
         """Generate deterministic hash IDs for KV cache blocks."""

@@ -68,11 +68,13 @@ class UserSession(AIPerfBaseModel):
 class UserSessionManager:
     """User session manager for multi-turn processing.
 
-    Manages user sessions for multi-turn processing.
+    Manages user sessions for multi-turn processing, including
+    child-to-parent mapping for parallel branch sub-sessions.
     """
 
     def __init__(self) -> None:
         self._cache: dict[str, UserSession] = {}
+        self._child_to_parent: dict[str, str] = {}
 
     def create_and_store(
         self,
@@ -121,12 +123,26 @@ class UserSessionManager:
 
     def get(self, x_correlation_id: str) -> UserSession | None:
         """
-        Get user session.
+        Get user session. Falls back to parent lookup via child mapping.
 
         Args:
             x_correlation_id: X-Correlation-ID header value
         """
-        return self._cache.get(x_correlation_id)
+        session = self._cache.get(x_correlation_id)
+        if session is not None:
+            return session
+        parent_id = self._child_to_parent.get(x_correlation_id)
+        if parent_id is not None:
+            return self._cache.get(parent_id)
+        return None
+
+    def register_child(self, child_id: str, parent_id: str) -> None:
+        """Register a child correlation ID that maps to a parent session."""
+        self._child_to_parent[child_id] = parent_id
+
+    def evict_child(self, child_id: str) -> None:
+        """Remove a child-to-parent mapping."""
+        self._child_to_parent.pop(child_id, None)
 
     def evict(self, x_correlation_id: str) -> None:
         """

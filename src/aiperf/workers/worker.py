@@ -443,6 +443,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         x_request_id = str(uuid.uuid4())
         x_correlation_id = credit_context.credit.x_correlation_id
         credit = credit_context.credit
+        is_parallel_branch = credit.is_parallel_branch
 
         # First token callback captures TTFT and optionally sends FirstToken
         # for prefill slot release. Only defined when TTFT tracking is needed
@@ -469,7 +470,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 return True
 
         try:
-            session = self.session_manager.get(x_correlation_id)
+            # Parallel branches resolve via parent session
+            if is_parallel_branch and credit.parent_correlation_id:
+                session = self.session_manager.get(credit.parent_correlation_id)
+                if session is not None:
+                    self.session_manager.register_child(
+                        x_correlation_id, credit.parent_correlation_id
+                    )
+                else:
+                    session = self.session_manager.get(x_correlation_id)
+            else:
+                session = self.session_manager.get(x_correlation_id)
+
             if session is None:
                 _conversation = await self._retrieve_conversation(
                     conversation_id=credit_context.credit.conversation_id,
@@ -521,8 +533,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self._update_circuit_breaker(credit_context.error)
             self.exception(f"Error processing credit: {e!r}")
         finally:
-            # Evict session on final turn OR if cancelled (no retry expected)
-            if credit_context.credit.is_final_turn or credit_context.cancelled:
+            if is_parallel_branch:
+                # Only evict child mapping, not parent session
+                self.session_manager.evict_child(x_correlation_id)
+            elif credit_context.credit.is_final_turn or credit_context.cancelled:
                 self.session_manager.evict(x_correlation_id)
 
     _CONNECTION_ERROR_TYPES = frozenset(

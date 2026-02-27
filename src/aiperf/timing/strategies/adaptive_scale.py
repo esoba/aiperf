@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from aiperf.common.constants import MILLIS_PER_SECOND
@@ -29,6 +30,18 @@ if TYPE_CHECKING:
 
 NS_PER_SEC = 1_000_000_000
 NS_PER_MS = 1_000_000
+
+
+@dataclass(slots=True)
+class PendingJoin:
+    """Tracks completion of parallel branches before dispatching the join turn."""
+
+    conversation_id: str
+    parent_correlation_id: str
+    expected_count: int
+    completed_count: int = 0
+    join_turn_index: int = 0
+    num_turns: int = 0
 
 
 class AdaptiveScaleStrategy(AIPerfLoggerMixin):
@@ -99,6 +112,9 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         self._min_goodput_ratio = config.min_goodput_ratio
         self._period_good_count = 0
         self._period_total_count = 0
+
+        # Parallel branch join tracking: parent x_correlation_id -> PendingJoin
+        self._pending_joins: dict[str, PendingJoin] = {}
 
     async def setup_phase(self) -> None:
         """Nothing to pre-compute; conversations are sampled on demand."""
@@ -307,7 +323,18 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
                 return sorted_samples[int(math.ceil(len(sorted_samples) * 0.95)) - 1]
 
     async def handle_credit_return(self, credit: Credit) -> None:
-        """Dispatch next turn with trace delay, or recycle on completion."""
+        """Dispatch next turn with trace delay, or recycle on completion.
+
+        Three paths:
+        A) Parallel branch returns: track completion, dispatch join when all done
+        B) Sequential turn returns and next is parallel group: fan-out dispatch
+        C) Normal sequential turn: existing logic
+        """
+        # Path A: Parallel branch returning
+        if credit.is_parallel_branch:
+            self._handle_parallel_branch_return(credit)
+            return
+
         if credit.is_final_turn:
             self._cleanup_session(credit.x_correlation_id)
             if self._recycle and self._stop_checker.can_send_any_turn():
@@ -320,8 +347,13 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
                 self._active_users -= 1
             return
 
-        # Non-final turn: dispatch next with delay from metadata
+        # Check if next turn starts a parallel group (Path B)
         next_meta = self._conversation_source.get_next_turn_metadata(credit)
+        if next_meta.parallel_group is not None:
+            self._dispatch_parallel_group(credit, next_meta.parallel_group)
+            return
+
+        # Path C: Normal sequential turn
         turn = TurnToSend.from_previous_credit(credit)
 
         delay_sec = 0.0
@@ -343,10 +375,74 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
                 self._credit_issuer.issue_credit(turn),
             )
 
+    def _dispatch_parallel_group(self, credit: Credit, group_id: str) -> None:
+        """Fan out parallel branches for a group and register a pending join."""
+        pg = self._conversation_source.get_parallel_group(
+            credit.conversation_id, group_id
+        )
+        if pg is None:
+            # Fallback: treat as sequential
+            turn = TurnToSend.from_previous_credit(credit)
+            self._scheduler.execute_async(
+                self._credit_issuer.issue_credit(turn),
+            )
+            return
+
+        parent_corr_id = credit.x_correlation_id
+
+        self._pending_joins[parent_corr_id] = PendingJoin(
+            conversation_id=credit.conversation_id,
+            parent_correlation_id=parent_corr_id,
+            expected_count=len(pg.turn_indices),
+            join_turn_index=pg.join_turn_index,
+            num_turns=credit.num_turns,
+        )
+
+        for i, turn_index in enumerate(pg.turn_indices):
+            branch_turn = TurnToSend.for_parallel_branch(
+                conversation_id=credit.conversation_id,
+                parent_correlation_id=parent_corr_id,
+                turn_index=turn_index,
+                num_turns=credit.num_turns,
+                parallel_group=group_id,
+                parallel_branch=i,
+            )
+            self._scheduler.execute_async(
+                self._credit_issuer.issue_credit(branch_turn),
+            )
+
+    def _handle_parallel_branch_return(self, credit: Credit) -> None:
+        """Handle a parallel branch credit return. Dispatch join when all branches complete."""
+        parent_id = credit.parent_correlation_id
+        if parent_id is None:
+            return
+
+        pending = self._pending_joins.get(parent_id)
+        if pending is None:
+            return
+
+        pending.completed_count += 1
+        if pending.completed_count < pending.expected_count:
+            return
+
+        # All branches complete — dispatch join turn using parent's correlation ID
+        self._pending_joins.pop(parent_id, None)
+
+        join_turn = TurnToSend(
+            conversation_id=pending.conversation_id,
+            x_correlation_id=parent_id,
+            turn_index=pending.join_turn_index,
+            num_turns=pending.num_turns,
+        )
+        self._scheduler.execute_async(
+            self._credit_issuer.issue_credit(join_turn),
+        )
+
     def _cleanup_session(self, corr_id: str) -> None:
         """Remove all per-session tracking state for a completed session."""
         self._rate_limit_counts.pop(corr_id, None)
         self._session_backoffs.pop(corr_id, None)
+        self._pending_joins.pop(corr_id, None)
         removed_ids = self._session_hash_ids.pop(corr_id, None)
         if removed_ids is not None:
             self._active_hash_ids = (

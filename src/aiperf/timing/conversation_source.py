@@ -18,7 +18,12 @@ Terminology:
 import uuid
 from dataclasses import dataclass
 
-from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
+from aiperf.common.models import (
+    ConversationMetadata,
+    DatasetMetadata,
+    ParallelGroupInfo,
+    TurnMetadata,
+)
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
 
@@ -112,3 +117,25 @@ class ConversationSource:
                 f"(only {len(metadata.turns)} turns exist)"
             )
         return metadata.turns[next_index]
+
+    def get_turn_metadata_at(
+        self, conversation_id: str, turn_index: int
+    ) -> TurnMetadata:
+        """Get metadata for a specific turn by index."""
+        metadata = self.get_metadata(conversation_id)
+        if turn_index >= len(metadata.turns):
+            raise ValueError(
+                f"No turn {turn_index} in conversation {conversation_id} "
+                f"(only {len(metadata.turns)} turns exist)"
+            )
+        return metadata.turns[turn_index]
+
+    def get_parallel_group(
+        self, conversation_id: str, group_id: str
+    ) -> ParallelGroupInfo | None:
+        """Get parallel group info for a specific group in a conversation."""
+        metadata = self.get_metadata(conversation_id)
+        for pg in metadata.parallel_groups:
+            if pg.group_id == group_id:
+                return pg
+        return None

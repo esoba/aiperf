@@ -123,6 +123,15 @@ class TurnMetadata(AIPerfBaseModel):
         default_factory=list,
         description="KV cache block hash IDs for working set tracking.",
     )
+    parallel_group: str | None = Field(
+        default=None,
+        description="Groups turns dispatched simultaneously (e.g. 'g0'). "
+        "All turns sharing a parallel_group are issued concurrently.",
+    )
+    parallel_branch: int | None = Field(
+        default=None,
+        description="Branch index within a parallel group (0-based).",
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -166,6 +175,15 @@ class Turn(AIPerfBaseModel):
         default_factory=list,
         description="KV cache block hash IDs for working set tracking.",
     )
+    parallel_group: str | None = Field(
+        default=None,
+        description="Groups turns dispatched simultaneously (e.g. 'g0'). "
+        "All turns sharing a parallel_group are issued concurrently.",
+    )
+    parallel_branch: int | None = Field(
+        default=None,
+        description="Branch index within a parallel group (0-based).",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -174,6 +192,8 @@ class Turn(AIPerfBaseModel):
             delay_ms=self.delay,
             input_tokens=self.input_tokens,
             hash_ids=self.hash_ids,
+            parallel_group=self.parallel_group,
+            parallel_branch=self.parallel_branch,
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -217,6 +237,25 @@ class Turn(AIPerfBaseModel):
         )
 
 
+class ParallelGroupInfo(AIPerfBaseModel):
+    """Describes a group of turns that should be dispatched in parallel.
+
+    All turns at the indices in turn_indices share the same parallel_group ID
+    and should be issued concurrently. The join_turn_index is the first
+    sequential turn after the parallel group completes.
+    """
+
+    group_id: str = Field(
+        description="Parallel group identifier, matches Turn.parallel_group.",
+    )
+    turn_indices: list[int] = Field(
+        description="Indices into the flat turns list for each branch.",
+    )
+    join_turn_index: int = Field(
+        description="Index of the first turn after the parallel group (the join point).",
+    )
+
+
 class ConversationMetadata(AIPerfBaseModel):
     """Metadata of a conversation."""
 
@@ -227,6 +266,10 @@ class ConversationMetadata(AIPerfBaseModel):
     turns: list[TurnMetadata] = Field(
         default_factory=list,
         description="The metadata of the turns in the conversation.",
+    )
+    parallel_groups: list[ParallelGroupInfo] = Field(
+        default_factory=list,
+        description="Precomputed parallel group info for turns dispatched simultaneously.",
     )
 
 
@@ -291,10 +334,38 @@ class Conversation(AIPerfBaseModel):
 
     def metadata(self) -> ConversationMetadata:
         """Get the metadata of the conversation."""
+        turn_metas = [turn.metadata() for turn in self.turns]
+        parallel_groups = self._compute_parallel_groups(turn_metas)
         return ConversationMetadata(
             conversation_id=self.session_id,
-            turns=[turn.metadata() for turn in self.turns],
+            turns=turn_metas,
+            parallel_groups=parallel_groups,
         )
+
+    @staticmethod
+    def _compute_parallel_groups(
+        turns: list[TurnMetadata],
+    ) -> list[ParallelGroupInfo]:
+        """Build ParallelGroupInfo list from turn metadata."""
+        groups: dict[str, list[int]] = {}
+        for i, t in enumerate(turns):
+            if t.parallel_group is not None:
+                groups.setdefault(t.parallel_group, []).append(i)
+
+        result: list[ParallelGroupInfo] = []
+        for group_id, indices in groups.items():
+            # Join turn is the first turn after the last branch index
+            join_index = indices[-1] + 1
+            if join_index >= len(turns):
+                join_index = len(turns) - 1
+            result.append(
+                ParallelGroupInfo(
+                    group_id=group_id,
+                    turn_indices=indices,
+                    join_turn_index=join_index,
+                )
+            )
+        return result
 
 
 class SessionPayloads(AIPerfBaseModel):

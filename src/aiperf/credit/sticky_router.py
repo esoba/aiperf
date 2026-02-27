@@ -262,6 +262,7 @@ class StickyCreditRouter(CommunicationMixin):
         This method:
         - Determines the worker based on sticky sessions or least-loaded
         - Updates the worker load and sticky sessions
+        - Parallel branches route via parent_correlation_id without managing sticky sessions
         - Sends the credit to the worker
         """
         if not self._workers:
@@ -269,6 +270,16 @@ class StickyCreditRouter(CommunicationMixin):
 
         if not credit.x_correlation_id:
             raise RuntimeError("x_correlation_id must be set in Credit")
+
+        # Parallel branches route to the same worker as their parent session
+        if credit.parent_correlation_id:
+            routing_key = credit.parent_correlation_id
+            sticky_worker_id = self._sticky_sessions.get(routing_key)
+            if sticky_worker_id and sticky_worker_id in self._workers:
+                self._track_credit_sent(sticky_worker_id, credit.id)
+                await self._router_client.send_to(sticky_worker_id, credit)
+                return
+            # Fall through to normal routing if parent session not found
 
         x_correlation_id = credit.x_correlation_id
         sticky_worker_id = self._sticky_sessions.get(x_correlation_id)

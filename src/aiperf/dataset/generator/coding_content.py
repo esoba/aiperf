@@ -173,13 +173,37 @@ _USER_REQUESTS = (
 )
 
 _TEXT_POOL_BLOCKS = 200
-_TOOL_POOL_BLOCKS_PER_TYPE = 50
-_TOOL_GENERATOR_TYPES = (
-    "_gen_python_code", "_gen_go_code", "_gen_rust_code",
-    "_gen_typescript_code", "_gen_bash_output", "_gen_json_response",
-    "_gen_error_traceback", "_gen_git_diff", "_gen_cicd_output",
-    "_gen_config_file", "_gen_markdown_doc", "_gen_test_output",
-)
+
+# Block counts per generator, weighted to match real trace data distribution:
+# ~35% code, ~25% bash, ~15% JSON, ~10% errors, ~15% other (diffs, CI, configs, docs, tests)
+_TOOL_POOL_BLOCK_COUNTS: dict[str, int] = {
+    "_gen_python_code": 53,
+    "_gen_go_code": 53,
+    "_gen_rust_code": 53,
+    "_gen_typescript_code": 53,
+    "_gen_bash_output": 150,
+    "_gen_json_response": 90,
+    "_gen_error_traceback": 60,
+    "_gen_git_diff": 18,
+    "_gen_cicd_output": 18,
+    "_gen_config_file": 18,
+    "_gen_markdown_doc": 18,
+    "_gen_test_output": 18,
+}
+
+# Language-specific pool: single code generator replaces all 4, rest stays proportional.
+# ~35% code, ~25% bash, ~15% JSON, ~10% errors/tests/configs, ~15% other
+_LANGUAGE_POOL_BLOCK_COUNTS: dict[str, int] = {
+    "code": 160,
+    "_gen_bash_output": 115,
+    "_gen_json_response": 70,
+    "_gen_error_traceback": 45,
+    "_gen_test_output": 25,
+    "_gen_config_file": 20,
+    "_gen_git_diff": 15,
+    "_gen_cicd_output": 15,
+    "_gen_markdown_doc": 10,
+}
 
 _LANGUAGE_AGNOSTIC_GENERATORS = (
     "_gen_bash_output", "_gen_json_response", "_gen_git_diff",
@@ -289,20 +313,29 @@ class CodingContentGenerator(BaseGenerator):
             return self._language_pools[language]
 
         lang_gens = _LANGUAGE_GENERATORS.get(language, ())
-        gen_names = lang_gens + _LANGUAGE_AGNOSTIC_GENERATORS
+        code_count = _LANGUAGE_POOL_BLOCK_COUNTS["code"]
 
         blocks: list[str] = []
-        for gen_name in gen_names:
+
+        # Language-specific code blocks
+        for gen_name in lang_gens:
             gen_fn = getattr(self, gen_name)
-            for _ in range(_TOOL_POOL_BLOCKS_PER_TYPE):
+            for _ in range(code_count):
                 blocks.append(gen_fn())
 
-        # Language-specific mixed generators
-        for _ in range(_TOOL_POOL_BLOCKS_PER_TYPE):
+        # Language-agnostic generators
+        for gen_name in _LANGUAGE_AGNOSTIC_GENERATORS:
+            gen_fn = getattr(self, gen_name)
+            count = _LANGUAGE_POOL_BLOCK_COUNTS[gen_name]
+            for _ in range(count):
+                blocks.append(gen_fn())
+
+        # Language-specific mixed generators (errors, tests, configs)
+        for _ in range(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_error_traceback"]):
             blocks.append(self._gen_error_traceback(language=language))
-        for _ in range(_TOOL_POOL_BLOCKS_PER_TYPE):
+        for _ in range(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_test_output"]):
             blocks.append(self._gen_test_output(language=language))
-        for _ in range(_TOOL_POOL_BLOCKS_PER_TYPE):
+        for _ in range(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_config_file"]):
             blocks.append(self._gen_config_file(language=language))
 
         text = "\n\n".join(blocks)
@@ -336,9 +369,9 @@ class CodingContentGenerator(BaseGenerator):
 
     def _build_tool_pool(self) -> None:
         blocks: list[str] = []
-        for gen_name in _TOOL_GENERATOR_TYPES:
+        for gen_name, count in _TOOL_POOL_BLOCK_COUNTS.items():
             gen_fn = getattr(self, gen_name)
-            for _ in range(_TOOL_POOL_BLOCKS_PER_TYPE):
+            for _ in range(count):
                 blocks.append(gen_fn())
         text = "\n\n".join(blocks)
         self._tool_pool = self.tokenizer.encode(text)

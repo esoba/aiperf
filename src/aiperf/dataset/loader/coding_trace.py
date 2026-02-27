@@ -82,6 +82,8 @@ class CodingTraceLoader(BaseFileLoader):
         self._output_token_budget_ratio = user_config.input.output_token_budget_ratio
         self._skipped_max_isl = 0
         self._skipped_min_requests = 0
+        # Per-conversation parallel annotations: conv_id -> {request_index -> (group_id, branch)}
+        self._parallel_annotations: dict[str, dict[int, tuple[str, int]]] = {}
 
     @classmethod
     def can_load(
@@ -138,6 +140,10 @@ class CodingTraceLoader(BaseFileLoader):
             # Flatten nested subagent requests and detect streaming/non-streaming pairs
             flat_requests = self._flatten_requests(trace.requests)
             self._detect_request_pairs(flat_requests)
+            # Detect parallel groups from subagent tree structure
+            parallel_annotations = self._detect_parallel_groups(
+                trace.requests, flat_requests
+            )
 
             # Truncate conversation at first request exceeding max_isl.
             # Unlike per-request filtering, this preserves conversation continuity:
@@ -155,6 +161,11 @@ class CodingTraceLoader(BaseFileLoader):
             # Split at context resets (pull-backs)
             segments = self._detect_pullbacks(flat_requests)
 
+            # Build identity-based annotation lookup for O(1) per-request
+            annotated_ids: dict[int, tuple[str, int]] = {}
+            for flat_idx, ann in parallel_annotations.items():
+                annotated_ids[id(flat_requests[flat_idx])] = ann
+
             for seg_idx, segment in enumerate(segments):
                 if len(segment) < self._min_requests:
                     self._skipped_min_requests += 1
@@ -164,6 +175,14 @@ class CodingTraceLoader(BaseFileLoader):
 
                 conv_id = f"{trace.id}_seg{seg_idx}" if len(segments) > 1 else trace.id
                 result[conv_id] = [seg_trace]
+
+                # Remap parallel annotations to segment-local indices
+                seg_annotations: dict[int, tuple[str, int]] = {}
+                for local_idx, req in enumerate(segment):
+                    if (ann := annotated_ids.get(id(req))) is not None:
+                        seg_annotations[local_idx] = ann
+                if seg_annotations:
+                    self._parallel_annotations[conv_id] = seg_annotations
 
         if self._skipped_max_isl > 0:
             self.info(
@@ -202,6 +221,45 @@ class CodingTraceLoader(BaseFileLoader):
                 flat.extend(self._flatten_requests(req.requests, base_time=abs_time))
         flat.sort(key=lambda r: r.t)
         return flat
+
+    @staticmethod
+    def _detect_parallel_groups(
+        original_requests: list[CodingTraceRequest],
+        flat_requests: list[CodingTraceRequest],
+    ) -> dict[int, tuple[str, int]]:
+        """Detect subagent nodes with >1 child and return parallel annotations.
+
+        Walks the original tree structure to find parent requests whose children
+        were flattened. When a parent has multiple child requests, those children
+        form a parallel group in the flat list.
+
+        Returns:
+            Mapping of flat request index -> (group_id, branch_index).
+        """
+        flat_index: dict[int, int] = {id(r): i for i, r in enumerate(flat_requests)}
+        annotations: dict[int, tuple[str, int]] = {}
+        group_counter = 0
+
+        def walk(requests: list[CodingTraceRequest]) -> None:
+            nonlocal group_counter
+            for req in requests:
+                if not req.requests:
+                    continue
+                child_indices: list[int] = []
+                for child in req.requests:
+                    if id(child) in flat_index:
+                        child_indices.append(flat_index[id(child)])
+                    if child.requests:
+                        walk([child])
+
+                if len(child_indices) > 1:
+                    group_id = f"g{group_counter}"
+                    group_counter += 1
+                    for branch, idx in enumerate(child_indices):
+                        annotations[idx] = (group_id, branch)
+
+        walk(original_requests)
+        return annotations
 
     @staticmethod
     def _detect_request_pairs(requests: list[CodingTraceRequest]) -> int:
@@ -371,12 +429,21 @@ class CodingTraceLoader(BaseFileLoader):
                     prompt = prompt_by_delta.get((ct, delta), "")
                 else:
                     prompt = prompt_by_delta.get(delta, "")
+                # Apply parallel annotations if available
+                par_group = None
+                par_branch = None
+                conv_annotations = self._parallel_annotations.get(conv_id)
+                if conv_annotations and i in conv_annotations:
+                    par_group, par_branch = conv_annotations[i]
+
                 turn = Turn(
                     delay=delay_ms,
                     max_tokens=req.output_tokens,
                     input_tokens=req.input_tokens,
                     texts=[Text(name="text", contents=[prompt])],
                     hash_ids=req.hash_ids,
+                    parallel_group=par_group,
+                    parallel_branch=par_branch,
                 )
                 conversation.turns.append(turn)
 

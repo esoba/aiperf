@@ -46,10 +46,17 @@ class Credit(
     issued_at_ns: int
     cancel_after_ns: int | None = None
     url_index: int | None = None
+    parallel_group: str | None = None
+    parallel_branch: int | None = None
+    parent_correlation_id: str | None = None
 
     @property
     def is_final_turn(self) -> bool:
         return self.turn_index == self.num_turns - 1
+
+    @property
+    def is_parallel_branch(self) -> bool:
+        return self.parallel_group is not None
 
 
 class CreditContext(
@@ -89,16 +96,26 @@ class TurnToSend(Struct, frozen=True):
         x_correlation_id: Conversation instance ID for sticky routing (X-Correlation-ID header).
         turn_index: The index of the turn in the conversation (0-based).
         num_turns: The total number of turns in the conversation.
+        parallel_group: Parallel group ID if this turn is part of a parallel fan-out.
+        parallel_branch: Branch index within the parallel group (0-based).
+        parent_correlation_id: Parent session's x_correlation_id for parallel branches.
     """
 
     conversation_id: str
     x_correlation_id: str
     turn_index: int
     num_turns: int
+    parallel_group: str | None = None
+    parallel_branch: int | None = None
+    parent_correlation_id: str | None = None
 
     @property
     def is_final_turn(self) -> bool:
         return self.turn_index == self.num_turns - 1
+
+    @property
+    def is_parallel_branch(self) -> bool:
+        return self.parallel_group is not None
 
     @classmethod
     def from_previous_credit(cls, credit: Credit) -> Self:
@@ -108,4 +125,26 @@ class TurnToSend(Struct, frozen=True):
             x_correlation_id=credit.x_correlation_id,
             turn_index=credit.turn_index + 1,
             num_turns=credit.num_turns,
+        )
+
+    @classmethod
+    def for_parallel_branch(
+        cls,
+        *,
+        conversation_id: str,
+        parent_correlation_id: str,
+        turn_index: int,
+        num_turns: int,
+        parallel_group: str,
+        parallel_branch: int,
+    ) -> Self:
+        """Create a TurnToSend for a parallel branch with a derived correlation ID."""
+        return cls(
+            conversation_id=conversation_id,
+            x_correlation_id=f"{parent_correlation_id}_b{parallel_branch}",
+            turn_index=turn_index,
+            num_turns=num_turns,
+            parallel_group=parallel_group,
+            parallel_branch=parallel_branch,
+            parent_correlation_id=parent_correlation_id,
         )

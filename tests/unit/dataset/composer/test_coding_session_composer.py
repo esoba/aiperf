@@ -53,10 +53,13 @@ class TestCodingSessionComposer:
         conversations = composer.create_dataset()
 
         for conv in conversations:
-            input_tokens = [t.input_tokens for t in conv.turns]
-            assert len(input_tokens) >= 2
-            for i in range(1, len(input_tokens)):
-                assert input_tokens[i] >= input_tokens[i - 1]
+            # Filter to sequential turns only (parallel branches fork from parent context)
+            sequential_tokens = [
+                t.input_tokens for t in conv.turns if t.parallel_group is None
+            ]
+            assert len(sequential_tokens) >= 2
+            for i in range(1, len(sequential_tokens)):
+                assert sequential_tokens[i] >= sequential_tokens[i - 1]
 
     def test_session_retires_at_max_prompt_tokens(
         self, coding_session_config, mock_tokenizer
@@ -69,13 +72,18 @@ class TestCodingSessionComposer:
             for turn in conv.turns:
                 assert turn.input_tokens <= max_tokens
 
-    def test_hash_ids_grow_across_turns(self, coding_session_config, mock_tokenizer):
+    def test_hash_ids_grow_across_sequential_turns(
+        self, coding_session_config, mock_tokenizer
+    ):
         composer = CodingSessionComposer(coding_session_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
         for conv in conversations:
-            for i in range(1, len(conv.turns)):
-                assert len(conv.turns[i].hash_ids) >= len(conv.turns[i - 1].hash_ids)
+            sequential_hash_lens = [
+                len(t.hash_ids) for t in conv.turns if t.parallel_group is None
+            ]
+            for i in range(1, len(sequential_hash_lens)):
+                assert sequential_hash_lens[i] >= sequential_hash_lens[i - 1]
 
     def test_system_message_set_on_conversation(
         self, coding_session_config, mock_tokenizer

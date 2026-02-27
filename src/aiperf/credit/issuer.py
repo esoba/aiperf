@@ -103,17 +103,18 @@ class CreditIssuer:
         Note:
             For first turns (turn_index == 0), acquires session slot first.
             For all turns, acquires prefill slot.
+            Parallel branches skip session slot (parent already holds one).
             Slots are released automatically on failure.
 
         Flow:
-            1. Acquire session slot (first turn only)
+            1. Acquire session slot (first turn only, non-parallel)
             2. Acquire prefill slot (all turns)
             3. Atomic numbering via increment_sent
             4. Calculate cancellation delay
             5. Create and send Credit
             6. If final credit: freeze counts + set event
         """
-        is_first_turn = turn.turn_index == 0
+        is_first_turn = turn.turn_index == 0 and not turn.is_parallel_branch
 
         # Select appropriate check function based on turn type
         # - First turns need can_start_new_session (more restrictive - checks session quota)
@@ -125,7 +126,7 @@ class CreditIssuer:
         )
 
         # Session concurrency: one slot per conversation, acquired on first turn only.
-        # Controls how many multi-turn conversations can be active simultaneously.
+        # Parallel branches do NOT acquire session slots (parent already holds one).
         if is_first_turn:
             acquired = await self._concurrency_manager.acquire_session_slot(
                 self._phase, self._stop_checker.can_start_new_session
@@ -161,7 +162,7 @@ class CreditIssuer:
             False: Credit issued but this was final, OR stop condition triggered.
             None: No slots available, credit NOT issued. Retry later.
         """
-        is_first_turn = turn.turn_index == 0
+        is_first_turn = turn.turn_index == 0 and not turn.is_parallel_branch
 
         # Select appropriate check function based on turn type
         can_proceed_fn = (
@@ -209,11 +210,11 @@ class CreditIssuer:
 
         # Get URL index from strategy (for multi-URL load balancing)
         # Only advance the round-robin on the first turn of a conversation.
-        # Subsequent turns will use the url_index stored in the worker's UserSession.
-        is_first_turn = turn.turn_index == 0
+        # Subsequent turns and parallel branches use the url_index stored in the worker's UserSession.
+        is_first_non_parallel = turn.turn_index == 0 and not turn.is_parallel_branch
         url_index = (
             self._url_selection_strategy.next_url_index()
-            if self._url_selection_strategy and is_first_turn
+            if self._url_selection_strategy and is_first_non_parallel
             else None
         )
 
@@ -227,6 +228,9 @@ class CreditIssuer:
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
+            parallel_group=turn.parallel_group,
+            parallel_branch=turn.parallel_branch,
+            parent_correlation_id=turn.parent_correlation_id,
         )
 
         await self._credit_router.send_credit(credit=credit)
