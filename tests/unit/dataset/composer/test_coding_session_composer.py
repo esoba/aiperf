@@ -32,6 +32,7 @@ def coding_session_config():
                 generation_length_mean=100,
                 generation_length_median=80,
                 block_size=64,
+                subagent_probability=0.0,
             ),
             prompt=PromptConfig(),
         ),
