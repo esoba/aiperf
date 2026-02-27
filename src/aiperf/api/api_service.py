@@ -159,7 +159,7 @@ class FastAPIService(BaseComponentService):
             )
         )
 
-    def _on_server_task_done(self, task: asyncio.Task) -> None:
+    def _on_server_task_done(self, task: asyncio.Task[None]) -> None:
         """Surface unhandled server errors and trigger graceful shutdown."""
         if task.cancelled():
             return
@@ -188,7 +188,7 @@ class FastAPIService(BaseComponentService):
                         timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
                     )
             except asyncio.CancelledError:
-                pass
+                raise
 
         self.info("AIPerf FastAPI server stopped")
 
