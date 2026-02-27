@@ -19,7 +19,7 @@ jobs:
 
   authorize:
     name: Authorize
-    runs-on: prod-default-small-v2
+    runs-on: ubuntu-latest
     if: github.actor == 'pvijayakrish'
     steps:
       - name: Authorized
@@ -28,7 +28,7 @@ jobs:
   prepare-release:
     name: Prepare Release
     needs: [authorize]
-    runs-on: prod-default-small-v2
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.extract.outputs.version }}
       rc_number: ${{ steps.rc.outputs.rc_number }}
@@ -97,7 +97,7 @@ jobs:
   pre-commit:
     name: Pre-commit Checks
     needs: [prepare-release]
-    runs-on: prod-default-small-v2
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -118,7 +118,7 @@ jobs:
   unit-tests:
     name: Unit Tests
     needs: [prepare-release]
-    runs-on: prod-default-v2
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -137,7 +137,7 @@ jobs:
   integration-tests:
     name: Integration Tests
     needs: [prepare-release]
-    runs-on: prod-default-v2
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -154,39 +154,12 @@ jobs:
         run: make integration-tests-ci
 
   gpu-e2e-tests:
-    name: GPU End-to-End Tests
+    name: GPU End-to-End Tests (skipped - no GPU runner)
     needs: [prepare-release]
-    runs-on: prod-tester-amd-gpu-v1
-    continue-on-error: true
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Build aiperf test image
-        run: |
-          docker build \
-            --target test \
-            -t aiperf:test \
-            .
-
-      - name: Run documentation e2e tests
-        env:
-          AIPERF_SOURCE_DIR: ${{ github.workspace }}
-        run: |
-          docker run --rm \
-            --gpus all \
-            --network host \
-            -v "${AIPERF_SOURCE_DIR}/tests/fixtures:/fixtures:ro" \
-            -v "${AIPERF_SOURCE_DIR}:/workspace:ro" \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aiperf:test \
-            "cd /workspace && python3 tests/ci/test_docs_end_to_end/main.py --all-servers"
-
-      - name: Cleanup
-        if: always()
-        run: |
-          docker rm -f $(docker ps -aq --filter "ancestor=aiperf:test") 2>/dev/null || true
-          docker rmi aiperf:test 2>/dev/null || true
+      - name: Skip
+        run: echo "Skipped - GPU runners not yet available"
 
   # ============================================================================
   # BUILD ARTIFACTS
@@ -195,7 +168,7 @@ jobs:
   build-wheel:
     name: Build Wheel
     needs: [prepare-release]
-    runs-on: prod-default-small-v2
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -236,7 +209,7 @@ jobs:
   validate-wheel:
     name: Validate Wheel
     needs: [prepare-release, build-wheel]
-    runs-on: prod-default-small-v2
+    runs-on: ubuntu-latest
     steps:
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -272,20 +245,21 @@ jobs:
   build-container:
     name: Build Container (${{ matrix.arch }})
     needs: [prepare-release]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: true
       matrix:
         include:
           - arch: amd64
             platform: linux/amd64
-            runner: prod-builder-amd-v1
           - arch: arm64
             platform: linux/arm64
-            runner: prod-builder-arm-v1
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Log in to container registry
         run: |
@@ -321,7 +295,7 @@ jobs:
   create-multiarch-manifest:
     name: Create Multi-arch Manifest
     needs: [prepare-release, build-container]
-    runs-on: prod-default-small-v2
+    runs-on: ubuntu-latest
     steps:
       - name: Log in to container registry
         run: |
@@ -350,7 +324,7 @@ jobs:
   publish-wheel:
     name: Publish Wheel
     needs: [prepare-release, validate-wheel]
-    runs-on: prod-default-small-v2
+    runs-on: ubuntu-latest
     steps:
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -401,7 +375,7 @@ jobs:
       - gpu-e2e-tests
       - publish-wheel
       - create-multiarch-manifest
-    runs-on: prod-default-small-v2
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
