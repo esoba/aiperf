@@ -22,6 +22,7 @@ from aiperf.common.models import (
     ConversationMetadata,
     DatasetMetadata,
     ParallelGroupInfo,
+    SubagentSpawnInfo,
     TurnMetadata,
 )
 from aiperf.credit.structs import Credit, TurnToSend
@@ -138,4 +139,25 @@ class ConversationSource:
         for pg in metadata.parallel_groups:
             if pg.group_id == group_id:
                 return pg
+        return None
+
+    def start_child_session(self, conversation_id: str) -> SampledSession:
+        """Start a specific child conversation as a new session (for subagent spawns)."""
+        metadata = self._metadata_lookup[conversation_id]
+        return SampledSession(
+            conversation_id=conversation_id,
+            metadata=metadata,
+            x_correlation_id=str(uuid.uuid4()),
+        )
+
+    def get_subagent_spawn(
+        self, conversation_id: str, spawn_id: str
+    ) -> SubagentSpawnInfo | None:
+        """Look up a SubagentSpawnInfo by conversation and spawn ID."""
+        metadata = self._metadata_lookup.get(conversation_id)
+        if metadata is None:
+            return None
+        for spawn in metadata.subagent_spawns:
+            if spawn.spawn_id == spawn_id:
+                return spawn
         return None

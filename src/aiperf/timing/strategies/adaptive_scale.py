@@ -44,6 +44,18 @@ class PendingJoin:
     num_turns: int = 0
 
 
+@dataclass(slots=True)
+class PendingSubagentJoin:
+    """Tracks completion of subagent children before dispatching the parent's join turn."""
+
+    parent_conversation_id: str
+    parent_correlation_id: str
+    expected_count: int
+    completed_count: int = 0
+    join_turn_index: int = 0
+    parent_num_turns: int = 0
+
+
 class AdaptiveScaleStrategy(AIPerfLoggerMixin):
     """Adaptive user scaling based on TTFT headroom or goodput ratio.
 
@@ -115,6 +127,10 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
 
         # Parallel branch join tracking: parent x_correlation_id -> PendingJoin
         self._pending_joins: dict[str, PendingJoin] = {}
+
+        # Subagent spawn tracking
+        self._pending_subagent_joins: dict[str, PendingSubagentJoin] = {}
+        self._subagent_child_to_parent: dict[str, str] = {}
 
     async def setup_phase(self) -> None:
         """Nothing to pre-compute; conversations are sampled on demand."""
@@ -325,14 +341,24 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
     async def handle_credit_return(self, credit: Credit) -> None:
         """Dispatch next turn with trace delay, or recycle on completion.
 
-        Three paths:
+        Five paths:
         A) Parallel branch returns: track completion, dispatch join when all done
         B) Sequential turn returns and next is parallel group: fan-out dispatch
         C) Normal sequential turn: existing logic
+        D) Next turn is blocked by subagent spawn: fan-out child sessions
+        E) Subagent child's final turn: signal parent join
         """
         # Path A: Parallel branch returning
         if credit.is_parallel_branch:
             self._handle_parallel_branch_return(credit)
+            return
+
+        # Path E: Subagent child's final turn -- signal parent join
+        if (
+            credit.is_final_turn
+            and credit.x_correlation_id in self._subagent_child_to_parent
+        ):
+            self._handle_subagent_child_complete(credit)
             return
 
         if credit.is_final_turn:
@@ -351,6 +377,11 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         next_meta = self._conversation_source.get_next_turn_metadata(credit)
         if next_meta.parallel_group is not None:
             self._dispatch_parallel_group(credit, next_meta.parallel_group)
+            return
+
+        # Path D: Next turn is blocked by subagent spawn
+        if next_meta.subagent_spawn_id is not None:
+            self._dispatch_subagent_spawn(credit, next_meta.subagent_spawn_id)
             return
 
         # Path C: Normal sequential turn
@@ -438,11 +469,76 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             self._credit_issuer.issue_credit(join_turn),
         )
 
+    def _dispatch_subagent_spawn(self, credit: Credit, spawn_id: str) -> None:
+        """Fan out subagent child sessions and register a pending join."""
+        spawn = self._conversation_source.get_subagent_spawn(
+            credit.conversation_id, spawn_id
+        )
+        if spawn is None:
+            turn = TurnToSend.from_previous_credit(credit)
+            self._scheduler.execute_async(
+                self._credit_issuer.issue_credit(turn),
+            )
+            return
+
+        parent_corr_id = credit.x_correlation_id
+        self._pending_subagent_joins[parent_corr_id] = PendingSubagentJoin(
+            parent_conversation_id=credit.conversation_id,
+            parent_correlation_id=parent_corr_id,
+            expected_count=len(spawn.child_conversation_ids),
+            join_turn_index=spawn.join_turn_index,
+            parent_num_turns=credit.num_turns,
+        )
+
+        for child_conv_id in spawn.child_conversation_ids:
+            child_session = self._conversation_source.start_child_session(child_conv_id)
+            self._subagent_child_to_parent[child_session.x_correlation_id] = (
+                parent_corr_id
+            )
+            child_turn = child_session.build_first_turn()
+            self._scheduler.execute_async(
+                self._credit_issuer.issue_credit(child_turn),
+            )
+
+    def _handle_subagent_child_complete(self, credit: Credit) -> None:
+        """Handle a subagent child's final turn. Dispatch parent join when all children complete."""
+        child_corr_id = credit.x_correlation_id
+        parent_corr_id = self._subagent_child_to_parent.pop(child_corr_id, None)
+        if parent_corr_id is None:
+            return
+
+        self._cleanup_session(child_corr_id)
+
+        pending = self._pending_subagent_joins.get(parent_corr_id)
+        if pending is None:
+            return
+
+        pending.completed_count += 1
+        if pending.completed_count < pending.expected_count:
+            return
+
+        self._pending_subagent_joins.pop(parent_corr_id, None)
+        join_turn = TurnToSend(
+            conversation_id=pending.parent_conversation_id,
+            x_correlation_id=parent_corr_id,
+            turn_index=pending.join_turn_index,
+            num_turns=pending.parent_num_turns,
+        )
+        self._scheduler.execute_async(
+            self._credit_issuer.issue_credit(join_turn),
+        )
+
     def _cleanup_session(self, corr_id: str) -> None:
         """Remove all per-session tracking state for a completed session."""
         self._rate_limit_counts.pop(corr_id, None)
         self._session_backoffs.pop(corr_id, None)
         self._pending_joins.pop(corr_id, None)
+        self._pending_subagent_joins.pop(corr_id, None)
+        orphaned = [
+            k for k, v in self._subagent_child_to_parent.items() if v == corr_id
+        ]
+        for k in orphaned:
+            self._subagent_child_to_parent.pop(k, None)
         removed_ids = self._session_hash_ids.pop(corr_id, None)
         if removed_ids is not None:
             self._active_hash_ids = (

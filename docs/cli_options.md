@@ -515,6 +515,60 @@ Median new tokens per parallel branch (lognormal distribution).
 <br>_Constraints: ≥ 1_
 <br>_Default: `400`_
 
+#### `--coding-session-subagent-probability` `<float>`
+
+Probability a turn spawns subagent children (mutually exclusive with parallel_probability per turn). 0.0 disables subagent generation.
+<br>_Constraints: ≥ 0.0, ≤ 1.0_
+<br>_Default: `0.15`_
+
+#### `--coding-session-subagent-count-mean` `<float>`
+
+Mean number of subagent children per spawn (Poisson).
+<br>_Constraints: ≥ 1.0_
+<br>_Default: `1.5`_
+
+#### `--coding-session-subagent-count-max` `<int>`
+
+Maximum number of subagent children per spawn.
+<br>_Constraints: ≥ 1_
+<br>_Default: `4`_
+
+#### `--coding-session-subagent-turns-mean` `<int>`
+
+Mean number of turns per subagent child session (lognormal).
+<br>_Constraints: ≥ 1_
+<br>_Default: `8`_
+
+#### `--coding-session-subagent-turns-median` `<int>`
+
+Median number of turns per subagent child session (lognormal).
+<br>_Constraints: ≥ 1_
+<br>_Default: `5`_
+
+#### `--coding-session-subagent-system-tokens` `<int>`
+
+System prompt tokens for subagent children (smaller tool set).
+<br>_Constraints: ≥ 0_
+<br>_Default: `4000`_
+
+#### `--coding-session-subagent-new-tokens-mean` `<int>`
+
+Mean new tokens per turn in subagent children.
+<br>_Constraints: ≥ 1_
+<br>_Default: `2500`_
+
+#### `--coding-session-subagent-new-tokens-median` `<int>`
+
+Median new tokens per turn in subagent children.
+<br>_Constraints: ≥ 1_
+<br>_Default: `1200`_
+
+#### `--coding-session-subagent-max-prompt-tokens` `<int>`
+
+Maximum prompt tokens for subagent children (shorter-lived).
+<br>_Constraints: ≥ 1_
+<br>_Default: `50000`_
+
 ### Audio Input
 
 #### `--audio-batch-size`, `--batch-size-audio` `<int>`

@@ -18,6 +18,7 @@ from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
 from aiperf.common.config.coding_session_config import CodingSessionConfig
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models.dataset_models import SubagentSpawnInfo
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.generator.coding_content import CodingContentGenerator
@@ -63,18 +64,30 @@ class CodingSessionComposer(BaseDatasetComposer):
         self._content_type_rng = rng.derive("coding_session.content_type")
         self._parallel_rng = rng.derive("coding_session.parallel")
         self._branch_tokens_rng = rng.derive("coding_session.branch_tokens")
+        self._subagent_rng = rng.derive("coding_session.subagent")
+        self._subagent_hash_rng = rng.derive("coding_session.subagent_hash")
+        self._subagent_tokens_rng = rng.derive("coding_session.subagent_tokens")
+        self._subagent_gen_rng = rng.derive("coding_session.subagent_gen")
+        self._subagent_turns_rng = rng.derive("coding_session.subagent_turns")
 
     def create_dataset(self) -> list[Conversation]:
         cfg = self._coding_config
         conversations: list[Conversation] = []
+        child_conversations: list[Conversation] = []
 
         for session_idx in range(cfg.num_sessions):
-            conversation = self._generate_session(session_idx, cfg)
+            conversation, children = self._generate_session(session_idx, cfg)
             conversations.append(conversation)
+            child_conversations.extend(children)
 
-        self._finalize_conversations(conversations)
+        all_conversations = conversations + child_conversations
+        self._finalize_conversations(all_conversations)
         self._log_statistics(conversations)
-        return conversations
+        if child_conversations:
+            self.info(
+                f"Generated {len(child_conversations)} subagent child conversations"
+            )
+        return all_conversations
 
     def _select_session_language(self, cfg: CodingSessionConfig) -> str:
         """Select a language for this session based on config."""
@@ -98,8 +111,10 @@ class CodingSessionComposer(BaseDatasetComposer):
 
     def _generate_session(
         self, session_idx: int, cfg: CodingSessionConfig
-    ) -> Conversation:
-        conversation = Conversation(session_id=f"coding_session_{session_idx:04d}")
+    ) -> tuple[Conversation, list[Conversation]]:
+        session_id = f"coding_session_{session_idx:04d}"
+        conversation = Conversation(session_id=session_id)
+        child_conversations: list[Conversation] = []
 
         block_size = cfg.block_size
         session_language = self._select_session_language(cfg)
@@ -140,6 +155,7 @@ class CodingSessionComposer(BaseDatasetComposer):
         conversation.turns.append(turn)
 
         parallel_group_counter = 0
+        subagent_spawn_counter = 0
 
         # Subsequent turns: grow context until max_prompt_tokens
         while cumulative_tokens < cfg.max_prompt_tokens:
@@ -178,11 +194,74 @@ class CodingSessionComposer(BaseDatasetComposer):
             self._finalize_turn(turn)
             conversation.turns.append(turn)
 
+            if cumulative_tokens >= cfg.max_prompt_tokens:
+                break
+
+            # Subagent spawn (checked first, mutually exclusive with parallel)
+            if (
+                cfg.subagent_probability > 0
+                and self._subagent_rng.random() < cfg.subagent_probability
+            ):
+                spawn_id = f"s{subagent_spawn_counter}"
+                subagent_spawn_counter += 1
+
+                num_children = self._sample_subagent_count(cfg)
+                child_conv_ids: list[str] = []
+
+                for child_idx in range(num_children):
+                    child_conv = self._generate_subagent_child(
+                        session_id, spawn_id, child_idx, cfg, session_language
+                    )
+                    child_conversations.append(child_conv)
+                    child_conv_ids.append(child_conv.session_id)
+
+                # Join turn after subagent spawn
+                join_delta = self._new_tokens_rng.sample_lognormal_integer(
+                    cfg.new_tokens_mean, cfg.new_tokens_median
+                )
+                cumulative_tokens += join_delta
+                if cumulative_tokens > cfg.max_prompt_tokens:
+                    cumulative_tokens = cfg.max_prompt_tokens
+
+                num_blocks = max(1, cumulative_tokens // block_size)
+                new_block_count = num_blocks - len(hash_ids)
+                if new_block_count > 0:
+                    new_ids = self._generate_hash_ids(
+                        new_block_count, offset=len(hash_ids)
+                    )
+                    hash_ids.extend(new_ids)
+
+                join_turn_index = len(conversation.turns)
+                join_gen = self._gen_length_rng.sample_lognormal_integer(
+                    cfg.generation_length_mean, cfg.generation_length_median
+                )
+                join_content_type = self._select_content_type(cfg)
+                join_prompt = self._content_generator.generate_language_prompt(
+                    max(1, join_delta), join_content_type, session_language
+                )
+                join_turn = Turn(
+                    max_tokens=join_gen,
+                    input_tokens=cumulative_tokens,
+                    texts=[Text(name="text", contents=[join_prompt])],
+                    hash_ids=list(hash_ids),
+                    subagent_spawn_id=spawn_id,
+                )
+                self._finalize_turn(join_turn)
+                conversation.turns.append(join_turn)
+
+                conversation.subagent_spawns.append(
+                    SubagentSpawnInfo(
+                        spawn_id=spawn_id,
+                        child_conversation_ids=child_conv_ids,
+                        join_turn_index=join_turn_index,
+                    )
+                )
+                continue
+
             # Parallel fan-out: after each sequential turn, potentially spawn branches
             if (
                 cfg.parallel_probability > 0
                 and self._parallel_rng.random() < cfg.parallel_probability
-                and cumulative_tokens < cfg.max_prompt_tokens
             ):
                 group_id = f"g{parallel_group_counter}"
                 parallel_group_counter += 1
@@ -260,7 +339,115 @@ class CodingSessionComposer(BaseDatasetComposer):
                 self._finalize_turn(join_turn)
                 conversation.turns.append(join_turn)
 
-        return conversation
+        return conversation, child_conversations
+
+    def _sample_subagent_count(self, cfg: CodingSessionConfig) -> int:
+        """Sample subagent count clamped to [1, subagent_count_max]."""
+        lam = cfg.subagent_count_mean
+        limit = math.exp(-lam)
+        k = 0
+        p = 1.0
+        while p > limit:
+            k += 1
+            p *= self._subagent_rng.random()
+        return max(1, min(k - 1, cfg.subagent_count_max))
+
+    def _generate_subagent_child(
+        self,
+        parent_session_id: str,
+        spawn_id: str,
+        child_idx: int,
+        cfg: CodingSessionConfig,
+        session_language: str,
+    ) -> Conversation:
+        """Generate a subagent child conversation with independent hash_ids."""
+        child_id = f"{parent_session_id}_{spawn_id}_c{child_idx}"
+        child = Conversation(session_id=child_id, is_subagent_child=True)
+
+        block_size = cfg.block_size
+
+        # Sample number of turns for this child
+        num_turns = self._subagent_turns_rng.sample_lognormal_integer(
+            cfg.subagent_turns_mean, cfg.subagent_turns_median
+        )
+        num_turns = max(1, num_turns)
+
+        # Fresh hash_ids for the child (independent KV cache)
+        cumulative_tokens = cfg.subagent_system_tokens
+        initial_tokens = self._subagent_tokens_rng.sample_lognormal_integer(
+            cfg.subagent_new_tokens_mean, cfg.subagent_new_tokens_median
+        )
+        cumulative_tokens += initial_tokens
+        cumulative_tokens = min(cumulative_tokens, cfg.subagent_max_prompt_tokens)
+
+        num_blocks = max(1, cumulative_tokens // block_size)
+        hash_ids = [
+            self._subagent_hash_rng.randint(0, 2**31 - 1) for _ in range(num_blocks)
+        ]
+
+        gen_length = self._subagent_gen_rng.sample_lognormal_integer(
+            cfg.generation_length_mean, cfg.generation_length_median
+        )
+
+        content_type = self._select_content_type(cfg)
+        prompt_text = self._content_generator.generate_language_prompt(
+            initial_tokens, content_type, session_language
+        )
+        system_text = self._content_generator.generate_language_prompt(
+            cfg.subagent_system_tokens, "tool_result", session_language
+        )
+        child.system_message = system_text
+
+        turn = Turn(
+            max_tokens=gen_length,
+            input_tokens=cumulative_tokens,
+            texts=[Text(name="text", contents=[prompt_text])],
+            hash_ids=list(hash_ids),
+        )
+        self._finalize_turn(turn)
+        child.turns.append(turn)
+
+        for _ in range(num_turns - 1):
+            if cumulative_tokens >= cfg.subagent_max_prompt_tokens:
+                break
+
+            new_tokens = self._subagent_tokens_rng.sample_lognormal_integer(
+                cfg.subagent_new_tokens_mean, cfg.subagent_new_tokens_median
+            )
+            gen_length = self._subagent_gen_rng.sample_lognormal_integer(
+                cfg.generation_length_mean, cfg.generation_length_median
+            )
+
+            effective_prev_output = int(gen_length * self._output_token_budget_ratio)
+            delta = max(1, new_tokens - effective_prev_output)
+
+            cumulative_tokens += new_tokens
+            if cumulative_tokens > cfg.subagent_max_prompt_tokens:
+                cumulative_tokens = cfg.subagent_max_prompt_tokens
+
+            num_blocks = max(1, cumulative_tokens // block_size)
+            new_block_count = num_blocks - len(hash_ids)
+            if new_block_count > 0:
+                new_ids = [
+                    self._subagent_hash_rng.randint(0, 2**31 - 1)
+                    for _ in range(new_block_count)
+                ]
+                hash_ids.extend(new_ids)
+
+            content_type = self._select_content_type(cfg)
+            prompt_text = self._content_generator.generate_language_prompt(
+                delta, content_type, session_language
+            )
+            turn = Turn(
+                max_tokens=gen_length,
+                input_tokens=cumulative_tokens,
+                texts=[Text(name="text", contents=[prompt_text])],
+                hash_ids=list(hash_ids),
+            )
+            self._finalize_turn(turn)
+            child.turns.append(turn)
+
+        return child
 
     def _sample_fan_out(self, cfg: CodingSessionConfig) -> int:
         """Sample fan-out count clamped to [2, parallel_fan_out_max].

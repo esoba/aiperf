@@ -24,6 +24,7 @@ import orjson
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models.dataset_models import SubagentSpawnInfo
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.models import (
@@ -84,6 +85,10 @@ class CodingTraceLoader(BaseFileLoader):
         self._skipped_min_requests = 0
         # Per-conversation parallel annotations: conv_id -> {request_index -> (group_id, branch)}
         self._parallel_annotations: dict[str, dict[int, tuple[str, int]]] = {}
+        # Per-conversation subagent data: conv_id -> list of (spawn_id, child_flat_requests, join_request_index)
+        self._subagent_extractions: dict[
+            str, list[tuple[str, list[CodingTraceRequest], int]]
+        ] = {}
 
     @classmethod
     def can_load(
@@ -137,6 +142,9 @@ class CodingTraceLoader(BaseFileLoader):
         for raw in raw_traces:
             trace = CodingTrace.model_validate(raw)
 
+            # Extract subagent subtrees before flattening
+            subtrees = self._extract_subagent_subtrees(trace.requests)
+
             # Flatten nested subagent requests and detect streaming/non-streaming pairs
             flat_requests = self._flatten_requests(trace.requests)
             self._detect_request_pairs(flat_requests)
@@ -166,6 +174,15 @@ class CodingTraceLoader(BaseFileLoader):
             for flat_idx, ann in parallel_annotations.items():
                 annotated_ids[id(flat_requests[flat_idx])] = ann
 
+            # Build subagent extraction data keyed by flat request identity
+            subtree_by_parent_req: dict[
+                int, list[tuple[list[CodingTraceRequest], int]]
+            ] = {}
+            for child_flat, parent_idx in subtrees:
+                subtree_by_parent_req.setdefault(parent_idx, []).append(
+                    (child_flat, parent_idx)
+                )
+
             for seg_idx, segment in enumerate(segments):
                 if len(segment) < self._min_requests:
                     self._skipped_min_requests += 1
@@ -183,6 +200,29 @@ class CodingTraceLoader(BaseFileLoader):
                         seg_annotations[local_idx] = ann
                 if seg_annotations:
                     self._parallel_annotations[conv_id] = seg_annotations
+
+                # Store subagent extraction data for this conversation
+                if subtrees:
+                    spawn_counter = 0
+                    extractions: list[tuple[str, list[CodingTraceRequest], int]] = []
+                    for child_flat, parent_idx in subtrees:
+                        # Find the parent request in this segment
+                        if parent_idx < len(flat_requests):
+                            parent_req = flat_requests[parent_idx]
+                            # Find parent's local index in this segment
+                            parent_local = None
+                            for local_idx, req in enumerate(segment):
+                                if id(req) == id(parent_req):
+                                    parent_local = local_idx
+                                    break
+                            if parent_local is not None:
+                                spawn_id = f"s{spawn_counter}"
+                                spawn_counter += 1
+                                # Join is the turn after the parent
+                                join_idx = min(parent_local + 1, len(segment) - 1)
+                                extractions.append((spawn_id, child_flat, join_idx))
+                    if extractions:
+                        self._subagent_extractions[conv_id] = extractions
 
         if self._skipped_max_isl > 0:
             self.info(
@@ -208,19 +248,64 @@ class CodingTraceLoader(BaseFileLoader):
 
         Converts subagent-relative timestamps to absolute time and sorts the
         result chronologically so inter-request delays are computed correctly.
+        Only flattens leaf children (no nested requests); subtrees with nested
+        requests are treated as subagents and extracted separately.
         """
         flat: list[CodingTraceRequest] = []
         for req in requests:
             abs_time = base_time + req.t
-            # Skip container-only entries (subagent wrappers with no token counts)
             if req.input_tokens > 0:
                 req.t = abs_time
                 flat.append(req)
-            # Recursively flatten nested subagent requests
             if req.requests:
-                flat.extend(self._flatten_requests(req.requests, base_time=abs_time))
+                # Only flatten leaf children (no nested requests of their own)
+                for child in req.requests:
+                    if not child.requests:
+                        child_abs = abs_time + child.t
+                        if child.input_tokens > 0:
+                            child.t = child_abs
+                            flat.append(child)
+                    else:
+                        # Subtree children are flattened recursively for backward compat
+                        flat.extend(self._flatten_requests([child], base_time=abs_time))
         flat.sort(key=lambda r: r.t)
         return flat
+
+    @staticmethod
+    def _extract_subagent_subtrees(
+        requests: list[CodingTraceRequest],
+    ) -> list[tuple[list[CodingTraceRequest], int]]:
+        """Extract subagent subtrees from the request tree.
+
+        A child request with its own nested requests (depth > 1) is a subagent.
+        Returns list of (child_flat_requests, parent_child_index) tuples.
+        """
+        subtrees: list[tuple[list[CodingTraceRequest], int]] = []
+
+        def _flatten_subtree(
+            reqs: list[CodingTraceRequest], base_time: float = 0.0
+        ) -> list[CodingTraceRequest]:
+            flat: list[CodingTraceRequest] = []
+            for r in reqs:
+                abs_t = base_time + r.t
+                if r.input_tokens > 0:
+                    r.t = abs_t
+                    flat.append(r)
+                if r.requests:
+                    flat.extend(_flatten_subtree(r.requests, base_time=abs_t))
+            flat.sort(key=lambda x: x.t)
+            return flat
+
+        for parent_idx, req in enumerate(requests):
+            if not req.requests:
+                continue
+            for child in req.requests:
+                if child.requests:
+                    child_flat = _flatten_subtree([child], base_time=req.t)
+                    if child_flat:
+                        subtrees.append((child_flat, parent_idx))
+
+        return subtrees
 
     @staticmethod
     def _detect_parallel_groups(
@@ -409,6 +494,8 @@ class CodingTraceLoader(BaseFileLoader):
         # Build conversation objects
         self.info("Building conversation objects")
         conversations = []
+        child_conversations: list[Conversation] = []
+
         for conv_id, traces in data.items():
             trace = traces[0]
             conversation = Conversation(session_id=conv_id)
@@ -424,7 +511,6 @@ class CodingTraceLoader(BaseFileLoader):
 
                 delta = trace_deltas[i]
                 if has_typed and req.input_types:
-                    # Pick content type: "text" if any text blocks, else "tool_result"
                     ct = "text" if "text" in req.input_types else "tool_result"
                     prompt = prompt_by_delta.get((ct, delta), "")
                 else:
@@ -436,6 +522,14 @@ class CodingTraceLoader(BaseFileLoader):
                 if conv_annotations and i in conv_annotations:
                     par_group, par_branch = conv_annotations[i]
 
+                # Check for subagent spawn annotation
+                subagent_spawn_id = None
+                extractions = self._subagent_extractions.get(conv_id, [])
+                for spawn_id, _, join_idx in extractions:
+                    if i == join_idx:
+                        subagent_spawn_id = spawn_id
+                        break
+
                 turn = Turn(
                     delay=delay_ms,
                     max_tokens=req.output_tokens,
@@ -444,6 +538,7 @@ class CodingTraceLoader(BaseFileLoader):
                     hash_ids=req.hash_ids,
                     parallel_group=par_group,
                     parallel_branch=par_branch,
+                    subagent_spawn_id=subagent_spawn_id,
                 )
                 conversation.turns.append(turn)
 
@@ -456,9 +551,81 @@ class CodingTraceLoader(BaseFileLoader):
                     Text(name="text", contents=[warm_prefix_text + original_text])
                 ]
 
+            # Build child conversations from subagent extractions
+            for spawn_id, child_flat, join_idx in extractions:
+                child_conv_id = f"{conv_id}_{spawn_id}"
+                child_conv = self._build_child_conversation(
+                    child_conv_id,
+                    child_flat,
+                    prompt_by_delta,
+                    has_typed,
+                    prefix_tokens,
+                )
+                child_conversations.append(child_conv)
+
+                conversation.subagent_spawns.append(
+                    SubagentSpawnInfo(
+                        spawn_id=spawn_id,
+                        child_conversation_ids=[child_conv_id],
+                        join_turn_index=join_idx,
+                    )
+                )
+
             conversations.append(conversation)
 
+        conversations.extend(child_conversations)
+        if child_conversations:
+            self.info(
+                f"Extracted {len(child_conversations)} subagent child conversations"
+            )
         return conversations
+
+    def _build_child_conversation(
+        self,
+        conv_id: str,
+        requests: list[CodingTraceRequest],
+        prompt_by_delta: dict,
+        has_typed: bool,
+        prefix_tokens: int,
+    ) -> Conversation:
+        """Build a child Conversation from extracted subagent requests."""
+        child = Conversation(session_id=conv_id, is_subagent_child=True)
+
+        prev_t = None
+        for i, req in enumerate(requests):
+            delay_ms = None
+            if prev_t is not None:
+                delay_sec = req.t - prev_t
+                delay_ms = delay_sec * MILLIS_PER_SECOND
+            prev_t = req.t
+
+            if i == 0:
+                delta = max(1, req.input_tokens - prefix_tokens)
+            else:
+                prev = requests[i - 1]
+                effective_prev_output = int(
+                    prev.output_tokens * self._output_token_budget_ratio
+                )
+                delta = max(
+                    1, req.input_tokens - prev.input_tokens - effective_prev_output
+                )
+
+            if has_typed and req.input_types:
+                ct = "text" if "text" in req.input_types else "tool_result"
+                prompt = prompt_by_delta.get((ct, delta), "")
+            else:
+                prompt = prompt_by_delta.get(delta, "")
+
+            turn = Turn(
+                delay=delay_ms,
+                max_tokens=req.output_tokens,
+                input_tokens=req.input_tokens,
+                texts=[Text(name="text", contents=[prompt])],
+                hash_ids=req.hash_ids,
+            )
+            child.turns.append(turn)
+
+        return child
 
     @staticmethod
     def _compute_trace_statistics(trace: CodingTrace) -> TraceStatistics:

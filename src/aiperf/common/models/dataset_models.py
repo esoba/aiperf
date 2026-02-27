@@ -132,6 +132,10 @@ class TurnMetadata(AIPerfBaseModel):
         default=None,
         description="Branch index within a parallel group (0-based).",
     )
+    subagent_spawn_id: str | None = Field(
+        default=None,
+        description="Spawn ID if this turn is blocked by a subagent spawn.",
+    )
 
 
 class Turn(AIPerfBaseModel):
@@ -184,6 +188,10 @@ class Turn(AIPerfBaseModel):
         default=None,
         description="Branch index within a parallel group (0-based).",
     )
+    subagent_spawn_id: str | None = Field(
+        default=None,
+        description="Spawn ID if this turn is blocked by a subagent spawn.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -194,6 +202,7 @@ class Turn(AIPerfBaseModel):
             hash_ids=self.hash_ids,
             parallel_group=self.parallel_group,
             parallel_branch=self.parallel_branch,
+            subagent_spawn_id=self.subagent_spawn_id,
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -256,6 +265,25 @@ class ParallelGroupInfo(AIPerfBaseModel):
     )
 
 
+class SubagentSpawnInfo(AIPerfBaseModel):
+    """Describes a subagent spawn point linking parent to child conversations.
+
+    When a parent conversation spawns subagents, the parent pauses at
+    the spawn turn and resumes at join_turn_index after all children complete.
+    Children are separate Conversations with independent hash_ids and sessions.
+    """
+
+    spawn_id: str = Field(
+        description="Subagent spawn identifier, e.g. 's0'.",
+    )
+    child_conversation_ids: list[str] = Field(
+        description="Conversation IDs of child subagent sessions to start.",
+    )
+    join_turn_index: int = Field(
+        description="Parent turn index to resume after all children complete.",
+    )
+
+
 class ConversationMetadata(AIPerfBaseModel):
     """Metadata of a conversation."""
 
@@ -270,6 +298,14 @@ class ConversationMetadata(AIPerfBaseModel):
     parallel_groups: list[ParallelGroupInfo] = Field(
         default_factory=list,
         description="Precomputed parallel group info for turns dispatched simultaneously.",
+    )
+    subagent_spawns: list[SubagentSpawnInfo] = Field(
+        default_factory=list,
+        description="Subagent spawn points linking to child conversations.",
+    )
+    is_subagent_child: bool = Field(
+        default=False,
+        description="True if this conversation is a subagent child (excluded from sampling).",
     )
 
 
@@ -331,6 +367,14 @@ class Conversation(AIPerfBaseModel):
         description="Optional per-conversation user context prepended to the first turn. "
         "Unique for each conversation when using --user-context-prompt-length.",
     )
+    is_subagent_child: bool = Field(
+        default=False,
+        description="True if this conversation is a subagent child.",
+    )
+    subagent_spawns: list[SubagentSpawnInfo] = Field(
+        default_factory=list,
+        description="Subagent spawn points linking to child conversations.",
+    )
 
     def metadata(self) -> ConversationMetadata:
         """Get the metadata of the conversation."""
@@ -340,6 +384,8 @@ class Conversation(AIPerfBaseModel):
             conversation_id=self.session_id,
             turns=turn_metas,
             parallel_groups=parallel_groups,
+            subagent_spawns=self.subagent_spawns,
+            is_subagent_child=self.is_subagent_child,
         )
 
     @staticmethod

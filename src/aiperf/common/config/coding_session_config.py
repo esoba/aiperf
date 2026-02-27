@@ -218,3 +218,105 @@ class CodingSessionConfig(BaseConfig):
             name=("--coding-session-parallel-branch-tokens-median",), group=_CLI_GROUP
         ),
     ] = 400
+
+    subagent_probability: Annotated[
+        float,
+        Field(
+            default=0.15,
+            ge=0.0,
+            le=1.0,
+            description="Probability a turn spawns subagent children (mutually exclusive "
+            "with parallel_probability per turn). 0.0 disables subagent generation.",
+        ),
+        CLIParameter(name=("--coding-session-subagent-probability",), group=_CLI_GROUP),
+    ] = 0.15
+
+    subagent_count_mean: Annotated[
+        float,
+        Field(
+            default=1.5,
+            ge=1.0,
+            description="Mean number of subagent children per spawn (Poisson).",
+        ),
+        CLIParameter(name=("--coding-session-subagent-count-mean",), group=_CLI_GROUP),
+    ] = 1.5
+
+    subagent_count_max: Annotated[
+        int,
+        Field(
+            default=4,
+            ge=1,
+            description="Maximum number of subagent children per spawn.",
+        ),
+        CLIParameter(name=("--coding-session-subagent-count-max",), group=_CLI_GROUP),
+    ] = 4
+
+    subagent_turns_mean: Annotated[
+        int,
+        Field(
+            default=8,
+            ge=1,
+            description="Mean number of turns per subagent child session (lognormal).",
+        ),
+        CLIParameter(name=("--coding-session-subagent-turns-mean",), group=_CLI_GROUP),
+    ] = 8
+
+    subagent_turns_median: Annotated[
+        int,
+        Field(
+            default=5,
+            ge=1,
+            description="Median number of turns per subagent child session (lognormal).",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-turns-median",), group=_CLI_GROUP
+        ),
+    ] = 5
+
+    subagent_system_tokens: Annotated[
+        int,
+        Field(
+            default=4000,
+            ge=0,
+            description="System prompt tokens for subagent children (smaller tool set).",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-system-tokens",), group=_CLI_GROUP
+        ),
+    ] = 4000
+
+    subagent_new_tokens_mean: Annotated[
+        int,
+        Field(
+            default=2500,
+            ge=1,
+            description="Mean new tokens per turn in subagent children.",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-new-tokens-mean",), group=_CLI_GROUP
+        ),
+    ] = 2500
+
+    subagent_new_tokens_median: Annotated[
+        int,
+        Field(
+            default=1200,
+            ge=1,
+            description="Median new tokens per turn in subagent children.",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-new-tokens-median",), group=_CLI_GROUP
+        ),
+    ] = 1200
+
+    subagent_max_prompt_tokens: Annotated[
+        int,
+        Field(
+            default=50000,
+            ge=1,
+            description="Maximum prompt tokens for subagent children (shorter-lived).",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-max-prompt-tokens",), group=_CLI_GROUP
+        ),
+    ] = 50000

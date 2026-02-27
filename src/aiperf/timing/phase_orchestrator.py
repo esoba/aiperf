@@ -109,7 +109,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         )
         self._dataset_sampler = SamplerClass(
             conversation_ids=[
-                c.conversation_id for c in self._dataset_metadata.conversations
+                c.conversation_id
+                for c in self._dataset_metadata.conversations
+                if not c.is_subagent_child
             ],
         )
 
