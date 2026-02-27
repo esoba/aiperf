@@ -38,7 +38,7 @@ from aiperf.common.models import (
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.dataset.loader import ShareGPTLoader
+from aiperf.dataset.loader import LMSYSLoader, ShareGPTLoader
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
@@ -250,6 +250,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         match public_dataset_type:
             case PublicDatasetType.SHAREGPT:
                 loader = ShareGPTLoader(self.user_config, self.tokenizer)
+            case PublicDatasetType.LMSYS:
+                loader = LMSYSLoader(self.user_config, self.tokenizer)
             case _:
                 raise ValueError(
                     f"Unsupported public dataset type: {public_dataset_type}"

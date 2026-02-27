@@ -15,7 +15,12 @@ from aiperf.common.config import (
     PromptConfig,
     SynthesisConfig,
 )
-from aiperf.common.enums import MetricFlags, MetricTimeUnit, MetricType
+from aiperf.common.enums import (
+    MetricFlags,
+    MetricTimeUnit,
+    MetricType,
+    PublicDatasetType,
+)
 from aiperf.common.exceptions import MetricTypeError
 from aiperf.metrics.base_derived_metric import BaseDerivedMetric
 from aiperf.metrics.metric_registry import MetricRegistry
@@ -167,6 +172,12 @@ def test_file_without_custom_dataset_type_succeeds():
         config = InputConfig(file=temp_file.name, custom_dataset_type=None)
         assert config.file == PosixPath(temp_file.name)
         assert config.custom_dataset_type is None
+
+
+def test_public_dataset_lmsys_is_accepted():
+    """Test LMSYS is accepted as a valid public dataset choice."""
+    config = InputConfig(public_dataset=PublicDatasetType.LMSYS)
+    assert config.public_dataset == PublicDatasetType.LMSYS
 
 
 @pytest.mark.parametrize(

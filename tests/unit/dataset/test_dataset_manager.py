@@ -254,6 +254,40 @@ class TestDatasetManagerSamplingStrategyDefaults:
     """Test default sampling strategy behavior for different dataset types."""
 
     @pytest.mark.asyncio
+    @patch("aiperf.dataset.loader.lmsys.LMSYSLoader.load_dataset")
+    @patch("aiperf.dataset.loader.lmsys.LMSYSLoader.convert_to_conversations")
+    async def test_lmsys_public_dataset_uses_lmsys_loader(
+        self,
+        mock_convert,
+        mock_load,
+        mock_tokenizer,
+    ):
+        """Test that LMSYS public dataset selection routes to LMSYSLoader."""
+        mock_load.return_value = {}
+        mock_convert.return_value = create_mock_conversations(["session-1"])
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig(public_dataset=PublicDatasetType.LMSYS),
+        )
+        assert user_config.input.dataset_sampling_strategy is None
+
+        service_config = ServiceConfig()
+        dataset_manager = DatasetManager(service_config, user_config)
+
+        await dataset_manager.initialize()
+        await dataset_manager._profile_configure_command(
+            ProfileConfigureCommand(config=user_config, service_id="test_service")
+        )
+
+        mock_load.assert_called_once()
+        mock_convert.assert_called_once()
+        assert (
+            user_config.input.dataset_sampling_strategy
+            == DatasetSamplingStrategy.SEQUENTIAL
+        )
+
+    @pytest.mark.asyncio
     @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.load_dataset")
     @patch("aiperf.dataset.loader.sharegpt.ShareGPTLoader.convert_to_conversations")
     async def test_public_dataset_uses_loader_recommended_strategy(

@@ -77,6 +77,7 @@ class ShareGPTLoader(BasePublicDatasetLoader):
         self.info(
             f"Validating {self.tag} dataset and constructing conversation dataset"
         )
+        # TODO: Speed up tokenization
         filtered_dataset = []
         skipped_entries = 0
         for entry in dataset:

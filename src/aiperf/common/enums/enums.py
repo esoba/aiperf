@@ -310,6 +310,9 @@ class PublicDatasetType(CaseInsensitiveStrEnum):
     SHAREGPT = "sharegpt"
     """ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges."""
 
+    LMSYS = "lmsys"
+    """LMSYS Chat 1M dataset from HuggingFace."""
+
 
 class ServerMetricsFormat(CaseInsensitiveStrEnum):
     """Format options for server metrics export.

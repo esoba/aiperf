@@ -155,6 +155,9 @@ aiperf profile --model your_model --url localhost:8000 --input-file trace.jsonl 
 # Multi-turn conversations with ShareGPT dataset
 aiperf profile --model your_model --url localhost:8000 --public-dataset sharegpt --num-sessions 50
 
+# LMSYS public dataset
+aiperf profile --model your_model --url localhost:8000 --public-dataset lmsys --num-sessions 50
+
 # Goodput measurement with SLOs
 aiperf profile --model your_model --url localhost:8000 --goodput "request_latency:250 inter_token_latency:10"
 ```
@@ -288,6 +291,7 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 | | | |
 |-------|:-------:|-------------|
 | `sharegpt` |  | ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges. |
+| `lmsys` |  | LMSYS Chat 1M dataset from HuggingFace. |
 
 #### `--custom-dataset-type` `<str>`
 

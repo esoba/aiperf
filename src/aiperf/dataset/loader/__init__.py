@@ -4,6 +4,7 @@
 
 from aiperf.dataset.loader.base_loader import BaseFileLoader, BaseLoader
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
+from aiperf.dataset.loader.lmsys import LMSYSLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import (
     MooncakeTrace,
@@ -22,6 +23,7 @@ __all__ = [
     "BaseLoader",
     "BasePublicDatasetLoader",
     "MediaConversionMixin",
+    "LMSYSLoader",
     "MooncakeTrace",
     "MooncakeTraceDatasetLoader",
     "MultiTurn",
