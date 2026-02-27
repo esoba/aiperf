@@ -20,7 +20,6 @@ jobs:
   prepare-release:
     name: Prepare Release
     runs-on: ubuntu-latest
-    environment: automated-release
     outputs:
       version: ${{ steps.extract.outputs.version }}
       rc_number: ${{ steps.rc.outputs.rc_number }}
@@ -238,7 +237,6 @@ jobs:
     name: Build Container (${{ matrix.arch }})
     needs: [prepare-release]
     runs-on: ubuntu-latest
-    environment: automated-release
     strategy:
       fail-fast: true
       matrix:
@@ -254,120 +252,28 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Log in to container registry
-        env:
-          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
-          REGISTRY_USER: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
-        run: |
-          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
-          echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push platform image
+      - name: Build and export image
         env:
-          IMAGE_REF: ${{ needs.prepare-release.outputs[format('container_platform_{0}_ref', matrix.arch)] }}
           PLATFORM: ${{ matrix.platform }}
         run: |
           docker buildx build \
             --platform "${PLATFORM}" \
             --target runtime \
-            --tag "${IMAGE_REF}" \
-            --push \
+            --output type=oci,dest=aiperf-${{ matrix.arch }}.tar \
             .
 
-      - name: Log out from registry
-        if: always()
-        env:
-          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
-        run: |
-          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
-          docker logout "${REGISTRY_HOST}" 2>/dev/null || true
-
-  # ============================================================================
-  # PUBLISH
-  # ============================================================================
-
-  create-multiarch-manifest:
-    name: Create Multi-arch Manifest
-    needs: [prepare-release, build-container]
-    runs-on: ubuntu-latest
-    environment: automated-release
-    steps:
-      - name: Log in to container registry
-        env:
-          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
-          REGISTRY_USER: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
-        run: |
-          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
-          echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
-
-      - name: Create and push multi-arch manifest
-        env:
-          MULTIARCH_REF: ${{ needs.prepare-release.outputs.container_multiarch_ref }}
-          AMD64_REF: ${{ needs.prepare-release.outputs.container_platform_amd64_ref }}
-          ARM64_REF: ${{ needs.prepare-release.outputs.container_platform_arm64_ref }}
-        run: |
-          set -euo pipefail
-          docker manifest create "${MULTIARCH_REF}" \
-            "${AMD64_REF}" \
-            "${ARM64_REF}"
-          docker manifest push "${MULTIARCH_REF}"
-
-      - name: Log out from registry
-        if: always()
-        env:
-          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
-        run: |
-          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
-          docker logout "${REGISTRY_HOST}" 2>/dev/null || true
-
-  publish-wheel:
-    name: Publish Wheel
-    needs: [prepare-release, validate-wheel]
-    runs-on: ubuntu-latest
-    environment: automated-release
-    steps:
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Upload container artifact
+        uses: actions/upload-artifact@v4
         with:
-          python-version: '3.12'
-
-      - name: Install twine
-        run: pip install --upgrade pip twine
-
-      - name: Download wheel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: aiperf-wheel
-          path: dist/
-
-      - name: Publish wheel
-        env:
-          TWINE_REPOSITORY_URL: ${{ secrets.ARTIFACTORY_URL }}
-          TWINE_USERNAME: ${{ secrets.ARTIFACTORY_USER }}
-          TWINE_PASSWORD: ${{ secrets.ARTIFACTORY_TOKEN }}
-          TWINE_NON_INTERACTIVE: '1'
-        run: |
-          set -euo pipefail
-          python -m twine upload \
-            --disable-progress-bar \
-            dist/*.whl
-
-      - name: Summary
-        env:
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
-          WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
-        run: |
-          echo "### Wheel Published" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **File**: \`${WHEEL_FILENAME}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Version**: \`${PEP440_VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          name: aiperf-container-${{ matrix.arch }}
+          path: aiperf-${{ matrix.arch }}.tar
+          retention-days: 7
 
   # ============================================================================
-  # TAG + SUMMARY
+  # TAG
   # ============================================================================
 
   create-rc-tag:
@@ -378,10 +284,9 @@ jobs:
       - unit-tests
       - integration-tests
       - gpu-e2e-tests
-      - publish-wheel
-      - create-multiarch-manifest
+      - validate-wheel
+      - build-container
     runs-on: ubuntu-latest
-    environment: automated-release
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -429,3 +334,82 @@ jobs:
             echo "| Integration Tests | ${{ needs.integration-tests.result }} |"
             echo "| GPU E2E Tests | ${GPU_TEST_RESULT} |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
+  # STAGE ARTIFACTS
+  # ============================================================================
+
+  stage-container:
+    name: Stage Container
+    needs: [prepare-release, create-rc-tag]
+    runs-on: ubuntu-latest
+    environment: automated-release
+    steps:
+      - name: Install skopeo
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+
+      - name: Download amd64 container artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aiperf-container-amd64
+          path: artifacts/
+
+      - name: Download arm64 container artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aiperf-container-arm64
+          path: artifacts/
+
+      - name: Log in to container registry
+        env:
+          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
+          REGISTRY_USER: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
+        run: |
+          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
+          echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
+
+      - name: Push amd64 image
+        env:
+          IMAGE_REF: ${{ needs.prepare-release.outputs.container_platform_amd64_ref }}
+        run: |
+          skopeo copy \
+            oci-archive:artifacts/aiperf-amd64.tar \
+            "docker://${IMAGE_REF}"
+
+      - name: Push arm64 image
+        env:
+          IMAGE_REF: ${{ needs.prepare-release.outputs.container_platform_arm64_ref }}
+        run: |
+          skopeo copy \
+            oci-archive:artifacts/aiperf-arm64.tar \
+            "docker://${IMAGE_REF}"
+
+      - name: Create and push multi-arch manifest
+        env:
+          MULTIARCH_REF: ${{ needs.prepare-release.outputs.container_multiarch_ref }}
+          AMD64_REF: ${{ needs.prepare-release.outputs.container_platform_amd64_ref }}
+          ARM64_REF: ${{ needs.prepare-release.outputs.container_platform_arm64_ref }}
+        run: |
+          set -euo pipefail
+          docker manifest create "${MULTIARCH_REF}" \
+            "${AMD64_REF}" \
+            "${ARM64_REF}"
+          docker manifest push "${MULTIARCH_REF}"
+
+      - name: Log out from registry
+        if: always()
+        env:
+          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
+        run: |
+          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
+          docker logout "${REGISTRY_HOST}" 2>/dev/null || true
+
+  stage-wheel:
+    name: Stage Wheel (skipped - requires internal network)
+    needs: [prepare-release, create-rc-tag, validate-wheel]
+    runs-on: ubuntu-latest
+    environment: automated-release
+    steps:
+      - name: Skip
+        run: echo "Skipped - Artifactory requires internal network access (self-hosted runners)"
