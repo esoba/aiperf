@@ -154,9 +154,9 @@ api_router:
   #   class: aiperf.api.routers.static:StaticRouter
   #   description: Static HTML file serving for dashboard and index pages.
 
-  # websocket:
-  #   class: aiperf.api.routers.websocket:WebSocketRouter
-  #   description: WebSocket endpoint for real-time ZMQ message streaming.
+  websocket:
+    class: aiperf.api.routers.websocket:WebSocketRouter
+    description: WebSocket endpoint for real-time ZMQ message streaming.
 
   # workers:
   #   class: aiperf.api.routers.workers:WorkersRouter
