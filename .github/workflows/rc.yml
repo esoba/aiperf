@@ -255,12 +255,13 @@ jobs:
         uses: docker/setup-qemu-action@v3
 
       - name: Log in to container registry
+        env:
+          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
+          REGISTRY_USER: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
         run: |
-          echo "${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}" | \
-            docker login \
-              "${{ secrets.RC_CONTAINER_REGISTRY }}" \
-              -u "${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}" \
-              --password-stdin
+          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
+          echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -279,7 +280,11 @@ jobs:
 
       - name: Log out from registry
         if: always()
-        run: docker logout "${{ secrets.RC_CONTAINER_REGISTRY }}" 2>/dev/null || true
+        env:
+          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
+        run: |
+          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
+          docker logout "${REGISTRY_HOST}" 2>/dev/null || true
 
   # ============================================================================
   # PUBLISH
@@ -292,12 +297,13 @@ jobs:
     environment: automated-release
     steps:
       - name: Log in to container registry
+        env:
+          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
+          REGISTRY_USER: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
         run: |
-          echo "${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}" | \
-            docker login \
-              "${{ secrets.RC_CONTAINER_REGISTRY }}" \
-              -u "${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}" \
-              --password-stdin
+          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
+          echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
 
       - name: Create and push multi-arch manifest
         env:
@@ -313,7 +319,11 @@ jobs:
 
       - name: Log out from registry
         if: always()
-        run: docker logout "${{ secrets.RC_CONTAINER_REGISTRY }}" 2>/dev/null || true
+        env:
+          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
+        run: |
+          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
+          docker logout "${REGISTRY_HOST}" 2>/dev/null || true
 
   publish-wheel:
     name: Publish Wheel
