@@ -17,18 +17,10 @@ jobs:
   # GATE: Authorization + Version Resolution
   # ============================================================================
 
-  authorize:
-    name: Authorize
-    runs-on: ubuntu-latest
-    if: github.actor == 'pvijayakrish'
-    steps:
-      - name: Authorized
-        run: echo "Authorized"
-
   prepare-release:
     name: Prepare Release
-    needs: [authorize]
     runs-on: ubuntu-latest
+    environment: automated-release
     outputs:
       version: ${{ steps.extract.outputs.version }}
       rc_number: ${{ steps.rc.outputs.rc_number }}
@@ -246,6 +238,7 @@ jobs:
     name: Build Container (${{ matrix.arch }})
     needs: [prepare-release]
     runs-on: ubuntu-latest
+    environment: automated-release
     strategy:
       fail-fast: true
       matrix:
@@ -296,6 +289,7 @@ jobs:
     name: Create Multi-arch Manifest
     needs: [prepare-release, build-container]
     runs-on: ubuntu-latest
+    environment: automated-release
     steps:
       - name: Log in to container registry
         run: |
@@ -325,6 +319,7 @@ jobs:
     name: Publish Wheel
     needs: [prepare-release, validate-wheel]
     runs-on: ubuntu-latest
+    environment: automated-release
     steps:
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -376,6 +371,7 @@ jobs:
       - publish-wheel
       - create-multiarch-manifest
     runs-on: ubuntu-latest
+    environment: automated-release
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
