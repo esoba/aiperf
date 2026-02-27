@@ -197,6 +197,17 @@ class TestCodingSessionLanguageAndContentType:
         gen = composer._content_generator
         assert len(gen._language_pools) >= 2
 
+    def test_large_context_scales_pools(self, make_config, mock_tokenizer):
+        """Large initial_prefix_mean causes pool auto-scaling."""
+        config = make_config(
+            initial_prefix_mean=500_000,
+            initial_prefix_median=400_000,
+            max_prompt_tokens=1_000_000,
+            num_sessions=1,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        assert composer._content_generator._pool_scale > 1.0
+
     def test_content_type_distribution(self, make_config, mock_tokenizer):
         """With tool_result_ratio=0.9, ~90% of turns use tool_result content."""
         config = make_config(

@@ -205,6 +205,27 @@ class TestCodingContentGenerator:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    # -- Pool scaling --
+
+    def test_pool_scale_default(self, config, mock_tokenizer):
+        gen = CodingContentGenerator(config=config, tokenizer=mock_tokenizer)
+        assert gen._pool_scale == 1.0
+
+    def test_pool_scale_increases_with_target(self, config, mock_tokenizer):
+        gen = CodingContentGenerator(
+            config=config, tokenizer=mock_tokenizer, pool_tokens_target=500_000
+        )
+        assert gen._pool_scale == 2.5
+
+    def test_scaled_pool_is_larger(self, config, mock_tokenizer):
+        gen_default = CodingContentGenerator(config=config, tokenizer=mock_tokenizer)
+        gen_scaled = CodingContentGenerator(
+            config=config, tokenizer=mock_tokenizer, pool_tokens_target=500_000
+        )
+        default_pool = gen_default.build_language_pool("python")
+        scaled_pool = gen_scaled.build_language_pool("python")
+        assert len(scaled_pool) > len(default_pool)
+
     # -- Language-specific generators --
 
     @pytest.mark.parametrize(

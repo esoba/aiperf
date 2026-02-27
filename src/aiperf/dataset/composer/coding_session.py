@@ -44,9 +44,15 @@ class CodingSessionComposer(BaseDatasetComposer):
         self._coding_config: CodingSessionConfig = config.input.coding_session
         self._output_token_budget_ratio = config.input.output_token_budget_ratio
 
+        pool_target = max(
+            self._coding_config.initial_prefix_mean * 2,
+            self._coding_config.new_tokens_mean * 3,
+            200_000,
+        )
         self._content_generator = CodingContentGenerator(
             config=config.input.prompt,
             tokenizer=self.prompt_generator.tokenizer,
+            pool_tokens_target=pool_target,
         )
 
         self._new_tokens_rng = rng.derive("coding_session.new_tokens")
