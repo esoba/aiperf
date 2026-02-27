@@ -874,6 +874,24 @@ gpu_telemetry_collector:
       PyNVML telemetry collector that collects GPU telemetry metrics using the pynvml Python library.
 
 # =============================================================================
+# Server Metrics Collector
+# =============================================================================
+# Server metrics collectors gather server-side metrics from various sources.
+# Supports Prometheus HTTP endpoints and system-level monitoring (psutil/pynvml).
+# One-to-one mapping based on server_metrics_collector configuration.
+# =============================================================================
+server_metrics_collector:
+  prometheus:
+    class: aiperf.server_metrics.data_collector:ServerMetricsDataCollector
+    description: |
+      Prometheus endpoint scraper that collects server metrics from Prometheus-compatible HTTP endpoints.
+  system:
+    class: aiperf.server_metrics.system_collector:SystemMetricsCollector
+    description: |
+      System-wide resource monitor that collects CPU, memory, and per-process GPU VRAM
+      metrics using psutil and optionally pynvml.
+
+# =============================================================================
 # Communication Backends
 # =============================================================================
 # Communication backends provide the underlying transport for inter-service messaging.

@@ -4,17 +4,23 @@
 """PyNVML-based GPU telemetry collector.
 
 Collects GPU metrics directly using the pynvml Python library, providing an
-alternative to DCGM HTTP endpoints for local GPU monitoring.
+alternative to DCGM HTTP endpoints for local GPU monitoring. Uses the shared
+NvmlHandleManager for pynvml lifecycle and handle management.
+
+Supports dual-output: scalar per-GPU metrics flow through the telemetry pipeline
+as TelemetryRecord objects, while per-process GPU VRAM flows through the server
+metrics pipeline as ServerMetricsRecord objects with labeled MetricSample entries.
 """
 
 import asyncio
 import contextlib
-import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+import psutil
 import pynvml
 
+from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -24,10 +30,20 @@ from aiperf.common.models import (
     TelemetryMetrics,
     TelemetryRecord,
 )
+from aiperf.common.models.server_metrics_models import (
+    MetricFamily,
+    MetricSample,
+    ServerMetricsRecord,
+)
+from aiperf.common.nvml_handle_manager import NvmlHandleManager
 from aiperf.gpu_telemetry.constants import (
     PYNVML_SOURCE_IDENTIFIER,
 )
-from aiperf.gpu_telemetry.protocols import TErrorCallback, TRecordCallback
+from aiperf.gpu_telemetry.protocols import (
+    TErrorCallback,
+    TRecordCallback,
+    TServerMetricsRecordCallback,
+)
 
 __all__ = ["PyNVMLTelemetryCollector"]
 
@@ -39,7 +55,18 @@ class ScalingFactors:
     gpu_power_usage = 1e-3  # mW -> W
     energy_consumption = 1e-9  # mJ -> MJ
     gpu_memory_used = 1e-9  # bytes -> GB
+    gpu_memory_total = 1e-9  # bytes -> GB
+    gpu_memory_free = 1e-9  # bytes -> GB
+    gpu_power_limit = 1e-3  # mW -> W
     power_violation = 1e-3  # ns -> µs
+
+
+@dataclass(slots=True)
+class _CollectionResult:
+    """Result of a single collection cycle containing both pipeline outputs."""
+
+    telemetry_records: list[TelemetryRecord] = field(default_factory=list)
+    server_metrics_record: ServerMetricsRecord | None = None
 
 
 @dataclass(slots=True)
@@ -66,7 +93,7 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
 
     Features:
         - Direct NVML API access via pynvml
-        - Automatic GPU discovery and enumeration
+        - Automatic GPU discovery and enumeration via NvmlHandleManager
         - Same TelemetryRecord output format as DCGM collector
         - Callback-based record delivery
 
@@ -76,10 +103,14 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
 
     Args:
         collection_interval: Interval in seconds between metric collections (default: from Environment)
-        record_callback: Optional async callback to receive collected records.
+        record_callback: Optional async callback to receive collected TelemetryRecords.
             Signature: async (records: list[TelemetryRecord], collector_id: str) -> None
         error_callback: Optional async callback to receive collection errors.
             Signature: async (error: ErrorDetails, collector_id: str) -> None
+        server_metrics_record_callback: Optional async callback to receive per-process GPU VRAM
+            as ServerMetricsRecords. When provided, enables per-process VRAM collection which
+            flows through the server metrics pipeline.
+            Signature: async (records: list[ServerMetricsRecord], collector_id: str) -> None
         collector_id: Unique identifier for this collector instance
 
     Raises:
@@ -91,19 +122,17 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         collection_interval: float = Environment.GPU.COLLECTION_INTERVAL,
         record_callback: TRecordCallback | None = None,
         error_callback: TErrorCallback | None = None,
+        server_metrics_record_callback: TServerMetricsRecordCallback | None = None,
         collector_id: str = "pynvml_collector",
     ) -> None:
         super().__init__(id=collector_id)
         self._collection_interval = collection_interval
         self._record_callback = record_callback
         self._error_callback = error_callback
+        self._server_metrics_record_callback = server_metrics_record_callback
 
-        # Per-GPU state (populated on init)
         self._gpus: list[GpuDeviceState] = []
-
-        # NVML initialization state and thread safety
-        self._nvml_initialized = False
-        self._nvml_lock = threading.Lock()
+        self._nvml = NvmlHandleManager()
 
     @property
     def endpoint_url(self) -> str:
@@ -128,59 +157,32 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         Returns:
             True if NVML is available and can access at least one GPU.
         """
-        # If already initialized, just check if we have GPUs
-        if self._nvml_initialized:
+        if self._nvml.initialized:
             return len(self._gpus) > 0
 
         try:
-            return await asyncio.to_thread(self._probe_nvml_devices)
+            return await asyncio.to_thread(self._nvml.probe)
         except Exception:
             return False
-
-    def _probe_nvml_devices(self) -> bool:
-        """Probe NVML to check if GPUs are available.
-
-        Synchronous helper that performs blocking NVML calls to check availability.
-        Called via asyncio.to_thread to avoid blocking the event loop.
-
-        Returns:
-            True if NVML can be initialized and at least one GPU is available.
-        """
-        pynvml.nvmlInit()
-        try:
-            count = pynvml.nvmlDeviceGetCount()
-            return count > 0
-        finally:
-            pynvml.nvmlShutdown()
 
     @on_init
     async def _initialize_nvml(self) -> None:
         """Initialize NVML and discover GPUs.
 
         Called automatically during initialization phase.
-        Initializes the NVML library and enumerates available GPUs.
+        Uses NvmlHandleManager for NVML lifecycle, then builds per-GPU
+        state with metadata and GPM support.
 
         Raises:
             RuntimeError: If NVML initialization or GPU discovery fails.
         """
-        try:
-            pynvml.nvmlInit()
-        except pynvml.NVMLError as e:
-            raise RuntimeError(f"Failed to initialize NVML: {e}") from e
-
-        self._nvml_initialized = True
-
-        try:
-            device_count = pynvml.nvmlDeviceGetCount()
-        except pynvml.NVMLError as e:
-            # Cleanup NVML if device enumeration fails
-            self._shutdown_nvml_sync()
-            raise RuntimeError(f"Failed to get GPU device count: {e}") from e
+        self._nvml.initialize()
 
         self._gpus = []
-
-        for i in range(device_count):
-            gpu = self._create_gpu_for_device_index(i)
+        for nvml_index, handle in zip(
+            self._nvml.handle_indices, self._nvml.handles, strict=True
+        ):
+            gpu = self._create_gpu_for_handle(nvml_index, handle)
             if gpu:
                 self._gpus.append(gpu)
 
@@ -190,15 +192,10 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
             f"({gpm_count} with GPM support)"
         )
 
-    def _create_gpu_for_device_index(self, index: int) -> GpuDeviceState | None:
-        """Initialize a GPU for telemetry collection."""
-        try:
-            handle = pynvml.nvmlDeviceGetHandleByIndex(index)
-        except pynvml.NVMLError as e:
-            self.warning(f"Failed to get handle for GPU {index}: {e}")
-            return None
-
-        # Gather static metadata for this GPU
+    def _create_gpu_for_handle(
+        self, index: int, handle: object
+    ) -> GpuDeviceState | None:
+        """Build GPU state with metadata and GPM for a device handle."""
         try:
             uuid = pynvml.nvmlDeviceGetUUID(handle)
         except pynvml.NVMLError:
@@ -206,7 +203,6 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
 
         try:
             name = pynvml.nvmlDeviceGetName(handle)
-            # pynvml may return bytes in some versions
             if isinstance(name, bytes):
                 name = name.decode("utf-8")
         except pynvml.NVMLError:
@@ -220,8 +216,6 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         except pynvml.NVMLError:
             pci_bus_id = None
 
-        # Create GPU state with metadata
-        # gpu_index in metadata reflects original NVML index for display
         gpu = GpuDeviceState(
             handle=handle,
             metadata=GpuMetadata(
@@ -234,7 +228,6 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
             ),
         )
 
-        # Check GPM support and allocate samples for efficient SM utilization
         self._init_gpm_for_device(gpu)
         return gpu
 
@@ -245,12 +238,10 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
                 return
             sample1 = pynvml.nvmlGpmSampleAlloc()
             sample2 = pynvml.nvmlGpmSampleAlloc()
-            # Take initial sample so delta computation works on first collection
             pynvml.nvmlGpmSampleGet(gpu.handle, sample1)
             gpu.gpm_samples = (sample1, sample2)
             self.debug(lambda: f"GPM enabled for GPU {gpu.metadata.gpu_index}")
         except pynvml.NVMLError:
-            # GPM unavailable, will use process API fallback
             self.debug(lambda: f"GPM not supported for GPU {gpu.metadata.gpu_index}")
 
     def _free_gpm_samples(self) -> None:
@@ -283,24 +274,16 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
     def _shutdown_nvml_sync(self) -> None:
         """Synchronous NVML shutdown helper.
 
-        Thread-safe shutdown that clears all state. Can be called from
-        any context (init cleanup or stop phase).
+        Frees GPM samples (collector-specific) then delegates NVML shutdown
+        to NvmlHandleManager.
         """
-        with self._nvml_lock:
-            if not self._nvml_initialized:
+        with self._nvml.lock:
+            if not self._nvml.initialized:
                 return
-
-            # Free GPM samples before NVML shutdown
             self._free_gpm_samples()
+            self._gpus = []
 
-            try:
-                pynvml.nvmlShutdown()
-            except Exception as e:
-                self.warning(f"Error during NVML shutdown: {e!r}")
-            finally:
-                # Always clear state regardless of shutdown success
-                self._nvml_initialized = False
-                self._gpus = []
+        self._nvml.shutdown()
 
     @on_stop
     async def _shutdown_nvml(self) -> None:
@@ -322,16 +305,25 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         await self._collect_and_process_metrics()
 
     async def _collect_and_process_metrics(self) -> None:
-        """Collect metrics from all GPUs and send via callback.
+        """Collect metrics from all GPUs and send via callbacks.
 
         Gathers current metrics from all discovered GPUs using NVML APIs,
-        converts them to TelemetryRecord objects, and delivers via callback.
+        converts them to TelemetryRecord objects (scalar GPU metrics) and
+        optionally ServerMetricsRecord (per-process VRAM), then delivers
+        via their respective callbacks.
+
         Uses asyncio.to_thread() to avoid blocking the event loop with NVML calls.
         """
         try:
-            records = await asyncio.to_thread(self._collect_gpu_metrics)
-            if records and self._record_callback:
-                await self._record_callback(records, self.id)
+            result = await asyncio.to_thread(self._collect_all_metrics)
+
+            if result.telemetry_records and self._record_callback:
+                await self._record_callback(result.telemetry_records, self.id)
+
+            if result.server_metrics_record and self._server_metrics_record_callback:
+                await self._server_metrics_record_callback(
+                    [result.server_metrics_record], self.id
+                )
         except Exception as e:
             if self._error_callback:
                 try:
@@ -341,112 +333,235 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
             else:
                 self.error(f"Metrics collection error: {e}")
 
-    def _collect_gpu_metrics(self) -> list[TelemetryRecord]:
-        """Collect metrics from all GPUs using NVML APIs.
+    def _collect_all_metrics(self) -> _CollectionResult:
+        """Collect all metrics from GPUs: scalar telemetry + per-process VRAM.
 
         Thread-safe - acquires lock to prevent collection during shutdown.
 
         Returns:
-            List of TelemetryRecord objects, one per GPU.
+            _CollectionResult with telemetry records and optional server metrics record.
         """
-        with self._nvml_lock:
-            if not self._nvml_initialized or not self._gpus:
-                return []
+        with self._nvml.lock:
+            if not self._nvml.initialized or not self._gpus:
+                return _CollectionResult()
 
             current_timestamp = time.time_ns()
-            records = []
-            NVMLError = pynvml.NVMLError
+            records = self._collect_gpu_metrics(current_timestamp)
 
-            for gpu in self._gpus:
-                handle = gpu.handle
-                telemetry_data = TelemetryMetrics()
+            server_metrics_record: ServerMetricsRecord | None = None
+            if self._server_metrics_record_callback:
+                server_metrics_record = self._collect_process_vram(current_timestamp)
 
-                # Power usage (milliwatts -> watts)
+            return _CollectionResult(
+                telemetry_records=records,
+                server_metrics_record=server_metrics_record,
+            )
+
+    def _collect_gpu_metrics(self, timestamp_ns: int) -> list[TelemetryRecord]:
+        """Collect scalar per-GPU metrics using NVML APIs.
+
+        Must be called while holding self._nvml.lock.
+
+        Args:
+            timestamp_ns: Nanosecond timestamp for all records in this cycle.
+
+        Returns:
+            List of TelemetryRecord objects, one per GPU.
+        """
+        records: list[TelemetryRecord] = []
+        NVMLError = pynvml.NVMLError
+
+        for gpu in self._gpus:
+            handle = gpu.handle
+            telemetry_data = TelemetryMetrics()
+
+            with contextlib.suppress(NVMLError):
+                power_mw = pynvml.nvmlDeviceGetPowerUsage(handle)
+                telemetry_data.gpu_power_usage = (
+                    power_mw * ScalingFactors.gpu_power_usage
+                )
+
+            with contextlib.suppress(NVMLError):
+                energy_mj = pynvml.nvmlDeviceGetTotalEnergyConsumption(handle)
+                telemetry_data.energy_consumption = (
+                    energy_mj * ScalingFactors.energy_consumption
+                )
+
+            with contextlib.suppress(NVMLError):
+                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                telemetry_data.gpu_utilization = float(util.gpu)
+                telemetry_data.mem_utilization = float(util.memory)
+
+            with contextlib.suppress(NVMLError):
+                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                telemetry_data.gpu_memory_used = (
+                    mem_info.used * ScalingFactors.gpu_memory_used
+                )
+                telemetry_data.gpu_memory_total = (
+                    mem_info.total * ScalingFactors.gpu_memory_total
+                )
+                telemetry_data.gpu_memory_free = (
+                    mem_info.free * ScalingFactors.gpu_memory_free
+                )
+
+            with contextlib.suppress(NVMLError):
+                temp = pynvml.nvmlDeviceGetTemperature(
+                    handle, pynvml.NVML_TEMPERATURE_GPU
+                )
+                telemetry_data.gpu_temperature = float(temp)
+
+            with contextlib.suppress(NVMLError):
+                dec_util, _ = pynvml.nvmlDeviceGetDecoderUtilization(handle)
+                telemetry_data.decoder_utilization = float(dec_util)
+
+            with contextlib.suppress(NVMLError):
+                enc_util, _ = pynvml.nvmlDeviceGetEncoderUtilization(handle)
+                telemetry_data.encoder_utilization = float(enc_util)
+
+            with contextlib.suppress(NVMLError):
+                jpg_util, _ = pynvml.nvmlDeviceGetJpgUtilization(handle)
+                telemetry_data.jpg_utilization = float(jpg_util)
+
+            sm_util: float | None = None
+            if gpu.gpm_samples:
+                sm_util = self._get_sm_utilization_gpm(gpu)
+
+            if sm_util is None:
                 with contextlib.suppress(NVMLError):
-                    power_mw = pynvml.nvmlDeviceGetPowerUsage(handle)
-                    telemetry_data.gpu_power_usage = (
-                        power_mw * ScalingFactors.gpu_power_usage
+                    process_utils = pynvml.nvmlDeviceGetProcessesUtilizationInfo(
+                        handle, 0
+                    )
+                    sm_util = (
+                        sum(p.smUtil for p in process_utils) if process_utils else 0.0
                     )
 
-                # Total energy consumption (millijoules -> megajoules)
-                with contextlib.suppress(NVMLError):
-                    energy_mj = pynvml.nvmlDeviceGetTotalEnergyConsumption(handle)
-                    telemetry_data.energy_consumption = (
-                        energy_mj * ScalingFactors.energy_consumption
+            if sm_util is not None:
+                telemetry_data.sm_utilization = min(float(sm_util), 100.0)
+
+            with contextlib.suppress(NVMLError):
+                violation = pynvml.nvmlDeviceGetViolationStatus(
+                    handle, pynvml.NVML_PERF_POLICY_POWER
+                )
+                telemetry_data.power_violation = (
+                    violation.violationTime * ScalingFactors.power_violation
+                )
+
+            with contextlib.suppress(NVMLError):
+                telemetry_data.graphics_clock = float(
+                    pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_GRAPHICS)
+                )
+
+            with contextlib.suppress(NVMLError):
+                telemetry_data.sm_clock = float(
+                    pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_SM)
+                )
+
+            with contextlib.suppress(NVMLError):
+                telemetry_data.memory_clock = float(
+                    pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_MEM)
+                )
+
+            with contextlib.suppress(NVMLError):
+                power_limit_mw = pynvml.nvmlDeviceGetPowerManagementLimit(handle)
+                telemetry_data.gpu_power_limit = (
+                    power_limit_mw * ScalingFactors.gpu_power_limit
+                )
+
+            with contextlib.suppress(NVMLError):
+                pstate = pynvml.nvmlDeviceGetPerformanceState(handle)
+                telemetry_data.performance_state = float(pstate)
+
+            with contextlib.suppress(NVMLError):
+                telemetry_data.pcie_tx_throughput = float(
+                    pynvml.nvmlDeviceGetPcieThroughput(
+                        handle, pynvml.NVML_PCIE_UTIL_TX_BYTES
                     )
+                )
 
-                # GPU and memory utilization (percent)
-                with contextlib.suppress(NVMLError):
-                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                    telemetry_data.gpu_utilization = float(util.gpu)
-                    telemetry_data.mem_utilization = float(util.memory)
-
-                # Memory used (bytes -> gigabytes)
-                with contextlib.suppress(NVMLError):
-                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                    telemetry_data.gpu_memory_used = (
-                        mem_info.used * ScalingFactors.gpu_memory_used
+            with contextlib.suppress(NVMLError):
+                telemetry_data.pcie_rx_throughput = float(
+                    pynvml.nvmlDeviceGetPcieThroughput(
+                        handle, pynvml.NVML_PCIE_UTIL_RX_BYTES
                     )
+                )
 
-                # Temperature (Celsius)
-                with contextlib.suppress(NVMLError):
-                    temp = pynvml.nvmlDeviceGetTemperature(
-                        handle, pynvml.NVML_TEMPERATURE_GPU
-                    )
-                    telemetry_data.gpu_temperature = float(temp)
+            with contextlib.suppress(NVMLError):
+                telemetry_data.fan_speed = float(pynvml.nvmlDeviceGetFanSpeed(handle))
 
-                # Video decoder utilization (percent)
-                with contextlib.suppress(NVMLError):
-                    dec_util, _ = pynvml.nvmlDeviceGetDecoderUtilization(handle)
-                    telemetry_data.decoder_utilization = float(dec_util)
+            if telemetry_data.model_fields_set:
+                record = TelemetryRecord(
+                    timestamp_ns=timestamp_ns,
+                    dcgm_url=PYNVML_SOURCE_IDENTIFIER,
+                    **gpu.metadata.model_dump(),
+                    telemetry_data=telemetry_data,
+                )
+                records.append(record)
 
-                # Video encoder utilization (percent)
-                with contextlib.suppress(NVMLError):
-                    enc_util, _ = pynvml.nvmlDeviceGetEncoderUtilization(handle)
-                    telemetry_data.encoder_utilization = float(enc_util)
+        return records
 
-                # JPEG decoder utilization (percent)
-                with contextlib.suppress(NVMLError):
-                    jpg_util, _ = pynvml.nvmlDeviceGetJpgUtilization(handle)
-                    telemetry_data.jpg_utilization = float(jpg_util)
+    def _collect_process_vram(self, timestamp_ns: int) -> ServerMetricsRecord | None:
+        """Collect per-process GPU memory usage across all GPUs.
 
-                # SM utilization: prefer GPM (device-level) over process enumeration
-                sm_util: float | None = None
-                if gpu.gpm_samples:
-                    sm_util = self._get_sm_utilization_gpm(gpu)
+        Must be called while holding self._nvml.lock.
 
-                # Fallback to process-level API if GPM unavailable or returned None
-                if sm_util is None:
-                    with contextlib.suppress(NVMLError):
-                        process_utils = pynvml.nvmlDeviceGetProcessesUtilizationInfo(
-                            handle, 0
+        Args:
+            timestamp_ns: Nanosecond timestamp for the record.
+
+        Returns:
+            ServerMetricsRecord with labeled per-process VRAM samples, or None if empty.
+        """
+        samples: list[MetricSample] = []
+
+        for gpu in self._gpus:
+            try:
+                procs = pynvml.nvmlDeviceGetComputeRunningProcesses(gpu.handle)
+            except pynvml.NVMLError:
+                continue
+            for proc in procs:
+                try:
+                    used_mem = proc.usedGpuMemory
+                    if used_mem is None:
+                        continue
+                    process_name = self._get_process_name(proc.pid)
+                    samples.append(
+                        MetricSample(
+                            labels={
+                                "pid": str(proc.pid),
+                                "process_name": process_name,
+                                "gpu_index": str(gpu.metadata.gpu_index),
+                            },
+                            value=float(used_mem),
                         )
-                        sm_util = (
-                            sum(p.smUtil for p in process_utils)
-                            if process_utils
-                            else 0.0
-                        )
-
-                if sm_util is not None:
-                    telemetry_data.sm_utilization = min(float(sm_util), 100.0)
-
-                # Power violation / throttling duration (nanoseconds -> microseconds)
-                with contextlib.suppress(NVMLError):
-                    violation = pynvml.nvmlDeviceGetViolationStatus(
-                        handle, pynvml.NVML_PERF_POLICY_POWER
                     )
-                    telemetry_data.power_violation = (
-                        violation.violationTime * ScalingFactors.power_violation
-                    )
+                except Exception:
+                    continue
 
-                # Create record if any metrics were collected
-                if telemetry_data.model_fields_set:
-                    record = TelemetryRecord(
-                        timestamp_ns=current_timestamp,
-                        dcgm_url=PYNVML_SOURCE_IDENTIFIER,
-                        **gpu.metadata.model_dump(),
-                        telemetry_data=telemetry_data,
-                    )
-                    records.append(record)
+        if not samples:
+            return None
 
-            return records
+        return ServerMetricsRecord(
+            endpoint_url=PYNVML_SOURCE_IDENTIFIER,
+            timestamp_ns=timestamp_ns,
+            metrics={
+                "gpu_process_memory_used_bytes": MetricFamily(
+                    type=PrometheusMetricType.GAUGE,
+                    description="GPU memory used per process (bytes)",
+                    samples=samples,
+                ),
+            },
+        )
+
+    @staticmethod
+    def _get_process_name(pid: int) -> str:
+        """Get a descriptive process name, with Triton-aware identification."""
+        try:
+            proc = psutil.Process(pid)
+            cmdline = proc.cmdline()
+            cmdline_str = " ".join(cmdline)
+            if "triton_python_backend_stub" in cmdline_str:
+                return "triton_python_backend_stub"
+            if "tritonserver" in cmdline_str:
+                return "tritonserver"
+            return proc.name()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return f"pid:{pid}"

@@ -19,22 +19,26 @@ from aiperf.common.messages import (
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType, ServerMetricsCollectorType
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
+from aiperf.server_metrics.protocols import (
+    SYSTEM_METRICS_SOURCE_IDENTIFIER,
+    ServerMetricsCollectorProtocol,
+)
 
 
 class ServerMetricsManager(BaseComponentService):
-    """Coordinates multiple ServerMetricsDataCollector instances for server metrics collection.
+    """Coordinates server metrics collectors for server-side metrics collection.
 
-    The ServerMetricsManager coordinates multiple ServerMetricsDataCollector instances
-    to collect server metrics from multiple Prometheus endpoints and send unified
-    ServerMetricsRecordsMessage to RecordsManager.
+    Supports multiple collector types via the plugin system, running simultaneously:
+    - prometheus (default): Scrapes Prometheus-compatible HTTP endpoints
+    - system (additive): Collects system-wide CPU, memory, and per-process GPU VRAM
 
     This service:
-    - Manages lifecycle of ServerMetricsDataCollector instances
-    - Collects metrics from multiple Prometheus endpoints
+    - Manages lifecycle of collector instances (any ServerMetricsCollectorProtocol)
     - Sends ServerMetricsRecordsMessage to RecordsManager via message system
     - Handles errors gracefully with ErrorDetails
-    - Follows centralized architecture patterns
 
     Args:
         service_config: Service-level configuration (logging, communication, etc.)
@@ -58,8 +62,9 @@ class ServerMetricsManager(BaseComponentService):
             CommAddress.RECORDS,
         )
 
-        self._collectors: dict[str, ServerMetricsDataCollector] = {}
+        self._collectors: dict[str, ServerMetricsCollectorProtocol] = {}
         self._server_metrics_disabled = user_config.server_metrics_disabled
+        self._system_metrics_enabled = user_config.system_metrics_enabled
 
         # Collect metrics from all endpoint URLs (for multi-URL load balancing)
         self._server_metrics_endpoints: list[str] = []
@@ -73,13 +78,11 @@ class ServerMetricsManager(BaseComponentService):
 
         # Add user-specified URLs if provided
         if user_config.server_metrics_urls:
-            # Add user URLs, avoiding duplicates
             for url in user_config.server_metrics_urls:
                 normalized_url = normalize_metrics_endpoint_url(url)
                 if normalized_url not in self._server_metrics_endpoints:
                     self._server_metrics_endpoints.append(normalized_url)
 
-        # Use server metrics collection interval
         self._collection_interval = Environment.SERVER_METRICS.COLLECTION_INTERVAL
 
         # Task for delayed shutdown, created when no endpoints are reachable
@@ -89,16 +92,14 @@ class ServerMetricsManager(BaseComponentService):
     async def _profile_configure_command(
         self, message: ProfileConfigureCommand
     ) -> None:
-        """Configure the server metrics collectors but don't start them yet.
+        """Configure server metrics collectors (additive: Prometheus + optional system).
 
-        Creates ServerMetricsDataCollector instances for each configured endpoint,
-        tests reachability, and sends status message to RecordsManager.
-        If no endpoints are reachable, disables metrics collection and stops the service.
+        Always attempts Prometheus endpoint discovery. Additionally configures the
+        system-level collector if --server-metrics system was specified.
 
         Args:
             message: Profile configuration command from SystemController
         """
-        # Check if server metrics are disabled via CLI flag
         if self._server_metrics_disabled:
             await self._send_server_metrics_status(
                 enabled=False,
@@ -110,6 +111,47 @@ class ServerMetricsManager(BaseComponentService):
 
         self._collectors.clear()
 
+        await self._configure_prometheus_collectors()
+
+        if self._system_metrics_enabled:
+            await self._configure_system_collector()
+
+        all_configured = list(self._server_metrics_endpoints)
+        if self._system_metrics_enabled:
+            all_configured.append(SYSTEM_METRICS_SOURCE_IDENTIFIER)
+
+        if not self._collectors:
+            await self._send_server_metrics_status(
+                enabled=False,
+                reason="no collectors available",
+                endpoints_configured=all_configured,
+                endpoints_reachable=[],
+            )
+            return
+
+        # Capture baseline metrics before profiling starts
+        self.info("Server Metrics: Capturing baseline metrics...")
+        for endpoint_url, collector in self._collectors.items():
+            try:
+                await collector.initialize()
+                await collector.collect_and_process_metrics()
+                self.debug(
+                    lambda url=endpoint_url: f"Server Metrics: Captured baseline from {url}"
+                )
+            except Exception as e:
+                self.warning(
+                    f"Server Metrics: Failed to capture baseline from {endpoint_url}: {e}"
+                )
+
+        await self._send_server_metrics_status(
+            enabled=True,
+            reason=None,
+            endpoints_configured=all_configured,
+            endpoints_reachable=list(self._collectors.keys()),
+        )
+
+    async def _configure_prometheus_collectors(self) -> None:
+        """Configure Prometheus-based collectors for each endpoint URL."""
         for endpoint_url in self._server_metrics_endpoints:
             self.debug(
                 lambda url=endpoint_url: f"Server Metrics: Testing reachability of {url}"
@@ -136,38 +178,31 @@ class ServerMetricsManager(BaseComponentService):
             except Exception as e:
                 self.error(f"Server Metrics: Exception testing {endpoint_url}: {e}")
 
-        reachable_endpoints = list(self._collectors.keys())
+    async def _configure_system_collector(self) -> None:
+        """Configure the system-level metrics collector (psutil + optional pynvml)."""
+        collector_cls = plugins.get_class(
+            PluginType.SERVER_METRICS_COLLECTOR,
+            ServerMetricsCollectorType.SYSTEM,
+        )
+        collector = collector_cls(
+            collection_interval=self._collection_interval,
+            record_callback=self._on_server_metrics_records,
+            error_callback=self._on_server_metrics_error,
+        )
 
-        if not self._collectors:
-            # Server metrics manager shutdown occurs in _on_start_profiling to prevent hang
-            await self._send_server_metrics_status(
-                enabled=False,
-                reason="no Prometheus endpoints reachable",
-                endpoints_configured=self._server_metrics_endpoints,
-                endpoints_reachable=[],
-            )
+        try:
+            is_reachable = await collector.is_url_reachable()
+            if not is_reachable:
+                self.warning(
+                    "Server Metrics: System metrics collector is not available"
+                )
+                return
+        except Exception as e:
+            self.error(f"Server Metrics: Exception testing system collector: {e}")
             return
 
-        # Capture baseline metrics before profiling starts
-        self.info("Server Metrics: Capturing baseline metrics...")
-        for endpoint_url, collector in self._collectors.items():
-            try:
-                await collector.initialize()
-                await collector.collect_and_process_metrics()
-                self.debug(
-                    lambda url=endpoint_url: f"Server Metrics: Captured baseline from {url}"
-                )
-            except Exception as e:
-                self.warning(
-                    f"Server Metrics: Failed to capture baseline from {endpoint_url}: {e}"
-                )
-
-        await self._send_server_metrics_status(
-            enabled=True,
-            reason=None,
-            endpoints_configured=self._server_metrics_endpoints,
-            endpoints_reachable=reachable_endpoints,
-        )
+        self._collectors[collector.endpoint_url] = collector
+        self.info("Server Metrics: System metrics collector ready")
 
     @on_command(CommandType.PROFILE_START)
     async def _on_start_profiling(self, message: ProfileStartCommand) -> None:
@@ -200,10 +235,13 @@ class ServerMetricsManager(BaseComponentService):
         total_collectors = len(self._collectors)
         if started_count == 0:
             self.warning("No server metrics collectors successfully started")
+            all_configured = list(self._server_metrics_endpoints)
+            if self._system_metrics_enabled:
+                all_configured.append(SYSTEM_METRICS_SOURCE_IDENTIFIER)
             await self._send_server_metrics_status(
                 enabled=False,
                 reason="all collectors failed to start",
-                endpoints_configured=self._server_metrics_endpoints,
+                endpoints_configured=all_configured,
                 endpoints_reachable=[],
             )
             self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
@@ -322,19 +360,13 @@ class ServerMetricsManager(BaseComponentService):
     ) -> None:
         """Async callback for receiving server metrics records from collectors.
 
-        Called by ServerMetricsDataCollector instances when they successfully
-        collect metrics. Forwards records to RecordsManager via ZMQ push socket,
-        preserving all metadata for hierarchical storage and processing.
-
-        Handles errors gracefully by sending error messages to RecordsManager
-        instead of raising exceptions, ensuring collector continues operation
-        despite individual record processing failures.
+        Called by collector instances when they successfully collect metrics.
+        Forwards records to RecordsManager via ZMQ push socket, preserving all
+        metadata for hierarchical storage and processing.
 
         Args:
-            records: List of ServerMetricsRecord objects from a collection cycle.
-                    Typically 1 record per successful scrape, may be empty if
-                    endpoint returned no metrics.
-            collector_id: Unique identifier of the collector (typically endpoint URL)
+            records: List of ServerMetricsRecord objects from a collection cycle
+            collector_id: Unique identifier of the collector
         """
         if not records:
             return
@@ -373,17 +405,12 @@ class ServerMetricsManager(BaseComponentService):
     ) -> None:
         """Async callback for receiving server metrics errors from collectors.
 
-        Called by ServerMetricsDataCollector when collection fails (e.g., network
-        timeout, HTTP error, parsing failure). Forwards error to RecordsManager
-        for tracking and reporting, allowing the system to continue operation
-        despite individual collector failures.
-
-        This callback-based error handling prevents exceptions from crashing
-        the collector's background task, enabling recovery on subsequent scrapes.
+        Called by collectors when collection fails. Forwards error to RecordsManager
+        for tracking and reporting.
 
         Args:
-            error: ErrorDetails describing the collection error with exception info
-            collector_id: Unique identifier of the collector (typically endpoint URL)
+            error: ErrorDetails describing the collection error
+            collector_id: Unique identifier of the collector
         """
         try:
             error_message = ServerMetricsRecordMessage(
@@ -407,15 +434,11 @@ class ServerMetricsManager(BaseComponentService):
     ) -> None:
         """Send server metrics status message to SystemController.
 
-        Publishes ServerMetricsStatusMessage to inform SystemController about metrics
-        availability and endpoint reachability. Used during configuration phase and
-        when metrics are disabled due to errors.
-
         Args:
             enabled: Whether server metrics collection is enabled/available
-            reason: Optional human-readable reason for status (e.g., "no Prometheus endpoints reachable")
-            endpoints_configured: List of Prometheus endpoint URLs configured
-            endpoints_reachable: List of Prometheus endpoint URLs that are accessible
+            reason: Optional human-readable reason for status
+            endpoints_configured: List of endpoint URLs configured
+            endpoints_reachable: List of endpoint URLs that are accessible
         """
         try:
             status_message = ServerMetricsStatusMessage(

@@ -34,7 +34,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br>_Choices: [`arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br>_Choices: [`arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `ramp`, `record_processor`, `results_processor`, `server_metrics_collector`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 
@@ -742,7 +742,7 @@ Disable GPU telemetry collection entirely.
 
 #### `--server-metrics` `<list>`
 
-Server metrics collection (ENABLED BY DEFAULT). Automatically collects from inference endpoint base_url + `/metrics`. Optionally specify additional custom Prometheus-compatible endpoint URLs (e.g., http://node1:8081/metrics, http://node2:9090/metrics). Use `--no-server-metrics` to disable collection. Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints.
+Server metrics collection (ENABLED BY DEFAULT). Automatically collects from inference endpoint base_url + `/metrics`. Optionally specify: (1) 'system' to add system-wide monitoring (CPU, memory, per-process VRAM) alongside Prometheus scraping, (2) additional custom Prometheus-compatible endpoint URLs (e.g., http://node1:8081/metrics, http://node2:9090/metrics). Both can be combined. Use `--no-server-metrics` to disable all collection. Examples: `--server-metrics system` | `--server-metrics system node1:8081` | `--server-metrics node1:8081 node2:9090/metrics`.
 
 #### `--no-server-metrics`
 

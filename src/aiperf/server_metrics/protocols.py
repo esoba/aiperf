@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+from aiperf.common.models import ErrorDetails
 
 if TYPE_CHECKING:
     from aiperf.common.models import (
@@ -13,6 +16,76 @@ if TYPE_CHECKING:
         ServerMetricsResults,
         TimeRangeFilter,
     )
+
+# Source identifier for system metrics collector
+SYSTEM_METRICS_SOURCE_IDENTIFIER = "system://localhost"
+
+
+# =============================================================================
+# Collector Protocol (for ServerMetricsManager to use interchangeably)
+# =============================================================================
+
+
+@runtime_checkable
+class ServerMetricsCollectorProtocol(Protocol):
+    """Protocol for server metrics collectors.
+
+    Defines the interface for collectors that gather server-side metrics from various
+    sources (Prometheus HTTP endpoints, system-level psutil/pynvml, etc.) and deliver
+    them via callbacks as ServerMetricsRecord objects.
+    """
+
+    @property
+    def id(self) -> str:
+        """Get the collector's unique identifier."""
+        ...
+
+    @property
+    def endpoint_url(self) -> str:
+        """Get the source identifier (URL for Prometheus, 'system://localhost' for system)."""
+        ...
+
+    async def initialize(self) -> None:
+        """Initialize the collector resources."""
+        ...
+
+    async def start(self) -> None:
+        """Start the background collection task."""
+        ...
+
+    async def stop(self) -> None:
+        """Stop the collector and clean up resources."""
+        ...
+
+    async def is_url_reachable(self) -> bool:
+        """Check if the collector source is available.
+
+        For Prometheus: Tests HTTP endpoint reachability.
+        For system: Tests psutil/pynvml availability.
+
+        Returns:
+            True if the source is available and ready for collection.
+        """
+        ...
+
+    async def collect_and_process_metrics(self) -> None:
+        """Collect metrics and process them into records.
+
+        Called by the manager for baseline capture and final scrape.
+        """
+        ...
+
+
+# Type aliases for callbacks
+TServerMetricsRecordCallback = Callable[
+    [list["ServerMetricsRecord"], str], Awaitable[None]
+]
+TServerMetricsErrorCallback = Callable[[ErrorDetails, str], Awaitable[None]]
+
+
+# =============================================================================
+# Processor Protocols (for RecordsManager pipeline)
+# =============================================================================
 
 
 @runtime_checkable

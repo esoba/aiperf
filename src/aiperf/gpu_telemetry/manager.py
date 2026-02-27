@@ -12,10 +12,11 @@ from aiperf.common.messages import (
     ProfileCancelCommand,
     ProfileCompleteCommand,
     ProfileConfigureCommand,
+    ServerMetricsRecordMessage,
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
 )
-from aiperf.common.models import ErrorDetails, TelemetryRecord
+from aiperf.common.models import ErrorDetails, ServerMetricsRecord, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
@@ -195,6 +196,7 @@ class GPUTelemetryManager(BaseComponentService):
                 collection_interval=self._collection_interval,
                 record_callback=self._on_telemetry_records,
                 error_callback=self._on_telemetry_error,
+                server_metrics_record_callback=self._on_process_vram_records,
                 collector_id=collector_id,
             )
 
@@ -447,6 +449,35 @@ class GPUTelemetryManager(BaseComponentService):
 
         except Exception as e:
             self.error(f"Failed to send telemetry records: {e}")
+
+    async def _on_process_vram_records(
+        self, records: list[ServerMetricsRecord], collector_id: str
+    ) -> None:
+        """Async callback for receiving per-process GPU VRAM records from pynvml collector.
+
+        Forwards records as ServerMetricsRecordMessage into the server metrics pipeline
+        so that per-process GPU VRAM data gets accumulated alongside Prometheus metrics.
+
+        Args:
+            records: List of ServerMetricsRecord objects with per-process VRAM samples
+            collector_id: Unique identifier of the collector that sent the records
+        """
+        if not records:
+            return
+
+        for record in records:
+            try:
+                message = ServerMetricsRecordMessage(
+                    service_id=self.service_id,
+                    collector_id=collector_id,
+                    record=record,
+                    error=None,
+                )
+                await self.records_push_client.push(message)
+            except Exception as e:
+                self.error(
+                    f"Failed to send per-process VRAM record from {collector_id}: {e}"
+                )
 
     async def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:
         """Async callback for receiving telemetry errors from collectors.

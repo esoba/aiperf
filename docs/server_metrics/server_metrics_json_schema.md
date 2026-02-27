@@ -41,6 +41,7 @@ The Parquet format exports raw time-series data with delta calculations in colum
 
 **Related documentation:**
 - [Server Metrics Tutorial](server-metrics.md) - Quick start guide and usage examples
+- [System Metrics Collector](system-metrics.md) - Host-level CPU, memory, and per-process GPU VRAM monitoring
 - [Server Metrics Reference](server_metrics_reference.md) - Metric definitions by backend (vLLM, SGLang, TRT-LLM, Dynamo)
 - [Parquet Schema Reference](server_metrics_parquet_schema.md) - Raw time-series data schema
 

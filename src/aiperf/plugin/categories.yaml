@@ -254,3 +254,15 @@ gpu_telemetry_collector:
     GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
     Supports DCGM HTTP endpoints and pynvml Python library.
     One-to-one mapping based on gpu_telemetry_collector configuration.
+
+# =============================================================================
+# Server Metrics Collector Categories
+# =============================================================================
+
+server_metrics_collector:
+  protocol: aiperf.server_metrics.protocols:ServerMetricsCollectorProtocol
+  enum: ServerMetricsCollectorType
+  description: |
+    Server metrics collectors gather server-side metrics from various sources.
+    Supports Prometheus HTTP endpoints and system-level monitoring (psutil/pynvml).
+    One-to-one mapping based on server_metrics_collector configuration.

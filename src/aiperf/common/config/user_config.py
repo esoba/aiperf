@@ -579,10 +579,14 @@ class UserConfig(BaseConfig):
             description=(
                 "Server metrics collection (ENABLED BY DEFAULT). "
                 "Automatically collects from inference endpoint base_url + `/metrics`. "
-                "Optionally specify additional custom Prometheus-compatible endpoint URLs "
+                "Optionally specify: "
+                "(1) 'system' to add system-wide monitoring (CPU, memory, per-process VRAM) "
+                "alongside Prometheus scraping, "
+                "(2) additional custom Prometheus-compatible endpoint URLs "
                 "(e.g., http://node1:8081/metrics, http://node2:9090/metrics). "
-                "Use `--no-server-metrics` to disable collection. "
-                "Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints"
+                "Both can be combined. Use `--no-server-metrics` to disable all collection. "
+                "Examples: `--server-metrics system` | `--server-metrics system node1:8081` "
+                "| `--server-metrics node1:8081 node2:9090/metrics`"
             ),
         ),
         BeforeValidator(parse_str_or_list),
@@ -621,14 +625,16 @@ class UserConfig(BaseConfig):
     ] = ServerMetricsDefaults.DEFAULT_FORMATS
 
     _server_metrics_urls: list[str] = []
+    _system_metrics_enabled: bool = False
 
     @model_validator(mode="after")
     def _parse_server_metrics_config(self) -> Self:
-        """Parse server_metrics list into URLs.
+        """Parse server_metrics list into system flag and URLs.
 
-        Empty list [] means enabled with automatic discovery only.
-        Non-empty list means enabled with custom URLs.
-        Use --no-server-metrics to disable collection.
+        'system' enables the system-level collector (additive, alongside Prometheus).
+        URLs are added as additional Prometheus endpoints.
+        Both can be combined: `--server-metrics system http://node1:8081`.
+        Use --no-server-metrics to disable all collection.
         """
         from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 
@@ -641,15 +647,36 @@ class UserConfig(BaseConfig):
                 "Use only one or the other."
             )
 
+        system_enabled = False
         urls: list[str] = []
 
         for item in self.server_metrics or []:
-            # Check for URLs (anything with : or starting with http)
-            if item.startswith("http") or ":" in item:
+            if item.lower() == "system":
+                system_enabled = True
+            elif item.startswith("http") or ":" in item:
                 normalized_url = item if item.startswith("http") else f"http://{item}"
                 normalized_url = normalize_metrics_endpoint_url(normalized_url)
                 urls.append(normalized_url)
+            else:
+                raise ValueError(
+                    f"Invalid server metrics item: {item}. "
+                    "Valid options are: 'system' for system-wide monitoring, "
+                    "or Prometheus endpoint URLs. Both can be combined."
+                )
 
+        if system_enabled:
+            non_local_urls = [
+                url for url in self.endpoint.urls if not _is_localhost_url(url)
+            ]
+            if non_local_urls:
+                _logger.warning(
+                    f"Using system collector with non-localhost server URL(s): {non_local_urls}. "
+                    "System metrics are collected from the local machine only. "
+                    "If the inference server is running remotely, the system metrics "
+                    "will reflect the client machine, not the server."
+                )
+
+        self._system_metrics_enabled = system_enabled
         self._server_metrics_urls = urls
         return self
 
@@ -662,6 +689,11 @@ class UserConfig(BaseConfig):
     def server_metrics_urls(self) -> list[str]:
         """Get the parsed server metrics Prometheus endpoint URLs."""
         return self._server_metrics_urls
+
+    @property
+    def system_metrics_enabled(self) -> bool:
+        """Whether the system-level collector (CPU, memory, VRAM) is enabled."""
+        return self._system_metrics_enabled
 
     @model_validator(mode="after")
     def _compute_config(self) -> Self:

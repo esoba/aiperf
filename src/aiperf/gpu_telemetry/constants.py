@@ -5,7 +5,9 @@
 
 from aiperf.common.enums import (
     EnergyMetricUnit,
+    FrequencyMetricUnit,
     GenericMetricUnit,
+    MetricOverTimeUnit,
     MetricSizeUnit,
     MetricTimeUnit,
     MetricUnitT,
@@ -49,6 +51,16 @@ GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
     ("JPEG Utilization", "jpg_utilization", GenericMetricUnit.PERCENT),
     ("XID Errors", "xid_errors", GenericMetricUnit.COUNT),
     ("Power Violation", "power_violation", MetricTimeUnit.MICROSECONDS),
+    ("Graphics Clock", "graphics_clock", FrequencyMetricUnit.MEGAHERTZ),
+    ("SM Clock", "sm_clock", FrequencyMetricUnit.MEGAHERTZ),
+    ("Memory Clock", "memory_clock", FrequencyMetricUnit.MEGAHERTZ),
+    ("GPU Memory Total", "gpu_memory_total", MetricSizeUnit.GIGABYTES),
+    ("GPU Memory Free", "gpu_memory_free", MetricSizeUnit.GIGABYTES),
+    ("GPU Power Limit", "gpu_power_limit", PowerMetricUnit.WATT),
+    ("Performance State", "performance_state", GenericMetricUnit.COUNT),
+    ("PCIe TX Throughput", "pcie_tx_throughput", MetricOverTimeUnit.KB_PER_SECOND),
+    ("PCIe RX Throughput", "pcie_rx_throughput", MetricOverTimeUnit.KB_PER_SECOND),
+    ("Fan Speed", "fan_speed", GenericMetricUnit.PERCENT),
 ]
 
 # Metrics that are cumulative counters (need delta calculation).

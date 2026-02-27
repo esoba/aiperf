@@ -257,8 +257,8 @@ DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Tensor active (in %)
 
     def test_metrics_removed_from_defaults_are_added_from_csv(self):
         """Test that metrics in DCGM mapping but removed from display defaults are added."""
-        # These are in DCGM_TO_FIELD_MAPPING but were removed from the 7 display defaults
-        csv_content = """DCGM_FI_DEV_SM_CLOCK, gauge, SM clock (in MHz)
+        # These DCGM fields are NOT in GPU_TELEMETRY_METRICS_CONFIG defaults
+        csv_content = """DCGM_FI_DEV_PCIE_REPLAY_COUNTER, gauge, PCIe replay counter (in count)
 DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock (in MHz)
 DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temp (in °C)
 DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
@@ -270,12 +270,11 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
         try:
             loader = MetricsConfigLoader()
 
-            # Get existing field names from the 7 display defaults
+            # Get existing field names from the display defaults
             existing_field_names = {cfg[1] for cfg in GPU_TELEMETRY_METRICS_CONFIG}
 
-            # These fields were removed from DCGM mapping and are not in the 7 display defaults
-            # When added via CSV, they'll get auto-generated field names
-            assert "sm_clock" not in existing_field_names
+            # These fields are not in the display defaults
+            assert "pcie_replay_counter" not in existing_field_names
             assert "mem_clock" not in existing_field_names
             assert "memory_temp" not in existing_field_names
             assert "power_mgmt_limit" not in existing_field_names
@@ -288,7 +287,7 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
             assert len(custom_metrics) == 4
             custom_field_names = {m[1] for m in custom_metrics}
             assert custom_field_names == {
-                "sm_clock",
+                "pcie_replay_counter",
                 "mem_clock",
                 "memory_temp",
                 "power_mgmt_limit",
@@ -297,7 +296,7 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
             # Verify new DCGM mappings (only if they didn't already exist from previous tests)
             # Note: Tests may run in any order, so some may already be in mapping
             for dcgm_field, field_name in [
-                ("DCGM_FI_DEV_SM_CLOCK", "sm_clock"),
+                ("DCGM_FI_DEV_PCIE_REPLAY_COUNTER", "pcie_replay_counter"),
                 ("DCGM_FI_DEV_MEM_CLOCK", "mem_clock"),
                 ("DCGM_FI_DEV_MEMORY_TEMP", "memory_temp"),
                 ("DCGM_FI_DEV_POWER_MGMT_LIMIT", "power_mgmt_limit"),
@@ -309,7 +308,10 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
             DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
 
             # After applying, all should be in the global mapping
-            assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_SM_CLOCK"] == "sm_clock"
+            assert (
+                DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_PCIE_REPLAY_COUNTER"]
+                == "pcie_replay_counter"
+            )
             assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_MEM_CLOCK"] == "mem_clock"
             assert DCGM_TO_FIELD_MAPPING["DCGM_FI_DEV_MEMORY_TEMP"] == "memory_temp"
             assert (
@@ -321,7 +323,7 @@ DCGM_FI_DEV_POWER_MGMT_LIMIT, gauge, Power limit (in W)
             for metric in custom_metrics:
                 display_name, field_name, unit = metric
                 assert field_name in [
-                    "sm_clock",
+                    "pcie_replay_counter",
                     "mem_clock",
                     "memory_temp",
                     "power_mgmt_limit",

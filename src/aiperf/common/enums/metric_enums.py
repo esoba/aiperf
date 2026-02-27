@@ -376,6 +376,10 @@ class MetricOverTimeUnit(BaseMetricUnit):
         primary_unit=GenericMetricUnit.VIDEO,
         inverted=True,
     )
+    KB_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=MetricSizeUnit.KILOBYTES,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
     MB_PER_SECOND = MetricOverTimeUnitInfo(
         primary_unit=MetricSizeUnit.MEGABYTES,
         time_unit=MetricTimeUnit.SECONDS,

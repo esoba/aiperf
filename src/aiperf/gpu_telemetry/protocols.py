@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from aiperf.common.models import (
         ErrorDetailsCount,
         MetricResult,
+        ServerMetricsRecord,
         TelemetryExportData,
     )
 
@@ -61,6 +62,9 @@ class GPUTelemetryCollectorProtocol(Protocol):
 # Type aliases for callbacks
 TRecordCallback = Callable[[list[TelemetryRecord], str], Awaitable[None]]
 TErrorCallback = Callable[[ErrorDetails, str], Awaitable[None]]
+TServerMetricsRecordCallback = Callable[
+    [list["ServerMetricsRecord"], str], Awaitable[None]
+]
 
 
 @runtime_checkable

@@ -8,6 +8,7 @@ actual GPU hardware.
 """
 
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,6 +16,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.models import TelemetryRecord
+from aiperf.common.models.server_metrics_models import ServerMetricsRecord
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
 from aiperf.gpu_telemetry.pynvml_collector import ScalingFactors
 
@@ -32,6 +34,11 @@ def mock_pynvml():
     mock_module.NVMLError = Exception
     mock_module.NVML_TEMPERATURE_GPU = 0
     mock_module.NVML_PERF_POLICY_POWER = 0
+    mock_module.NVML_CLOCK_GRAPHICS = 0
+    mock_module.NVML_CLOCK_SM = 1
+    mock_module.NVML_CLOCK_MEM = 2
+    mock_module.NVML_PCIE_UTIL_TX_BYTES = 0
+    mock_module.NVML_PCIE_UTIL_RX_BYTES = 1
 
     # Mock device count
     mock_module.nvmlDeviceGetCount.return_value = 2
@@ -76,9 +83,17 @@ def mock_pynvml():
         util_0 if h == mock_handles[0] else util_1
     )
 
-    # Memory info (bytes): 20 GB, 16 GB
-    mem_0 = SimpleNamespace(used=20 * 1024 * 1024 * 1024)
-    mem_1 = SimpleNamespace(used=16 * 1024 * 1024 * 1024)
+    # Memory info (bytes): 24 GB total, 20/16 GB used
+    mem_0 = SimpleNamespace(
+        used=20 * 1024 * 1024 * 1024,
+        total=24 * 1024 * 1024 * 1024,
+        free=4 * 1024 * 1024 * 1024,
+    )
+    mem_1 = SimpleNamespace(
+        used=16 * 1024 * 1024 * 1024,
+        total=24 * 1024 * 1024 * 1024,
+        free=8 * 1024 * 1024 * 1024,
+    )
     mock_module.nvmlDeviceGetMemoryInfo.side_effect = lambda h: (
         mem_0 if h == mock_handles[0] else mem_1
     )
@@ -125,17 +140,83 @@ def mock_pynvml():
     mock_module.NVML_GPM_METRIC_SM_UTIL = 2
     mock_module.c_nvmlGpmMetricsGet_t = MagicMock
 
+    # Clock speeds (MHz): Graphics 2100/1950, SM 2100/1950, Memory 1350/1200
+    def get_clock(h, clock_type):
+        if h == mock_handles[0]:
+            return {0: 2100, 1: 2100, 2: 1350}[clock_type]
+        return {0: 1950, 1: 1950, 2: 1200}[clock_type]
+
+    mock_module.nvmlDeviceGetClockInfo.side_effect = get_clock
+
+    # Power management limit (milliwatts): 450W, 350W
+    mock_module.nvmlDeviceGetPowerManagementLimit.side_effect = lambda h: (
+        450000 if h == mock_handles[0] else 350000
+    )
+
+    # Performance state: P0, P2
+    mock_module.nvmlDeviceGetPerformanceState.side_effect = lambda h: (
+        0 if h == mock_handles[0] else 2
+    )
+
+    # PCIe throughput (KB/s): TX 500000/300000, RX 400000/250000
+    def get_pcie(h, counter_type):
+        if h == mock_handles[0]:
+            return {0: 500000, 1: 400000}[counter_type]
+        return {0: 300000, 1: 250000}[counter_type]
+
+    mock_module.nvmlDeviceGetPcieThroughput.side_effect = get_pcie
+
+    # Fan speed (percent): 65%, 55%
+    mock_module.nvmlDeviceGetFanSpeed.side_effect = lambda h: (
+        65 if h == mock_handles[0] else 55
+    )
+
+    # Per-process GPU memory (for dual-output tests)
+    proc_mem_0 = [
+        SimpleNamespace(pid=1234, usedGpuMemory=2 * 1024 * 1024 * 1024),
+        SimpleNamespace(pid=5678, usedGpuMemory=1 * 1024 * 1024 * 1024),
+    ]
+    proc_mem_1 = [
+        SimpleNamespace(pid=9012, usedGpuMemory=3 * 1024 * 1024 * 1024),
+    ]
+    mock_module.nvmlDeviceGetComputeRunningProcesses.side_effect = lambda h: (
+        proc_mem_0 if h == mock_handles[0] else proc_mem_1
+    )
+
     return mock_module
 
 
 @pytest.fixture
-def patch_pynvml(mock_pynvml):
-    """Patch pynvml module reference in the collector module for testing."""
+def mock_psutil():
+    """Create a mock psutil.Process for process name resolution."""
+    mock_proc = MagicMock()
+    mock_proc.cmdline.return_value = ["/usr/bin/python3", "train.py"]
+    mock_proc.name.return_value = "python3"
+    return mock_proc
+
+
+@pytest.fixture
+def patch_pynvml(mock_pynvml, mock_psutil):
+    """Patch pynvml module in both the collector and NvmlHandleManager."""
     from aiperf.gpu_telemetry import pynvml_collector
     from aiperf.gpu_telemetry.pynvml_collector import PyNVMLTelemetryCollector
 
-    # Patch the pynvml reference in the collector module's namespace
-    with patch.object(pynvml_collector, "pynvml", mock_pynvml):
+    with (
+        patch.object(pynvml_collector, "pynvml", mock_pynvml),
+        patch.object(
+            pynvml_collector,
+            "psutil",
+            MagicMock(
+                Process=MagicMock(return_value=mock_psutil),
+                NoSuchProcess=ProcessLookupError,
+                AccessDenied=PermissionError,
+            ),
+        ),
+        patch(
+            "aiperf.common.nvml_handle_manager._import_pynvml", return_value=mock_pynvml
+        ),
+        patch("aiperf.common.nvml_handle_manager._pynvml", mock_pynvml),
+    ):
         yield mock_pynvml, PyNVMLTelemetryCollector
 
 
@@ -189,6 +270,7 @@ class TestPyNVMLTelemetryCollectorInitialization:
         assert collector.collection_interval == 0.333
         assert collector._record_callback is None
         assert collector._error_callback is None
+        assert collector._server_metrics_record_callback is None
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +317,7 @@ class TestPyNVMLLifecycle:
     @pytest.mark.asyncio
     async def test_initialize_discovers_gpus(self, initialized_collector):
         """Test initialization discovers and catalogs GPUs."""
-        assert initialized_collector._nvml_initialized
+        assert initialized_collector._nvml.initialized
         assert len(initialized_collector._gpus) == 2
 
         # Verify GPU metadata
@@ -257,11 +339,11 @@ class TestPyNVMLLifecycle:
 
         collector = PyNVMLTelemetryCollector()
         await collector.initialize()
-        assert collector._nvml_initialized
+        assert collector._nvml.initialized
 
         await collector.stop()
 
-        assert not collector._nvml_initialized
+        assert not collector._nvml.initialized
         mock_pynvml.nvmlShutdown.assert_called()
 
     @pytest.mark.asyncio
@@ -294,7 +376,7 @@ class TestPyNVMLLifecycle:
         with pytest.raises(asyncio.CancelledError, match="Failed to initialize NVML"):
             await collector.initialize()
 
-        assert not collector._nvml_initialized
+        assert not collector._nvml.initialized
 
     @pytest.mark.asyncio
     async def test_init_failure_device_count_raises(self, patch_pynvml):
@@ -313,7 +395,7 @@ class TestPyNVMLLifecycle:
             await collector.initialize()
 
         # Should have cleaned up NVML
-        assert not collector._nvml_initialized
+        assert not collector._nvml.initialized
         mock_pynvml.nvmlShutdown.assert_called()
 
     @pytest.mark.asyncio
@@ -331,7 +413,7 @@ class TestPyNVMLLifecycle:
         await collector.initialize()
 
         # Should have initialized with only the second GPU
-        assert collector._nvml_initialized
+        assert collector._nvml.initialized
         assert len(collector._gpus) == 1
 
         await collector.stop()
@@ -348,7 +430,8 @@ class TestPyNVMLMetricsCollection:
     @pytest.mark.asyncio
     async def test_collect_gpu_metrics(self, initialized_collector):
         """Test metrics collection returns correct TelemetryRecord objects."""
-        records = initialized_collector._collect_gpu_metrics()
+        ts = time.time_ns()
+        records = initialized_collector._collect_gpu_metrics(ts)
 
         assert len(records) == 2
         assert all(isinstance(r, TelemetryRecord) for r in records)
@@ -395,7 +478,7 @@ class TestPyNVMLMetricsCollection:
         collector = PyNVMLTelemetryCollector()
         await collector.initialize()
 
-        records = collector._collect_gpu_metrics()
+        records = collector._collect_gpu_metrics(time.time_ns())
 
         # Should still get records with other metrics
         assert len(records) == 2
@@ -409,7 +492,7 @@ class TestPyNVMLMetricsCollection:
     @pytest.mark.asyncio
     async def test_collect_returns_empty_when_not_initialized(self, collector):
         """Test collection returns empty list when NVML not initialized."""
-        records = collector._collect_gpu_metrics()
+        records = collector._collect_gpu_metrics(time.time_ns())
         assert records == []
 
 
@@ -456,7 +539,7 @@ class TestPyNVMLCallbacks:
         await collector.initialize()
 
         # Force an error by making the collect method raise
-        collector._collect_gpu_metrics = MagicMock(
+        collector._collect_all_metrics = MagicMock(
             side_effect=Exception("Collection failed")
         )
 
@@ -482,6 +565,9 @@ class TestPyNVMLScalingFactors:
             param("gpu_power_usage", 1e-3, 350000, 350.0, id="power_mW_to_W"),
             param("energy_consumption", 1e-9, 1e9, 1.0, id="energy_mJ_to_MJ"),
             param("gpu_memory_used", 1e-9, 20e9, 20.0, id="memory_bytes_to_GB"),
+            param("gpu_memory_total", 1e-9, 24e9, 24.0, id="memory_total_bytes_to_GB"),
+            param("gpu_memory_free", 1e-9, 4e9, 4.0, id="memory_free_bytes_to_GB"),
+            param("gpu_power_limit", 1e-3, 450000, 450.0, id="power_limit_mW_to_W"),
         ],
     )
     def test_scaling_factor(self, field, factor, raw_value, expected):
@@ -539,7 +625,7 @@ class TestPyNVMLEdgeCases:
     @pytest.mark.asyncio
     async def test_energy_consumption_collected(self, initialized_collector):
         """Test energy consumption metric is collected and scaled correctly."""
-        records = initialized_collector._collect_gpu_metrics()
+        records = initialized_collector._collect_gpu_metrics(time.time_ns())
 
         gpu0 = next(r for r in records if r.gpu_index == 0)
         # 1000000000 mJ * 1e-9 = 1.0 MJ
@@ -560,7 +646,7 @@ class TestPyNVMLEdgeCases:
         collector = PyNVMLTelemetryCollector()
         await collector.initialize()
 
-        records = collector._collect_gpu_metrics()
+        records = collector._collect_gpu_metrics(time.time_ns())
         gpu0 = next(r for r in records if r.gpu_index == 0)
 
         # Should sum: 40 + 35 = 75
@@ -580,7 +666,7 @@ class TestPyNVMLEdgeCases:
         collector = PyNVMLTelemetryCollector()
         await collector.initialize()
 
-        records = collector._collect_gpu_metrics()
+        records = collector._collect_gpu_metrics(time.time_ns())
 
         for r in records:
             assert r.telemetry_data.sm_utilization == 0.0
@@ -602,7 +688,7 @@ class TestPyNVMLEdgeCases:
         collector = PyNVMLTelemetryCollector()
         await collector.initialize()
 
-        records = collector._collect_gpu_metrics()
+        records = collector._collect_gpu_metrics(time.time_ns())
         gpu0 = next(r for r in records if r.gpu_index == 0)
 
         # Sum would be 60 + 55 = 115, but should be capped at 100.0
@@ -666,7 +752,7 @@ class TestPyNVMLGPM:
         assert all(gpu.gpm_samples is None for gpu in collector._gpus)
 
         # Should still collect SM utilization via process API
-        records = collector._collect_gpu_metrics()
+        records = collector._collect_gpu_metrics(time.time_ns())
         assert all(r.telemetry_data.sm_utilization is not None for r in records)
 
         await collector.stop()
@@ -735,7 +821,7 @@ class TestPyNVMLGPM:
         assert mock_pynvml.nvmlGpmSampleGet.call_count == 2
 
         # First collection should use GPM directly (no fallback needed)
-        records = collector._collect_gpu_metrics()
+        records = collector._collect_gpu_metrics(time.time_ns())
 
         # GPM metrics should have been queried
         assert mock_pynvml.nvmlGpmMetricsGet.called
@@ -763,7 +849,7 @@ class TestPyNVMLGPM:
         assert all(gpu.gpm_samples is None for gpu in collector._gpus)
 
         # Should still work via process API
-        records = collector._collect_gpu_metrics()
+        records = collector._collect_gpu_metrics(time.time_ns())
         assert all(r.telemetry_data.sm_utilization is not None for r in records)
 
         await collector.stop()
@@ -808,10 +894,10 @@ class TestPyNVMLGPM:
         await collector.initialize()
 
         # First collection - primes the sample buffer
-        collector._collect_gpu_metrics()
+        collector._collect_gpu_metrics(time.time_ns())
 
         # Second collection - GPM fails, should fall back to process API
-        records = collector._collect_gpu_metrics()
+        records = collector._collect_gpu_metrics(time.time_ns())
 
         # Should still get SM utilization from process API fallback
         assert all(r.telemetry_data.sm_utilization is not None for r in records)
@@ -845,3 +931,281 @@ class TestPyNVMLGPM:
         assert collector._gpus[1].gpm_samples is None
 
         await collector.stop()
+
+
+# ---------------------------------------------------------------------------
+# Test New Scalar NVML Metrics
+# ---------------------------------------------------------------------------
+
+
+class TestPyNVMLNewScalarMetrics:
+    """Test new scalar NVML metrics: clocks, memory total/free, power limit, pstate, PCIe, fan."""
+
+    @pytest.mark.asyncio
+    async def test_clock_speeds_collected(self, initialized_collector):
+        """Test graphics, SM, and memory clock speeds are collected."""
+        records = initialized_collector._collect_gpu_metrics(time.time_ns())
+        gpu0 = next(r for r in records if r.gpu_index == 0)
+        gpu1 = next(r for r in records if r.gpu_index == 1)
+
+        assert gpu0.telemetry_data.graphics_clock == 2100.0
+        assert gpu0.telemetry_data.sm_clock == 2100.0
+        assert gpu0.telemetry_data.memory_clock == 1350.0
+
+        assert gpu1.telemetry_data.graphics_clock == 1950.0
+        assert gpu1.telemetry_data.sm_clock == 1950.0
+        assert gpu1.telemetry_data.memory_clock == 1200.0
+
+    @pytest.mark.asyncio
+    async def test_memory_total_and_free_collected(self, initialized_collector):
+        """Test GPU memory total and free are collected alongside used."""
+        records = initialized_collector._collect_gpu_metrics(time.time_ns())
+        gpu0 = next(r for r in records if r.gpu_index == 0)
+        gpu1 = next(r for r in records if r.gpu_index == 1)
+
+        assert gpu0.telemetry_data.gpu_memory_total == pytest.approx(24.0, rel=0.1)
+        assert gpu0.telemetry_data.gpu_memory_free == pytest.approx(4.0, rel=0.1)
+        assert gpu0.telemetry_data.gpu_memory_used == pytest.approx(20.0, rel=0.1)
+
+        assert gpu1.telemetry_data.gpu_memory_total == pytest.approx(24.0, rel=0.1)
+        assert gpu1.telemetry_data.gpu_memory_free == pytest.approx(8.0, rel=0.1)
+
+    @pytest.mark.asyncio
+    async def test_power_limit_collected(self, initialized_collector):
+        """Test GPU power management limit is collected and scaled."""
+        records = initialized_collector._collect_gpu_metrics(time.time_ns())
+        gpu0 = next(r for r in records if r.gpu_index == 0)
+        gpu1 = next(r for r in records if r.gpu_index == 1)
+
+        assert gpu0.telemetry_data.gpu_power_limit == pytest.approx(450.0, rel=0.01)
+        assert gpu1.telemetry_data.gpu_power_limit == pytest.approx(350.0, rel=0.01)
+
+    @pytest.mark.asyncio
+    async def test_performance_state_collected(self, initialized_collector):
+        """Test GPU performance state (P-state) is collected."""
+        records = initialized_collector._collect_gpu_metrics(time.time_ns())
+        gpu0 = next(r for r in records if r.gpu_index == 0)
+        gpu1 = next(r for r in records if r.gpu_index == 1)
+
+        assert gpu0.telemetry_data.performance_state == 0.0  # P0
+        assert gpu1.telemetry_data.performance_state == 2.0  # P2
+
+    @pytest.mark.asyncio
+    async def test_pcie_throughput_collected(self, initialized_collector):
+        """Test PCIe TX/RX throughput is collected in KB/s."""
+        records = initialized_collector._collect_gpu_metrics(time.time_ns())
+        gpu0 = next(r for r in records if r.gpu_index == 0)
+        gpu1 = next(r for r in records if r.gpu_index == 1)
+
+        assert gpu0.telemetry_data.pcie_tx_throughput == 500000.0
+        assert gpu0.telemetry_data.pcie_rx_throughput == 400000.0
+        assert gpu1.telemetry_data.pcie_tx_throughput == 300000.0
+        assert gpu1.telemetry_data.pcie_rx_throughput == 250000.0
+
+    @pytest.mark.asyncio
+    async def test_fan_speed_collected(self, initialized_collector):
+        """Test fan speed percentage is collected."""
+        records = initialized_collector._collect_gpu_metrics(time.time_ns())
+        gpu0 = next(r for r in records if r.gpu_index == 0)
+        gpu1 = next(r for r in records if r.gpu_index == 1)
+
+        assert gpu0.telemetry_data.fan_speed == 65.0
+        assert gpu1.telemetry_data.fan_speed == 55.0
+
+    @pytest.mark.asyncio
+    async def test_new_metrics_graceful_on_nvml_error(self, patch_pynvml):
+        """Test new metrics are None when their NVML APIs raise errors."""
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+
+        mock_pynvml.nvmlDeviceGetClockInfo.side_effect = mock_pynvml.NVMLError("N/A")
+        mock_pynvml.nvmlDeviceGetPowerManagementLimit.side_effect = (
+            mock_pynvml.NVMLError("N/A")
+        )
+        mock_pynvml.nvmlDeviceGetPerformanceState.side_effect = mock_pynvml.NVMLError(
+            "N/A"
+        )
+        mock_pynvml.nvmlDeviceGetPcieThroughput.side_effect = mock_pynvml.NVMLError(
+            "N/A"
+        )
+        mock_pynvml.nvmlDeviceGetFanSpeed.side_effect = mock_pynvml.NVMLError("N/A")
+
+        collector = PyNVMLTelemetryCollector()
+        await collector.initialize()
+
+        records = collector._collect_gpu_metrics(time.time_ns())
+
+        assert len(records) == 2
+        for r in records:
+            assert r.telemetry_data.graphics_clock is None
+            assert r.telemetry_data.sm_clock is None
+            assert r.telemetry_data.memory_clock is None
+            assert r.telemetry_data.gpu_power_limit is None
+            assert r.telemetry_data.performance_state is None
+            assert r.telemetry_data.pcie_tx_throughput is None
+            assert r.telemetry_data.pcie_rx_throughput is None
+            assert r.telemetry_data.fan_speed is None
+            # Existing metrics should still work
+            assert r.telemetry_data.gpu_utilization is not None
+
+        await collector.stop()
+
+
+# ---------------------------------------------------------------------------
+# Test Per-Process VRAM (Dual Output)
+# ---------------------------------------------------------------------------
+
+
+class TestPyNVMLProcessVRAM:
+    """Test per-process GPU VRAM collection via dual-output callback."""
+
+    @pytest.mark.asyncio
+    async def test_process_vram_collected_with_callback(self, patch_pynvml):
+        """Test per-process VRAM is collected when server_metrics_record_callback is set."""
+        _, PyNVMLTelemetryCollector = patch_pynvml
+
+        mock_record_callback = AsyncMock()
+        mock_server_metrics_callback = AsyncMock()
+
+        collector = PyNVMLTelemetryCollector(
+            record_callback=mock_record_callback,
+            server_metrics_record_callback=mock_server_metrics_callback,
+        )
+        await collector.initialize()
+        await collector._collect_and_process_metrics()
+        await collector.stop()
+
+        # Telemetry records callback should be called
+        mock_record_callback.assert_called_once()
+        telemetry_records = mock_record_callback.call_args[0][0]
+        assert len(telemetry_records) == 2
+
+        # Server metrics callback should also be called with per-process data
+        mock_server_metrics_callback.assert_called_once()
+        sm_records = mock_server_metrics_callback.call_args[0][0]
+        assert len(sm_records) == 1
+        record = sm_records[0]
+        assert isinstance(record, ServerMetricsRecord)
+        assert record.endpoint_url == PYNVML_SOURCE_IDENTIFIER
+        assert "gpu_process_memory_used_bytes" in record.metrics
+
+        samples = record.metrics["gpu_process_memory_used_bytes"].samples
+        assert len(samples) == 3  # 2 procs on GPU 0, 1 on GPU 1
+
+    @pytest.mark.asyncio
+    async def test_process_vram_not_collected_without_callback(self, patch_pynvml):
+        """Test per-process VRAM is skipped when no server_metrics_record_callback."""
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+
+        mock_record_callback = AsyncMock()
+
+        collector = PyNVMLTelemetryCollector(
+            record_callback=mock_record_callback,
+        )
+        await collector.initialize()
+        await collector._collect_and_process_metrics()
+        await collector.stop()
+
+        # Telemetry records callback should be called
+        mock_record_callback.assert_called_once()
+
+        # nvmlDeviceGetComputeRunningProcesses should NOT be called
+        mock_pynvml.nvmlDeviceGetComputeRunningProcesses.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_process_vram_labels_correct(self, patch_pynvml):
+        """Test per-process VRAM samples have correct labels."""
+        _, PyNVMLTelemetryCollector = patch_pynvml
+
+        mock_server_metrics_callback = AsyncMock()
+        collector = PyNVMLTelemetryCollector(
+            server_metrics_record_callback=mock_server_metrics_callback,
+        )
+        await collector.initialize()
+        await collector._collect_and_process_metrics()
+        await collector.stop()
+
+        record = mock_server_metrics_callback.call_args[0][0][0]
+        samples = record.metrics["gpu_process_memory_used_bytes"].samples
+
+        pids = {s.labels["pid"] for s in samples}
+        assert pids == {"1234", "5678", "9012"}
+
+        gpu_indices = {s.labels["gpu_index"] for s in samples}
+        assert gpu_indices == {"0", "1"}
+
+    @pytest.mark.asyncio
+    async def test_process_vram_empty_returns_none(self, patch_pynvml):
+        """Test no server metrics record when no processes are running."""
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+
+        mock_pynvml.nvmlDeviceGetComputeRunningProcesses.side_effect = None
+        mock_pynvml.nvmlDeviceGetComputeRunningProcesses.return_value = []
+
+        mock_server_metrics_callback = AsyncMock()
+        collector = PyNVMLTelemetryCollector(
+            server_metrics_record_callback=mock_server_metrics_callback,
+        )
+        await collector.initialize()
+        await collector._collect_and_process_metrics()
+        await collector.stop()
+
+        # Callback should NOT be called when there are no processes
+        mock_server_metrics_callback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_process_vram_handles_nvml_error(self, patch_pynvml):
+        """Test per-process VRAM handles NVML errors gracefully."""
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+
+        mock_pynvml.nvmlDeviceGetComputeRunningProcesses.side_effect = (
+            mock_pynvml.NVMLError("Not supported")
+        )
+
+        mock_record_callback = AsyncMock()
+        mock_server_metrics_callback = AsyncMock()
+        collector = PyNVMLTelemetryCollector(
+            record_callback=mock_record_callback,
+            server_metrics_record_callback=mock_server_metrics_callback,
+        )
+        await collector.initialize()
+        await collector._collect_and_process_metrics()
+        await collector.stop()
+
+        # Telemetry records should still be delivered
+        mock_record_callback.assert_called_once()
+        # Server metrics should NOT be called (error => empty samples => None)
+        mock_server_metrics_callback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_process_vram_skips_none_memory(self, patch_pynvml):
+        """Test per-process VRAM skips processes with None usedGpuMemory."""
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+
+        # GPU 0: one process with None memory and one valid; GPU 1: empty
+        mock_pynvml.nvmlDeviceGetComputeRunningProcesses.side_effect = None
+        call_count = 0
+
+        def per_gpu_procs(handle):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return [
+                    SimpleNamespace(pid=1111, usedGpuMemory=None),
+                    SimpleNamespace(pid=2222, usedGpuMemory=1024),
+                ]
+            return []
+
+        mock_pynvml.nvmlDeviceGetComputeRunningProcesses.side_effect = per_gpu_procs
+
+        mock_server_metrics_callback = AsyncMock()
+        collector = PyNVMLTelemetryCollector(
+            server_metrics_record_callback=mock_server_metrics_callback,
+        )
+        await collector.initialize()
+        await collector._collect_and_process_metrics()
+        await collector.stop()
+
+        record = mock_server_metrics_callback.call_args[0][0][0]
+        samples = record.metrics["gpu_process_memory_used_bytes"].samples
+        assert len(samples) == 1
+        assert samples[0].labels["pid"] == "2222"

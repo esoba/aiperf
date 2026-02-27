@@ -5,7 +5,8 @@ import pytest
 
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.models import Image, Text, Turn
-from aiperf.common.models.record_models import TextResponseData
+from aiperf.common.models.record_models import RankingsResponseData, TextResponseData
+from aiperf.endpoints.nim_image_retrieval import ImageRetrievalEndpoint
 from aiperf.endpoints.template_endpoint import TemplateEndpoint
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import EndpointType
@@ -15,6 +16,12 @@ from tests.unit.endpoints.conftest import (
     create_mock_response,
     create_model_endpoint,
     create_request_info,
+)
+
+IMAGE_RETRIEVAL_TEMPLATE = (
+    '{"input": [{% for img in images %}'
+    '{"type": "image_url", "url": {{ img|tojson }}}'
+    "{% if not loop.last %}, {% endif %}{% endfor %}]}"
 )
 
 
@@ -392,6 +399,179 @@ class TestTemplateEndpointParseResponse:
         """Test None returned when no extractable content."""
         parsed = endpoint.parse_response(
             create_mock_response(json_data=json_data, text=text)
+        )
+
+        assert parsed is None
+
+
+class TestTemplateEmulatesImageRetrieval:
+    """Verify the template endpoint can produce identical payloads to the native image_retrieval endpoint."""
+
+    BASE64_PNG = (
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+        "AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+
+    @pytest.fixture
+    def template_endpoint_and_model(self):
+        model_endpoint = create_model_endpoint(
+            EndpointType.TEMPLATE,
+            model_name="image-retrieval-model",
+            extra=[
+                ("payload_template", IMAGE_RETRIEVAL_TEMPLATE),
+                ("response_field", "data"),
+            ],
+        )
+        endpoint = create_endpoint_with_mock_transport(TemplateEndpoint, model_endpoint)
+        return endpoint, model_endpoint
+
+    @pytest.fixture
+    def native_endpoint_and_model(self):
+        model_endpoint = create_model_endpoint(
+            EndpointType.IMAGE_RETRIEVAL, model_name="image-retrieval-model"
+        )
+        endpoint = create_endpoint_with_mock_transport(
+            ImageRetrievalEndpoint, model_endpoint
+        )
+        return endpoint, model_endpoint
+
+    @pytest.mark.parametrize(
+        "image_contents",
+        [
+            [
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+                "AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            ],
+            ["https://example.com/img1.png", "https://example.com/img2.png"],
+        ],
+        ids=["single_base64_image", "multiple_url_images"],
+    )
+    def test_payload_matches_native(
+        self,
+        template_endpoint_and_model,
+        native_endpoint_and_model,
+        image_contents,
+    ):
+        """Template produces identical payload to native image_retrieval."""
+        template_ep, template_me = template_endpoint_and_model
+        native_ep, native_me = native_endpoint_and_model
+
+        turn = Turn(
+            images=[Image(contents=image_contents)],
+            model="image-retrieval-model",
+        )
+
+        template_payload = template_ep.format_payload(
+            create_request_info(model_endpoint=template_me, turns=[turn])
+        )
+        native_payload = native_ep.format_payload(
+            create_request_info(model_endpoint=native_me, turns=[turn])
+        )
+
+        assert template_payload == native_payload
+
+    def test_payload_matches_with_multiple_image_objects(
+        self,
+        template_endpoint_and_model,
+        native_endpoint_and_model,
+    ):
+        """Template matches native when images span multiple Image objects."""
+        template_ep, template_me = template_endpoint_and_model
+        native_ep, native_me = native_endpoint_and_model
+
+        turn = Turn(
+            images=[
+                Image(contents=[self.BASE64_PNG]),
+                Image(contents=["https://example.com/other.png"]),
+            ],
+            model="image-retrieval-model",
+        )
+
+        template_payload = template_ep.format_payload(
+            create_request_info(model_endpoint=template_me, turns=[turn])
+        )
+        native_payload = native_ep.format_payload(
+            create_request_info(model_endpoint=native_me, turns=[turn])
+        )
+
+        assert template_payload == native_payload
+
+    def test_extra_fields_merged_into_payload(self):
+        """Extra fields (beyond reserved keys) are merged into the payload."""
+        model_endpoint = create_model_endpoint(
+            EndpointType.TEMPLATE,
+            model_name="image-retrieval-model",
+            extra=[
+                ("payload_template", IMAGE_RETRIEVAL_TEMPLATE),
+                ("response_field", "data"),
+                ("threshold", 0.5),
+                ("max_detections", 10),
+            ],
+        )
+        endpoint = create_endpoint_with_mock_transport(TemplateEndpoint, model_endpoint)
+
+        turn = Turn(
+            images=[Image(contents=[self.BASE64_PNG])],
+            model="image-retrieval-model",
+        )
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+
+        assert payload["input"][0]["type"] == "image_url"
+        assert payload["threshold"] == 0.5
+        assert payload["max_detections"] == 10
+
+    def test_response_parsed_via_jmespath(self, template_endpoint_and_model):
+        """JMESPath extracts the data field from an image retrieval response."""
+        endpoint, _ = template_endpoint_and_model
+        json_data = {
+            "data": [
+                {
+                    "index": 0,
+                    "bounding_boxes": {
+                        "chart": [
+                            {
+                                "x_min": 10,
+                                "y_min": 20,
+                                "x_max": 100,
+                                "y_max": 120,
+                                "confidence": 0.95,
+                            }
+                        ]
+                    },
+                }
+            ],
+            "usage": {"images_size_mb": 0.5},
+        }
+
+        parsed = endpoint.parse_response(create_mock_response(json_data=json_data))
+
+        assert parsed is not None
+        assert isinstance(parsed.data, RankingsResponseData)
+        assert len(parsed.data.rankings) == 1
+        assert "chart" in parsed.data.rankings[0]["bounding_boxes"]
+
+    def test_response_preserves_perf_ns(self, template_endpoint_and_model):
+        """perf_ns from the response is preserved through template parsing."""
+        endpoint, _ = template_endpoint_and_model
+        json_data = {"data": [{"index": 0}]}
+
+        parsed = endpoint.parse_response(
+            create_mock_response(perf_ns=999888777, json_data=json_data)
+        )
+
+        assert parsed is not None
+        assert parsed.perf_ns == 999888777
+
+    def test_response_no_data_falls_back_to_auto_detect(
+        self, template_endpoint_and_model
+    ):
+        """When JMESPath finds no data, auto-detection is attempted."""
+        endpoint, _ = template_endpoint_and_model
+
+        parsed = endpoint.parse_response(
+            create_mock_response(json_data={"status": "ok"})
         )
 
         assert parsed is None

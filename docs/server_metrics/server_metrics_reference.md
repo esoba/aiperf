@@ -12,6 +12,7 @@ Comprehensive reference for server metrics collected during AIPerf benchmark run
 2. [Backend Comparison Matrix](#backend-comparison-matrix)
 3. [Metric Interpretation Guide](#metric-interpretation-guide)
 4. [Detailed Metric Definitions](#detailed-metric-definitions)
+   - [System Metrics](#system-metrics)
    - [Dynamo Frontend](#dynamo-frontend)
    - [Dynamo Component](#dynamo-component)
    - [vLLM](#vllm)
@@ -50,6 +51,9 @@ Comprehensive reference for server metrics collected during AIPerf benchmark run
 
 | Metric | Field | Threshold | Meaning |
 |--------|-------|-----------|---------|
+| `system_cpu_utilization_percent` | `stats.max` | >90 | Client or server CPU saturated (system collector) |
+| `system_memory_available_bytes` | `stats.min` | Low | Memory pressure, swap risk (system collector) |
+| `gpu_process_memory_used_bytes` | `stats.max` | Near VRAM capacity | Per-process GPU memory nearing limit (system collector) |
 | `vllm:kv_cache_usage_perc` | `stats.max` | >0.9 | KV cache near full capacity |
 | `vllm:num_preemptions` | `stats.total` | >0 | Memory pressure causing preemptions |
 | `vllm:num_requests_waiting` | `stats.avg` | Growing | Queue building up |
@@ -166,6 +170,36 @@ When scraping multiple server instances, each series includes an `endpoint_url` 
 ---
 
 ## Detailed Metric Definitions
+
+## System Metrics
+
+System metrics are collected by the `system` collector (`--server-metrics system`) using `psutil` and optionally `pynvml`. These metrics are **additive** -- they run alongside Prometheus scraping and appear in exports with `endpoint_url: "system://localhost"`.
+
+Enable with: `--server-metrics system`
+
+For full details, see the [System Metrics Collector](system-metrics.md) guide.
+
+### CPU & Memory
+
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `system_cpu_utilization_percent` | gauge | percent | — | System-wide CPU utilization across all cores. `stats.avg` for typical load, `stats.max` for peak. |
+| `system_memory_used_bytes` | gauge | bytes | — | Physical memory currently in use. |
+| `system_memory_total_bytes` | gauge | bytes | — | Total physical memory installed. |
+| `system_memory_available_bytes` | gauge | bytes | — | Memory available for new allocations (includes reclaimable cache/buffers). |
+
+### GPU Process Memory (requires pynvml)
+
+| Metric | Type | Unit | Labels | Description |
+|--------|------|------|--------|-------------|
+| `gpu_process_memory_used_bytes` | gauge | bytes | `pid`, `process_name`, `gpu_index` | GPU VRAM allocated per process. One series per process per GPU. |
+
+**Label values:**
+- `pid`: Process ID (e.g., `12345`)
+- `process_name`: Process name with Triton-aware identification (`tritonserver`, `triton_python_backend_stub`, or the OS process name)
+- `gpu_index`: GPU device index (`0`, `1`, ...)
+
+---
 
 ## Dynamo Frontend
 
@@ -546,4 +580,4 @@ Labels that appear across multiple metrics:
 
 ---
 
-*For detailed implementation and usage examples, see the [Server Metrics Tutorial](server-metrics.md). For aggregated statistics, see the [JSON Schema Reference](server_metrics_json_schema.md). For raw time-series analysis, see the [Parquet Schema Reference](server_metrics_parquet_schema.md).*
+*For detailed implementation and usage examples, see the [Server Metrics Tutorial](server-metrics.md). For system-level monitoring, see the [System Metrics Collector](system-metrics.md). For aggregated statistics, see the [JSON Schema Reference](server_metrics_json_schema.md). For raw time-series analysis, see the [Parquet Schema Reference](server_metrics_parquet_schema.md).*

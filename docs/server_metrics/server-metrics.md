@@ -12,10 +12,12 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | Feature | Description | Default |
 |---------|-------------|---------|
 | **Auto-discovery** | Automatically finds `/metrics` endpoint on server URL | Enabled |
+| **System metrics** | `--server-metrics system` for CPU, memory, per-process VRAM | Off |
 | **Collection** | Scrapes metrics every 333ms during benchmark | Enabled |
 | **Outputs** | JSON (aggregated), CSV (tabular), JSONL (time-series), Parquet (cumulative deltas) | JSON + CSV |
 | **Custom endpoints** | `--server-metrics URL [URL...]` for additional endpoints | None |
-| **Disable** | `--no-server-metrics` to turn off collection | Enabled |
+| **Combined** | `--server-metrics system URL [URL...]` for both system and Prometheus | -- |
+| **Disable** | `--no-server-metrics` to turn off all collection | Enabled |
 | **Windowed stats** | `--slice-duration SECONDS` for time-sliced analysis | Off |
 
 **Key metrics by server:**
@@ -111,6 +113,18 @@ AIPerf automatically:
 aiperf profile --model MODEL ... --server-metrics-formats json csv jsonl
 ```
 
+### Adding System Metrics
+
+Collect host-level CPU, memory, and per-process GPU VRAM alongside the auto-discovered Prometheus endpoint:
+
+```bash
+aiperf profile --model MODEL ... --server-metrics system
+```
+
+System metrics are **additive** -- Prometheus auto-discovery still runs. Both data sources appear in the same export files, distinguished by `endpoint_url` (`system://localhost` vs `http://...`).
+
+See the [System Metrics Collector](system-metrics.md) guide for full details.
+
 ### Adding Custom Endpoints
 
 ```bash
@@ -121,11 +135,17 @@ aiperf profile --model MODEL ... --server-metrics http://localhost:8081
 aiperf profile --model MODEL ... --server-metrics \
     http://node1:8081 \
     http://node2:8081
+
+# System metrics + custom endpoints (all three combined)
+aiperf profile --model MODEL ... --server-metrics system \
+    http://node1:8081 \
+    http://node2:8081
 ```
 
 ### Disabling Server Metrics
 
 ```bash
+# Disables ALL collection (both system and Prometheus)
 aiperf profile --model MODEL ... --no-server-metrics
 ```
 
@@ -331,6 +351,7 @@ Raw time-series data with delta calculations applied. Uses a normalized schema (
 See [Parquet Schema Reference](server_metrics_parquet_schema.md) for complete schema, metadata, and query examples.
 
 **Related documentation:**
+- [System Metrics Collector](system-metrics.md) - Host-level CPU, memory, and per-process GPU VRAM monitoring
 - [JSON Schema Reference](server_metrics_json_schema.md) - Complete JSON export format specification
 - [Server Metrics Reference](server_metrics_reference.md) - Metric definitions by backend (vLLM, SGLang, TRT-LLM, Dynamo)
 - [Parquet Schema Reference](server_metrics_parquet_schema.md) - Raw time-series data schema

@@ -193,6 +193,14 @@
       "additionalProperties": {
         "$ref": "#/$defs/GpuTelemetryCollectorPlugin"
       }
+    },
+    "server_metrics_collector": {
+      "title": "Server Metrics Collector Plugins",
+      "type": "object",
+      "description": "Server metrics collectors gather server-side metrics from various sources.\nSupports Prometheus HTTP endpoints and system-level monitoring (psutil/pynvml).\nOne-to-one mapping based on server_metrics_collector configuration.",
+      "additionalProperties": {
+        "$ref": "#/$defs/ServerMetricsCollectorPlugin"
+      }
     }
   },
   "title": "PluginsManifest",
@@ -1275,6 +1283,47 @@
       ],
       "title": "GPU Telemetry Collector Plugin",
       "description": "GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.\nSupports DCGM HTTP endpoints and pynvml Python library.\nOne-to-one mapping based on gpu_telemetry_collector configuration."
+    },
+    "ServerMetricsCollectorPlugin": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "description": "Python class that implements this plugin entry. Use 'module.path:ClassName' format, e.g., 'aiperf.endpoints.openai_chat:ChatEndpoint'.",
+          "title": "Class",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "Brief explanation of what this plugin type does and when to use it.",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "default": 0,
+          "description": "Conflict resolution priority. When multiple packages register the same type name, the one with higher priority wins. Use 0 for normal plugins, higher values to override built-in implementations.",
+          "title": "Priority",
+          "type": "integer"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Category-specific configuration for this plugin type. The allowed fields depend on the category's metadata_class in categories.yaml.",
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "title": "Server Metrics Collector Plugin",
+      "description": "Server metrics collectors gather server-side metrics from various sources.\nSupports Prometheus HTTP endpoints and system-level monitoring (psutil/pynvml).\nOne-to-one mapping based on server_metrics_collector configuration."
     }
   }
 }

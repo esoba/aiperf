@@ -65,6 +65,37 @@ class TelemetryMetrics(AIPerfBaseModel):
         default=None,
         description="Throttling duration due to power constraints in microseconds",
     )
+    graphics_clock: float | None = Field(
+        default=None, description="Current graphics clock speed in MHz"
+    )
+    sm_clock: float | None = Field(
+        default=None, description="Current SM clock speed in MHz"
+    )
+    memory_clock: float | None = Field(
+        default=None, description="Current memory clock speed in MHz"
+    )
+    gpu_memory_total: float | None = Field(
+        default=None, description="Total GPU memory in GB"
+    )
+    gpu_memory_free: float | None = Field(
+        default=None, description="Free GPU memory in GB"
+    )
+    gpu_power_limit: float | None = Field(
+        default=None, description="GPU power management limit in W"
+    )
+    performance_state: float | None = Field(
+        default=None,
+        description="GPU performance state (P-state 0-12, lower is higher performance)",
+    )
+    pcie_tx_throughput: float | None = Field(
+        default=None, description="PCIe transmit throughput in KB/s"
+    )
+    pcie_rx_throughput: float | None = Field(
+        default=None, description="PCIe receive throughput in KB/s"
+    )
+    fan_speed: float | None = Field(
+        default=None, description="Fan speed percentage (0-100)"
+    )
 
 
 class GpuMetadata(AIPerfBaseModel):
