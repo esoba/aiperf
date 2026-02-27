@@ -1,0 +1,451 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: RC
+
+on:
+  push:
+    branches:
+      - 'pvijayakrish/automate-release-rc'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # ============================================================================
+  # GATE: Authorization + Version Resolution
+  # ============================================================================
+
+  authorize:
+    name: Authorize
+    runs-on: prod-default-small-v2
+    if: github.actor == 'pvijayakrish'
+    steps:
+      - name: Authorized
+        run: echo "Authorized"
+
+  prepare-release:
+    name: Prepare Release
+    needs: [authorize]
+    runs-on: prod-default-small-v2
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      rc_number: ${{ steps.rc.outputs.rc_number }}
+      rc_tag: ${{ steps.rc.outputs.rc_tag }}
+      pep440_version: ${{ steps.rc.outputs.pep440_version }}
+      container_image: ${{ steps.metadata.outputs.container_image }}
+      container_platform_amd64_tag: ${{ steps.metadata.outputs.container_platform_amd64_tag }}
+      container_platform_arm64_tag: ${{ steps.metadata.outputs.container_platform_arm64_tag }}
+      container_platform_amd64_ref: ${{ steps.metadata.outputs.container_platform_amd64_ref }}
+      container_platform_arm64_ref: ${{ steps.metadata.outputs.container_platform_arm64_ref }}
+      container_multiarch_tag: ${{ steps.metadata.outputs.container_multiarch_tag }}
+      container_multiarch_ref: ${{ steps.metadata.outputs.container_multiarch_ref }}
+      wheel_filename: ${{ steps.metadata.outputs.wheel_filename }}
+    steps:
+      - name: Set test version
+        id: extract
+        run: |
+          set -euo pipefail
+          VERSION="0.0.0"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Determine RC number
+        id: rc
+        env:
+          VERSION: ${{ steps.extract.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          RC_PATTERN="v${VERSION}-rc"
+          EXISTING_RCS=$(git tag -l "${RC_PATTERN}*" | grep -E "^v${VERSION}-rc[0-9]+$" | sort -V || true)
+
+          if [ -z "${EXISTING_RCS}" ]; then
+            NEXT_RC=0
+          else
+            LAST_RC=$(echo "${EXISTING_RCS}" | tail -1)
+            LAST_RC_NUM=${LAST_RC#v${VERSION}-rc}
+            NEXT_RC=$((LAST_RC_NUM + 1))
+          fi
+
+          RC_TAG="v${VERSION}-rc${NEXT_RC}"
+          PEP440_VERSION="${VERSION}rc${NEXT_RC}"
+
+          echo "rc_number=${NEXT_RC}" >> "$GITHUB_OUTPUT"
+          echo "rc_tag=${RC_TAG}" >> "$GITHUB_OUTPUT"
+          echo "pep440_version=${PEP440_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release metadata
+        id: metadata
+        uses: ./.github/actions/release-metadata
+        with:
+          branch_name: release/${{ steps.extract.outputs.version }}
+          rc_number: ${{ steps.rc.outputs.rc_number }}
+          container_registry: ${{ secrets.RC_CONTAINER_REGISTRY }}
+          container_repository: aiperf
+
+  # ============================================================================
+  # QUALITY GATES
+  # ============================================================================
+
+  pre-commit:
+    name: Pre-commit Checks
+    needs: [prepare-release]
+    runs-on: prod-default-small-v2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Run pre-commit
+        run: |
+          . .venv/bin/activate
+          pre-commit run --all-files
+
+  unit-tests:
+    name: Unit Tests
+    needs: [prepare-release]
+    runs-on: prod-default-v2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Run unit and component integration tests
+        run: make test-ci PYTHON_VERSION=3.12
+
+  integration-tests:
+    name: Integration Tests
+    needs: [prepare-release]
+    runs-on: prod-default-v2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Run integration tests
+        run: make integration-tests-ci
+
+  gpu-e2e-tests:
+    name: GPU End-to-End Tests
+    needs: [prepare-release]
+    runs-on: prod-tester-amd-gpu-v1
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build aiperf test image
+        run: |
+          docker build \
+            --target test \
+            -t aiperf:test \
+            .
+
+      - name: Run documentation e2e tests
+        env:
+          AIPERF_SOURCE_DIR: ${{ github.workspace }}
+        run: |
+          docker run --rm \
+            --gpus all \
+            --network host \
+            -v "${AIPERF_SOURCE_DIR}/tests/fixtures:/fixtures:ro" \
+            -v "${AIPERF_SOURCE_DIR}:/workspace:ro" \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aiperf:test \
+            "cd /workspace && python3 tests/ci/test_docs_end_to_end/main.py --all-servers"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f $(docker ps -aq --filter "ancestor=aiperf:test") 2>/dev/null || true
+          docker rmi aiperf:test 2>/dev/null || true
+
+  # ============================================================================
+  # BUILD ARTIFACTS
+  # ============================================================================
+
+  build-wheel:
+    name: Build Wheel
+    needs: [prepare-release]
+    runs-on: prod-default-small-v2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: pip install --upgrade pip build twine
+
+      - name: Patch version for RC
+        env:
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+        run: |
+          sed -i "s/^version = .*/version = \"${PEP440_VERSION}\"/" pyproject.toml
+
+      - name: Build wheel
+        run: python -m build --wheel --outdir dist/
+
+      - name: Verify wheel exists
+        env:
+          EXPECTED_WHEEL: ${{ needs.prepare-release.outputs.wheel_filename }}
+        run: |
+          if [ ! -f "dist/${EXPECTED_WHEEL}" ]; then
+            echo "::error::Expected wheel not found"
+            exit 1
+          fi
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiperf-wheel
+          path: dist/*.whl
+          retention-days: 30
+
+  validate-wheel:
+    name: Validate Wheel
+    needs: [prepare-release, build-wheel]
+    runs-on: prod-default-small-v2
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install validation tools
+        run: pip install --upgrade pip twine
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aiperf-wheel
+          path: dist/
+
+      - name: Run twine check
+        run: twine check dist/*.whl
+
+      - name: Validate license metadata
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/*.whl)
+          python -m zipfile -l "${WHEEL}" | grep -i license || {
+            echo "::warning::No LICENSE file found in wheel"
+          }
+
+      - name: Smoke test import
+        run: |
+          pip install dist/*.whl
+          python -c "import aiperf; print(f'aiperf version: {aiperf.__version__}')"
+          aiperf --help
+
+  build-container:
+    name: Build Container (${{ matrix.arch }})
+    needs: [prepare-release]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: prod-builder-amd-v1
+          - arch: arm64
+            platform: linux/arm64
+            runner: prod-builder-arm-v1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to container registry
+        run: |
+          echo "${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}" | \
+            docker login \
+              "${{ secrets.RC_CONTAINER_REGISTRY }}" \
+              -u "${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}" \
+              --password-stdin
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push platform image
+        env:
+          IMAGE_REF: ${{ needs.prepare-release.outputs[format('container_platform_{0}_ref', matrix.arch)] }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          docker buildx build \
+            --platform "${PLATFORM}" \
+            --target runtime \
+            --tag "${IMAGE_REF}" \
+            --push \
+            .
+
+      - name: Log out from registry
+        if: always()
+        run: docker logout "${{ secrets.RC_CONTAINER_REGISTRY }}" 2>/dev/null || true
+
+  # ============================================================================
+  # PUBLISH
+  # ============================================================================
+
+  create-multiarch-manifest:
+    name: Create Multi-arch Manifest
+    needs: [prepare-release, build-container]
+    runs-on: prod-default-small-v2
+    steps:
+      - name: Log in to container registry
+        run: |
+          echo "${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}" | \
+            docker login \
+              "${{ secrets.RC_CONTAINER_REGISTRY }}" \
+              -u "${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}" \
+              --password-stdin
+
+      - name: Create and push multi-arch manifest
+        env:
+          MULTIARCH_REF: ${{ needs.prepare-release.outputs.container_multiarch_ref }}
+          AMD64_REF: ${{ needs.prepare-release.outputs.container_platform_amd64_ref }}
+          ARM64_REF: ${{ needs.prepare-release.outputs.container_platform_arm64_ref }}
+        run: |
+          set -euo pipefail
+          docker manifest create "${MULTIARCH_REF}" \
+            "${AMD64_REF}" \
+            "${ARM64_REF}"
+          docker manifest push "${MULTIARCH_REF}"
+
+      - name: Log out from registry
+        if: always()
+        run: docker logout "${{ secrets.RC_CONTAINER_REGISTRY }}" 2>/dev/null || true
+
+  publish-wheel:
+    name: Publish Wheel
+    needs: [prepare-release, validate-wheel]
+    runs-on: prod-default-small-v2
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install twine
+        run: pip install --upgrade pip twine
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aiperf-wheel
+          path: dist/
+
+      - name: Publish wheel
+        env:
+          TWINE_REPOSITORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+          TWINE_USERNAME: ${{ secrets.ARTIFACTORY_USER }}
+          TWINE_PASSWORD: ${{ secrets.ARTIFACTORY_TOKEN }}
+          TWINE_NON_INTERACTIVE: '1'
+        run: |
+          set -euo pipefail
+          python -m twine upload \
+            --disable-progress-bar \
+            dist/*.whl
+
+      - name: Summary
+        env:
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
+        run: |
+          echo "### Wheel Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **File**: \`${WHEEL_FILENAME}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version**: \`${PEP440_VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
+  # TAG + SUMMARY
+  # ============================================================================
+
+  create-rc-tag:
+    name: Create RC Tag
+    needs:
+      - prepare-release
+      - pre-commit
+      - unit-tests
+      - integration-tests
+      - gpu-e2e-tests
+      - publish-wheel
+      - create-multiarch-manifest
+    runs-on: prod-default-small-v2
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and push RC tag
+        env:
+          RC_TAG: ${{ needs.prepare-release.outputs.rc_tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${RC_TAG}" -m "Release candidate ${RC_TAG}"
+          git push origin "${RC_TAG}"
+
+      - name: Release summary
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+          RC_TAG: ${{ needs.prepare-release.outputs.rc_tag }}
+          RC_NUMBER: ${{ needs.prepare-release.outputs.rc_number }}
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
+          GPU_TEST_RESULT: ${{ needs.gpu-e2e-tests.result }}
+        run: |
+          {
+            echo "## RC Release Summary"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Version | ${VERSION} |"
+            echo "| RC Number | ${RC_NUMBER} |"
+            echo "| Git Tag | \`${RC_TAG}\` |"
+            echo "| PEP 440 Version | \`${PEP440_VERSION}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Wheel | \`${WHEEL_FILENAME}\` |"
+            echo ""
+            echo "### Quality Gates"
+            echo ""
+            echo "| Check | Status |"
+            echo "|-------|--------|"
+            echo "| Pre-commit | ${{ needs.pre-commit.result }} |"
+            echo "| Unit Tests | ${{ needs.unit-tests.result }} |"
+            echo "| Integration Tests | ${{ needs.integration-tests.result }} |"
+            echo "| GPU E2E Tests | ${GPU_TEST_RESULT} |"
+          } >> "$GITHUB_STEP_SUMMARY"
