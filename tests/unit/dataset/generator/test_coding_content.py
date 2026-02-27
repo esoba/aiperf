@@ -226,7 +226,7 @@ class TestCodingContentGenerator:
             ("python", "test session starts"),
             ("go", "Test"),
             ("rust", "Compiling"),
-            ("typescript", "test session starts"),
+            ("typescript", "test suites matching"),
         ],
     )
     def test_gen_test_output_with_language(self, generator, language, expected):
@@ -256,3 +256,29 @@ class TestCodingContentGenerator:
                 seen.add("makefile")
         assert seen <= expected_kinds
         assert len(seen) > 0
+
+    @pytest.mark.parametrize(
+        "language,expected_tool",
+        [
+            ("python", "ruff"),
+            ("go", "golangci-lint"),
+            ("rust", "cargo clippy"),
+            ("typescript", "eslint"),
+        ],
+    )
+    def test_gen_cicd_output_with_language(self, generator, language, expected_tool):
+        block = generator._gen_cicd_output(language=language)
+        assert expected_tool in block
+
+    @pytest.mark.parametrize(
+        "language,expected_fence",
+        [
+            ("python", "```python"),
+            ("go", "```go"),
+            ("rust", "```rust"),
+            ("typescript", "```typescript"),
+        ],
+    )
+    def test_gen_markdown_doc_with_language(self, generator, language, expected_fence):
+        block = generator._gen_markdown_doc(language=language)
+        assert expected_fence in block

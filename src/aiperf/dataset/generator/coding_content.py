@@ -91,6 +91,32 @@ _FILE_PATHS = (
     ".github/workflows/ci.yml", "kubernetes/deployment.yaml",
 )
 
+_LANG_FILE_PATHS: dict[str, tuple[str, ...]] = {
+    "python": (
+        "src/main.py", "src/config.py", "src/models.py", "src/routes.py",
+        "src/utils.py", "src/middleware.py", "src/database.py", "src/auth.py",
+        "tests/test_main.py", "tests/test_models.py", "tests/conftest.py",
+        "pyproject.toml", "Dockerfile", "Makefile",
+    ),
+    "go": (
+        "lib/core.go", "lib/handler.go", "lib/service.go", "lib/types.go",
+        "pkg/api/server.go", "pkg/api/client.go", "pkg/store/store.go",
+        "cmd/server/main.go", "internal/config/config.go",
+        "go.mod", "go.sum", "Makefile",
+    ),
+    "rust": (
+        "src/lib.rs", "src/main.rs", "src/config.rs", "src/error.rs",
+        "src/handler.rs", "src/models.rs", "src/routes.rs",
+        "Cargo.toml", "Cargo.lock",
+    ),
+    "typescript": (
+        "src/index.ts", "src/app.ts", "src/types.ts", "src/api.ts",
+        "src/components/App.tsx", "src/components/Form.tsx",
+        "src/utils.ts", "src/middleware.ts", "src/routes.ts",
+        "package.json", "tsconfig.json", "Dockerfile",
+    ),
+}
+
 _ERROR_MESSAGES = (
     "connection refused", "timeout exceeded", "permission denied",
     "resource not found", "invalid argument", "out of memory",
@@ -207,7 +233,6 @@ _LANGUAGE_POOL_BLOCK_COUNTS: dict[str, int] = {
 
 _LANGUAGE_AGNOSTIC_GENERATORS = (
     "_gen_bash_output", "_gen_json_response", "_gen_git_diff",
-    "_gen_cicd_output", "_gen_markdown_doc",
 )
 
 _LANGUAGE_GENERATORS: dict[str, tuple[str, ...]] = {
@@ -330,13 +355,20 @@ class CodingContentGenerator(BaseGenerator):
             for _ in range(count):
                 blocks.append(gen_fn())
 
-        # Language-specific mixed generators (errors, tests, configs)
+        # Language-specific mixed generators (errors, tests, configs, CI/CD, markdown)
         for _ in range(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_error_traceback"]):
             blocks.append(self._gen_error_traceback(language=language))
         for _ in range(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_test_output"]):
             blocks.append(self._gen_test_output(language=language))
         for _ in range(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_config_file"]):
             blocks.append(self._gen_config_file(language=language))
+        for _ in range(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_cicd_output"]):
+            blocks.append(self._gen_cicd_output(language=language))
+        for _ in range(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_markdown_doc"]):
+            blocks.append(self._gen_markdown_doc(language=language))
+
+        # Shuffle so any window slice gets diverse content types
+        self._template_rng.shuffle(blocks)
 
         text = "\n\n".join(blocks)
         pool = self.tokenizer.encode(text)
@@ -373,6 +405,7 @@ class CodingContentGenerator(BaseGenerator):
             gen_fn = getattr(self, gen_name)
             for _ in range(count):
                 blocks.append(gen_fn())
+        self._template_rng.shuffle(blocks)
         text = "\n\n".join(blocks)
         self._tool_pool = self.tokenizer.encode(text)
         self.debug(
@@ -514,7 +547,7 @@ type {cls} struct {{{{
 }}}}
 
 func New{cls}({v1} string) *{cls} {{{{
-    return &{cls}{{{{{{v1}}: {v1}}}}}
+    return &{cls}{{{{{v1}: {v1}}}}}
 }}}}
 
 func (s *{cls}) {m1.title()}(ctx context.Context) error {{{{
@@ -679,7 +712,6 @@ $ echo $?
         err = r.choice(_ERROR_MESSAGES)
         cls = r.choice(_CLASSES)
         m1, m2 = r.sample(_METHODS, 2)
-        f1, f2, f3 = r.sample(list(_FILE_PATHS), 3)
 
         lang_to_kind = {
             "python": "python",
@@ -692,6 +724,10 @@ $ echo $?
             if language in lang_to_kind
             else r.choice(["python", "go", "rust", "node"])
         )
+        file_pool = (
+            _LANG_FILE_PATHS.get(language, _FILE_PATHS) if language else _FILE_PATHS
+        )
+        f1, f2, f3 = r.sample(list(file_pool), 3)
         if kind == "python":
             v = r.choice(_VARS)
             mod = r.choice(_MODULES)
@@ -787,7 +823,7 @@ index {idx2a:07x}..{idx2b:07x} 100644
 +logger = logging.getLogger(__name__)
 """
 
-    def _gen_cicd_output(self) -> str:
+    def _gen_cicd_output(self, language: str | None = None) -> str:
         r = self._template_rng
         mod = r.choice(_MODULES)
         n_pass = r.randint(20, 200)
@@ -803,19 +839,52 @@ index {idx2a:07x}..{idx2b:07x} 100644
         status = "PASSED" if n_fail == 0 else "FAILED"
         elapsed = r.randint(30, 600)
 
+        lang_toolchain = {
+            "python": {
+                "install": f"pip install -r requirements.txt\n  Resolved {n_pkgs} packages in {install_time:.1f}s",
+                "lint": f"ruff check . && ruff format --check .\n  All checks passed ({n_lint_files} files)",
+                "typecheck": f"mypy src/\n  Success: {n_type_mods} modules checked",
+                "test": f"pytest tests/ -v\n  {n_pass} passed, {n_fail} failed, {n_skip} skipped\n  Coverage: {coverage:.1f}%",
+                "build": f"python -m build\n  Built {mod}-{ver}.tar.gz ({artifact_size:.1f} MB)",
+            },
+            "go": {
+                "install": f"go mod download\n  Resolved {n_pkgs} packages in {install_time:.1f}s",
+                "lint": f"golangci-lint run ./...\n  All checks passed ({n_lint_files} files)",
+                "typecheck": f"go vet ./...\n  Success: {n_type_mods} packages checked",
+                "test": f"go test -v -race -coverprofile=coverage.out ./...\n  {n_pass} passed, {n_fail} failed, {n_skip} skipped\n  Coverage: {coverage:.1f}%",
+                "build": f"go build -o bin/{mod} ./cmd/{mod}\n  Built bin/{mod} ({artifact_size:.1f} MB)",
+            },
+            "rust": {
+                "install": f"cargo fetch\n  Resolved {n_pkgs} crates in {install_time:.1f}s",
+                "lint": f"cargo clippy -- -D warnings\n  All checks passed ({n_lint_files} files)",
+                "typecheck": f"cargo check\n  Checked {n_type_mods} crates",
+                "test": f"cargo test\n  {n_pass} passed, {n_fail} failed, {n_skip} ignored\n  Coverage: {coverage:.1f}%",
+                "build": f"cargo build --release\n  Built target/release/{mod} ({artifact_size:.1f} MB)",
+            },
+            "typescript": {
+                "install": f"npm ci\n  Resolved {n_pkgs} packages in {install_time:.1f}s",
+                "lint": f"eslint src/ && prettier --check src/\n  All checks passed ({n_lint_files} files)",
+                "typecheck": f"tsc --noEmit\n  Success: {n_type_mods} modules checked",
+                "test": f"vitest run\n  {n_pass} passed, {n_fail} failed, {n_skip} skipped\n  Coverage: {coverage:.1f}%",
+                "build": f"npm run build\n  Built dist/{mod}-{ver}.tgz ({artifact_size:.1f} MB)",
+            },
+        }
+        toolchain = lang_toolchain.get(
+            language, r.choice(list(lang_toolchain.values()))
+        )
+
         return f"""\
 === CI Pipeline: {mod} ===
 Step 1/5: Installing dependencies...
-  Resolved {n_pkgs} packages in {install_time:.1f}s
+  {toolchain["install"]}
 Step 2/5: Linting...
-  All checks passed ({n_lint_files} files)
+  {toolchain["lint"]}
 Step 3/5: Type checking...
-  Success: {n_type_mods} modules checked
+  {toolchain["typecheck"]}
 Step 4/5: Running tests...
-  {n_pass} passed, {n_fail} failed, {n_skip} skipped
-  Coverage: {coverage:.1f}%
+  {toolchain["test"]}
 Step 5/5: Building artifacts...
-  Built {mod}-{ver}.tar.gz ({artifact_size:.1f} MB)
+  {toolchain["build"]}
 Pipeline {status} in {elapsed}s
 """
 
@@ -887,28 +956,44 @@ description = "{desc_cls} {desc_method} service"
 {v3} = true
 """
         elif kind == "dockerfile":
-            py_ver = r.randint(10, 13)
-            copy_file = r.choice(_FILE_PATHS)
             env1_val = r.randint(1, 100)
             env2_val = r.choice(_MODULES)
             port = r.randint(3000, 9999)
+            docker_lang = language or "python"
+            if docker_lang == "python":
+                py_ver = r.randint(10, 13)
+                base_image = f"python:3.{py_ver}-slim"
+                install_cmd = "COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt"
+                run_cmd = f'CMD ["python", "-m", "{mod}"]'
+            elif docker_lang == "go":
+                go_ver = f"1.{r.randint(21, 23)}"
+                base_image = f"golang:{go_ver}-alpine"
+                install_cmd = "COPY go.mod go.sum ./\nRUN go mod download"
+                run_cmd = f'CMD ["./bin/{mod}"]'
+            elif docker_lang == "rust":
+                base_image = "rust:1-slim"
+                install_cmd = "COPY Cargo.toml Cargo.lock ./\nRUN cargo fetch"
+                run_cmd = f'CMD ["./target/release/{mod}"]'
+            else:
+                node_ver = r.randint(18, 22)
+                base_image = f"node:{node_ver}-alpine"
+                install_cmd = "COPY package.json package-lock.json ./\nRUN npm ci"
+                run_cmd = f'CMD ["node", "dist/{mod}/index.js"]'
             return f"""\
-FROM python:3.{py_ver}-slim
+FROM {base_image}
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+{install_cmd}
 
 COPY src/ ./src/
-COPY {copy_file} .
 
 ENV {v1.upper()}={env1_val}
 ENV {v2.upper()}={env2_val}
 
 EXPOSE {port}
 
-CMD ["python", "-m", "{mod}"]
+{run_cmd}
 """
         else:
             return f"""\
@@ -929,15 +1014,77 @@ clean:
 \trm -rf bin/ dist/ *.egg-info
 """
 
-    def _gen_markdown_doc(self) -> str:
+    def _gen_markdown_doc(self, language: str | None = None) -> str:
         r = self._template_rng
         cls = r.choice(_CLASSES)
         m1, m2 = r.sample(_METHODS, 2)
         mod = r.choice(_MODULES)
         v1 = r.choice(_VARS)
-        param_type = r.choice(_TYPES)
-        return_type = r.choice(_TYPES)
         err = r.choice(_ERROR_MESSAGES)
+
+        lang_examples = {
+            "python": {
+                "fence": "python",
+                "code": f'from {mod} import {cls}\n\ninstance = {cls}({v1}="value")\nresult = await instance.{m1}()',
+                "param_type": r.choice(
+                    ("str", "int", "float", "bool", "dict", "list", "Any", "Optional")
+                ),
+                "return_type": r.choice(
+                    ("str", "int", "bool", "dict", "list", "None", "Any")
+                ),
+            },
+            "go": {
+                "fence": "go",
+                "code": f'import "{mod}"\n\nc := {mod}.New{cls}("{v1}")\nerr := c.{m1.title()}(ctx)',
+                "param_type": r.choice(
+                    (
+                        "string",
+                        "int",
+                        "int64",
+                        "bool",
+                        "[]byte",
+                        "error",
+                        "context.Context",
+                    )
+                ),
+                "return_type": r.choice(("string", "int", "bool", "error", f"*{cls}")),
+            },
+            "rust": {
+                "fence": "rust",
+                "code": f'use {mod}::{cls};\n\nlet mut c = {cls}::new("{v1}");\nc.{m1}().await?;',
+                "param_type": r.choice(
+                    (
+                        "&str",
+                        "String",
+                        "i64",
+                        "bool",
+                        "Vec<u8>",
+                        "&[u8]",
+                        "Option<String>",
+                    )
+                ),
+                "return_type": r.choice(
+                    ("Result<()>", "Result<String>", "bool", "Option<String>", "&str")
+                ),
+            },
+            "typescript": {
+                "fence": "typescript",
+                "code": f"import {{ {cls} }} from './{mod}';\n\nconst c = new {cls}({{ {v1}: 'value' }});\nawait c.{m1}();",
+                "param_type": r.choice(
+                    (
+                        "string",
+                        "number",
+                        "boolean",
+                        "Record<string, unknown>",
+                        "unknown[]",
+                    )
+                ),
+                "return_type": r.choice(
+                    ("string", "number", "boolean", "void", "Promise<void>")
+                ),
+            },
+        }
+        example = lang_examples.get(language, r.choice(list(lang_examples.values())))
 
         return f"""\
 # {cls}
@@ -948,11 +1095,8 @@ The `{cls}` class provides {m1} and {m2} operations for the `{mod}` module.
 
 ## Usage
 
-```python
-from {mod} import {cls}
-
-instance = {cls}({v1}="value")
-result = await instance.{m1}()
+```{example["fence"]}
+{example["code"]}
 ```
 
 ## API Reference
@@ -962,9 +1106,9 @@ result = await instance.{m1}()
 Performs the {m1} operation.
 
 **Parameters:**
-- `{v1}` ({param_type}): The input {v1}.
+- `{v1}` ({example["param_type"]}): The input {v1}.
 
-**Returns:** {return_type}
+**Returns:** {example["return_type"]}
 
 ### `{m2}()`
 
@@ -983,7 +1127,7 @@ Performs the {m2} operation.
             "python": "pytest",
             "go": "go",
             "rust": "cargo",
-            "typescript": "pytest",
+            "typescript": "jest",
         }
         kind = (
             lang_to_kind[language]
@@ -1003,6 +1147,29 @@ Performs the {m2} operation.
             dur = r.uniform(0.5, 30.0)
             lines.append(f"\n{'=' * 70}")
             lines.append(f"{n_pass} passed, {n_fail} failed in {dur:.2f}s")
+            return "\n".join(lines) + "\n"
+        elif kind == "jest":
+            runner = r.choice(["JEST", "VITEST"])
+            lines = [
+                f" {runner}  v{r.randint(28, 30)}.{r.randint(0, 9)}.{r.randint(0, 9)}"
+            ]
+            lines.append("")
+            results: list[str] = []
+            for m in methods:
+                passed = r.choice([True, True, True, False])
+                mark = "\u2713" if passed else "\u2717"
+                dur_ms = r.randint(1, 500)
+                results.append(f"  {mark} {cls} > {m} ({dur_ms} ms)")
+                lines.append(results[-1])
+            n_pass = sum(1 for res in results if "\u2713" in res)
+            n_fail = len(methods) - n_pass
+            dur = r.uniform(0.5, 15.0)
+            lines.append("")
+            lines.append(
+                f"Tests:       {n_fail} failed, {n_pass} passed, {len(methods)} total"
+            )
+            lines.append(f"Time:        {dur:.3f} s")
+            lines.append(f"Ran all test suites matching /src/{mod}.test.ts/i.")
             return "\n".join(lines) + "\n"
         elif kind == "go":
             lines = []
