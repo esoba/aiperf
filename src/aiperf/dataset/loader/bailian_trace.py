@@ -89,8 +89,12 @@ class BailianTraceDatasetLoader(BaseTraceDatasetLoader[BailianTrace]):
                 return root_cache[chat_id]
 
             path: list[int] = []
+            seen: set[int] = set()
             current = chat_id
             while current in by_chat_id and by_chat_id[current].parent_chat_id != -1:
+                if current in seen:
+                    break
+                seen.add(current)
                 parent = by_chat_id[current].parent_chat_id
                 if parent == current or parent not in by_chat_id:
                     break

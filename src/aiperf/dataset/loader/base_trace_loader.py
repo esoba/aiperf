@@ -167,6 +167,9 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         :meth:`_parse_trace`, :meth:`_preprocess_trace`, and
         :meth:`_group_traces`.
         """
+        self._skipped_traces = 0
+        self._skipped_max_isl = 0
+        self._capped_max_osl = 0
         items: list[TraceT] = []
 
         with open(self.filename) as f:

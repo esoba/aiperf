@@ -167,6 +167,8 @@ class PromptGenerator(BaseGenerator):
             A synthetic prompt as a string.
         """
         if hash_ids:
+            if mean is None:
+                raise ValueError("mean must be provided when hash_ids is set.")
             block_size = (
                 self.config.input_tokens.block_size or InputTokensDefaults.BLOCK_SIZE
             )

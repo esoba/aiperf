@@ -183,7 +183,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
                 f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
                 f"are only supported with trace datasets, "
-                f"but got {dataset_type.value}. "
+                f"but got {dataset_type}. "
                 f"Either remove synthesis options or use a trace dataset type."
             )
 
