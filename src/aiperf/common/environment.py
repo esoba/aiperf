@@ -74,6 +74,12 @@ class _APIServerSettings(BaseSettings):
         default=[],
         description="List of CORS origins to allow (empty = no CORS, ['*'] = all origins)",
     )
+    SHUTDOWN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=5.0,
+        description="Timeout in seconds for graceful API server shutdown before force-cancelling",
+    )
 
 
 class _CompressionSettings(BaseSettings):

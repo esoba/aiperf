@@ -103,30 +103,32 @@ class TestProfileConfigureTimeout:
 class TestAPIServerSettings:
     """Test _APIServerSettings defaults and env var overrides."""
 
-    def test_defaults(self) -> None:
+    def test_api_server_settings_no_env_returns_defaults(self) -> None:
         settings = _APIServerSettings()
         assert settings.HOST == "127.0.0.1"
         assert settings.PORT is None
         assert settings.CORS_ORIGINS == []
 
-    def test_port_from_env(self, monkeypatch) -> None:
+    def test_api_server_settings_env_port_overrides_default(self, monkeypatch) -> None:
         monkeypatch.setenv("AIPERF_API_SERVER_PORT", "8080")
         settings = _APIServerSettings()
         assert settings.PORT == 8080
 
-    def test_host_from_env(self, monkeypatch) -> None:
+    def test_api_server_settings_env_host_overrides_default(self, monkeypatch) -> None:
         monkeypatch.setenv("AIPERF_API_SERVER_HOST", "0.0.0.0")
         settings = _APIServerSettings()
         assert settings.HOST == "0.0.0.0"
 
-    def test_cors_origins_from_env(self, monkeypatch) -> None:
+    def test_api_server_settings_env_cors_origins_parses_list(
+        self, monkeypatch
+    ) -> None:
         monkeypatch.setenv(
             "AIPERF_API_SERVER_CORS_ORIGINS", '["http://localhost:3000"]'
         )
         settings = _APIServerSettings()
         assert settings.CORS_ORIGINS == ["http://localhost:3000"]
 
-    def test_environment_has_api_server_subsystem(self) -> None:
+    def test_environment_api_server_subsystem_exists(self) -> None:
         env = _Environment()
         assert hasattr(env, "API_SERVER")
         assert isinstance(env.API_SERVER, _APIServerSettings)

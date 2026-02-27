@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated
 
 import uvicorn
 from fastapi import Depends, FastAPI
@@ -56,7 +56,7 @@ class FastAPIService(BaseComponentService):
         service_config: ServiceConfig,
         user_config: UserConfig,
         service_id: str | None = None,
-        **kwargs: Any,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config,
@@ -111,7 +111,11 @@ class FastAPIService(BaseComponentService):
             lifespan=lifespan,
         )
 
-        app.add_middleware(CompressMiddleware, zstd_level=3, gzip_level=6)
+        app.add_middleware(
+            CompressMiddleware,
+            zstd_level=Environment.COMPRESSION.ZSTD_LEVEL,
+            gzip_level=Environment.COMPRESSION.GZIP_LEVEL,
+        )
 
         if service.cors_origins:
             app.add_middleware(
@@ -172,7 +176,10 @@ class FastAPIService(BaseComponentService):
             self._server.should_exit = True
         if self._server_task:
             try:
-                await asyncio.wait_for(self._server_task, timeout=5.0)
+                await asyncio.wait_for(
+                    self._server_task,
+                    timeout=Environment.API_SERVER.SHUTDOWN_TIMEOUT,
+                )
             except asyncio.TimeoutError:
                 self._server_task.cancel()
                 with suppress(asyncio.CancelledError, asyncio.TimeoutError):

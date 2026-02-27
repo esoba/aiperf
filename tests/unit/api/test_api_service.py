@@ -227,6 +227,7 @@ class TestFastAPIServiceStartStop:
 
         assert mock_server.should_exit is True
 
+    @pytest.mark.asyncio
     async def test_on_server_task_done_schedules_stop_on_exception(
         self, mock_fastapi_service
     ) -> None:

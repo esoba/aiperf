@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any
 
 from fastapi import APIRouter, Depends
 from starlette.requests import HTTPConnection
@@ -27,7 +26,7 @@ class BaseRouter(AIPerfLifecycleMixin):
         self,
         user_config: UserConfig,
         service_config: ServiceConfig | None = None,
-        **kwargs: Any,
+        **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.user_config = user_config
