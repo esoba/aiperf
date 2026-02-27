@@ -318,14 +318,29 @@ class CodingTraceLoader(BaseFileLoader):
             f"Found {len(unique_deltas)} unique delta lengths (max: {max_delta} tokens)"
         )
 
-        # Generate one base prompt at max delta, build lookup by truncation
-        prompt_by_delta: dict[int, str] = {}
+        # Generate base prompts and build lookup by truncation.
+        # If the generator supports typed prompts (CodingContentGenerator),
+        # build separate lookups for "text" and "tool_result" content types.
+        has_typed = (
+            getattr(self.prompt_generator, "supports_typed_prompt", False) is True
+        )
+        prompt_by_delta: dict[int | tuple[str, int], str] = {}
         if max_delta > 0:
-            base_prompt = self.prompt_generator.generate_prompt(max_delta)
-            chars_per_token = len(base_prompt) / max_delta
-            for delta in unique_deltas:
-                char_count = max(1, int(delta * chars_per_token))
-                prompt_by_delta[delta] = base_prompt[:char_count]
+            if has_typed:
+                for content_type in ("text", "tool_result"):
+                    base = self.prompt_generator.generate_typed_prompt(
+                        max_delta, content_type
+                    )
+                    cpt = len(base) / max_delta
+                    for delta in unique_deltas:
+                        char_count = max(1, int(delta * cpt))
+                        prompt_by_delta[(content_type, delta)] = base[:char_count]
+            else:
+                base_prompt = self.prompt_generator.generate_prompt(max_delta)
+                chars_per_token = len(base_prompt) / max_delta
+                for delta in unique_deltas:
+                    char_count = max(1, int(delta * chars_per_token))
+                    prompt_by_delta[delta] = base_prompt[:char_count]
 
         gen_elapsed = time.perf_counter() - start
         self.info(
@@ -350,7 +365,12 @@ class CodingTraceLoader(BaseFileLoader):
                 prev_t = req.t
 
                 delta = trace_deltas[i]
-                prompt = prompt_by_delta.get(delta, "")
+                if has_typed and req.input_types:
+                    # Pick content type: "text" if any text blocks, else "tool_result"
+                    ct = "text" if "text" in req.input_types else "tool_result"
+                    prompt = prompt_by_delta.get((ct, delta), "")
+                else:
+                    prompt = prompt_by_delta.get(delta, "")
                 turn = Turn(
                     delay=delay_ms,
                     max_tokens=req.output_tokens,

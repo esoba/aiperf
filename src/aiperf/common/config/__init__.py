@@ -4,6 +4,7 @@
 from aiperf.common.config.audio_config import AudioConfig, AudioLengthConfig
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter, DisableCLI
+from aiperf.common.config.coding_session_config import CodingSessionConfig
 from aiperf.common.config.config_defaults import (
     AudioDefaults,
     CLIDefaults,
@@ -83,6 +84,7 @@ __all__ = [
     "BaseZMQProxyConfig",
     "CLIDefaults",
     "CLIParameter",
+    "CodingSessionConfig",
     "ConversationConfig",
     "ConversationDefaults",
     "DisableCLI",

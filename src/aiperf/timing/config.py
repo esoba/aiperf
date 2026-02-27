@@ -248,6 +248,14 @@ class CreditPhaseConfig(AIPerfBaseModel):
         default=64,
         description="KV cache block size in tokens for working set calculation.",
     )
+    adaptive_scale_slo: dict[str, float] | None = Field(
+        default=None,
+        description="SLO thresholds for goodput-based adaptive scaling (display units, e.g. ms).",
+    )
+    min_goodput_ratio: float = Field(
+        default=0.95,
+        description="Minimum goodput ratio required to continue scaling up.",
+    )
 
 
 def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
@@ -347,4 +355,6 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
         max_new_tokens_per_period=input.adaptive_scale_max_new_tokens_per_period if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
         enable_rate_limiting=input.adaptive_scale_enable_rate_limiting if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else True,
         max_working_set_tokens=input.adaptive_scale_max_working_set_tokens if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        adaptive_scale_slo=input.adaptive_scale_slo if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
+        min_goodput_ratio=input.adaptive_scale_min_goodput_ratio if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else 0.95,
     )  # fmt: skip

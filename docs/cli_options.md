@@ -387,6 +387,16 @@ Maximum new input tokens from newly started sessions per assessment period. Prev
 Maximum total KV cache working set in tokens across all active sessions. When set, new sessions are rejected if their hash_ids would push the total working set beyond this budget. Set to None to disable.
 <br>_Constraints: ≥ 0_
 
+#### `--adaptive-scale-slo` `<str>`
+
+SLO thresholds for adaptive scale goodput-based scaling. When configured, scaling uses goodput ratio instead of TTFT headroom. Specify as space-separated 'KEY:VALUE' pairs where KEY is a metric tag and VALUE is in display units (e.g., ms). Supported: 'time_to_first_token:500' (ms), 'request_latency:2000' (ms).
+
+#### `--adaptive-scale-min-goodput-ratio` `<float>`
+
+Minimum goodput ratio (0-1) required to continue scaling up in SLO-based adaptive scale mode. Goodput ratio is the fraction of completed requests meeting all SLO thresholds.
+<br>_Constraints: ≥ 0, ≤ 1_
+<br>_Default: `0.95`_
+
 #### `--output-token-budget-ratio` `<float>`
 
 Expected ratio of actual to requested output tokens for coding trace replay. Adjusts delta calculations to compensate for model undergeneration. At 0.8 (default), expects 80% of trace output tokens, making deltas ~20% larger. Set to 1.0 to disable compensation.
@@ -398,6 +408,82 @@ Expected ratio of actual to requested output tokens for coding trace replay. Adj
 Percentage of max(tool_tokens + system_tokens) to use as a warm prefix for KV cache pre-fill in coding trace replay. Set to 0 to disable.
 <br>_Constraints: ≥ 0, ≤ 1_
 <br>_Default: `0.5`_
+
+#### `--coding-session`
+
+Enable synthetic coding session generation. Generates multi-turn sessions with lognormal distributions matching real coding workload patterns. Mutually exclusive with --input-file and --public-dataset.
+<br>_Flag (no value required)_
+
+#### `--coding-session-num-sessions` `<int>`
+
+Number of synthetic coding sessions to generate.
+<br>_Constraints: ≥ 1_
+<br>_Default: `200`_
+
+#### `--coding-session-system-prompt-tokens` `<int>`
+
+Number of tokens for the system prompt prefix in each session.
+<br>_Constraints: ≥ 0_
+<br>_Default: `8500`_
+
+#### `--coding-session-new-tokens-mean` `<int>`
+
+Mean of the lognormal distribution for new tokens per turn.
+<br>_Constraints: ≥ 1_
+<br>_Default: `4500`_
+
+#### `--coding-session-new-tokens-median` `<int>`
+
+Median of the lognormal distribution for new tokens per turn.
+<br>_Constraints: ≥ 1_
+<br>_Default: `2100`_
+
+#### `--coding-session-max-prompt-tokens` `<int>`
+
+Maximum prompt tokens before a session is retired.
+<br>_Constraints: ≥ 1_
+<br>_Default: `215000`_
+
+#### `--coding-session-initial-prefix-mean` `<int>`
+
+Mean of the lognormal distribution for the initial prefix tokens.
+<br>_Constraints: ≥ 1_
+<br>_Default: `67000`_
+
+#### `--coding-session-initial-prefix-median` `<int>`
+
+Median of the lognormal distribution for the initial prefix tokens.
+<br>_Constraints: ≥ 1_
+<br>_Default: `54000`_
+
+#### `--coding-session-generation-length-mean` `<int>`
+
+Mean of the lognormal distribution for output generation length.
+<br>_Constraints: ≥ 1_
+<br>_Default: `600`_
+
+#### `--coding-session-generation-length-median` `<int>`
+
+Median of the lognormal distribution for output generation length.
+<br>_Constraints: ≥ 1_
+<br>_Default: `350`_
+
+#### `--coding-session-block-size` `<int>`
+
+KV cache block size in tokens for hash ID generation.
+<br>_Constraints: ≥ 1_
+<br>_Default: `64`_
+
+#### `--coding-session-tool-result-ratio` `<float>`
+
+Probability a turn uses tool_result content vs text content. Real trace data shows ~90%% tool_result and ~10%% text by token count.
+<br>_Constraints: ≥ 0.0, ≤ 1.0_
+<br>_Default: `0.9`_
+
+#### `--coding-session-language` `<str>`
+
+Programming language for session content. 'mixed' randomly assigns a language per session using weighted distribution. A specific language forces all sessions to use that language's tool pool.
+<br>_Default: `mixed`_
 
 ### Audio Input
 
@@ -604,6 +690,7 @@ Standard deviation for synthetic input prompt token lengths. Creates variability
 #### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
 
 Token block size for hash-based prompt caching in `mooncake_trace` datasets. When `hash_ids` are provided in trace entries, prompts are divided into blocks of this size. Each `hash_id` maps to a cached block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length equals `(num_hash_ids - 1) * block_size + final_block_size`.
+<br>_Constraints: ≥ 1_
 <br>_Default: `512`_
 
 #### `--seq-dist`, `--sequence-distribution` `<str>`

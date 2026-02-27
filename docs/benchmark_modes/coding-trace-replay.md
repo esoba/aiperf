@@ -278,6 +278,20 @@ This will:
 | `--adaptive-scale-stagger-ms` | 50 | Milliseconds between launching new users in a batch |
 | `--adaptive-scale-formula` | conservative | Scaling formula: `conservative`, `aggressive`, or `linear` |
 | `--adaptive-scale-max-new-tokens-per-period` | 500000 | Token budget per assessment period to prevent cache-miss bursts |
+| `--adaptive-scale-slo` | None | SLO thresholds for goodput-based scaling (e.g., `time_to_first_token:500 request_latency:2000` in ms) |
+| `--adaptive-scale-min-goodput-ratio` | 0.95 | Minimum fraction of requests meeting all SLOs to continue scaling up |
+
+### Scaling Modes
+
+Adaptive scale supports two scaling modes:
+
+**TTFT Headroom (default)**: Scales up while the TTFT metric stays below `--adaptive-scale-max-ttft`. This is the simplest mode and works well when TTFT is the primary indicator of server saturation.
+
+**Goodput Ratio (SLO-based)**: When `--adaptive-scale-slo` is configured, scaling switches to goodput ratio mode. Each completed request is evaluated against all SLO thresholds. Users are added only when the fraction of "good" requests (meeting all SLOs) is at or above `--adaptive-scale-min-goodput-ratio`. This mode detects saturation that manifests in multiple metrics (e.g., both TTFT and request latency).
+
+Supported SLO metrics:
+- `time_to_first_token` (ms): Time to first token
+- `request_latency` (ms): Total request latency (end-to-end)
 
 ### Scaling Formulas
 
@@ -414,6 +428,26 @@ aiperf profile \
     --warm-prefix-pct 0.0 \
     --benchmark-duration 300
 ```
+
+### SLO-Based Scaling
+
+Use goodput ratio scaling with multiple SLO thresholds for more nuanced capacity finding.
+
+```bash
+aiperf profile \
+    --model your-model \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --input-file traces/ \
+    --custom-dataset-type coding_trace \
+    --adaptive-scale \
+    --adaptive-scale-slo time_to_first_token:500 request_latency:2000 \
+    --adaptive-scale-min-goodput-ratio 0.95 \
+    --benchmark-duration 600
+```
+
+This scales up while at least 95% of requests have TTFT under 500ms **and** total latency under 2000ms.
 
 ### Token Budget Control
 

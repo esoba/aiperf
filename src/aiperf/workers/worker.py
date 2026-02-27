@@ -355,6 +355,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
             ttft_ns=credit_context.ttft_ns,
+            request_latency_ns=credit_context.request_latency_ns,
         )
         self.execute_async(self.credit_dealer_client.send(credit_return))
         credit_context.returned = True
@@ -411,6 +412,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
                 ttft_ns=credit_context.ttft_ns,
+                request_latency_ns=credit_context.request_latency_ns,
             )
             await self.credit_dealer_client.send(credit_return)
             # Mark as returned AFTER send succeeds
@@ -494,6 +496,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             record: RequestRecord = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
             )
+            if record.end_perf_ns is not None:
+                credit_context.request_latency_ns = (
+                    record.end_perf_ns - record.start_perf_ns
+                )
             await self._send_inference_result_message(record)
 
             # Copy request-level errors to credit context for CreditReturn tracking

@@ -51,7 +51,7 @@ DatasetSamplingStrategy = plugins.create_enum(PluginType.DATASET_SAMPLER, "Datas
 
 ComposerTypeStr: TypeAlias = str
 ComposerType = plugins.create_enum(PluginType.DATASET_COMPOSER, "ComposerType", module=__name__)
-"""Dynamic enum for dataset composer. Example: ComposerType.CUSTOM, ComposerType.SYNTHETIC, ComposerType.SYNTHETIC_RANKINGS"""
+"""Dynamic enum for dataset composer. Example: ComposerType.CODING_SESSION, ComposerType.CUSTOM, ComposerType.SYNTHETIC"""
 
 CustomDatasetTypeStr: TypeAlias = str
 CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "CustomDatasetType", module=__name__)

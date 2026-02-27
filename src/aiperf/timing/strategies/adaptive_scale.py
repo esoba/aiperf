@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adaptive user scaling strategy based on TTFT headroom.
+"""Adaptive user scaling strategy based on TTFT headroom or goodput ratio.
 
 Starts with a small number of concurrent users and scales up as long as
-TTFT remains below a configured threshold. Designed for trace replay
-workloads where the goal is to find the maximum sustainable concurrency.
+TTFT remains below a configured threshold (headroom mode) or goodput ratio
+stays above a minimum (SLO mode). Designed for trace replay workloads
+where the goal is to find the maximum sustainable concurrency.
 """
 
 from __future__ import annotations
@@ -20,24 +21,27 @@ from aiperf.credit.structs import Credit, TurnToSend
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
+    from aiperf.credit.messages import CreditReturn
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource, SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
 
 NS_PER_SEC = 1_000_000_000
+NS_PER_MS = 1_000_000
 
 
 class AdaptiveScaleStrategy(AIPerfLoggerMixin):
-    """Adaptive user scaling based on TTFT headroom.
+    """Adaptive user scaling based on TTFT headroom or goodput ratio.
 
-    Starts with start_users concurrent sessions and periodically assesses TTFT.
-    If the measured TTFT metric is below max_ttft_sec, adds users proportional
-    to the remaining headroom. Scaling stops when TTFT exceeds the threshold
-    or max_users is reached.
+    Two scaling modes:
+    - TTFT headroom (default): Scales up while TTFT metric < threshold.
+    - Goodput ratio (when --adaptive-scale-slo configured): Scales up while
+      the fraction of requests meeting all SLO thresholds >= min_goodput_ratio.
 
     TTFT samples are received via on_ttft_sample() called from the
-    CreditCallbackHandler.
+    CreditCallbackHandler. Completed requests are received via
+    on_request_complete() for SLO evaluation.
     """
 
     def __init__(
@@ -88,6 +92,14 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         self._active_hash_ids: set[int] = set()
         self._session_hash_ids: dict[str, set[int]] = {}
 
+        # SLO-based goodput scaling
+        self._slo_thresholds: dict[str, int] | None = self._normalize_slo_thresholds(
+            config.adaptive_scale_slo
+        )
+        self._min_goodput_ratio = config.min_goodput_ratio
+        self._period_good_count = 0
+        self._period_total_count = 0
+
     async def setup_phase(self) -> None:
         """Nothing to pre-compute; conversations are sampled on demand."""
 
@@ -130,7 +142,14 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             self._assess_and_scale()
 
     def _assess_and_scale(self) -> None:
-        """Assess TTFT samples and decide whether to add more users."""
+        """Assess metrics and decide whether to add more users."""
+        if self._slo_thresholds:
+            self._assess_and_scale_goodput()
+        else:
+            self._assess_and_scale_ttft()
+
+    def _assess_and_scale_ttft(self) -> None:
+        """Assess TTFT samples and decide whether to add more users (headroom mode)."""
         samples = self._period_ttft_samples
         if not samples:
             self.debug("No TTFT samples in assessment period, skipping")
@@ -152,6 +171,42 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         # Calculate headroom-based scaling
         headroom_ratio = 1.0 - (metric_value / self._max_ttft_sec)
         headroom_pct = headroom_ratio * 100.0
+        self._add_users(headroom_ratio, headroom_pct)
+
+    def _assess_and_scale_goodput(self) -> None:
+        """Assess goodput ratio and decide whether to add more users (SLO mode)."""
+        total = self._period_total_count
+        good = self._period_good_count
+        self._period_total_count = 0
+        self._period_good_count = 0
+        self._period_ttft_samples = []
+        self._period_new_tokens = 0
+
+        if total == 0:
+            self.debug("No completed requests in assessment period, skipping")
+            return
+
+        goodput_ratio = good / total
+
+        if goodput_ratio < self._min_goodput_ratio:
+            self.info(
+                f"Goodput ratio {goodput_ratio:.1%} ({good}/{total}) < "
+                f"min {self._min_goodput_ratio:.1%}, not adding users "
+                f"(active={self._active_users})"
+            )
+            return
+
+        headroom_ratio = goodput_ratio - self._min_goodput_ratio
+        headroom_pct = headroom_ratio * 100.0
+
+        self.info(
+            f"Goodput ratio {goodput_ratio:.1%} ({good}/{total}), "
+            f"headroom={headroom_ratio:.1%}"
+        )
+        self._add_users(headroom_ratio, headroom_pct)
+
+    def _add_users(self, headroom_ratio: float, headroom_pct: float) -> None:
+        """Add users based on headroom. Shared by TTFT and goodput scaling."""
         users_to_add = self._compute_users_to_add(headroom_ratio, headroom_pct)
 
         if self._max_users is not None:
@@ -159,15 +214,13 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
 
         if users_to_add <= 0:
             self.info(
-                f"TTFT {self._ttft_metric}={metric_value:.3f}s, "
-                f"at max_users={self._max_users}"
+                f"At max_users={self._max_users}, not adding users "
+                f"(active={self._active_users})"
             )
             return
 
         self.info(
-            f"TTFT {self._ttft_metric}={metric_value:.3f}s, "
-            f"headroom={headroom_ratio:.1%}, "
-            f"adding {users_to_add} users (total={self._active_users + users_to_add})"
+            f"Adding {users_to_add} users (total={self._active_users + users_to_add})"
         )
 
         actually_added = 0
@@ -324,3 +377,73 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         else:
             self._session_backoffs.pop(corr_id, None)
             self._rate_limit_counts.pop(corr_id, None)
+
+    def on_request_complete(self, credit_return: CreditReturn) -> None:
+        """Evaluate a completed request against SLO thresholds for goodput tracking.
+
+        Called by CreditCallbackHandler for non-cancelled returns when SLO-based
+        scaling is active. Updates period goodput counters and applies per-session
+        rate limiting when SLOs are violated.
+        """
+        if not self._slo_thresholds:
+            return
+
+        self._period_total_count += 1
+        if self._evaluate_slos(credit_return):
+            self._period_good_count += 1
+        elif self._enable_rate_limiting:
+            corr_id = credit_return.credit.x_correlation_id
+            count = self._rate_limit_counts.get(corr_id, 0)
+            backoff = min(2.0 * (1.5**count), 30.0)
+            self._session_backoffs[corr_id] = backoff
+            self._rate_limit_counts[corr_id] = count + 1
+
+    def _evaluate_slos(self, credit_return: CreditReturn) -> bool:
+        """Check if a completed request meets all configured SLO thresholds.
+
+        Returns True if all SLOs are satisfied, False if any fail or data is missing.
+        """
+        if not self._slo_thresholds:
+            return True
+
+        for metric_tag, threshold_ns in self._slo_thresholds.items():
+            match metric_tag:
+                case "time_to_first_token":
+                    if credit_return.ttft_ns is None:
+                        return False
+                    if credit_return.ttft_ns > threshold_ns:
+                        return False
+                case "request_latency":
+                    if credit_return.request_latency_ns is None:
+                        return False
+                    if credit_return.request_latency_ns > threshold_ns:
+                        return False
+        return True
+
+    @staticmethod
+    def _normalize_slo_thresholds(
+        slo_dict: dict[str, float] | None,
+    ) -> dict[str, int] | None:
+        """Convert SLO thresholds from display units (ms) to nanoseconds.
+
+        Uses the metric registry to look up each metric's display_unit and base unit,
+        then converts the user-provided value accordingly.
+        """
+        if not slo_dict:
+            return None
+
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        normalized: dict[str, int] = {}
+        for metric_tag, value in slo_dict.items():
+            metric_cls = MetricRegistry.get_class(metric_tag)
+            display_unit = metric_cls.display_unit
+            base_unit = metric_cls.unit
+            if (
+                display_unit is not None
+                and base_unit is not None
+                and display_unit != base_unit
+            ):
+                value = display_unit.convert_to(base_unit, value)
+            normalized[metric_tag] = int(value)
+        return normalized

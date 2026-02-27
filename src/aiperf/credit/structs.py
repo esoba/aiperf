@@ -73,6 +73,7 @@ class CreditContext(
     first_token_sent: bool = False
     error: str | None = None
     ttft_ns: int | None = None
+    request_latency_ns: int | None = None
 
 
 # =============================================================================

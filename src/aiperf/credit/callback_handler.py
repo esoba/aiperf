@@ -189,6 +189,12 @@ class CreditCallbackHandler:
         ):
             handler.strategy.on_ttft_sample(credit_return.ttft_ns, credit=credit)
 
+        # 5b. Forward completed request to timing strategy for SLO evaluation
+        if not credit_return.cancelled and hasattr(
+            handler.strategy, "on_request_complete"
+        ):
+            handler.strategy.on_request_complete(credit_return)
+
         # 6. Notify timing strategy for subsequent turns when phase can still send
         # Timing strategy queues subsequent turns for rate-limited issuance.
         # Skipped when phase can't send

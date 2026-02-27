@@ -203,6 +203,14 @@ class CustomDatasetComposer(BaseDatasetComposer):
                     f"{dataset_type} datasets require a tokenizer for prompt synthesis. "
                     "Ensure the endpoint supports tokenization or provide a --tokenizer."
                 )
+        if dataset_type == CustomDatasetType.CODING_TRACE:
+            from aiperf.dataset.generator.coding_content import CodingContentGenerator
+
+            kwargs["prompt_generator"] = CodingContentGenerator(
+                config=self.config.input.prompt,
+                tokenizer=self.prompt_generator.tokenizer,
+            )
+        elif dataset_type == CustomDatasetType.MOONCAKE_TRACE:
             kwargs["prompt_generator"] = self.prompt_generator
         elif dataset_type == CustomDatasetType.RANDOM_POOL:
             kwargs["num_conversations"] = self.config.input.conversation.num

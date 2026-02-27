@@ -306,6 +306,42 @@ class RandomGenerator:
             return max(1, round(mean))
         return max(1, math.ceil(self.sample_positive_normal(mean, stddev)))
 
+    def sample_lognormal_integer(
+        self, mean: float, median: float, minimum: int = 1
+    ) -> int:
+        """Sample an integer from a lognormal distribution parameterized by mean and median.
+
+        The lognormal parameters are derived as:
+            mu = ln(median)
+            sigma = sqrt(2 * ln(mean / median))
+
+        When mean == median, sigma == 0 and the result degenerates to round(mean).
+
+        Args:
+            mean: Mean of the lognormal distribution. Must be >= median.
+            median: Median of the lognormal distribution. Must be > 0.
+            minimum: Floor for the returned value (default 1).
+
+        Returns:
+            Integer sample >= minimum from the lognormal distribution.
+
+        Raises:
+            ValueError: If median <= 0 or mean < median.
+        """
+        if median <= 0:
+            raise ValueError(f"Median must be > 0, got {median}")
+        if mean < median:
+            raise ValueError(
+                f"Mean ({mean}) must be >= median ({median}) for lognormal distribution"
+            )
+        if mean == median:
+            return max(minimum, round(mean))
+
+        mu = math.log(median)
+        sigma = math.sqrt(2.0 * math.log(mean / median))
+        value = self._python_rng.lognormvariate(mu, sigma)
+        return max(minimum, round(value))
+
     def expovariate(self, lambd: float) -> float:
         """Generate exponentially distributed random number.
 

@@ -6,6 +6,7 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
+from aiperf.credit.messages import CreditReturn
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
@@ -39,6 +40,8 @@ def make_strategy(
     max_ttft_sec: float = 2.0,
     assessment_period_sec: float = 5.0,
     recycle: bool = False,
+    adaptive_scale_slo: dict[str, float] | None = None,
+    min_goodput_ratio: float = 0.95,
 ) -> tuple[AdaptiveScaleStrategy, MagicMock, MagicMock, MagicMock]:
     scheduler = MagicMock()
     scheduler.schedule_later = MagicMock()
@@ -68,6 +71,8 @@ def make_strategy(
         ttft_metric="p95",
         assessment_period_sec=assessment_period_sec,
         recycle_sessions=recycle,
+        adaptive_scale_slo=adaptive_scale_slo,
+        min_goodput_ratio=min_goodput_ratio,
     )
 
     strategy = AdaptiveScaleStrategy(
@@ -80,6 +85,33 @@ def make_strategy(
     )
 
     return strategy, scheduler, issuer, stop_checker
+
+
+def _make_credit(credit_id: int = 1, corr_id: str = "xcorr-1") -> Credit:
+    return Credit(
+        id=credit_id,
+        phase=CreditPhase.PROFILING,
+        conversation_id="conv_0",
+        x_correlation_id=corr_id,
+        turn_index=0,
+        num_turns=5,
+        issued_at_ns=0,
+    )
+
+
+def _make_credit_return(
+    credit_id: int = 1,
+    ttft_ns: int | None = None,
+    request_latency_ns: int | None = None,
+    cancelled: bool = False,
+    corr_id: str = "xcorr-1",
+) -> CreditReturn:
+    return CreditReturn(
+        credit=_make_credit(credit_id=credit_id, corr_id=corr_id),
+        cancelled=cancelled,
+        ttft_ns=ttft_ns,
+        request_latency_ns=request_latency_ns,
+    )
 
 
 class TestAdaptiveScaleStrategy:
@@ -500,3 +532,197 @@ class TestAdaptiveScaleStrategy:
         # 8 existing + 4 new = 12 blocks * 64 = 768 < 1280
         assert strategy._check_token_budget(session)
         assert strategy._active_hash_ids == set(range(8)) | set(range(20, 24))
+
+
+NS_PER_MS = 1_000_000
+
+
+class TestSLOBasedScaling:
+    """Tests for SLO-based goodput scaling mode."""
+
+    def test_no_slo_uses_ttft_headroom(self):
+        """Without SLOs, strategy uses TTFT headroom mode."""
+        strategy, scheduler, _, _ = make_strategy()
+        assert strategy._slo_thresholds is None
+
+        strategy._active_users = 2
+        strategy._period_ttft_samples = [0.5, 0.6, 0.4]
+        strategy._assess_and_scale()
+        assert strategy._active_users > 2
+
+    def test_slo_thresholds_normalized_to_ns(self):
+        """SLO thresholds in ms are normalized to nanoseconds."""
+        strategy, _, _, _ = make_strategy(
+            adaptive_scale_slo={"time_to_first_token": 500, "request_latency": 2000},
+        )
+        assert strategy._slo_thresholds is not None
+        assert strategy._slo_thresholds["time_to_first_token"] == 500 * NS_PER_MS
+        assert strategy._slo_thresholds["request_latency"] == 2000 * NS_PER_MS
+
+    def test_slo_ttft_threshold_pass(self):
+        """Request with TTFT below SLO threshold passes."""
+        strategy, _, _, _ = make_strategy(
+            adaptive_scale_slo={"time_to_first_token": 500},
+        )
+        cr = _make_credit_return(
+            ttft_ns=400 * NS_PER_MS, request_latency_ns=1000 * NS_PER_MS
+        )
+        assert strategy._evaluate_slos(cr) is True
+
+    def test_slo_ttft_threshold_fail(self):
+        """Request with TTFT above SLO threshold fails."""
+        strategy, _, _, _ = make_strategy(
+            adaptive_scale_slo={"time_to_first_token": 500},
+        )
+        cr = _make_credit_return(
+            ttft_ns=600 * NS_PER_MS, request_latency_ns=1000 * NS_PER_MS
+        )
+        assert strategy._evaluate_slos(cr) is False
+
+    def test_slo_request_latency_threshold_pass(self):
+        """Request with latency below SLO threshold passes."""
+        strategy, _, _, _ = make_strategy(
+            adaptive_scale_slo={"request_latency": 2000},
+        )
+        cr = _make_credit_return(
+            ttft_ns=400 * NS_PER_MS, request_latency_ns=1500 * NS_PER_MS
+        )
+        assert strategy._evaluate_slos(cr) is True
+
+    def test_slo_request_latency_threshold_fail(self):
+        """Request with latency above SLO threshold fails."""
+        strategy, _, _, _ = make_strategy(
+            adaptive_scale_slo={"request_latency": 2000},
+        )
+        cr = _make_credit_return(
+            ttft_ns=400 * NS_PER_MS, request_latency_ns=2500 * NS_PER_MS
+        )
+        assert strategy._evaluate_slos(cr) is False
+
+    def test_slo_combined_thresholds(self):
+        """All SLOs must pass for a request to be 'good'."""
+        strategy, _, _, _ = make_strategy(
+            adaptive_scale_slo={"time_to_first_token": 500, "request_latency": 2000},
+        )
+        # Both pass
+        cr = _make_credit_return(
+            ttft_ns=400 * NS_PER_MS, request_latency_ns=1500 * NS_PER_MS
+        )
+        assert strategy._evaluate_slos(cr) is True
+
+        # TTFT fails
+        cr = _make_credit_return(
+            ttft_ns=600 * NS_PER_MS, request_latency_ns=1500 * NS_PER_MS
+        )
+        assert strategy._evaluate_slos(cr) is False
+
+        # Latency fails
+        cr = _make_credit_return(
+            ttft_ns=400 * NS_PER_MS, request_latency_ns=2500 * NS_PER_MS
+        )
+        assert strategy._evaluate_slos(cr) is False
+
+    def test_slo_missing_data_fails(self):
+        """Missing metric data causes SLO check to fail."""
+        strategy, _, _, _ = make_strategy(
+            adaptive_scale_slo={"time_to_first_token": 500, "request_latency": 2000},
+        )
+        # Missing ttft_ns
+        cr = _make_credit_return(ttft_ns=None, request_latency_ns=1500 * NS_PER_MS)
+        assert strategy._evaluate_slos(cr) is False
+
+        # Missing request_latency_ns
+        cr = _make_credit_return(ttft_ns=400 * NS_PER_MS, request_latency_ns=None)
+        assert strategy._evaluate_slos(cr) is False
+
+    def test_goodput_scaling_all_good_adds_users(self):
+        """When all requests meet SLOs, goodput ratio is 1.0 and users are added."""
+        strategy, scheduler, _, _ = make_strategy(
+            adaptive_scale_slo={"time_to_first_token": 500},
+            min_goodput_ratio=0.9,
+        )
+        strategy._active_users = 2
+
+        for i in range(10):
+            cr = _make_credit_return(credit_id=i, ttft_ns=300 * NS_PER_MS)
+            strategy.on_request_complete(cr)
+
+        strategy._assess_and_scale()
+        assert strategy._active_users > 2
+
+    def test_goodput_scaling_below_ratio_holds(self):
+        """When goodput ratio is below threshold, no users are added."""
+        strategy, scheduler, _, _ = make_strategy(
+            adaptive_scale_slo={"time_to_first_token": 500},
+            min_goodput_ratio=0.9,
+        )
+        strategy._active_users = 5
+
+        # 5 good, 5 bad -> ratio 0.5 < 0.9
+        for i in range(5):
+            cr = _make_credit_return(credit_id=i, ttft_ns=300 * NS_PER_MS)
+            strategy.on_request_complete(cr)
+        for i in range(5, 10):
+            cr = _make_credit_return(credit_id=i, ttft_ns=600 * NS_PER_MS)
+            strategy.on_request_complete(cr)
+
+        strategy._assess_and_scale()
+        assert strategy._active_users == 5
+        assert scheduler.schedule_later.call_count == 0
+
+    def test_goodput_scaling_mixed_results(self):
+        """With ratio just above threshold, users are added."""
+        strategy, scheduler, _, _ = make_strategy(
+            adaptive_scale_slo={"time_to_first_token": 500},
+            min_goodput_ratio=0.8,
+        )
+        strategy._active_users = 4
+
+        # 9 good, 1 bad -> ratio 0.9 >= 0.8
+        for i in range(9):
+            cr = _make_credit_return(credit_id=i, ttft_ns=300 * NS_PER_MS)
+            strategy.on_request_complete(cr)
+        cr = _make_credit_return(credit_id=9, ttft_ns=600 * NS_PER_MS)
+        strategy.on_request_complete(cr)
+
+        strategy._assess_and_scale()
+        assert strategy._active_users > 4
+
+    def test_goodput_period_counters_reset(self):
+        """Period counters reset after assessment."""
+        strategy, _, _, _ = make_strategy(
+            adaptive_scale_slo={"time_to_first_token": 500},
+        )
+        strategy._active_users = 2
+
+        for i in range(5):
+            cr = _make_credit_return(credit_id=i, ttft_ns=300 * NS_PER_MS)
+            strategy.on_request_complete(cr)
+
+        assert strategy._period_total_count == 5
+        assert strategy._period_good_count == 5
+
+        strategy._assess_and_scale()
+
+        assert strategy._period_total_count == 0
+        assert strategy._period_good_count == 0
+
+    def test_on_request_complete_noop_without_slo(self):
+        """on_request_complete is a no-op when no SLOs configured."""
+        strategy, _, _, _ = make_strategy()
+        cr = _make_credit_return(ttft_ns=300 * NS_PER_MS)
+        strategy.on_request_complete(cr)
+        assert strategy._period_total_count == 0
+
+    def test_slo_rate_limiting_on_failure(self):
+        """Failed SLO applies per-session backoff when rate limiting enabled."""
+        strategy, _, _, _ = make_strategy(
+            adaptive_scale_slo={"time_to_first_token": 500},
+        )
+        strategy._enable_rate_limiting = True
+
+        cr = _make_credit_return(ttft_ns=600 * NS_PER_MS, corr_id="xcorr-rl")
+        strategy.on_request_complete(cr)
+
+        assert "xcorr-rl" in strategy._session_backoffs
+        assert strategy._session_backoffs["xcorr-rl"] > 0

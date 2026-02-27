@@ -372,6 +372,13 @@ dataset_composer:
       Synthetic rankings dataset composer that generates ranking tasks with query
       and passage pairs for ranking model evaluation and benchmarking.
 
+  coding_session:
+    class: aiperf.dataset.composer.coding_session:CodingSessionComposer
+    description: |
+      Synthetic coding session composer that generates multi-turn sessions with
+      lognormal distributions for context growth, initial prefix, and generation
+      length. Designed for adaptive_scale timing mode.
+
 # =============================================================================
 # Custom Dataset Loaders
 # =============================================================================

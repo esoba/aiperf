@@ -322,6 +322,57 @@ class TestNewAPIMethods:
             rng.sample([1, 2, 3], k=5)
 
 
+class TestSampleLognormalInteger:
+    """Test sample_lognormal_integer method."""
+
+    def test_statistical_properties(self):
+        """Test that samples have approximately correct mean and median."""
+        rng_inst = RandomGenerator(seed=42, _internal=True)
+        mean, median = 4500, 2100
+        samples = [rng_inst.sample_lognormal_integer(mean, median) for _ in range(5000)]
+
+        actual_mean = sum(samples) / len(samples)
+        sorted_samples = sorted(samples)
+        actual_median = sorted_samples[len(sorted_samples) // 2]
+
+        assert abs(actual_mean - mean) / mean < 0.15
+        assert abs(actual_median - median) / median < 0.15
+
+    def test_mean_equals_median_returns_constant(self):
+        """Test degenerate case where mean == median returns round(mean)."""
+        rng_inst = RandomGenerator(seed=42, _internal=True)
+        result = rng_inst.sample_lognormal_integer(100, 100)
+        assert result == 100
+
+    def test_invalid_median_raises_error(self):
+        """Test that median <= 0 raises ValueError."""
+        rng_inst = RandomGenerator(seed=42, _internal=True)
+        with pytest.raises(ValueError, match="Median must be > 0"):
+            rng_inst.sample_lognormal_integer(100, 0)
+
+    def test_mean_less_than_median_raises_error(self):
+        """Test that mean < median raises ValueError."""
+        rng_inst = RandomGenerator(seed=42, _internal=True)
+        with pytest.raises(ValueError, match="must be >= median"):
+            rng_inst.sample_lognormal_integer(50, 100)
+
+    def test_minimum_floor(self):
+        """Test that results respect the minimum parameter."""
+        rng_inst = RandomGenerator(seed=42, _internal=True)
+        for _ in range(100):
+            result = rng_inst.sample_lognormal_integer(10, 5, minimum=5)
+            assert result >= 5
+
+    def test_reproducibility(self):
+        """Test same seed produces same results."""
+        rng1 = RandomGenerator(seed=42, _internal=True)
+        rng2 = RandomGenerator(seed=42, _internal=True)
+        for _ in range(20):
+            assert rng1.sample_lognormal_integer(
+                1000, 500
+            ) == rng2.sample_lognormal_integer(1000, 500)
+
+
 class TestDocumentationAndEdgeCases:
     """Test various edge cases and documented behaviors."""
 

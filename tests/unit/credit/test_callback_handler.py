@@ -397,3 +397,81 @@ class TestEdgeCases:
             mock_concurrency.release_prefill_slot.assert_called_once()
         else:
             mock_concurrency.release_prefill_slot.assert_not_called()
+
+
+# =============================================================================
+# Test: on_request_complete Dispatch
+# =============================================================================
+
+
+class TestOnRequestCompleteDispatch:
+    """Tests for on_request_complete callback dispatch."""
+
+    async def test_dispatches_on_request_complete_for_non_cancelled(
+        self, callback_handler, mock_concurrency
+    ):
+        """on_request_complete called for non-cancelled returns when strategy supports it."""
+        strategy = MagicMock()
+        strategy.handle_credit_return = AsyncMock()
+        strategy.on_request_complete = MagicMock()
+
+        progress = MagicMock()
+        progress.increment_returned = MagicMock(return_value=False)
+        progress.increment_prefill_released = MagicMock()
+        progress.all_credits_returned_event = asyncio.Event()
+        progress.in_flight_sessions = 0
+
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            progress=progress,
+            lifecycle=MagicMock(is_complete=False),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
+            strategy=strategy,
+        )
+
+        credit = make_credit()
+        credit_return = make_credit_return(credit, cancelled=False)
+
+        await callback_handler.on_credit_return("worker-1", credit_return)
+        strategy.on_request_complete.assert_called_once_with(credit_return)
+
+    async def test_skips_on_request_complete_for_cancelled(
+        self, callback_handler, mock_concurrency
+    ):
+        """on_request_complete NOT called for cancelled returns."""
+        strategy = MagicMock()
+        strategy.handle_credit_return = AsyncMock()
+        strategy.on_request_complete = MagicMock()
+
+        progress = MagicMock()
+        progress.increment_returned = MagicMock(return_value=False)
+        progress.increment_prefill_released = MagicMock()
+        progress.all_credits_returned_event = asyncio.Event()
+        progress.in_flight_sessions = 0
+
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            progress=progress,
+            lifecycle=MagicMock(is_complete=False),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=True)),
+            strategy=strategy,
+        )
+
+        credit = make_credit()
+        credit_return = make_credit_return(credit, cancelled=True)
+
+        await callback_handler.on_credit_return("worker-1", credit_return)
+        strategy.on_request_complete.assert_not_called()
+
+    async def test_skips_on_request_complete_when_strategy_lacks_method(
+        self, registered_handler, mock_strategy
+    ):
+        """No error when strategy doesn't have on_request_complete."""
+        # mock_strategy from fixture doesn't have on_request_complete by default
+        if hasattr(mock_strategy, "on_request_complete"):
+            del mock_strategy.on_request_complete
+
+        credit = make_credit()
+        credit_return = make_credit_return(credit, cancelled=False)
+        # Should not raise
+        await registered_handler.on_credit_return("worker-1", credit_return)

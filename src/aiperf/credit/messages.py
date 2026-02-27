@@ -107,6 +107,7 @@ class CreditReturn(
     first_token_sent: bool = False
     error: str | None = None
     ttft_ns: int | None = None
+    request_latency_ns: int | None = None
 
 
 class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):

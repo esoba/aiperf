@@ -315,13 +315,22 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
         return composer.create_dataset()
 
+    def _load_coding_session_dataset(self) -> list[Conversation]:
+        ComposerClass = plugins.get_class(
+            PluginType.DATASET_COMPOSER, ComposerType.CODING_SESSION
+        )
+        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        return composer.create_dataset()
+
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
             raise self._service_error("User config is required for dataset manager")
 
         self.dataset_configured.clear()
 
-        if self.user_config.input.public_dataset is not None:
+        if self.user_config.input.coding_session.enabled:
+            conversations = self._load_coding_session_dataset()
+        elif self.user_config.input.public_dataset is not None:
             conversations = await self._load_public_dataset()
         elif (
             self.user_config.input.custom_dataset_type is not None

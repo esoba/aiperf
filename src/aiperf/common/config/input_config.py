@@ -11,6 +11,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.config.audio_config import AudioConfig
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
+from aiperf.common.config.coding_session_config import CodingSessionConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.config_validators import (
     parse_file,
@@ -127,6 +128,28 @@ class InputConfig(BaseConfig):
                 "--synthesis-max-isl, --synthesis-max-osl) "
                 "require --custom-dataset-type mooncake_trace"
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_coding_session_exclusivity(self) -> Self:
+        """Validate that coding_session is mutually exclusive with input-file and public-dataset."""
+        if self.coding_session.enabled:
+            if self.file is not None:
+                raise ValueError("--coding-session cannot be used with --input-file")
+            if self.public_dataset is not None:
+                raise ValueError(
+                    "--coding-session cannot be used with --public-dataset"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def apply_coding_session_defaults(self) -> Self:
+        """Auto-set adaptive_scale defaults when coding_session is enabled."""
+        if self.coding_session.enabled:
+            if "adaptive_scale" not in self.model_fields_set:
+                self.adaptive_scale = True
+            if "adaptive_scale_recycle" not in self.model_fields_set:
+                self.adaptive_scale_recycle = True
         return self
 
     @model_validator(mode="after")
@@ -517,6 +540,38 @@ class InputConfig(BaseConfig):
         ),
     ] = None
 
+    adaptive_scale_slo: Annotated[
+        dict[str, float] | None,
+        Field(
+            default=None,
+            description="SLO thresholds for adaptive scale goodput-based scaling. "
+            "When configured, scaling uses goodput ratio instead of TTFT headroom. "
+            "Specify as space-separated 'KEY:VALUE' pairs where KEY is a metric tag "
+            "and VALUE is in display units (e.g., ms). "
+            "Supported: 'time_to_first_token:500' (ms), 'request_latency:2000' (ms).",
+        ),
+        BeforeValidator(parse_str_as_numeric_dict),
+        CLIParameter(
+            name=("--adaptive-scale-slo",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    adaptive_scale_min_goodput_ratio: Annotated[
+        float,
+        Field(
+            ge=0,
+            le=1,
+            description="Minimum goodput ratio (0-1) required to continue scaling up in "
+            "SLO-based adaptive scale mode. Goodput ratio is the fraction of completed "
+            "requests meeting all SLO thresholds.",
+        ),
+        CLIParameter(
+            name=("--adaptive-scale-min-goodput-ratio",),
+            group=_CLI_GROUP,
+        ),
+    ] = 0.95
+
     output_token_budget_ratio: Annotated[
         float,
         Field(
@@ -554,3 +609,4 @@ class InputConfig(BaseConfig):
     rankings: RankingsConfig = RankingsConfig()
     synthesis: SynthesisConfig = SynthesisConfig()
     conversation: ConversationConfig = ConversationConfig()
+    coding_session: CodingSessionConfig = CodingSessionConfig()
