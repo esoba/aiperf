@@ -182,72 +182,14 @@ class CodingSessionConfig(BaseConfig):
         CLIParameter(name=("--coding-session-language",), group=_CLI_GROUP),
     ] = "mixed"
 
-    parallel_probability: Annotated[
-        float,
-        Field(
-            default=0.3,
-            ge=0.0,
-            le=1.0,
-            description="Probability a turn fans out into parallel tool calls. "
-            "0.0 disables parallel generation entirely.",
-        ),
-        CLIParameter(name=("--coding-session-parallel-probability",), group=_CLI_GROUP),
-    ] = 0.3
-
-    parallel_fan_out_mean: Annotated[
-        float,
-        Field(
-            default=3.0,
-            ge=2.0,
-            description="Mean number of parallel branches per fan-out.",
-        ),
-        CLIParameter(
-            name=("--coding-session-parallel-fan-out-mean",), group=_CLI_GROUP
-        ),
-    ] = 3.0
-
-    parallel_fan_out_max: Annotated[
-        int,
-        Field(
-            default=8,
-            ge=2,
-            description="Maximum number of parallel branches per fan-out.",
-        ),
-        CLIParameter(name=("--coding-session-parallel-fan-out-max",), group=_CLI_GROUP),
-    ] = 8
-
-    parallel_branch_tokens_mean: Annotated[
-        int,
-        Field(
-            default=800,
-            ge=1,
-            description="Mean new tokens per parallel branch (lognormal distribution).",
-        ),
-        CLIParameter(
-            name=("--coding-session-parallel-branch-tokens-mean",), group=_CLI_GROUP
-        ),
-    ] = 800
-
-    parallel_branch_tokens_median: Annotated[
-        int,
-        Field(
-            default=400,
-            ge=1,
-            description="Median new tokens per parallel branch (lognormal distribution).",
-        ),
-        CLIParameter(
-            name=("--coding-session-parallel-branch-tokens-median",), group=_CLI_GROUP
-        ),
-    ] = 400
-
     subagent_probability: Annotated[
         float,
         Field(
             default=0.15,
             ge=0.0,
             le=1.0,
-            description="Probability a turn spawns subagent children (mutually exclusive "
-            "with parallel_probability per turn). 0.0 disables subagent generation.",
+            description="Probability a turn spawns subagent children. "
+            "0.0 disables subagent generation.",
         ),
         CLIParameter(name=("--coding-session-subagent-probability",), group=_CLI_GROUP),
     ] = 0.15

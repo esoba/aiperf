@@ -497,39 +497,9 @@ Probability a turn uses tool_result content vs text content. Real trace data sho
 Programming language for session content. 'mixed' randomly assigns a language per session using weighted distribution. A specific language forces all sessions to use that language's tool pool.
 <br>_Default: `mixed`_
 
-#### `--coding-session-parallel-probability` `<float>`
-
-Probability a turn fans out into parallel tool calls. 0.0 disables parallel generation entirely.
-<br>_Constraints: ≥ 0.0, ≤ 1.0_
-<br>_Default: `0.3`_
-
-#### `--coding-session-parallel-fan-out-mean` `<float>`
-
-Mean number of parallel branches per fan-out.
-<br>_Constraints: ≥ 2.0_
-<br>_Default: `3.0`_
-
-#### `--coding-session-parallel-fan-out-max` `<int>`
-
-Maximum number of parallel branches per fan-out.
-<br>_Constraints: ≥ 2_
-<br>_Default: `8`_
-
-#### `--coding-session-parallel-branch-tokens-mean` `<int>`
-
-Mean new tokens per parallel branch (lognormal distribution).
-<br>_Constraints: ≥ 1_
-<br>_Default: `800`_
-
-#### `--coding-session-parallel-branch-tokens-median` `<int>`
-
-Median new tokens per parallel branch (lognormal distribution).
-<br>_Constraints: ≥ 1_
-<br>_Default: `400`_
-
 #### `--coding-session-subagent-probability` `<float>`
 
-Probability a turn spawns subagent children (mutually exclusive with parallel_probability per turn). 0.0 disables subagent generation.
+Probability a turn spawns subagent children. 0.0 disables subagent generation.
 <br>_Constraints: ≥ 0.0, ≤ 1.0_
 <br>_Default: `0.15`_
 

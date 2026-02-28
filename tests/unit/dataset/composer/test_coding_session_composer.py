@@ -56,10 +56,7 @@ class TestCodingSessionComposer:
         conversations = composer.create_dataset()
 
         for conv in conversations:
-            # Filter to sequential turns only (parallel branches fork from parent context)
-            sequential_tokens = [
-                t.input_tokens for t in conv.turns if t.parallel_group is None
-            ]
+            sequential_tokens = [t.input_tokens for t in conv.turns]
             assert len(sequential_tokens) >= 2
             for i in range(1, len(sequential_tokens)):
                 assert sequential_tokens[i] >= sequential_tokens[i - 1]
@@ -82,9 +79,7 @@ class TestCodingSessionComposer:
         conversations = composer.create_dataset()
 
         for conv in conversations:
-            sequential_hash_lens = [
-                len(t.hash_ids) for t in conv.turns if t.parallel_group is None
-            ]
+            sequential_hash_lens = [len(t.hash_ids) for t in conv.turns]
             for i in range(1, len(sequential_hash_lens)):
                 assert sequential_hash_lens[i] >= sequential_hash_lens[i - 1]
 
@@ -268,7 +263,6 @@ def _make_cache_config(**overrides):
         "l1_tokens": 640,
         "l2_tokens": 128,
         "subagent_probability": 0.0,
-        "parallel_probability": 0.0,
     }
     session_kwargs.update(overrides)
     return UserConfig(
@@ -323,8 +317,6 @@ class TestCacheLayerStructure:
                 continue
             l2_first = conv.turns[0].hash_ids[l1_count : l1_count + l2_count]
             for turn in conv.turns[1:]:
-                if turn.parallel_group is not None:
-                    continue
                 l2_this = turn.hash_ids[l1_count : l1_count + l2_count]
                 assert l2_this == l2_first
 
@@ -335,9 +327,7 @@ class TestCacheLayerStructure:
         conversations = composer.create_dataset()
 
         for conv in conversations:
-            sequential_l3 = [
-                t.cache_layer_sizes.l3 for t in conv.turns if t.parallel_group is None
-            ]
+            sequential_l3 = [t.cache_layer_sizes.l3 for t in conv.turns]
             for i in range(1, len(sequential_l3)):
                 assert sequential_l3[i] >= sequential_l3[i - 1]
 
@@ -414,8 +404,6 @@ class TestSessionRestart:
         l2_count = 128 // 64
         l2_t0 = conv.turns[0].hash_ids[l1_count : l1_count + l2_count]
         for turn in conv.turns[1:]:
-            if turn.parallel_group is not None:
-                continue
             l2_this = turn.hash_ids[l1_count : l1_count + l2_count]
             assert l2_this == l2_t0
 
@@ -436,9 +424,7 @@ class TestContextCompression:
         conversations = composer.create_dataset()
 
         conv = conversations[0]
-        l3_sizes = [
-            t.cache_layer_sizes.l3 for t in conv.turns if t.parallel_group is None
-        ]
+        l3_sizes = [t.cache_layer_sizes.l3 for t in conv.turns]
         # After compression, L3 should drop
         has_drop = any(l3_sizes[i] < l3_sizes[i - 1] for i in range(1, len(l3_sizes)))
         assert has_drop, f"Expected L3 drop from compression, got {l3_sizes}"
@@ -456,9 +442,7 @@ class TestContextCompression:
         conversations = composer.create_dataset()
 
         conv = conversations[0]
-        l3_sizes = [
-            t.cache_layer_sizes.l3 for t in conv.turns if t.parallel_group is None
-        ]
+        l3_sizes = [t.cache_layer_sizes.l3 for t in conv.turns]
         drops = sum(1 for i in range(1, len(l3_sizes)) if l3_sizes[i] < l3_sizes[i - 1])
         assert drops <= 1
 
@@ -474,9 +458,7 @@ class TestContextCompression:
         conversations = composer.create_dataset()
 
         conv = conversations[0]
-        l3_sizes = [
-            t.cache_layer_sizes.l3 for t in conv.turns if t.parallel_group is None
-        ]
+        l3_sizes = [t.cache_layer_sizes.l3 for t in conv.turns]
         for i in range(1, len(l3_sizes)):
             assert l3_sizes[i] >= l3_sizes[i - 1]
 
@@ -518,8 +500,6 @@ class TestThinkingBlocks:
         # At least some turns should have thinking blocks (hash_ids > L1+L2+L3)
         has_thinking = False
         for turn in conv.turns[1:]:
-            if turn.parallel_group is not None:
-                continue
             sizes = turn.cache_layer_sizes
             layer_total = sizes.l1 + sizes.l2 + sizes.l3
             if len(turn.hash_ids) > layer_total:
@@ -604,7 +584,6 @@ class TestSubagentL1Isolation:
             l1_tokens=640,
             l2_tokens=128,
             block_size=64,
-            parallel_probability=0.0,
             subagent_probability=1.0,
             subagent_count_mean=2.0,
             subagent_count_max=3,
@@ -781,7 +760,6 @@ def _make_export_config(**overrides):
         "l1_tokens": 640,
         "l2_tokens": 128,
         "subagent_probability": 0.0,
-        "parallel_probability": 0.0,
         "thinking_tokens_mean": 0,
     }
     session_kwargs.update(overrides)
@@ -939,38 +917,6 @@ class TestToCodingTracesWithSubagents:
                     else:
                         assert nested.input_tokens > 0
                         assert nested.output_tokens > 0
-
-
-class TestToCodingTracesWithParallel:
-    """Tests for parallel group nesting in to_coding_traces()."""
-
-    @pytest.fixture
-    def parallel_config(self):
-        return _make_export_config(
-            num_sessions=3,
-            parallel_probability=1.0,
-            parallel_fan_out_mean=3.0,
-            parallel_fan_out_max=4,
-            parallel_branch_tokens_mean=500,
-            parallel_branch_tokens_median=300,
-        )
-
-    def test_parallel_groups_produce_nested_requests(
-        self, parallel_config, mock_tokenizer
-    ):
-        composer = CodingSessionComposer(parallel_config, mock_tokenizer)
-        composer.create_dataset()
-
-        traces = composer.to_coding_traces()
-
-        has_nested = False
-        for trace in traces:
-            for req in trace.requests:
-                if req.requests:
-                    has_nested = True
-                    assert len(req.requests) >= 2
-                    break
-        assert has_nested, "Expected nested parallel requests"
 
 
 class TestWriteTraces:
@@ -1188,8 +1134,7 @@ class TestMaxTurns:
         conversations = composer.create_dataset()
 
         for conv in conversations:
-            sequential_turns = [t for t in conv.turns if t.parallel_group is None]
-            assert len(sequential_turns) <= 5
+            assert len(conv.turns) <= 5
 
     def test_max_turns_token_ceiling_still_applies(self, mock_tokenizer):
         config = _make_cache_config(

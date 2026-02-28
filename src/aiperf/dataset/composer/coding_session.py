@@ -74,8 +74,6 @@ class CodingSessionComposer(BaseDatasetComposer):
         self._hash_id_rng = rng.derive("coding_session.hash_ids")
         self._language_rng = rng.derive("coding_session.language")
         self._content_type_rng = rng.derive("coding_session.content_type")
-        self._parallel_rng = rng.derive("coding_session.parallel")
-        self._branch_tokens_rng = rng.derive("coding_session.branch_tokens")
         self._subagent_rng = rng.derive("coding_session.subagent")
         self._subagent_hash_rng = rng.derive("coding_session.subagent_hash")
         self._subagent_tokens_rng = rng.derive("coding_session.subagent_tokens")
@@ -224,7 +222,6 @@ class CodingSessionComposer(BaseDatasetComposer):
                 ),
             )
 
-        parallel_group_counter = 0
         subagent_spawn_counter = 0
         compressions_used = 0
         turn_count = 1
@@ -333,7 +330,7 @@ class CodingSessionComposer(BaseDatasetComposer):
             if cumulative_tokens >= cfg.max_prompt_tokens:
                 break
 
-            # Subagent spawn (checked first, mutually exclusive with parallel)
+            # Subagent spawn
             if (
                 cfg.subagent_probability > 0
                 and self._subagent_rng.random() < cfg.subagent_probability
@@ -402,108 +399,6 @@ class CodingSessionComposer(BaseDatasetComposer):
                     )
                 )
                 continue
-
-            # Parallel fan-out
-            if (
-                cfg.parallel_probability > 0
-                and self._parallel_rng.random() < cfg.parallel_probability
-            ):
-                group_id = f"g{parallel_group_counter}"
-                parallel_group_counter += 1
-
-                fan_out = self._sample_fan_out(cfg)
-                branch_token_sum = 0
-
-                for branch_idx in range(fan_out):
-                    branch_tokens = self._branch_tokens_rng.sample_lognormal_integer(
-                        cfg.parallel_branch_tokens_mean,
-                        cfg.parallel_branch_tokens_median,
-                    )
-                    branch_input = min(
-                        cumulative_tokens + branch_tokens, cfg.max_prompt_tokens
-                    )
-
-                    # Each branch extends parent L3 with branch-specific IDs
-                    branch_blocks = max(1, branch_input // block_size)
-                    parent_count = (
-                        len(l1_ids) + len(l2_ids) + len(l3_ids) + len(thinking_ids)
-                    )
-                    branch_new = branch_blocks - parent_count
-                    branch_l3_extra = max(0, branch_new)
-                    branch_extra_ids = [
-                        self._hash_id_rng.randint(0, 2**31 - 1)
-                        for _ in range(branch_l3_extra)
-                    ]
-                    branch_hash_ids = (
-                        l1_ids + l2_ids + l3_ids + thinking_ids + branch_extra_ids
-                    )
-                    branch_layer_sizes = CacheLayerSizes(
-                        l1=len(l1_ids),
-                        l2=len(l2_ids),
-                        l3=len(l3_ids) + branch_l3_extra,
-                    )
-
-                    branch_gen = self._gen_length_rng.sample_lognormal_integer(
-                        cfg.generation_length_mean, cfg.generation_length_median
-                    )
-                    branch_content_type = self._select_content_type(cfg)
-                    branch_prompt = self._content_generator.generate_language_prompt(
-                        branch_tokens, branch_content_type, session_language
-                    )
-
-                    branch_turn = Turn(
-                        max_tokens=branch_gen,
-                        input_tokens=branch_input,
-                        texts=[Text(name="text", contents=[branch_prompt])],
-                        hash_ids=list(branch_hash_ids),
-                        cache_layer_sizes=branch_layer_sizes,
-                        parallel_group=group_id,
-                        parallel_branch=branch_idx,
-                        delay=self._sample_delay(cfg),
-                    )
-                    self._finalize_turn(branch_turn)
-                    conversation.turns.append(branch_turn)
-                    branch_token_sum += branch_tokens
-
-                join_delta = self._new_tokens_rng.sample_lognormal_integer(
-                    cfg.new_tokens_mean, cfg.new_tokens_median
-                )
-                cumulative_tokens += branch_token_sum + join_delta
-                if cumulative_tokens > cfg.max_prompt_tokens:
-                    cumulative_tokens = cfg.max_prompt_tokens
-
-                total_blocks = max(1, cumulative_tokens // block_size)
-                current_count = (
-                    len(l1_ids) + len(l2_ids) + len(l3_ids) + len(thinking_ids)
-                )
-                new_l3_count = total_blocks - current_count
-                if new_l3_count > 0:
-                    l3_ids.extend(
-                        self._hash_id_rng.randint(0, 2**31 - 1)
-                        for _ in range(new_l3_count)
-                    )
-
-                join_gen = self._gen_length_rng.sample_lognormal_integer(
-                    cfg.generation_length_mean, cfg.generation_length_median
-                )
-                join_content_type = self._select_content_type(cfg)
-                join_prompt = self._content_generator.generate_language_prompt(
-                    max(1, join_delta), join_content_type, session_language
-                )
-                join_hash_ids = l1_ids + l2_ids + l3_ids + thinking_ids
-                join_layer_sizes = CacheLayerSizes(
-                    l1=len(l1_ids), l2=len(l2_ids), l3=len(l3_ids)
-                )
-                join_turn = Turn(
-                    max_tokens=join_gen,
-                    input_tokens=cumulative_tokens,
-                    texts=[Text(name="text", contents=[join_prompt])],
-                    hash_ids=list(join_hash_ids),
-                    cache_layer_sizes=join_layer_sizes,
-                    delay=self._sample_delay(cfg),
-                )
-                self._finalize_turn(join_turn)
-                conversation.turns.append(join_turn)
 
         return conversation, child_conversations
 
@@ -647,20 +542,6 @@ class CodingSessionComposer(BaseDatasetComposer):
 
         return child
 
-    def _sample_fan_out(self, cfg: CodingSessionConfig) -> int:
-        """Sample fan-out count clamped to [2, parallel_fan_out_max].
-
-        Uses Knuth's algorithm for Poisson sampling with the underlying RNG.
-        """
-        lam = cfg.parallel_fan_out_mean
-        limit = math.exp(-lam)
-        k = 0
-        p = 1.0
-        while p > limit:
-            k += 1
-            p *= self._parallel_rng.random()
-        return max(2, min(k - 1, cfg.parallel_fan_out_max))
-
     def _generate_hash_ids(self, count: int) -> list[int]:
         """Generate deterministic hash IDs for KV cache blocks."""
         return [self._hash_id_rng.randint(0, 2**31 - 1) for _ in range(count)]
@@ -670,8 +551,7 @@ class CodingSessionComposer(BaseDatasetComposer):
 
         Must be called after create_dataset(). Reconstructs the nested request
         tree structure that CodingTraceLoader expects, including subagent
-        children as nested requests and parallel groups as sibling requests
-        under a synthetic parent.
+        children as nested requests.
 
         Returns:
             List of CodingTrace objects, one per parent session.
@@ -708,86 +588,39 @@ class CodingSessionComposer(BaseDatasetComposer):
     ) -> list[CodingTraceRequest]:
         """Convert a parent Conversation's turns into CodingTraceRequest list.
 
-        Handles sequential turns, parallel groups (nested under synthetic parent),
-        and subagent spawns (nested child conversation requests).
+        Handles sequential turns and subagent spawns (nested child conversation requests).
         """
         # Build spawn_id -> child conversations lookup
         spawn_children: dict[str, list[str]] = {}
-        spawn_join_idx: dict[str, int] = {}
         for spawn in conv.subagent_spawns:
             spawn_children[spawn.spawn_id] = spawn.child_conversation_ids
-            spawn_join_idx[spawn.spawn_id] = spawn.join_turn_index
 
         requests: list[CodingTraceRequest] = []
         cumulative_t = 0.0
-        i = 0
-        turns = conv.turns
 
-        while i < len(turns):
-            turn = turns[i]
+        for i, turn in enumerate(conv.turns):
+            req = self._turn_to_request(turn, cumulative_t, i == len(conv.turns) - 1)
 
-            # Check for parallel group start
-            if turn.parallel_group is not None:
-                group_id = turn.parallel_group
-                branch_requests: list[CodingTraceRequest] = []
-
-                # Collect all turns in this parallel group
-                while i < len(turns) and turns[i].parallel_group == group_id:
-                    branch_turn = turns[i]
-                    branch_req = self._turn_to_request(
-                        branch_turn, 0.0, i == len(turns) - 1
-                    )
-                    branch_requests.append(branch_req)
-                    i += 1
-
-                # Emit a synthetic container (input_tokens=0) so the loader
-                # sees a parent with multiple leaf children and detects them
-                # as a parallel group. The container is skipped during
-                # flattening; only the leaf branch requests enter the flat list.
-                container = CodingTraceRequest(
-                    t=cumulative_t,
-                    type="n",
-                    input_tokens=0,
-                    output_tokens=0,
-                    requests=branch_requests,
-                )
-                requests.append(container)
-
-                # The join turn (if present) becomes a separate sequential request
-                if i < len(turns) and turns[i].parallel_group is None:
-                    # Don't advance i here — the join turn will be processed
-                    # as a normal sequential turn in the next iteration
-                    pass
-            else:
-                req = self._turn_to_request(turn, cumulative_t, i == len(turns) - 1)
-
-                # Check if this turn is a subagent spawn point
-                if turn.subagent_spawn_id is not None:
-                    spawn_id = turn.subagent_spawn_id
-                    child_ids = spawn_children.get(spawn_id, [])
-                    for child_id in child_ids:
-                        child_conv = child_by_id.get(child_id)
-                        if child_conv:
-                            child_reqs = self._child_conversation_to_requests(
-                                child_conv
+            # Check if this turn is a subagent spawn point
+            if turn.subagent_spawn_id is not None:
+                spawn_id = turn.subagent_spawn_id
+                child_ids = spawn_children.get(spawn_id, [])
+                for child_id in child_ids:
+                    child_conv = child_by_id.get(child_id)
+                    if child_conv:
+                        child_reqs = self._child_conversation_to_requests(child_conv)
+                        if child_reqs:
+                            subtree = CodingTraceRequest(
+                                t=0.0,
+                                type="subagent",
+                                input_tokens=0,
+                                output_tokens=0,
+                                requests=child_reqs,
                             )
-                            if child_reqs:
-                                # Wrap as a container with input_tokens=0 (the
-                                # loader skips containers) and nest the actual
-                                # child requests inside. This gives depth > 1
-                                # so _extract_subagent_subtrees recognizes it.
-                                subtree = CodingTraceRequest(
-                                    t=0.0,
-                                    type="subagent",
-                                    input_tokens=0,
-                                    output_tokens=0,
-                                    requests=child_reqs,
-                                )
-                                req.requests.append(subtree)
+                            req.requests.append(subtree)
 
-                requests.append(req)
-                cumulative_t += (turn.delay or 0.0) / 1000.0
-                i += 1
+            requests.append(req)
+            cumulative_t += (turn.delay or 0.0) / 1000.0
 
         return requests
 

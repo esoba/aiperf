@@ -144,15 +144,6 @@ class TurnMetadata(AIPerfBaseModel):
         default=None,
         description="Cache layer decomposition of hash_ids into L1/L2/L3 blocks.",
     )
-    parallel_group: str | None = Field(
-        default=None,
-        description="Groups turns dispatched simultaneously (e.g. 'g0'). "
-        "All turns sharing a parallel_group are issued concurrently.",
-    )
-    parallel_branch: int | None = Field(
-        default=None,
-        description="Branch index within a parallel group (0-based).",
-    )
     subagent_spawn_id: str | None = Field(
         default=None,
         description="Spawn ID if this turn is blocked by a subagent spawn.",
@@ -204,15 +195,6 @@ class Turn(AIPerfBaseModel):
         default=None,
         description="Cache layer decomposition of hash_ids into L1/L2/L3 blocks.",
     )
-    parallel_group: str | None = Field(
-        default=None,
-        description="Groups turns dispatched simultaneously (e.g. 'g0'). "
-        "All turns sharing a parallel_group are issued concurrently.",
-    )
-    parallel_branch: int | None = Field(
-        default=None,
-        description="Branch index within a parallel group (0-based).",
-    )
     subagent_spawn_id: str | None = Field(
         default=None,
         description="Spawn ID if this turn is blocked by a subagent spawn.",
@@ -242,8 +224,6 @@ class Turn(AIPerfBaseModel):
             input_tokens=self.input_tokens,
             hash_ids=self.hash_ids,
             cache_layer_sizes=self.cache_layer_sizes,
-            parallel_group=self.parallel_group,
-            parallel_branch=self.parallel_branch,
             subagent_spawn_id=self.subagent_spawn_id,
         )
 
@@ -288,32 +268,11 @@ class Turn(AIPerfBaseModel):
             input_tokens=self.input_tokens,
             hash_ids=list(self.hash_ids),
             cache_layer_sizes=self.cache_layer_sizes,
-            parallel_group=self.parallel_group,
-            parallel_branch=self.parallel_branch,
             subagent_spawn_id=self.subagent_spawn_id,
             raw_content=None,
             raw_message=self.raw_message,
             assistant_prefill=self.assistant_prefill,
         )
-
-
-class ParallelGroupInfo(AIPerfBaseModel):
-    """Describes a group of turns that should be dispatched in parallel.
-
-    All turns at the indices in turn_indices share the same parallel_group ID
-    and should be issued concurrently. The join_turn_index is the first
-    sequential turn after the parallel group completes.
-    """
-
-    group_id: str = Field(
-        description="Parallel group identifier, matches Turn.parallel_group.",
-    )
-    turn_indices: list[int] = Field(
-        description="Indices into the flat turns list for each branch.",
-    )
-    join_turn_index: int = Field(
-        description="Index of the first turn after the parallel group (the join point).",
-    )
 
 
 class SubagentSpawnInfo(AIPerfBaseModel):
@@ -345,10 +304,6 @@ class ConversationMetadata(AIPerfBaseModel):
     turns: list[TurnMetadata] = Field(
         default_factory=list,
         description="The metadata of the turns in the conversation.",
-    )
-    parallel_groups: list[ParallelGroupInfo] = Field(
-        default_factory=list,
-        description="Precomputed parallel group info for turns dispatched simultaneously.",
     )
     subagent_spawns: list[SubagentSpawnInfo] = Field(
         default_factory=list,
@@ -434,36 +389,12 @@ class Conversation(AIPerfBaseModel):
     def metadata(self) -> ConversationMetadata:
         """Get the metadata of the conversation."""
         turn_metas = [turn.metadata() for turn in self.turns]
-        parallel_groups = self._compute_parallel_groups(turn_metas)
         return ConversationMetadata(
             conversation_id=self.session_id,
             turns=turn_metas,
-            parallel_groups=parallel_groups,
             subagent_spawns=self.subagent_spawns,
             is_subagent_child=self.is_subagent_child,
         )
-
-    @staticmethod
-    def _compute_parallel_groups(
-        turns: list[TurnMetadata],
-    ) -> list[ParallelGroupInfo]:
-        """Build ParallelGroupInfo list from turn metadata."""
-        groups: dict[str, list[int]] = {}
-        for i, t in enumerate(turns):
-            if t.parallel_group is not None:
-                groups.setdefault(t.parallel_group, []).append(i)
-
-        result: list[ParallelGroupInfo] = []
-        for group_id, indices in groups.items():
-            join_index = indices[-1] + 1
-            result.append(
-                ParallelGroupInfo(
-                    group_id=group_id,
-                    turn_indices=indices,
-                    join_turn_index=join_index,
-                )
-            )
-        return result
 
 
 class SessionPayloads(AIPerfBaseModel):

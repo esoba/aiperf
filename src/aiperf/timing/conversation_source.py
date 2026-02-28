@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from aiperf.common.models import (
     ConversationMetadata,
     DatasetMetadata,
-    ParallelGroupInfo,
     SubagentSpawnInfo,
     TurnMetadata,
 )
@@ -130,16 +129,6 @@ class ConversationSource:
                 f"(only {len(metadata.turns)} turns exist)"
             )
         return metadata.turns[turn_index]
-
-    def get_parallel_group(
-        self, conversation_id: str, group_id: str
-    ) -> ParallelGroupInfo | None:
-        """Get parallel group info for a specific group in a conversation."""
-        metadata = self.get_metadata(conversation_id)
-        for pg in metadata.parallel_groups:
-            if pg.group_id == group_id:
-                return pg
-        return None
 
     def start_child_session(self, conversation_id: str) -> SampledSession:
         """Start a specific child conversation as a new session (for subagent spawns)."""
