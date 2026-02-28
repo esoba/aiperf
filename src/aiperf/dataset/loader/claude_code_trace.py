@@ -180,7 +180,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
         self._synthetic_mode = prompt_generator is not None
         self._manifest: ClaudeCodeManifest | None = None
         self._parent_trace_id: str | None = None
-        self._subagent_traces: dict[str, tuple[ClaudeCodeTrace, int]] = {}
+        self._subagent_traces: dict[str, tuple[ClaudeCodeTrace, int, bool]] = {}
 
     @classmethod
     def can_load(
@@ -286,7 +286,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
         self._parent_trace_id = parent_trace.id
 
         # Load subagent children
-        self._subagent_traces: dict[str, tuple[ClaudeCodeTrace, int]] = {}
+        self._subagent_traces: dict[str, tuple[ClaudeCodeTrace, int, bool]] = {}
         for link in manifest.subagents:
             child_path = directory / link.file
             child_trace = self._load_single_file(child_path)
@@ -295,6 +295,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
                 self._subagent_traces[child_trace.id] = (
                     child_trace,
                     link.spawn_after_api_call,
+                    link.is_background,
                 )
 
         self.info(
@@ -318,18 +319,18 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
         conversations: list[Conversation] = []
         child_conversations: list[Conversation] = []
 
-        # Build spawn info mapping: parent_trace_id -> {turn_index -> [(spawn_id, child_id)]}
-        spawn_map: dict[str, dict[int, list[tuple[str, str]]]] = {}
+        # Build spawn info mapping: parent_trace_id -> {turn_index -> [(spawn_id, child_id, is_bg)]}
+        spawn_map: dict[str, dict[int, list[tuple[str, str, bool]]]] = {}
         child_trace_ids: set[str] = set()
         if self._subagent_traces:
-            for spawn_counter, (child_id, (_, spawn_after)) in enumerate(
+            for spawn_counter, (child_id, (_, spawn_after, is_bg)) in enumerate(
                 self._subagent_traces.items()
             ):
                 spawn_id = f"s{spawn_counter}"
                 child_trace_ids.add(child_id)
                 parent_id = self._parent_trace_id
                 spawn_map.setdefault(parent_id, {}).setdefault(spawn_after, []).append(
-                    (spawn_id, child_id)
+                    (spawn_id, child_id, is_bg)
                 )
 
         for trace_id, traces in data.items():
@@ -359,7 +360,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
 
                 # Register SubagentSpawnInfo; mark the join turn with spawn_id
                 spawns_at_turn = spawn_map.get(trace_id, {}).get(call_idx, [])
-                for spawn_id, child_id in spawns_at_turn:
+                for spawn_id, child_id, is_bg in spawns_at_turn:
                     join_idx = min(call_idx + 1, len(trace.api_calls) - 1)
                     join_turn_spawn_ids[join_idx] = spawn_id
                     conversation.subagent_spawns.append(
@@ -367,6 +368,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
                             spawn_id=spawn_id,
                             child_conversation_ids=[child_id],
                             join_turn_index=join_idx,
+                            is_background=is_bg,
                         )
                     )
 

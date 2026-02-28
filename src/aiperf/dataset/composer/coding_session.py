@@ -22,12 +22,18 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Any
 
 import orjson
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
-from aiperf.common.config.coding_session_config import CodingSessionConfig
+from aiperf.common.config.coding_session_config import (
+    DEFAULT_SUBAGENT_PROFILES,
+    CodingSessionConfig,
+    SubagentTypeProfile,
+)
+from aiperf.common.enums.enums import SubagentType
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.models.dataset_models import CacheLayerSizes, SubagentSpawnInfo
 from aiperf.common.tokenizer import Tokenizer
@@ -51,7 +57,7 @@ class CodingSessionComposer(BaseDatasetComposer):
     with AdaptiveScaleStrategy for token budget and working set tracking.
     """
 
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs):
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer, **kwargs: Any) -> None:
         super().__init__(config, tokenizer, **kwargs)
 
         self._coding_config: CodingSessionConfig = config.input.coding_session
@@ -86,7 +92,62 @@ class CodingSessionComposer(BaseDatasetComposer):
         self._max_turns_rng = rng.derive("coding_session.max_turns")
 
         self._tool_definitions = self._content_generator.generate_tool_definitions()
-        self._subagent_tool_definitions = self._tool_definitions[:4]
+        self._tool_definitions_by_name: dict[str, dict[str, Any]] = {
+            t["function"]["name"]: t for t in self._tool_definitions
+        }
+
+        # Build per-type profiles from defaults, applying config overrides
+        self._subagent_profiles = self._build_subagent_profiles(self._coding_config)
+
+    def _build_subagent_profiles(
+        self, cfg: CodingSessionConfig
+    ) -> list[SubagentTypeProfile]:
+        """Build subagent type profiles with config overrides applied."""
+        profiles: list[SubagentTypeProfile] = []
+        for default in DEFAULT_SUBAGENT_PROFILES:
+            model_name = default.model_name
+            if (
+                default.agent_type == SubagentType.EXPLORE
+                and cfg.subagent_explore_model_name
+            ):
+                model_name = cfg.subagent_explore_model_name
+            profiles.append(
+                SubagentTypeProfile(
+                    agent_type=default.agent_type,
+                    model_name=model_name,
+                    system_tokens=default.system_tokens,
+                    turns_mean=default.turns_mean,
+                    turns_median=default.turns_median,
+                    new_tokens_mean=default.new_tokens_mean,
+                    new_tokens_median=default.new_tokens_median,
+                    max_prompt_tokens=default.max_prompt_tokens,
+                    tool_names=list(default.tool_names),
+                    weight=default.weight,
+                    cache_ttl_sec=default.cache_ttl_sec,
+                )
+            )
+        return profiles
+
+    def _select_subagent_profile(self) -> SubagentTypeProfile:
+        """Select a subagent type profile using weighted random choice."""
+        total = sum(p.weight for p in self._subagent_profiles)
+        r = self._subagent_rng.random() * total
+        cumulative = 0.0
+        for profile in self._subagent_profiles:
+            cumulative += profile.weight
+            if r <= cumulative:
+                return profile
+        return self._subagent_profiles[-1]
+
+    def _filter_tools_for_profile(
+        self, profile: SubagentTypeProfile
+    ) -> list[dict[str, Any]]:
+        """Filter tool definitions to those allowed for a subagent type."""
+        return [
+            self._tool_definitions_by_name[name]
+            for name in profile.tool_names
+            if name in self._tool_definitions_by_name
+        ]
 
     def create_dataset(self) -> list[Conversation]:
         cfg = self._coding_config
@@ -159,6 +220,26 @@ class CodingSessionComposer(BaseDatasetComposer):
         count = min(cfg.l2_tokens // cfg.block_size, max(0, max_blocks - l1_count))
         return [self._l2_hash_rng.randint(0, 2**31 - 1) for _ in range(count)]
 
+    def _should_session_use_subagents(self, cfg: CodingSessionConfig) -> bool:
+        """Decide at session creation whether this session uses subagents.
+
+        Two-level bimodal distribution: first decide if session uses subagents
+        at all, then per-turn probability is checked separately.
+        """
+        if cfg.subagent_session_probability <= 0:
+            return False
+        return self._subagent_rng.random() < cfg.subagent_session_probability
+
+    def _should_spawn_subagent(
+        self, cfg: CodingSessionConfig, session_uses_subagents: bool
+    ) -> bool:
+        """Per-turn spawn check, conditional on session using subagents."""
+        if not session_uses_subagents:
+            return False
+        if cfg.subagent_turn_probability <= 0:
+            return False
+        return self._subagent_rng.random() < cfg.subagent_turn_probability
+
     def _generate_session(
         self, session_idx: int, cfg: CodingSessionConfig
     ) -> tuple[Conversation, list[Conversation]]:
@@ -221,6 +302,9 @@ class CodingSessionComposer(BaseDatasetComposer):
                     cfg.max_turns_mean, cfg.max_turns_median
                 ),
             )
+
+        # Session-level subagent decision (bimodal distribution)
+        session_uses_subagents = self._should_session_use_subagents(cfg)
 
         subagent_spawn_counter = 0
         compressions_used = 0
@@ -330,26 +414,25 @@ class CodingSessionComposer(BaseDatasetComposer):
             if cumulative_tokens >= cfg.max_prompt_tokens:
                 break
 
-            # Subagent spawn
-            if (
-                cfg.subagent_probability > 0
-                and self._subagent_rng.random() < cfg.subagent_probability
-            ):
+            # Subagent spawn (two-level probability)
+            if self._should_spawn_subagent(cfg, session_uses_subagents):
                 spawn_id = f"s{subagent_spawn_counter}"
                 subagent_spawn_counter += 1
 
+                profile = self._select_subagent_profile()
                 num_children = self._sample_subagent_count(cfg)
                 child_conv_ids: list[str] = []
 
                 for child_idx in range(num_children):
                     child_conv = self._generate_subagent_child(
-                        session_id, spawn_id, child_idx, cfg, session_language
+                        session_id, spawn_id, child_idx, cfg, session_language, profile
                     )
                     child_conversations.append(child_conv)
                     child_conv_ids.append(child_conv.session_id)
 
-                join_delta = self._new_tokens_rng.sample_lognormal_integer(
-                    cfg.new_tokens_mean, cfg.new_tokens_median
+                # Correlated join turn tokens from subagent result distribution
+                join_delta = self._subagent_rng.sample_lognormal_integer(
+                    cfg.subagent_result_tokens_mean, cfg.subagent_result_tokens_median
                 )
                 cumulative_tokens += join_delta
                 if cumulative_tokens > cfg.max_prompt_tokens:
@@ -366,6 +449,13 @@ class CodingSessionComposer(BaseDatasetComposer):
                         self._hash_id_rng.randint(0, 2**31 - 1)
                         for _ in range(new_l3_count)
                     )
+
+                # Background spawn decision
+                is_background = (
+                    cfg.subagent_background_probability > 0
+                    and self._subagent_rng.random()
+                    < cfg.subagent_background_probability
+                )
 
                 join_turn_index = len(conversation.turns)
                 join_gen = self._gen_length_rng.sample_lognormal_integer(
@@ -396,6 +486,7 @@ class CodingSessionComposer(BaseDatasetComposer):
                         spawn_id=spawn_id,
                         child_conversation_ids=child_conv_ids,
                         join_turn_index=join_turn_index,
+                        is_background=is_background,
                     )
                 )
                 continue
@@ -424,21 +515,23 @@ class CodingSessionComposer(BaseDatasetComposer):
         child_idx: int,
         cfg: CodingSessionConfig,
         session_language: str,
+        profile: SubagentTypeProfile,
     ) -> Conversation:
-        """Generate a subagent child conversation with independent L1 range."""
+        """Generate a subagent child conversation using per-type profile parameters."""
         child_id = f"{parent_session_id}_{spawn_id}_c{child_idx}"
+        child_tools = self._filter_tools_for_profile(profile)
         child = Conversation(
             session_id=child_id,
             is_subagent_child=True,
-            tools=self._subagent_tool_definitions,
+            tools=child_tools,
         )
 
         block_size = cfg.block_size
 
         # L1: independent range (subagent has different tool set, diverges from byte 0)
-        max_blocks = cfg.subagent_max_prompt_tokens // block_size
+        max_blocks = profile.max_prompt_tokens // block_size
         l1_count = min(
-            min(cfg.subagent_system_tokens, cfg.l1_tokens) // block_size, max_blocks
+            min(profile.system_tokens, cfg.l1_tokens) // block_size, max_blocks
         )
         offset = self._SUBAGENT_L1_OFFSET
         child_l1_ids = list(range(offset, offset + l1_count))
@@ -450,16 +543,16 @@ class CodingSessionComposer(BaseDatasetComposer):
         ]
 
         num_turns = self._subagent_turns_rng.sample_lognormal_integer(
-            cfg.subagent_turns_mean, cfg.subagent_turns_median
+            profile.turns_mean, profile.turns_median
         )
         num_turns = max(1, num_turns)
 
-        cumulative_tokens = cfg.subagent_system_tokens
+        cumulative_tokens = profile.system_tokens
         initial_tokens = self._subagent_tokens_rng.sample_lognormal_integer(
-            cfg.subagent_new_tokens_mean, cfg.subagent_new_tokens_median
+            profile.new_tokens_mean, profile.new_tokens_median
         )
         cumulative_tokens += initial_tokens
-        cumulative_tokens = min(cumulative_tokens, cfg.subagent_max_prompt_tokens)
+        cumulative_tokens = min(cumulative_tokens, profile.max_prompt_tokens)
 
         total_blocks = max(1, cumulative_tokens // block_size)
         l3_count = max(0, total_blocks - len(child_l1_ids) - len(child_l2_ids))
@@ -476,7 +569,7 @@ class CodingSessionComposer(BaseDatasetComposer):
             initial_tokens, content_type, session_language
         )
         system_text = self._content_generator.generate_language_prompt(
-            cfg.subagent_system_tokens, "tool_result", session_language
+            profile.system_tokens, "tool_result", session_language
         )
         child.system_message = system_text
 
@@ -485,6 +578,7 @@ class CodingSessionComposer(BaseDatasetComposer):
             l1=len(child_l1_ids), l2=len(child_l2_ids), l3=len(child_l3_ids)
         )
         turn = Turn(
+            model=profile.model_name,
             max_tokens=gen_length,
             input_tokens=cumulative_tokens,
             texts=[Text(name="text", contents=[prompt_text])],
@@ -495,11 +589,11 @@ class CodingSessionComposer(BaseDatasetComposer):
         child.turns.append(turn)
 
         for _ in range(num_turns - 1):
-            if cumulative_tokens >= cfg.subagent_max_prompt_tokens:
+            if cumulative_tokens >= profile.max_prompt_tokens:
                 break
 
             new_tokens = self._subagent_tokens_rng.sample_lognormal_integer(
-                cfg.subagent_new_tokens_mean, cfg.subagent_new_tokens_median
+                profile.new_tokens_mean, profile.new_tokens_median
             )
             gen_length = self._subagent_gen_rng.sample_lognormal_integer(
                 cfg.generation_length_mean, cfg.generation_length_median
@@ -509,8 +603,8 @@ class CodingSessionComposer(BaseDatasetComposer):
             delta = max(1, new_tokens - effective_prev_output)
 
             cumulative_tokens += new_tokens
-            if cumulative_tokens > cfg.subagent_max_prompt_tokens:
-                cumulative_tokens = cfg.subagent_max_prompt_tokens
+            if cumulative_tokens > profile.max_prompt_tokens:
+                cumulative_tokens = profile.max_prompt_tokens
 
             total_blocks = max(1, cumulative_tokens // block_size)
             current_count = len(child_l1_ids) + len(child_l2_ids) + len(child_l3_ids)
@@ -530,6 +624,7 @@ class CodingSessionComposer(BaseDatasetComposer):
                 l1=len(child_l1_ids), l2=len(child_l2_ids), l3=len(child_l3_ids)
             )
             turn = Turn(
+                model=profile.model_name,
                 max_tokens=gen_length,
                 input_tokens=cumulative_tokens,
                 texts=[Text(name="text", contents=[prompt_text])],

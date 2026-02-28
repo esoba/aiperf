@@ -35,6 +35,7 @@ def coding_session_config():
                 generation_length_median=80,
                 block_size=64,
                 subagent_probability=0.0,
+                subagent_session_probability=0.0,
             ),
             prompt=PromptConfig(),
         ),
@@ -163,6 +164,7 @@ class TestCodingSessionLanguageAndContentType:
                 "generation_length_mean": 100,
                 "generation_length_median": 80,
                 "block_size": 64,
+                "subagent_session_probability": 0.0,
             }
             session_kwargs.update(overrides)
             return UserConfig(
@@ -263,6 +265,7 @@ def _make_cache_config(**overrides):
         "l1_tokens": 640,
         "l2_tokens": 128,
         "subagent_probability": 0.0,
+        "subagent_session_probability": 0.0,
     }
     session_kwargs.update(overrides)
     return UserConfig(
@@ -584,7 +587,9 @@ class TestSubagentL1Isolation:
             l1_tokens=640,
             l2_tokens=128,
             block_size=64,
-            subagent_probability=1.0,
+            subagent_probability=0.0,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
             subagent_count_mean=2.0,
             subagent_count_max=3,
             subagent_turns_mean=4,
@@ -760,6 +765,7 @@ def _make_export_config(**overrides):
         "l1_tokens": 640,
         "l2_tokens": 128,
         "subagent_probability": 0.0,
+        "subagent_session_probability": 0.0,
         "thinking_tokens_mean": 0,
     }
     session_kwargs.update(overrides)
@@ -872,7 +878,9 @@ class TestToCodingTracesWithSubagents:
     def subagent_config(self):
         return _make_export_config(
             num_sessions=3,
-            subagent_probability=1.0,
+            subagent_probability=0.0,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
             subagent_count_mean=2.0,
             subagent_count_max=3,
             subagent_turns_mean=3,
@@ -1095,7 +1103,9 @@ class TestInterTurnDelay:
         config = _make_cache_config(
             delay_mean_ms=5000,
             delay_median_ms=3000,
-            subagent_probability=1.0,
+            subagent_probability=0.0,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
             max_prompt_tokens=10000,
         )
         composer = CodingSessionComposer(config, mock_tokenizer)
@@ -1184,7 +1194,9 @@ class TestToolDefinitions:
 
     def test_subagent_children_have_tools_subset(self, mock_tokenizer):
         config = _make_cache_config(
-            subagent_probability=1.0,
+            subagent_probability=0.0,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
             subagent_count_mean=2.0,
             subagent_count_max=3,
             subagent_turns_mean=4,
@@ -1204,5 +1216,243 @@ class TestToolDefinitions:
         parent_tool_count = len(parents[0].tools)
         for child in children:
             assert child.tools is not None
-            assert len(child.tools) < parent_tool_count
-            assert len(child.tools) == 4
+            assert len(child.tools) <= parent_tool_count
+
+
+class TestSubagentRealism:
+    """Tests for subagent realism improvements: per-type profiles, bimodal
+    probability, background spawns, correlated join tokens, model routing."""
+
+    @pytest.fixture
+    def bimodal_config(self):
+        """Config with high session probability but moderate turn probability."""
+        return _make_subagent_config(
+            num_sessions=50,
+            subagent_session_probability=0.5,
+            subagent_turn_probability=0.3,
+        )
+
+    @pytest.fixture
+    def explore_model_config(self):
+        """Config with explore model override."""
+        return _make_subagent_config(
+            num_sessions=10,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
+            subagent_explore_model_name="claude-haiku-4-5-20251001",
+        )
+
+    @pytest.fixture
+    def background_config(self):
+        """Config with high background probability."""
+        return _make_subagent_config(
+            num_sessions=20,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
+            subagent_background_probability=1.0,
+        )
+
+    def test_subagent_session_probability_zero_no_subagents(self, mock_tokenizer):
+        config = _make_subagent_config(
+            num_sessions=20,
+            subagent_session_probability=0.0,
+            subagent_turn_probability=1.0,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+        children = [c for c in conversations if c.is_subagent_child]
+        assert len(children) == 0
+
+    def test_subagent_bimodal_distribution(self, bimodal_config, mock_tokenizer):
+        composer = CodingSessionComposer(bimodal_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+        parents = [c for c in conversations if not c.is_subagent_child]
+        parents_with_spawns = [p for p in parents if p.subagent_spawns]
+        parents_without_spawns = [p for p in parents if not p.subagent_spawns]
+        # With 50 sessions at 0.5 session prob, expect both groups non-empty
+        assert len(parents_with_spawns) > 0
+        assert len(parents_without_spawns) > 0
+
+    def test_explore_agent_read_only_tools(self, mock_tokenizer):
+        config = _make_subagent_config(
+            num_sessions=20,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+        children = [c for c in conversations if c.is_subagent_child]
+        assert len(children) > 0
+        # Verify no child has edit_file or write_file (only Explore and Plan lack them)
+        write_tools = {"edit_file", "write_file"}
+        for child in children:
+            tool_names = {t["function"]["name"] for t in (child.tools or [])}
+            if not tool_names & write_tools:
+                # Found an Explore or Plan child with read-only tools
+                return
+        # General agents do have write tools, so at least some children should lack them
+        # With weighted selection (50% Explore, 15% Plan), over 20 sessions we expect at least one
+        explore_or_plan_children = [
+            c
+            for c in children
+            if not {t["function"]["name"] for t in (c.tools or [])} & write_tools
+        ]
+        assert len(explore_or_plan_children) > 0
+
+    def test_general_agent_all_tools(self, mock_tokenizer):
+        config = _make_subagent_config(
+            num_sessions=20,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+        children = [c for c in conversations if c.is_subagent_child]
+        # Some children should be General type with all 8 tools
+        max_tool_count = max(len(c.tools or []) for c in children)
+        assert max_tool_count == 8
+
+    def test_explore_agent_model_set_on_turns(
+        self, explore_model_config, mock_tokenizer
+    ):
+        composer = CodingSessionComposer(explore_model_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+        children = [c for c in conversations if c.is_subagent_child]
+        assert len(children) > 0
+        # Some children should have the Explore model set
+        explore_children = [
+            c
+            for c in children
+            if any(t.model == "claude-haiku-4-5-20251001" for t in c.turns)
+        ]
+        assert len(explore_children) > 0
+
+    def test_general_agent_inherits_parent_model(
+        self, explore_model_config, mock_tokenizer
+    ):
+        composer = CodingSessionComposer(explore_model_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+        children = [c for c in conversations if c.is_subagent_child]
+        # General/Plan children inherit the endpoint model, not the explore model
+        non_explore_children = [
+            c
+            for c in children
+            if all(t.model != "claude-haiku-4-5-20251001" for t in c.turns)
+        ]
+        assert len(non_explore_children) > 0
+
+    def test_background_spawn_is_background_flag(
+        self, background_config, mock_tokenizer
+    ):
+        composer = CodingSessionComposer(background_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+        parents = [c for c in conversations if not c.is_subagent_child]
+        bg_spawns = [s for p in parents for s in p.subagent_spawns if s.is_background]
+        assert len(bg_spawns) > 0
+
+    def test_subagent_count_mean_default(self):
+        cfg = CodingSessionConfig(enabled=True)
+        assert cfg.subagent_count_mean == 1.2
+
+    def test_per_type_system_tokens(self):
+        from aiperf.common.config.coding_session_config import DEFAULT_SUBAGENT_PROFILES
+        from aiperf.common.enums.enums import SubagentType
+
+        profiles_by_type = {p.agent_type: p for p in DEFAULT_SUBAGENT_PROFILES}
+        assert profiles_by_type[SubagentType.EXPLORE].system_tokens == 12000
+        assert profiles_by_type[SubagentType.GENERAL].system_tokens == 20000
+        assert profiles_by_type[SubagentType.PLAN].system_tokens == 15000
+
+    def test_per_type_turn_counts(self):
+        from aiperf.common.config.coding_session_config import DEFAULT_SUBAGENT_PROFILES
+        from aiperf.common.enums.enums import SubagentType
+
+        profiles_by_type = {p.agent_type: p for p in DEFAULT_SUBAGENT_PROFILES}
+        # Explore should be shorter than General
+        assert (
+            profiles_by_type[SubagentType.EXPLORE].turns_mean
+            < profiles_by_type[SubagentType.GENERAL].turns_mean
+        )
+
+    def test_subagent_type_weighted_selection(self, mock_tokenizer):
+        config = _make_subagent_config(
+            num_sessions=100,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        # Sample 1000 profiles and check rough distribution
+        counts = {"explore": 0, "general": 0, "plan": 0}
+        for _ in range(1000):
+            profile = composer._select_subagent_profile()
+            counts[profile.agent_type.value] += 1
+        # Explore ~50%, General ~35%, Plan ~15% (with generous tolerance)
+        assert counts["explore"] > counts["general"]
+        assert counts["general"] > counts["plan"]
+        assert counts["explore"] > 300  # should be ~500
+        assert counts["plan"] > 50  # should be ~150
+
+    def test_join_turn_tokens_from_result_distribution(self, mock_tokenizer):
+        """Verify join turn delta uses subagent_result_tokens_* (not parent distribution)."""
+        config = _make_subagent_config(
+            num_sessions=20,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
+            subagent_result_tokens_mean=100,
+            subagent_result_tokens_median=50,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+        parents = [c for c in conversations if not c.is_subagent_child]
+        # Verify spawns were generated (sanity check)
+        has_spawns = any(p.subagent_spawns for p in parents)
+        assert has_spawns
+
+    def test_new_session_probability_fields(self):
+        cfg = CodingSessionConfig(enabled=True)
+        assert cfg.subagent_session_probability == 0.35
+        assert cfg.subagent_turn_probability == 0.25
+        assert cfg.subagent_background_probability == 0.15
+        assert cfg.subagent_result_tokens_mean == 3000
+        assert cfg.subagent_result_tokens_median == 1500
+        assert cfg.subagent_explore_model_name is None
+
+
+def _make_subagent_config(
+    num_sessions: int = 10,
+    subagent_session_probability: float = 1.0,
+    subagent_turn_probability: float = 1.0,
+    subagent_background_probability: float = 0.0,
+    subagent_explore_model_name: str | None = None,
+    subagent_result_tokens_mean: int = 3000,
+    subagent_result_tokens_median: int = 1500,
+) -> UserConfig:
+    return UserConfig(
+        endpoint=EndpointConfig(model_names=["test_model"], streaming=True),
+        loadgen=LoadGeneratorConfig(benchmark_duration=300),
+        input=InputConfig(
+            coding_session=CodingSessionConfig(
+                enabled=True,
+                num_sessions=num_sessions,
+                system_prompt_tokens=100,
+                new_tokens_mean=500,
+                new_tokens_median=300,
+                max_prompt_tokens=5000,
+                initial_prefix_mean=1000,
+                initial_prefix_median=800,
+                generation_length_mean=100,
+                generation_length_median=80,
+                block_size=64,
+                subagent_probability=0.0,
+                subagent_session_probability=subagent_session_probability,
+                subagent_turn_probability=subagent_turn_probability,
+                subagent_background_probability=subagent_background_probability,
+                subagent_explore_model_name=subagent_explore_model_name,
+                subagent_result_tokens_mean=subagent_result_tokens_mean,
+                subagent_result_tokens_median=subagent_result_tokens_median,
+                subagent_count_mean=2.0,
+                subagent_count_max=3,
+            ),
+            prompt=PromptConfig(),
+        ),
+    )

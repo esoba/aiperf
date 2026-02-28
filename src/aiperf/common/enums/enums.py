@@ -455,6 +455,14 @@ class VideoSynthType(CaseInsensitiveStrEnum):
     """Generate videos with random noise frames"""
 
 
+class SubagentType(CaseInsensitiveStrEnum):
+    """Type of subagent spawned during coding sessions."""
+
+    EXPLORE = "explore"
+    GENERAL = "general"
+    PLAN = "plan"
+
+
 class WorkerStatus(CaseInsensitiveStrEnum):
     """The current status of a worker service.
 

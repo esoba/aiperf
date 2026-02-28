@@ -424,7 +424,11 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             )
 
     def _dispatch_subagent_spawn(self, credit: Credit, spawn_id: str) -> None:
-        """Fan out subagent child sessions and register a pending join."""
+        """Fan out subagent child sessions and register a pending join.
+
+        For background spawns, the parent continues immediately by dispatching
+        the join turn without waiting for children to complete.
+        """
         spawn = self._conversation_source.get_subagent_spawn(
             credit.conversation_id, spawn_id
         )
@@ -436,14 +440,8 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             return
 
         parent_corr_id = credit.x_correlation_id
-        self._pending_subagent_joins[parent_corr_id] = PendingSubagentJoin(
-            parent_conversation_id=credit.conversation_id,
-            parent_correlation_id=parent_corr_id,
-            expected_count=len(spawn.child_conversation_ids),
-            join_turn_index=spawn.join_turn_index,
-            parent_num_turns=credit.num_turns,
-        )
 
+        # Fan out children (same for both background and blocking)
         for child_conv_id in spawn.child_conversation_ids:
             child_session = self._conversation_source.start_child_session(child_conv_id)
             self._subagent_child_to_parent[child_session.x_correlation_id] = (
@@ -453,6 +451,27 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             child_turn = child_session.build_first_turn()
             self._scheduler.execute_async(
                 self._credit_issuer.issue_credit(child_turn),
+            )
+
+        if spawn.is_background:
+            # Parent continues immediately -- dispatch join turn without waiting
+            join_turn = TurnToSend(
+                conversation_id=credit.conversation_id,
+                x_correlation_id=parent_corr_id,
+                turn_index=spawn.join_turn_index,
+                num_turns=credit.num_turns,
+            )
+            self._scheduler.execute_async(
+                self._credit_issuer.issue_credit(join_turn),
+            )
+        else:
+            # Blocking: register pending join (wait for all children)
+            self._pending_subagent_joins[parent_corr_id] = PendingSubagentJoin(
+                parent_conversation_id=credit.conversation_id,
+                parent_correlation_id=parent_corr_id,
+                expected_count=len(spawn.child_conversation_ids),
+                join_turn_index=spawn.join_turn_index,
+                parent_num_turns=credit.num_turns,
             )
 
     def _handle_subagent_child_complete(self, credit: Credit) -> None:

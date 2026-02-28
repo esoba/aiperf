@@ -86,6 +86,7 @@ def _make_dataset_with_subagent(
     spawn_at: int | None = 2,
     num_children: int = 2,
     child_turns: int = 3,
+    is_background: bool = False,
 ) -> tuple[DatasetMetadata, list[str]]:
     """Create dataset with subagent spawns.
 
@@ -124,6 +125,7 @@ def _make_dataset_with_subagent(
                     spawn_id="s0",
                     child_conversation_ids=children,
                     join_turn_index=spawn_at + 1,
+                    is_background=is_background,
                 )
             )
 
@@ -176,6 +178,7 @@ def _make_adaptive_strategy(
     num_children: int = 2,
     child_turns: int = 3,
     turns_per_conv: int = 6,
+    is_background: bool = False,
 ) -> tuple[
     AdaptiveScaleStrategy, MagicMock, MagicMock, MagicMock, DatasetMetadata, list[str]
 ]:
@@ -195,6 +198,7 @@ def _make_adaptive_strategy(
         spawn_at=spawn_at,
         num_children=num_children,
         child_turns=child_turns,
+        is_background=is_background,
     )
     src = _make_conversation_source(ds)
 
@@ -358,7 +362,7 @@ class TestCodingSessionSubagentConfig:
     def test_defaults(self):
         cfg = CodingSessionConfig(enabled=True)
         assert cfg.subagent_probability == 0.15
-        assert cfg.subagent_count_mean == 1.5
+        assert cfg.subagent_count_mean == 1.2
         assert cfg.subagent_count_max == 4
         assert cfg.subagent_turns_mean == 8
         assert cfg.subagent_turns_median == 5
@@ -366,6 +370,12 @@ class TestCodingSessionSubagentConfig:
         assert cfg.subagent_new_tokens_mean == 2500
         assert cfg.subagent_new_tokens_median == 1200
         assert cfg.subagent_max_prompt_tokens == 50000
+        assert cfg.subagent_session_probability == 0.35
+        assert cfg.subagent_turn_probability == 0.25
+        assert cfg.subagent_background_probability == 0.15
+        assert cfg.subagent_result_tokens_mean == 3000
+        assert cfg.subagent_result_tokens_median == 1500
+        assert cfg.subagent_explore_model_name is None
 
     def test_disable_subagent(self):
         cfg = CodingSessionConfig(enabled=True, subagent_probability=0.0)
@@ -415,7 +425,9 @@ class TestCodingSessionSubagentGeneration:
                     generation_length_mean=100,
                     generation_length_median=80,
                     block_size=64,
-                    subagent_probability=1.0,
+                    subagent_probability=0.0,
+                    subagent_session_probability=1.0,
+                    subagent_turn_probability=1.0,
                     subagent_count_mean=2.0,
                     subagent_count_max=3,
                     subagent_turns_mean=4,
@@ -448,6 +460,7 @@ class TestCodingSessionSubagentGeneration:
                     generation_length_median=80,
                     block_size=64,
                     subagent_probability=0.0,
+                    subagent_session_probability=0.0,
                 ),
                 prompt=PromptConfig(),
             ),
@@ -547,7 +560,9 @@ class TestCodingSessionSubagentGeneration:
         assert has_meta_spawns
 
     def test_child_input_tokens_within_max(self, subagent_config, mock_tokenizer):
-        max_tokens = subagent_config.input.coding_session.subagent_max_prompt_tokens
+        from aiperf.common.config.coding_session_config import DEFAULT_SUBAGENT_PROFILES
+
+        max_tokens = max(p.max_prompt_tokens for p in DEFAULT_SUBAGENT_PROFILES)
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
@@ -848,3 +863,75 @@ class TestPendingSubagentJoin:
 
         pj.completed_count += 1
         assert pj.completed_count == pj.expected_count
+
+
+# =============================================================================
+# Background Subagent Tests
+# =============================================================================
+
+
+class TestBackgroundSubagentDispatch:
+    """Tests for background subagent spawns where parent continues immediately."""
+
+    @pytest.mark.asyncio
+    async def test_background_spawn_dispatches_join_immediately(self):
+        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy(
+            is_background=True
+        )
+
+        credit = _make_sequential_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+
+        strategy._dispatch_subagent_spawn(credit, "s0")
+
+        # Should NOT register a pending join (parent doesn't wait)
+        assert "parent-1" not in strategy._pending_subagent_joins
+
+        # Should issue credits for children + the join turn
+        # 2 children + 1 join = 3 execute_async calls
+        assert scheduler.execute_async.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_background_child_complete_no_pending_join(self):
+        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy(
+            is_background=True
+        )
+
+        credit = _make_sequential_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        strategy._dispatch_subagent_spawn(credit, "s0")
+        scheduler.execute_async.reset_mock()
+
+        child_corr_ids = list(strategy._subagent_child_to_parent.keys())
+        assert len(child_corr_ids) == 2
+
+        # Child completes -- should clean up without error
+        child_credit = _make_sequential_credit(
+            conv_id=child_ids[0],
+            corr_id=child_corr_ids[0],
+            turn_index=2,
+            num_turns=3,
+        )
+        strategy._handle_subagent_child_complete(child_credit)
+
+        # No pending join to dispatch (already dispatched immediately)
+        assert "parent-1" not in strategy._pending_subagent_joins
+
+    def test_subagent_spawn_info_is_background_default(self):
+        info = SubagentSpawnInfo(
+            spawn_id="s0",
+            child_conversation_ids=["c0"],
+            join_turn_index=3,
+        )
+        assert info.is_background is False
+
+    def test_subagent_spawn_info_is_background_true(self):
+        info = SubagentSpawnInfo(
+            spawn_id="s0",
+            child_conversation_ids=["c0"],
+            join_turn_index=3,
+            is_background=True,
+        )
+        assert info.is_background is True

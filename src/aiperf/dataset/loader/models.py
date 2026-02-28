@@ -457,6 +457,10 @@ class ClaudeCodeSubagentLink(AIPerfBaseModel):
     spawn_after_api_call: int = Field(
         description="0-based index of the parent API call after which this subagent spawns."
     )
+    is_background: bool = Field(
+        default=False,
+        description="If true, parent continued without waiting for this subagent.",
+    )
 
 
 class ClaudeCodeManifest(AIPerfBaseModel):

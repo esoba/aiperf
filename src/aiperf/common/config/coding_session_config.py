@@ -4,11 +4,96 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.groups import Groups
+from aiperf.common.enums.enums import SubagentType
+
+
+class SubagentTypeProfile(BaseModel):
+    """Per-type parameters for subagent generation."""
+
+    agent_type: SubagentType = Field(
+        description="Subagent type this profile configures."
+    )
+    model_name: str | None = Field(
+        default=None, description="Model name override. None inherits parent model."
+    )
+    system_tokens: int = Field(description="System prompt tokens for this agent type.")
+    turns_mean: int = Field(description="Mean turn count (lognormal).")
+    turns_median: int = Field(description="Median turn count (lognormal).")
+    new_tokens_mean: int = Field(description="Mean new tokens per turn (lognormal).")
+    new_tokens_median: int = Field(
+        description="Median new tokens per turn (lognormal)."
+    )
+    max_prompt_tokens: int = Field(
+        description="Maximum prompt tokens before retirement."
+    )
+    tool_names: list[str] = Field(
+        description="Tool function names available to this type."
+    )
+    weight: float = Field(description="Selection weight for weighted random choice.")
+    cache_ttl_sec: float = Field(description="KV cache TTL in seconds.")
+
+
+DEFAULT_SUBAGENT_PROFILES: list[SubagentTypeProfile] = [
+    SubagentTypeProfile(
+        agent_type=SubagentType.EXPLORE,
+        model_name=None,
+        system_tokens=12000,
+        turns_mean=5,
+        turns_median=4,
+        new_tokens_mean=2000,
+        new_tokens_median=1000,
+        max_prompt_tokens=30000,
+        tool_names=["read_file", "search_files", "list_directory", "run_command"],
+        weight=0.50,
+        cache_ttl_sec=300.0,
+    ),
+    SubagentTypeProfile(
+        agent_type=SubagentType.GENERAL,
+        model_name=None,
+        system_tokens=20000,
+        turns_mean=10,
+        turns_median=7,
+        new_tokens_mean=3000,
+        new_tokens_median=1500,
+        max_prompt_tokens=80000,
+        tool_names=[
+            "read_file",
+            "edit_file",
+            "search_files",
+            "run_command",
+            "list_directory",
+            "write_file",
+            "find_references",
+            "get_diagnostics",
+        ],
+        weight=0.35,
+        cache_ttl_sec=300.0,
+    ),
+    SubagentTypeProfile(
+        agent_type=SubagentType.PLAN,
+        model_name=None,
+        system_tokens=15000,
+        turns_mean=4,
+        turns_median=3,
+        new_tokens_mean=2500,
+        new_tokens_median=1200,
+        max_prompt_tokens=50000,
+        tool_names=[
+            "read_file",
+            "search_files",
+            "list_directory",
+            "run_command",
+            "find_references",
+        ],
+        weight=0.15,
+        cache_ttl_sec=300.0,
+    ),
+]
 
 
 class CodingSessionConfig(BaseConfig):
@@ -188,21 +273,101 @@ class CodingSessionConfig(BaseConfig):
             default=0.15,
             ge=0.0,
             le=1.0,
-            description="Probability a turn spawns subagent children. "
-            "0.0 disables subagent generation.",
+            description="Legacy per-turn subagent probability. Superseded by "
+            "subagent_session_probability + subagent_turn_probability. "
+            "Kept as fallback when new fields are at defaults.",
         ),
         CLIParameter(name=("--coding-session-subagent-probability",), group=_CLI_GROUP),
     ] = 0.15
 
+    subagent_session_probability: Annotated[
+        float,
+        Field(
+            default=0.35,
+            ge=0.0,
+            le=1.0,
+            description="Probability a session uses subagents at all. "
+            "First level of the bimodal spawn distribution.",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-session-probability",), group=_CLI_GROUP
+        ),
+    ] = 0.35
+
+    subagent_turn_probability: Annotated[
+        float,
+        Field(
+            default=0.25,
+            ge=0.0,
+            le=1.0,
+            description="Per-turn spawn probability, conditional on session using subagents. "
+            "Second level of the bimodal spawn distribution.",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-turn-probability",), group=_CLI_GROUP
+        ),
+    ] = 0.25
+
+    subagent_background_probability: Annotated[
+        float,
+        Field(
+            default=0.15,
+            ge=0.0,
+            le=1.0,
+            description="Fraction of subagent spawns that run in background "
+            "(parent continues without waiting).",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-background-probability",), group=_CLI_GROUP
+        ),
+    ] = 0.15
+
+    subagent_result_tokens_mean: Annotated[
+        int,
+        Field(
+            default=3000,
+            ge=1,
+            description="Mean tool_result tokens added to the parent join turn "
+            "from subagent output.",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-result-tokens-mean",), group=_CLI_GROUP
+        ),
+    ] = 3000
+
+    subagent_result_tokens_median: Annotated[
+        int,
+        Field(
+            default=1500,
+            ge=1,
+            description="Median tool_result tokens added to the parent join turn.",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-result-tokens-median",), group=_CLI_GROUP
+        ),
+    ] = 1500
+
+    subagent_explore_model_name: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Model name for Explore subagents (e.g. 'claude-haiku-4-5-20251001'). "
+            "None inherits parent model.",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-explore-model-name",), group=_CLI_GROUP
+        ),
+    ] = None
+
     subagent_count_mean: Annotated[
         float,
         Field(
-            default=1.5,
+            default=1.2,
             ge=1.0,
             description="Mean number of subagent children per spawn (Poisson).",
         ),
         CLIParameter(name=("--coding-session-subagent-count-mean",), group=_CLI_GROUP),
-    ] = 1.5
+    ] = 1.2
 
     subagent_count_max: Annotated[
         int,

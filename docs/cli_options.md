@@ -499,15 +499,49 @@ Programming language for session content. 'mixed' randomly assigns a language pe
 
 #### `--coding-session-subagent-probability` `<float>`
 
-Probability a turn spawns subagent children. 0.0 disables subagent generation.
+Legacy per-turn subagent probability. Superseded by subagent_session_probability + subagent_turn_probability. Kept as fallback when new fields are at defaults.
 <br>_Constraints: ≥ 0.0, ≤ 1.0_
 <br>_Default: `0.15`_
+
+#### `--coding-session-subagent-session-probability` `<float>`
+
+Probability a session uses subagents at all. First level of the bimodal spawn distribution.
+<br>_Constraints: ≥ 0.0, ≤ 1.0_
+<br>_Default: `0.35`_
+
+#### `--coding-session-subagent-turn-probability` `<float>`
+
+Per-turn spawn probability, conditional on session using subagents. Second level of the bimodal spawn distribution.
+<br>_Constraints: ≥ 0.0, ≤ 1.0_
+<br>_Default: `0.25`_
+
+#### `--coding-session-subagent-background-probability` `<float>`
+
+Fraction of subagent spawns that run in background (parent continues without waiting).
+<br>_Constraints: ≥ 0.0, ≤ 1.0_
+<br>_Default: `0.15`_
+
+#### `--coding-session-subagent-result-tokens-mean` `<int>`
+
+Mean tool_result tokens added to the parent join turn from subagent output.
+<br>_Constraints: ≥ 1_
+<br>_Default: `3000`_
+
+#### `--coding-session-subagent-result-tokens-median` `<int>`
+
+Median tool_result tokens added to the parent join turn.
+<br>_Constraints: ≥ 1_
+<br>_Default: `1500`_
+
+#### `--coding-session-subagent-explore-model-name` `<str>`
+
+Model name for Explore subagents (e.g. 'claude-haiku-4-5-20251001'). None inherits parent model.
 
 #### `--coding-session-subagent-count-mean` `<float>`
 
 Mean number of subagent children per spawn (Poisson).
 <br>_Constraints: ≥ 1.0_
-<br>_Default: `1.5`_
+<br>_Default: `1.2`_
 
 #### `--coding-session-subagent-count-max` `<int>`
 

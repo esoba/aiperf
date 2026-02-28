@@ -292,6 +292,10 @@ class SubagentSpawnInfo(AIPerfBaseModel):
     join_turn_index: int = Field(
         description="Parent turn index to resume after all children complete.",
     )
+    is_background: bool = Field(
+        default=False,
+        description="If true, parent continues without waiting for children.",
+    )
 
 
 class ConversationMetadata(AIPerfBaseModel):
