@@ -33,7 +33,7 @@ from aiperf.transports.grpc.grpc_transport import (
     _metadata_to_dict,
 )
 from aiperf.transports.grpc.kserve_v2_serializers import KServeV2GrpcSerializer
-from aiperf.transports.grpc.proto import grpc_predict_v2_pb2 as pb2
+from aiperf.transports.grpc.proto.kserve import grpc_predict_v2_pb2 as pb2
 from aiperf.transports.grpc.trace_data import GrpcTraceData
 
 # Method paths for tests (match plugins.yaml kserve_v2_infer metadata)

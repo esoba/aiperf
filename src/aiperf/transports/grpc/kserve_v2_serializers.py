@@ -14,7 +14,7 @@ from __future__ import annotations
 import struct
 from typing import Any
 
-from aiperf.transports.grpc.proto import grpc_predict_v2_pb2 as pb2
+from aiperf.transports.grpc.proto.kserve import grpc_predict_v2_pb2 as pb2
 from aiperf.transports.grpc.stream_chunk import StreamChunk
 
 # ---------------------------------------------------------------------------

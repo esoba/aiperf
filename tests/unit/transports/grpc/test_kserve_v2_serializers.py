@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from aiperf.transports.grpc.grpc_transport import GrpcSerializerProtocol
 from aiperf.transports.grpc.kserve_v2_serializers import KServeV2GrpcSerializer
-from aiperf.transports.grpc.proto import grpc_predict_v2_pb2 as pb2
+from aiperf.transports.grpc.proto.kserve import grpc_predict_v2_pb2 as pb2
 from aiperf.transports.grpc.stream_chunk import StreamChunk
 
 

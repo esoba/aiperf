@@ -183,7 +183,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.transports.grpc.proto import my_service_pb2 as pb2
+from aiperf.transports.grpc.proto.my_service import my_service_pb2 as pb2
 
 
 def dict_to_my_request(
@@ -221,7 +221,7 @@ from aiperf.transports.grpc.my_payload_converter import (
     dict_to_my_request,
     my_response_to_dict,
 )
-from aiperf.transports.grpc.proto import my_service_pb2 as pb2
+from aiperf.transports.grpc.proto.my_service import my_service_pb2 as pb2
 from aiperf.transports.grpc.stream_chunk import StreamChunk
 
 

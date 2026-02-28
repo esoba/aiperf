@@ -11,7 +11,7 @@ from aiperf.transports.grpc.kserve_v2_serializers import (
     dict_to_model_infer_request,
     model_infer_response_to_dict,
 )
-from aiperf.transports.grpc.proto import grpc_predict_v2_pb2 as pb2
+from aiperf.transports.grpc.proto.kserve import grpc_predict_v2_pb2 as pb2
 
 
 class TestDictToModelInferRequest:
