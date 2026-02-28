@@ -134,6 +134,7 @@ from aiperf.common.models.trace_models import (
 )
 from aiperf.common.models.usage_models import Usage
 from aiperf.common.models.worker_models import WorkerTaskStats
+from aiperf.transports.grpc.trace_data import GrpcTraceData, GrpcTraceDataExport
 
 __all__ = [
     "AIPerfBaseModel",
@@ -171,6 +172,8 @@ __all__ = [
     "GaugeSeries",
     "GaugeStats",
     "GaugeTimeslice",
+    "GrpcTraceData",
+    "GrpcTraceDataExport",
     "GpuMetadata",
     "GpuMetricTimeSeries",
     "GpuSummary",

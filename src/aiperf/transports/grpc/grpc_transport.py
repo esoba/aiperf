@@ -605,6 +605,7 @@ class GrpcTransport(BaseTransport):
         trace_data.response_receive_start_perf_ns = perf_ns
         trace_data.response_receive_end_perf_ns = perf_ns
         trace_data.response_headers_received_perf_ns = perf_ns
+        record.recv_start_perf_ns = perf_ns
         response_dict, response_size = self._serializer.deserialize_response(
             result.data
         )
@@ -684,6 +685,7 @@ class GrpcTransport(BaseTransport):
                 if trace_data.response_receive_start_perf_ns is None:
                     trace_data.response_receive_start_perf_ns = perf_ns
                     trace_data.response_headers_received_perf_ns = perf_ns
+                    record.recv_start_perf_ns = perf_ns
 
                 json_str = orjson.dumps(chunk.response_dict).decode("utf-8")
                 text_response = TextResponse(
