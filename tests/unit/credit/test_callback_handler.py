@@ -26,6 +26,7 @@ def mock_concurrency():
     """Mock concurrency manager."""
     mock = MagicMock()
     mock.release_session_slot = MagicMock()
+    mock.release_request_slot = MagicMock()
     mock.release_prefill_slot = MagicMock()
     return mock
 
@@ -169,6 +170,7 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             False,  # cancelled=False
+            is_subagent_child=credit.is_subagent_child,
         )
 
     async def test_on_credit_return_tracks_cancelled_status(
@@ -183,6 +185,7 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             True,  # cancelled=True
+            is_subagent_child=credit.is_subagent_child,
         )
 
     async def test_on_credit_return_releases_session_slot_on_final_turn(
@@ -391,7 +394,7 @@ class TestEdgeCases:
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_progress.increment_returned.assert_called_once_with(
-            credit.is_final_turn, cancelled
+            credit.is_final_turn, cancelled, is_subagent_child=credit.is_subagent_child
         )
         if not first_token_sent:
             mock_concurrency.release_prefill_slot.assert_called_once()

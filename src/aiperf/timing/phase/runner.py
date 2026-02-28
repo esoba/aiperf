@@ -228,6 +228,7 @@ class PhaseRunner(TaskManagerMixin):
                 self._config.phase,
                 self._config.concurrency,
                 self._config.prefill_concurrency,
+                self._config.request_concurrency,
             )
 
             await strategy.setup_phase()
@@ -335,6 +336,26 @@ class PhaseRunner(TaskManagerMixin):
                 )
 
             self._rampers.append(Ramper(setter=setter, config=ramp_config))
+
+        # Request concurrency ramper (stepped mode)
+        if config.request_concurrency_ramp_duration_sec and config.request_concurrency:
+            self.info(
+                f"Starting request concurrency ramp: 1 → {config.request_concurrency} "
+                f"over {config.request_concurrency_ramp_duration_sec}s"
+            )
+            ramp_config = RampConfig(
+                ramp_type=RampType.LINEAR,
+                start=1,
+                target=config.request_concurrency,
+                duration_sec=config.request_concurrency_ramp_duration_sec,
+            )
+
+            def request_setter(limit: float) -> None:
+                return self._concurrency_manager.set_request_limit(
+                    config.phase, int(limit)
+                )
+
+            self._rampers.append(Ramper(setter=request_setter, config=ramp_config))
 
         # Prefill concurrency ramper (stepped mode)
         if config.prefill_concurrency_ramp_duration_sec and config.prefill_concurrency:
@@ -549,13 +570,13 @@ class PhaseRunner(TaskManagerMixin):
 
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""
-        session_released, prefill_released = (
+        session_released, request_released, prefill_released = (
             self._concurrency_manager.release_stuck_slots(self._config.phase)
         )
-        if session_released or prefill_released:
+        if session_released or request_released or prefill_released:
             self.warning(
                 f"Released stuck slots for phase {self._config.phase}: "
-                f"session={session_released}, prefill={prefill_released}"
+                f"session={session_released}, request={request_released}, prefill={prefill_released}"
             )
 
     async def _wait_for_event_with_timeout(

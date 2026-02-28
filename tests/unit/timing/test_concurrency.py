@@ -439,12 +439,12 @@ class TestConcurrencyManager:
             await m.acquire_session_slot(P, lambda: True)
         for _ in range(2):
             await m.acquire_prefill_slot(P, lambda: True)
-        assert m.release_stuck_slots(P) == (3, 2)
+        assert m.release_stuck_slots(P) == (3, 0, 2)
 
     def test_release_stuck_slots_disabled_returns_zero(self) -> None:
         m = ConcurrencyManager()
         m.configure_for_phase(P, None, None)
-        assert m.release_stuck_slots(P) == (0, 0)
+        assert m.release_stuck_slots(P) == (0, 0, 0)
 
     def test_get_session_stats_disabled_returns_none(self) -> None:
         m = ConcurrencyManager()

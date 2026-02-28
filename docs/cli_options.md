@@ -1101,9 +1101,14 @@ The grace period in seconds to wait for responses after benchmark duration ends.
 <br>_Constraints: ≥ 0_
 <br>_Default: `30.0`_
 
-#### `--concurrency` `<int>`
+#### `--concurrency`, `--session-concurrency` `<int>`
 
-Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.
+Number of concurrent users (sessions) to maintain. Each user holds a slot from their first turn until their final turn completes. Can be combined with `--request-rate` to control the request rate.
+<br>_Constraints: ≥ 1_
+
+#### `--request-concurrency` `<int>`
+
+Max concurrent request streams (prefill + decode). Acquired every turn, released on credit return. Limits total in-flight requests independent of session concurrency. If not set, request concurrency is unlimited.
 <br>_Constraints: ≥ 1_
 
 #### `--prefill-concurrency` `<int>`
@@ -1152,6 +1157,11 @@ The number of sessions to use for the warmup phase. If not set, it will use the 
 The concurrency value to use for the warmup phase. If not set, it will use the `--concurrency` value.
 <br>_Constraints: ≥ 1_
 
+#### `--warmup-request-concurrency` `<int>`
+
+The request concurrency value to use for the warmup phase. If not set, it will use the `--request-concurrency` value.
+<br>_Constraints: ≥ 1_
+
 #### `--warmup-prefill-concurrency` `<int>`
 
 The prefill concurrency value to use for the warmup phase. If not set, it will use the `--prefill-concurrency` value.
@@ -1197,6 +1207,11 @@ The number of initial users to use for --user-centric-rate mode.
 Duration in seconds to ramp session concurrency from 1 to target. Useful for gradual warm-up of the target system.
 <br>_Constraints: > 0_
 
+#### `--request-concurrency-ramp-duration` `<float>`
+
+Duration in seconds to ramp request concurrency from 1 to target.
+<br>_Constraints: > 0_
+
 #### `--prefill-concurrency-ramp-duration` `<float>`
 
 Duration in seconds to ramp prefill concurrency from 1 to target.
@@ -1205,6 +1220,11 @@ Duration in seconds to ramp prefill concurrency from 1 to target.
 #### `--warmup-concurrency-ramp-duration` `<float>`
 
 Duration in seconds to ramp warmup session concurrency from 1 to target. If not set, uses `--concurrency-ramp-duration` value.
+<br>_Constraints: > 0_
+
+#### `--warmup-request-concurrency-ramp-duration` `<float>`
+
+Duration in seconds to ramp warmup request concurrency from 1 to target. If not set, uses `--request-concurrency-ramp-duration` value.
 <br>_Constraints: > 0_
 
 #### `--warmup-prefill-concurrency-ramp-duration` `<float>`

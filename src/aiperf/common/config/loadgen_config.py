@@ -49,13 +49,28 @@ class LoadGeneratorConfig(BaseConfig):
         int | None,
         Field(
             ge=1,
-            description="Number of concurrent requests to maintain. AIPerf issues a new request immediately when one completes, "
-            "maintaining this level of in-flight requests. Can be combined with `--request-rate` to control the request rate.",
+            description="Number of concurrent users (sessions) to maintain. Each user holds a slot from their first turn "
+            "until their final turn completes. Can be combined with `--request-rate` to control the request rate.",
         ),
         CLIParameter(
             name=(
                 "--concurrency",  # GenAI-Perf
+                "--session-concurrency",
             ),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    request_concurrency: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description="Max concurrent request streams (prefill + decode). "
+            "Acquired every turn, released on credit return. Limits total in-flight requests "
+            "independent of session concurrency. If not set, request concurrency is unlimited.",
+        ),
+        CLIParameter(
+            name=("--request-concurrency",),
             group=_CLI_GROUP,
         ),
     ] = None
@@ -189,6 +204,19 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = None
 
+    warmup_request_concurrency: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description="The request concurrency value to use for the warmup phase. "
+            "If not set, it will use the `--request-concurrency` value.",
+        ),
+        CLIParameter(
+            name=("--warmup-request-concurrency",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
     warmup_prefill_concurrency: Annotated[
         int | None,
         Field(
@@ -314,6 +342,18 @@ class LoadGeneratorConfig(BaseConfig):
         ),
     ] = None
 
+    request_concurrency_ramp_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Duration in seconds to ramp request concurrency from 1 to target.",
+        ),
+        CLIParameter(
+            name=("--request-concurrency-ramp-duration",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
     prefill_concurrency_ramp_duration: Annotated[
         float | None,
         Field(
@@ -335,6 +375,19 @@ class LoadGeneratorConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-concurrency-ramp-duration",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    warmup_request_concurrency_ramp_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Duration in seconds to ramp warmup request concurrency from 1 to target. "
+            "If not set, uses `--request-concurrency-ramp-duration` value.",
+        ),
+        CLIParameter(
+            name=("--warmup-request-concurrency-ramp-duration",),
             group=_CLI_GROUP,
         ),
     ] = None
@@ -489,6 +542,7 @@ class LoadGeneratorConfig(BaseConfig):
 
         # Warmup load parameters
         self.warmup_concurrency = None
+        self.warmup_request_concurrency = None
         self.warmup_prefill_concurrency = None
         self.warmup_request_rate = None
         self.warmup_arrival_pattern = None
@@ -498,6 +552,7 @@ class LoadGeneratorConfig(BaseConfig):
 
         # Warmup ramp parameters
         self.warmup_concurrency_ramp_duration = None
+        self.warmup_request_concurrency_ramp_duration = None
         self.warmup_prefill_concurrency_ramp_duration = None
         self.warmup_request_rate_ramp_duration = None
 

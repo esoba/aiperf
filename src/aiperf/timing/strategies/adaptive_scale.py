@@ -448,7 +448,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
                 parent_corr_id
             )
             self._session_is_subagent[child_session.x_correlation_id] = True
-            child_turn = child_session.build_first_turn()
+            child_turn = child_session.build_first_turn(is_subagent_child=True)
             self._scheduler.execute_async(
                 self._credit_issuer.issue_credit(child_turn),
             )

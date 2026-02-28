@@ -46,18 +46,25 @@ class SampledSession:
     metadata: ConversationMetadata
     x_correlation_id: str
 
-    def build_first_turn(self, max_turns: int | None = None) -> TurnToSend:
+    def build_first_turn(
+        self,
+        max_turns: int | None = None,
+        is_subagent_child: bool = False,
+    ) -> TurnToSend:
         """Build first turn (turn_index=0) from sampled conversation.
 
         Args:
             max_turns: The maximum number of turns to send for this user. Simulates a user that is partially through a conversation.
                 If None, the number of turns is determined by the conversation metadata.
+            is_subagent_child: Whether this session is a subagent child. Children skip session
+                slot acquisition and don't count toward session totals.
         """
         return TurnToSend(
             conversation_id=self.conversation_id,
             x_correlation_id=self.x_correlation_id,
             turn_index=0,
             num_turns=max_turns or len(self.metadata.turns),
+            is_subagent_child=is_subagent_child,
         )
 
 

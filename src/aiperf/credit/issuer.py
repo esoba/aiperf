@@ -5,7 +5,7 @@
 Handles credit issuance with concurrency control and stop condition checking.
 
 Key responsibilities:
-- Acquire concurrency slots (session + prefill)
+- Acquire concurrency slots (session + request + prefill)
 - Check stop conditions after slot acquisition
 - Atomic credit numbering via progress tracker
 - Create and send Credit to router
@@ -34,16 +34,17 @@ class CreditIssuer:
     """Issues credits with concurrency control and stop condition checking.
 
     Single point of contact for credit issuance operations:
-    - Acquire concurrency slots (session on first turn, prefill on every turn)
+    - Acquire concurrency slots (session → request → prefill)
     - Check stop conditions AFTER slot acquisition (prevents races)
     - Atomic credit numbering via progress tracker
     - Create and send Credit to router
     - Signal all_credits_sent_event when final credit is issued
 
     Concurrency contract:
-    - Session slot: Acquired on first turn only
-    - Prefill slot: Acquired on every turn
-    - Slots are released on failure to maintain symmetry
+    - Session slot: Acquired on first turn of parent sessions only (children skip)
+    - Request slot: Acquired on every turn (parents and children)
+    - Prefill slot: Acquired on every turn (parents and children)
+    - Slots are released symmetrically on failure
 
     Used by timing strategies to issue credits without knowing about
     concurrency or routing internals.
@@ -101,45 +102,57 @@ class CreditIssuer:
             False if this was the final credit or couldn't acquire slots.
 
         Note:
-            For first turns (turn_index == 0), acquires session slot first.
-            For all turns, acquires prefill slot.
+            For first turns of parent sessions, acquires session slot first.
+            Subagent children skip session slots entirely.
+            For all turns, acquires request and prefill slots.
             Slots are released automatically on failure.
 
         Flow:
-            1. Acquire session slot (first turn only)
-            2. Acquire prefill slot (all turns)
-            3. Atomic numbering via increment_sent
-            4. Calculate cancellation delay
-            5. Create and send Credit
-            6. If final credit: freeze counts + set event
+            1. Acquire session slot (first turn of parents only)
+            2. Acquire request slot (all turns)
+            3. Acquire prefill slot (all turns)
+            4. Atomic numbering via increment_sent
+            5. Calculate cancellation delay
+            6. Create and send Credit
+            7. If final credit: freeze counts + set event
         """
         is_first_turn = turn.turn_index == 0
+        acquire_session_slot = is_first_turn and not turn.is_subagent_child
 
         # Select appropriate check function based on turn type
-        # - First turns need can_start_new_session (more restrictive - checks session quota)
-        # - Subsequent turns use can_send_any_turn (less restrictive - allows finishing existing sessions)
+        # - First turns of parents need can_start_new_session (more restrictive - checks session quota)
+        # - Subsequent turns and children use can_send_any_turn (less restrictive)
         can_proceed_fn = (
             self._stop_checker.can_start_new_session
-            if is_first_turn
+            if acquire_session_slot
             else self._stop_checker.can_send_any_turn
         )
 
         # Session concurrency: one slot per conversation, acquired on first turn only.
-        if is_first_turn:
+        # Subagent children skip session slots - they only consume request and prefill slots.
+        if acquire_session_slot:
             acquired = await self._concurrency_manager.acquire_session_slot(
                 self._phase, self._stop_checker.can_start_new_session
             )
             if not acquired:
                 return False
 
+        # Request concurrency: one slot per request stream, released on credit return.
+        acquired = await self._concurrency_manager.acquire_request_slot(
+            self._phase, can_proceed_fn
+        )
+        if not acquired:
+            if acquire_session_slot:
+                self._concurrency_manager.release_session_slot(self._phase)
+            return False
+
         # Prefill concurrency: one slot per request, released when TTFT arrives.
-        # Limits concurrent prompt processing which is the GPU-intensive phase.
         acquired = await self._concurrency_manager.acquire_prefill_slot(
             self._phase, can_proceed_fn
         )
         if not acquired:
-            # CRITICAL: Release session slot if we acquired it to maintain symmetry
-            if is_first_turn:
+            self._concurrency_manager.release_request_slot(self._phase)
+            if acquire_session_slot:
                 self._concurrency_manager.release_session_slot(self._phase)
             return False
 
@@ -161,11 +174,12 @@ class CreditIssuer:
             None: No slots available, credit NOT issued. Retry later.
         """
         is_first_turn = turn.turn_index == 0
+        acquire_session_slot = is_first_turn and not turn.is_subagent_child
 
         # Select appropriate check function based on turn type
         can_proceed_fn = (
             self._stop_checker.can_start_new_session
-            if is_first_turn
+            if acquire_session_slot
             else self._stop_checker.can_send_any_turn
         )
 
@@ -173,19 +187,27 @@ class CreditIssuer:
         if not can_proceed_fn():
             return False
 
-        if is_first_turn:
+        if acquire_session_slot:
             acquired = self._concurrency_manager.try_acquire_session_slot(
                 self._phase, can_proceed_fn
             )
             if not acquired:
                 return None  # No slot - credit not issued
 
+        acquired = self._concurrency_manager.try_acquire_request_slot(
+            self._phase, can_proceed_fn
+        )
+        if not acquired:
+            if acquire_session_slot:
+                self._concurrency_manager.release_session_slot(self._phase)
+            return None  # No slot - credit not issued
+
         acquired = self._concurrency_manager.try_acquire_prefill_slot(
             self._phase, can_proceed_fn
         )
         if not acquired:
-            # CRITICAL: Release session slot if we acquired it to maintain symmetry
-            if is_first_turn:
+            self._concurrency_manager.release_request_slot(self._phase)
+            if acquire_session_slot:
                 self._concurrency_manager.release_session_slot(self._phase)
             return None  # No slot - credit not issued
 
@@ -225,6 +247,7 @@ class CreditIssuer:
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
+            is_subagent_child=turn.is_subagent_child,
         )
 
         await self._credit_router.send_credit(credit=credit)

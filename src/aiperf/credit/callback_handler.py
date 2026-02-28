@@ -168,6 +168,7 @@ class CreditCallbackHandler:
         is_final_returned = handler.progress.increment_returned(
             credit.is_final_turn,
             credit_return.cancelled,
+            is_subagent_child=credit.is_subagent_child,
         )
 
         # 2. Track prefill release if TTFT never arrived
@@ -225,8 +226,9 @@ class CreditCallbackHandler:
         """
         concurrency = handler.concurrency_manager
 
-        # Release session slot when conversation ends (final turn, whether completed or cancelled)
-        if credit.is_final_turn:
+        # Release session slot when conversation ends (final turn, whether completed or cancelled).
+        # Subagent children never acquired session slots, so skip release for them.
+        if credit.is_final_turn and not credit.is_subagent_child:
             concurrency.release_session_slot(phase)
 
         # On phase end, release slots for sessions still in flight.
@@ -241,6 +243,9 @@ class CreditCallbackHandler:
                 )
                 for _ in range(in_flight):
                     concurrency.release_session_slot(phase)
+
+        # Release request slot unconditionally (every return, parent and child)
+        concurrency.release_request_slot(phase)
 
         # Prefill slot is normally released on TTFT. If the request failed or was
         # cancelled before first token, we release here to prevent slot leaks.
