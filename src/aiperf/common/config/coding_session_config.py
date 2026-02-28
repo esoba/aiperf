@@ -320,3 +320,130 @@ class CodingSessionConfig(BaseConfig):
             name=("--coding-session-subagent-max-prompt-tokens",), group=_CLI_GROUP
         ),
     ] = 50000
+
+    # Cache lifetime mechanics
+    l1_tokens: Annotated[
+        int,
+        Field(
+            default=32000,
+            ge=0,
+            description="L1 (tools+system) tokens. Maps to deterministic hash_ids shared "
+            "across all sessions. 0 disables L1 layer.",
+        ),
+        CLIParameter(name=("--coding-session-l1-tokens",), group=_CLI_GROUP),
+    ] = 32000
+
+    l2_tokens: Annotated[
+        int,
+        Field(
+            default=1500,
+            ge=0,
+            description="L2 (CLAUDE.md+skills) tokens. Random per session, stable across turns. "
+            "0 disables L2 layer.",
+        ),
+        CLIParameter(name=("--coding-session-l2-tokens",), group=_CLI_GROUP),
+    ] = 1500
+
+    restart_probability: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            le=1.0,
+            description="Per-turn probability of a --continue restart. Preserves L1, "
+            "regenerates L2+L3 hash_ids. 0.0 disables.",
+        ),
+        CLIParameter(name=("--coding-session-restart-probability",), group=_CLI_GROUP),
+    ] = 0.0
+
+    compression_threshold: Annotated[
+        float,
+        Field(
+            default=0.85,
+            ge=0.0,
+            le=1.0,
+            description="Fraction of max_prompt_tokens that triggers context compression.",
+        ),
+        CLIParameter(
+            name=("--coding-session-compression-threshold",), group=_CLI_GROUP
+        ),
+    ] = 0.85
+
+    compression_ratio: Annotated[
+        float,
+        Field(
+            default=0.3,
+            ge=0.0,
+            le=1.0,
+            description="Fraction of L3 blocks retained after compression.",
+        ),
+        CLIParameter(name=("--coding-session-compression-ratio",), group=_CLI_GROUP),
+    ] = 0.3
+
+    max_compressions: Annotated[
+        int,
+        Field(
+            default=3,
+            ge=0,
+            description="Maximum compression events per session. 0 disables compression.",
+        ),
+        CLIParameter(name=("--coding-session-max-compressions",), group=_CLI_GROUP),
+    ] = 3
+
+    thinking_tokens_mean: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Mean thinking tokens per tool-use turn (lognormal). 0 disables.",
+        ),
+        CLIParameter(name=("--coding-session-thinking-tokens-mean",), group=_CLI_GROUP),
+    ] = 0
+
+    thinking_tokens_median: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Median thinking tokens per tool-use turn (lognormal).",
+        ),
+        CLIParameter(
+            name=("--coding-session-thinking-tokens-median",), group=_CLI_GROUP
+        ),
+    ] = 0
+
+    thinking_strip_probability: Annotated[
+        float,
+        Field(
+            default=0.1,
+            ge=0.0,
+            le=1.0,
+            description="Probability of stripping thinking blocks at non-tool-result boundary. "
+            "Causes L2+L3 hash_id regeneration (cache invalidation).",
+        ),
+        CLIParameter(
+            name=("--coding-session-thinking-strip-probability",), group=_CLI_GROUP
+        ),
+    ] = 0.1
+
+    cache_ttl_sec: Annotated[
+        float,
+        Field(
+            default=3600.0,
+            gt=0,
+            description="Main agent KV cache TTL in seconds for working set eviction.",
+        ),
+        CLIParameter(name=("--coding-session-cache-ttl-sec",), group=_CLI_GROUP),
+    ] = 3600.0
+
+    subagent_cache_ttl_sec: Annotated[
+        float,
+        Field(
+            default=300.0,
+            gt=0,
+            description="Subagent KV cache TTL in seconds for working set eviction.",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-cache-ttl-sec",), group=_CLI_GROUP
+        ),
+    ] = 300.0

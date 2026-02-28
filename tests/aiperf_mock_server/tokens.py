@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from aiperf_mock_server.models import (
+    AnthropicMessagesRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
     CompletionRequest,
@@ -202,12 +203,33 @@ def _calculate_budget(
 
 
 def _generate_reasoning_tokens(
-    request: ChatCompletionRequest | CompletionRequest | TGIGenerateRequest,
+    request: ChatCompletionRequest
+    | CompletionRequest
+    | TGIGenerateRequest
+    | AnthropicMessagesRequest,
     prompt_tokens: list[str],
     prompt_token_count: int,
     max_tokens: int | None,
 ) -> _ReasoningResult:
     """Generate reasoning tokens if model supports it, managing budget."""
+    # Anthropic: generate reasoning if thinking config is present
+    if isinstance(request, AnthropicMessagesRequest):
+        if not request.thinking:
+            return _ReasoningResult(
+                token_count=0, content_tokens=[], remaining_budget=max_tokens
+            )
+        budget_tokens = request.thinking.get("budget_tokens", 250)
+        total_budget = (
+            max_tokens if max_tokens is not None else max(prompt_token_count * 2, 16)
+        )
+        actual = min(budget_tokens, total_budget)
+        content = _cycle_tokens_reversed(prompt_tokens, actual)
+        return _ReasoningResult(
+            token_count=actual,
+            content_tokens=content,
+            remaining_budget=total_budget - actual,
+        )
+
     # Only chat completions support reasoning (per OpenAI API spec)
     if not isinstance(request, ChatCompletionRequest):
         return _ReasoningResult(
@@ -247,7 +269,10 @@ def _generate_reasoning_tokens(
 
 def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
     """Extract text and max_tokens from request."""
-    if isinstance(request, ChatCompletionRequest):
+    if isinstance(request, AnthropicMessagesRequest):
+        text = _extract_anthropic_messages(request.messages)
+        return text, request.max_output_tokens
+    elif isinstance(request, ChatCompletionRequest):
         text = _extract_chat_messages(request.messages)
         return text, request.max_output_tokens
     elif isinstance(request, CompletionRequest | TGIGenerateRequest):
@@ -264,6 +289,24 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
         return " ".join(request.query), None
     else:
         raise ValueError(f"Unsupported request type: {type(request)}")
+
+
+def _extract_anthropic_messages(messages: list) -> str:
+    """Extract text content from Anthropic messages."""
+    texts = []
+    for msg in messages:
+        if msg.role != "user":
+            continue
+        content = msg.content
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            texts.extend(
+                item.get("text", "")
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            )
+    return "\n".join(texts)
 
 
 def _extract_chat_messages(messages: list) -> str:

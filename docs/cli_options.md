@@ -183,7 +183,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br>_Choices: [`anthropic_messages`, `chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
 <br>_Default: `chat`_
 
 #### `--streaming`
@@ -568,6 +568,72 @@ Median new tokens per turn in subagent children.
 Maximum prompt tokens for subagent children (shorter-lived).
 <br>_Constraints: ≥ 1_
 <br>_Default: `50000`_
+
+#### `--coding-session-l1-tokens` `<int>`
+
+L1 (tools+system) tokens. Maps to deterministic hash_ids shared across all sessions. 0 disables L1 layer.
+<br>_Constraints: ≥ 0_
+<br>_Default: `32000`_
+
+#### `--coding-session-l2-tokens` `<int>`
+
+L2 (CLAUDE.md+skills) tokens. Random per session, stable across turns. 0 disables L2 layer.
+<br>_Constraints: ≥ 0_
+<br>_Default: `1500`_
+
+#### `--coding-session-restart-probability` `<float>`
+
+Per-turn probability of a --continue restart. Preserves L1, regenerates L2+L3 hash_ids. 0.0 disables.
+<br>_Constraints: ≥ 0.0, ≤ 1.0_
+<br>_Default: `0.0`_
+
+#### `--coding-session-compression-threshold` `<float>`
+
+Fraction of max_prompt_tokens that triggers context compression.
+<br>_Constraints: ≥ 0.0, ≤ 1.0_
+<br>_Default: `0.85`_
+
+#### `--coding-session-compression-ratio` `<float>`
+
+Fraction of L3 blocks retained after compression.
+<br>_Constraints: ≥ 0.0, ≤ 1.0_
+<br>_Default: `0.3`_
+
+#### `--coding-session-max-compressions` `<int>`
+
+Maximum compression events per session. 0 disables compression.
+<br>_Constraints: ≥ 0_
+<br>_Default: `3`_
+
+#### `--coding-session-thinking-tokens-mean` `<int>`
+
+Mean thinking tokens per tool-use turn (lognormal). 0 disables.
+<br>_Constraints: ≥ 0_
+<br>_Default: `0`_
+
+#### `--coding-session-thinking-tokens-median` `<int>`
+
+Median thinking tokens per tool-use turn (lognormal).
+<br>_Constraints: ≥ 0_
+<br>_Default: `0`_
+
+#### `--coding-session-thinking-strip-probability` `<float>`
+
+Probability of stripping thinking blocks at non-tool-result boundary. Causes L2+L3 hash_id regeneration (cache invalidation).
+<br>_Constraints: ≥ 0.0, ≤ 1.0_
+<br>_Default: `0.1`_
+
+#### `--coding-session-cache-ttl-sec` `<float>`
+
+Main agent KV cache TTL in seconds for working set eviction.
+<br>_Constraints: > 0_
+<br>_Default: `3600.0`_
+
+#### `--coding-session-subagent-cache-ttl-sec` `<float>`
+
+Subagent KV cache TTL in seconds for working set eviction.
+<br>_Constraints: > 0_
+<br>_Default: `300.0`_
 
 ### Audio Input
 

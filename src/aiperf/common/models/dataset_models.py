@@ -103,6 +103,23 @@ class Video(Media):
     media_type: ClassVar[MediaTypeT] = MediaType.VIDEO
 
 
+class CacheLayerSizes(AIPerfBaseModel):
+    """Per-turn annotation of cache layer block counts.
+
+    Describes how hash_ids decompose into L1 (global shared), L2 (session-stable),
+    and L3 (conversation history) layers. Used by working set tracking to avoid
+    overcounting shared L1 blocks across sessions.
+    """
+
+    l1: int = Field(default=0, description="Number of L1 (global shared) cache blocks.")
+    l2: int = Field(
+        default=0, description="Number of L2 (session-stable) cache blocks."
+    )
+    l3: int = Field(
+        default=0, description="Number of L3 (conversation history) cache blocks."
+    )
+
+
 class TurnMetadata(AIPerfBaseModel):
     """Metadata of a turn."""
 
@@ -122,6 +139,10 @@ class TurnMetadata(AIPerfBaseModel):
     hash_ids: list[int] = Field(
         default_factory=list,
         description="KV cache block hash IDs for working set tracking.",
+    )
+    cache_layer_sizes: CacheLayerSizes | None = Field(
+        default=None,
+        description="Cache layer decomposition of hash_ids into L1/L2/L3 blocks.",
     )
     parallel_group: str | None = Field(
         default=None,
@@ -179,6 +200,10 @@ class Turn(AIPerfBaseModel):
         default_factory=list,
         description="KV cache block hash IDs for working set tracking.",
     )
+    cache_layer_sizes: CacheLayerSizes | None = Field(
+        default=None,
+        description="Cache layer decomposition of hash_ids into L1/L2/L3 blocks.",
+    )
     parallel_group: str | None = Field(
         default=None,
         description="Groups turns dispatched simultaneously (e.g. 'g0'). "
@@ -200,6 +225,7 @@ class Turn(AIPerfBaseModel):
             delay_ms=self.delay,
             input_tokens=self.input_tokens,
             hash_ids=self.hash_ids,
+            cache_layer_sizes=self.cache_layer_sizes,
             parallel_group=self.parallel_group,
             parallel_branch=self.parallel_branch,
             subagent_spawn_id=self.subagent_spawn_id,
@@ -243,6 +269,12 @@ class Turn(AIPerfBaseModel):
                 )
                 for vid in self.videos
             ],
+            input_tokens=self.input_tokens,
+            hash_ids=list(self.hash_ids),
+            cache_layer_sizes=self.cache_layer_sizes,
+            parallel_group=self.parallel_group,
+            parallel_branch=self.parallel_branch,
+            subagent_spawn_id=self.subagent_spawn_id,
         )
 
 

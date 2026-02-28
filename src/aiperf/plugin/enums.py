@@ -59,7 +59,7 @@ CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "Custo
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)
-"""Dynamic enum for endpoint. Example: EndpointType.CHAT, EndpointType.CHAT_EMBEDDINGS, EndpointType.COHERE_RANKINGS"""
+"""Dynamic enum for endpoint. Example: EndpointType.ANTHROPIC_MESSAGES, EndpointType.CHAT, EndpointType.CHAT_EMBEDDINGS"""
 
 TransportTypeStr: TypeAlias = str
 TransportType = plugins.create_enum(PluginType.TRANSPORT, "TransportType", module=__name__)

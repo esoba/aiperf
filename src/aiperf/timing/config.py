@@ -256,6 +256,16 @@ class CreditPhaseConfig(AIPerfBaseModel):
         default=0.95,
         description="Minimum goodput ratio required to continue scaling up.",
     )
+    cache_ttl_sec: float = Field(
+        default=3600.0,
+        gt=0,
+        description="Main agent KV cache TTL in seconds for working set eviction.",
+    )
+    subagent_cache_ttl_sec: float = Field(
+        default=300.0,
+        gt=0,
+        description="Subagent KV cache TTL in seconds for working set eviction.",
+    )
 
 
 def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
@@ -357,4 +367,6 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
         max_working_set_tokens=input.adaptive_scale_max_working_set_tokens if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
         adaptive_scale_slo=input.adaptive_scale_slo if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else None,
         min_goodput_ratio=input.adaptive_scale_min_goodput_ratio if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else 0.95,
+        cache_ttl_sec=input.coding_session.cache_ttl_sec if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else 3600.0,
+        subagent_cache_ttl_sec=input.coding_session.subagent_cache_ttl_sec if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else 300.0,
     )  # fmt: skip

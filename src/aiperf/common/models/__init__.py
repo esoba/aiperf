@@ -11,6 +11,7 @@ from aiperf.common.models.credit_models import (
 )
 from aiperf.common.models.dataset_models import (
     Audio,
+    CacheLayerSizes,
     Conversation,
     ConversationMetadata,
     DatasetClientMetadata,
@@ -153,6 +154,7 @@ __all__ = [
     "BaseTraceData",
     "BinaryResponse",
     "CPUTimes",
+    "CacheLayerSizes",
     "Conversation",
     "ConversationMetadata",
     "CounterMetricData",

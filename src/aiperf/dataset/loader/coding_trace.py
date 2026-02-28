@@ -24,7 +24,7 @@ import orjson
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.models import Conversation, Text, Turn
-from aiperf.common.models.dataset_models import SubagentSpawnInfo
+from aiperf.common.models.dataset_models import CacheLayerSizes, SubagentSpawnInfo
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.models import (
@@ -573,12 +573,47 @@ class CodingTraceLoader(BaseFileLoader):
 
             conversations.append(conversation)
 
+        # Annotate cache layers from hash_id stability patterns
+        for conv in conversations:
+            self._annotate_cache_layers(conv)
+        for conv in child_conversations:
+            self._annotate_cache_layers(conv)
+
         conversations.extend(child_conversations)
         if child_conversations:
             self.info(
                 f"Extracted {len(child_conversations)} subagent child conversations"
             )
         return conversations
+
+    @staticmethod
+    def _annotate_cache_layers(conv: Conversation) -> None:
+        """Annotate turns with L1/L2/L3 cache layer sizes from hash_id stability.
+
+        L1 = hash_ids present in ALL turns (global intersection)
+        L2 = estimated as min(24, remaining) blocks (~1.5K/64 from blog data)
+        L3 = remainder
+        """
+        turns_with_ids = [t for t in conv.turns if t.hash_ids]
+        if not turns_with_ids:
+            return
+
+        # L1 = intersection of all hash_id sets
+        all_sets = [set(t.hash_ids) for t in turns_with_ids]
+        l1_set = all_sets[0]
+        for s in all_sets[1:]:
+            l1_set &= s
+
+        l1_count = len(l1_set)
+
+        for turn in conv.turns:
+            total = len(turn.hash_ids)
+            remaining = total - l1_count
+            l2_count = min(24, max(0, remaining))
+            l3_count = max(0, remaining - l2_count)
+            turn.cache_layer_sizes = CacheLayerSizes(
+                l1=l1_count, l2=l2_count, l3=l3_count
+            )
 
     def _build_child_conversation(
         self,

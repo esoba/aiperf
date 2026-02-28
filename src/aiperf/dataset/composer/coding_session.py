@@ -7,6 +7,14 @@ growth, initial prefix, and generation length. Each session grows its context
 monotonically until reaching max_prompt_tokens, mimicking real agentic coding
 patterns (tool calls, edits, test output accumulating in context).
 
+Hash IDs are structured into three cache layers matching real prompt caching:
+- L1 (tools+system): deterministic, shared across all sessions
+- L2 (CLAUDE.md+skills): random per session, stable across turns
+- L3 (conversation history): random, grows each turn
+
+Session restarts, context compression, and thinking block invalidation events
+regenerate affected layer IDs to model cache misses observed in production.
+
 Designed for adaptive_scale timing mode without requiring real trace files.
 """
 
@@ -18,7 +26,7 @@ from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
 from aiperf.common.config.coding_session_config import CodingSessionConfig
 from aiperf.common.models import Conversation, Text, Turn
-from aiperf.common.models.dataset_models import SubagentSpawnInfo
+from aiperf.common.models.dataset_models import CacheLayerSizes, SubagentSpawnInfo
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.generator.coding_content import CodingContentGenerator
@@ -69,6 +77,9 @@ class CodingSessionComposer(BaseDatasetComposer):
         self._subagent_tokens_rng = rng.derive("coding_session.subagent_tokens")
         self._subagent_gen_rng = rng.derive("coding_session.subagent_gen")
         self._subagent_turns_rng = rng.derive("coding_session.subagent_turns")
+        self._l2_hash_rng = rng.derive("coding_session.l2_hash")
+        self._restart_rng = rng.derive("coding_session.restart")
+        self._thinking_rng = rng.derive("coding_session.thinking")
 
     def create_dataset(self) -> list[Conversation]:
         cfg = self._coding_config
@@ -109,6 +120,26 @@ class CodingSessionComposer(BaseDatasetComposer):
             else "text"
         )
 
+    def _generate_l1_hash_ids(self, cfg: CodingSessionConfig) -> list[int]:
+        """Generate deterministic L1 hash IDs shared across all sessions.
+
+        L1 count is capped so L1+L2 don't exceed max_prompt_tokens.
+        """
+        max_blocks = cfg.max_prompt_tokens // cfg.block_size
+        count = min(cfg.l1_tokens // cfg.block_size, max_blocks)
+        return list(range(count))
+
+    def _generate_l2_hash_ids(
+        self, cfg: CodingSessionConfig, l1_count: int = 0
+    ) -> list[int]:
+        """Generate random L2 hash IDs (session-stable).
+
+        L2 count is capped so L1+L2 don't exceed max_prompt_tokens.
+        """
+        max_blocks = cfg.max_prompt_tokens // cfg.block_size
+        count = min(cfg.l2_tokens // cfg.block_size, max(0, max_blocks - l1_count))
+        return [self._l2_hash_rng.randint(0, 2**31 - 1) for _ in range(count)]
+
     def _generate_session(
         self, session_idx: int, cfg: CodingSessionConfig
     ) -> tuple[Conversation, list[Conversation]]:
@@ -119,6 +150,10 @@ class CodingSessionComposer(BaseDatasetComposer):
         block_size = cfg.block_size
         session_language = self._select_session_language(cfg)
 
+        # L1/L2 layer setup
+        l1_ids = self._generate_l1_hash_ids(cfg)
+        l2_ids = self._generate_l2_hash_ids(cfg, len(l1_ids))
+
         # Sample initial prefix size
         initial_prefix = self._prefix_rng.sample_lognormal_integer(
             cfg.initial_prefix_mean, cfg.initial_prefix_median
@@ -127,14 +162,15 @@ class CodingSessionComposer(BaseDatasetComposer):
 
         # Turn 0: system_prompt + initial_prefix
         cumulative_tokens = cfg.system_prompt_tokens + initial_prefix
-        num_blocks = max(1, cumulative_tokens // block_size)
-        hash_ids = self._generate_hash_ids(num_blocks)
+        total_blocks = max(1, cumulative_tokens // block_size)
+        l3_count = max(0, total_blocks - len(l1_ids) - len(l2_ids))
+        l3_ids = self._generate_hash_ids(l3_count)
+        thinking_ids: list[int] = []
 
         gen_length = self._gen_length_rng.sample_lognormal_integer(
             cfg.generation_length_mean, cfg.generation_length_median
         )
 
-        # Delta for turn 0: the entire initial content beyond system prompt
         delta = initial_prefix
         content_type = self._select_content_type(cfg)
         prompt_text = self._content_generator.generate_language_prompt(
@@ -145,20 +181,34 @@ class CodingSessionComposer(BaseDatasetComposer):
         )
         conversation.system_message = system_text
 
+        hash_ids = l1_ids + l2_ids + l3_ids
+        layer_sizes = CacheLayerSizes(l1=len(l1_ids), l2=len(l2_ids), l3=len(l3_ids))
         turn = Turn(
             max_tokens=gen_length,
             input_tokens=cumulative_tokens,
             texts=[Text(name="text", contents=[prompt_text])],
             hash_ids=list(hash_ids),
+            cache_layer_sizes=layer_sizes,
         )
         self._finalize_turn(turn)
         conversation.turns.append(turn)
 
         parallel_group_counter = 0
         subagent_spawn_counter = 0
+        compressions_used = 0
 
-        # Subsequent turns: grow context until max_prompt_tokens
         while cumulative_tokens < cfg.max_prompt_tokens:
+            # Session restart check
+            if (
+                cfg.restart_probability > 0
+                and self._restart_rng.random() < cfg.restart_probability
+            ):
+                l2_ids = self._generate_l2_hash_ids(cfg, len(l1_ids))
+                l3_ids = [
+                    self._hash_id_rng.randint(0, 2**31 - 1) for _ in range(len(l3_ids))
+                ]
+                thinking_ids = []
+
             new_tokens = self._new_tokens_rng.sample_lognormal_integer(
                 cfg.new_tokens_mean, cfg.new_tokens_median
             )
@@ -166,7 +216,6 @@ class CodingSessionComposer(BaseDatasetComposer):
                 cfg.generation_length_mean, cfg.generation_length_median
             )
 
-            # Account for output shortfall compensation
             effective_prev_output = int(gen_length * self._output_token_budget_ratio)
             delta = max(1, new_tokens - effective_prev_output)
 
@@ -174,14 +223,64 @@ class CodingSessionComposer(BaseDatasetComposer):
             if cumulative_tokens > cfg.max_prompt_tokens:
                 cumulative_tokens = cfg.max_prompt_tokens
 
-            # Grow hash_ids for new blocks
-            num_blocks = max(1, cumulative_tokens // block_size)
-            new_block_count = num_blocks - len(hash_ids)
-            if new_block_count > 0:
-                new_ids = self._generate_hash_ids(new_block_count, offset=len(hash_ids))
-                hash_ids.extend(new_ids)
+            # Compression check
+            if (
+                cfg.max_compressions > 0
+                and compressions_used < cfg.max_compressions
+                and cumulative_tokens / cfg.max_prompt_tokens
+                >= cfg.compression_threshold
+            ):
+                l2_ids = self._generate_l2_hash_ids(cfg, len(l1_ids))
+                compressed_l3 = max(1, int(len(l3_ids) * cfg.compression_ratio))
+                l3_ids = [
+                    self._hash_id_rng.randint(0, 2**31 - 1)
+                    for _ in range(compressed_l3)
+                ]
+                thinking_ids = []
+                cumulative_tokens = min(
+                    (len(l1_ids) + len(l2_ids) + compressed_l3) * block_size,
+                    cfg.max_prompt_tokens,
+                )
+                compressions_used += 1
+            else:
+                # Normal L3 growth
+                total_blocks = max(1, cumulative_tokens // block_size)
+                current_count = (
+                    len(l1_ids) + len(l2_ids) + len(l3_ids) + len(thinking_ids)
+                )
+                new_l3_count = total_blocks - current_count
+                if new_l3_count > 0:
+                    l3_ids.extend(
+                        self._hash_id_rng.randint(0, 2**31 - 1)
+                        for _ in range(new_l3_count)
+                    )
 
+            # Thinking blocks
             content_type = self._select_content_type(cfg)
+            if cfg.thinking_tokens_mean > 0 and cfg.thinking_tokens_median > 0:
+                if content_type == "tool_result":
+                    thinking_tokens = self._thinking_rng.sample_lognormal_integer(
+                        cfg.thinking_tokens_mean, cfg.thinking_tokens_median
+                    )
+                    thinking_block_count = max(0, thinking_tokens // block_size)
+                    thinking_ids.extend(
+                        self._thinking_rng.randint(0, 2**31 - 1)
+                        for _ in range(thinking_block_count)
+                    )
+                elif content_type == "text" and thinking_ids:
+                    if self._thinking_rng.random() < cfg.thinking_strip_probability:
+                        l2_ids = self._generate_l2_hash_ids(cfg, len(l1_ids))
+                        l3_ids = [
+                            self._hash_id_rng.randint(0, 2**31 - 1)
+                            for _ in range(len(l3_ids))
+                        ]
+                        thinking_ids = []
+
+            hash_ids = l1_ids + l2_ids + l3_ids + thinking_ids
+            layer_sizes = CacheLayerSizes(
+                l1=len(l1_ids), l2=len(l2_ids), l3=len(l3_ids)
+            )
+
             prompt_text = self._content_generator.generate_language_prompt(
                 delta, content_type, session_language
             )
@@ -190,6 +289,7 @@ class CodingSessionComposer(BaseDatasetComposer):
                 input_tokens=cumulative_tokens,
                 texts=[Text(name="text", contents=[prompt_text])],
                 hash_ids=list(hash_ids),
+                cache_layer_sizes=layer_sizes,
             )
             self._finalize_turn(turn)
             conversation.turns.append(turn)
@@ -215,7 +315,6 @@ class CodingSessionComposer(BaseDatasetComposer):
                     child_conversations.append(child_conv)
                     child_conv_ids.append(child_conv.session_id)
 
-                # Join turn after subagent spawn
                 join_delta = self._new_tokens_rng.sample_lognormal_integer(
                     cfg.new_tokens_mean, cfg.new_tokens_median
                 )
@@ -223,13 +322,17 @@ class CodingSessionComposer(BaseDatasetComposer):
                 if cumulative_tokens > cfg.max_prompt_tokens:
                     cumulative_tokens = cfg.max_prompt_tokens
 
-                num_blocks = max(1, cumulative_tokens // block_size)
-                new_block_count = num_blocks - len(hash_ids)
-                if new_block_count > 0:
-                    new_ids = self._generate_hash_ids(
-                        new_block_count, offset=len(hash_ids)
+                # Grow L3 for join turn
+                total_blocks = max(1, cumulative_tokens // block_size)
+                current_count = (
+                    len(l1_ids) + len(l2_ids) + len(l3_ids) + len(thinking_ids)
+                )
+                new_l3_count = total_blocks - current_count
+                if new_l3_count > 0:
+                    l3_ids.extend(
+                        self._hash_id_rng.randint(0, 2**31 - 1)
+                        for _ in range(new_l3_count)
                     )
-                    hash_ids.extend(new_ids)
 
                 join_turn_index = len(conversation.turns)
                 join_gen = self._gen_length_rng.sample_lognormal_integer(
@@ -239,11 +342,16 @@ class CodingSessionComposer(BaseDatasetComposer):
                 join_prompt = self._content_generator.generate_language_prompt(
                     max(1, join_delta), join_content_type, session_language
                 )
+                join_hash_ids = l1_ids + l2_ids + l3_ids + thinking_ids
+                join_layer_sizes = CacheLayerSizes(
+                    l1=len(l1_ids), l2=len(l2_ids), l3=len(l3_ids)
+                )
                 join_turn = Turn(
                     max_tokens=join_gen,
                     input_tokens=cumulative_tokens,
                     texts=[Text(name="text", contents=[join_prompt])],
-                    hash_ids=list(hash_ids),
+                    hash_ids=list(join_hash_ids),
+                    cache_layer_sizes=join_layer_sizes,
                     subagent_spawn_id=spawn_id,
                 )
                 self._finalize_turn(join_turn)
@@ -258,7 +366,7 @@ class CodingSessionComposer(BaseDatasetComposer):
                 )
                 continue
 
-            # Parallel fan-out: after each sequential turn, potentially spawn branches
+            # Parallel fan-out
             if (
                 cfg.parallel_probability > 0
                 and self._parallel_rng.random() < cfg.parallel_probability
@@ -278,14 +386,25 @@ class CodingSessionComposer(BaseDatasetComposer):
                         cumulative_tokens + branch_tokens, cfg.max_prompt_tokens
                     )
 
-                    # Each branch extends parent hash_ids with a unique tail
+                    # Each branch extends parent L3 with branch-specific IDs
                     branch_blocks = max(1, branch_input // block_size)
-                    branch_new = branch_blocks - len(hash_ids)
-                    branch_hash_ids = list(hash_ids)
-                    if branch_new > 0:
-                        branch_hash_ids.extend(
-                            self._generate_hash_ids(branch_new, offset=len(hash_ids))
-                        )
+                    parent_count = (
+                        len(l1_ids) + len(l2_ids) + len(l3_ids) + len(thinking_ids)
+                    )
+                    branch_new = branch_blocks - parent_count
+                    branch_l3_extra = max(0, branch_new)
+                    branch_extra_ids = [
+                        self._hash_id_rng.randint(0, 2**31 - 1)
+                        for _ in range(branch_l3_extra)
+                    ]
+                    branch_hash_ids = (
+                        l1_ids + l2_ids + l3_ids + thinking_ids + branch_extra_ids
+                    )
+                    branch_layer_sizes = CacheLayerSizes(
+                        l1=len(l1_ids),
+                        l2=len(l2_ids),
+                        l3=len(l3_ids) + branch_l3_extra,
+                    )
 
                     branch_gen = self._gen_length_rng.sample_lognormal_integer(
                         cfg.generation_length_mean, cfg.generation_length_median
@@ -299,7 +418,8 @@ class CodingSessionComposer(BaseDatasetComposer):
                         max_tokens=branch_gen,
                         input_tokens=branch_input,
                         texts=[Text(name="text", contents=[branch_prompt])],
-                        hash_ids=branch_hash_ids,
+                        hash_ids=list(branch_hash_ids),
+                        cache_layer_sizes=branch_layer_sizes,
                         parallel_group=group_id,
                         parallel_branch=branch_idx,
                     )
@@ -307,7 +427,6 @@ class CodingSessionComposer(BaseDatasetComposer):
                     conversation.turns.append(branch_turn)
                     branch_token_sum += branch_tokens
 
-                # Join turn: cumulative grows by sum of branch deltas + join delta
                 join_delta = self._new_tokens_rng.sample_lognormal_integer(
                     cfg.new_tokens_mean, cfg.new_tokens_median
                 )
@@ -315,13 +434,16 @@ class CodingSessionComposer(BaseDatasetComposer):
                 if cumulative_tokens > cfg.max_prompt_tokens:
                     cumulative_tokens = cfg.max_prompt_tokens
 
-                num_blocks = max(1, cumulative_tokens // block_size)
-                new_block_count = num_blocks - len(hash_ids)
-                if new_block_count > 0:
-                    new_ids = self._generate_hash_ids(
-                        new_block_count, offset=len(hash_ids)
+                total_blocks = max(1, cumulative_tokens // block_size)
+                current_count = (
+                    len(l1_ids) + len(l2_ids) + len(l3_ids) + len(thinking_ids)
+                )
+                new_l3_count = total_blocks - current_count
+                if new_l3_count > 0:
+                    l3_ids.extend(
+                        self._hash_id_rng.randint(0, 2**31 - 1)
+                        for _ in range(new_l3_count)
                     )
-                    hash_ids.extend(new_ids)
 
                 join_gen = self._gen_length_rng.sample_lognormal_integer(
                     cfg.generation_length_mean, cfg.generation_length_median
@@ -330,11 +452,16 @@ class CodingSessionComposer(BaseDatasetComposer):
                 join_prompt = self._content_generator.generate_language_prompt(
                     max(1, join_delta), join_content_type, session_language
                 )
+                join_hash_ids = l1_ids + l2_ids + l3_ids + thinking_ids
+                join_layer_sizes = CacheLayerSizes(
+                    l1=len(l1_ids), l2=len(l2_ids), l3=len(l3_ids)
+                )
                 join_turn = Turn(
                     max_tokens=join_gen,
                     input_tokens=cumulative_tokens,
                     texts=[Text(name="text", contents=[join_prompt])],
-                    hash_ids=list(hash_ids),
+                    hash_ids=list(join_hash_ids),
+                    cache_layer_sizes=join_layer_sizes,
                 )
                 self._finalize_turn(join_turn)
                 conversation.turns.append(join_turn)
@@ -360,19 +487,30 @@ class CodingSessionComposer(BaseDatasetComposer):
         cfg: CodingSessionConfig,
         session_language: str,
     ) -> Conversation:
-        """Generate a subagent child conversation with independent hash_ids."""
+        """Generate a subagent child conversation with L1 prefix sharing."""
         child_id = f"{parent_session_id}_{spawn_id}_c{child_idx}"
         child = Conversation(session_id=child_id, is_subagent_child=True)
 
         block_size = cfg.block_size
 
-        # Sample number of turns for this child
+        # L1: prefix of global L1 range (subagent has smaller tool set)
+        max_blocks = cfg.subagent_max_prompt_tokens // block_size
+        l1_count = min(
+            min(cfg.subagent_system_tokens, cfg.l1_tokens) // block_size, max_blocks
+        )
+        child_l1_ids = list(range(l1_count))
+
+        # L2: own random IDs (capped so L1+L2 don't exceed budget)
+        l2_count = min(cfg.l2_tokens // block_size, max(0, max_blocks - l1_count))
+        child_l2_ids = [
+            self._subagent_hash_rng.randint(0, 2**31 - 1) for _ in range(l2_count)
+        ]
+
         num_turns = self._subagent_turns_rng.sample_lognormal_integer(
             cfg.subagent_turns_mean, cfg.subagent_turns_median
         )
         num_turns = max(1, num_turns)
 
-        # Fresh hash_ids for the child (independent KV cache)
         cumulative_tokens = cfg.subagent_system_tokens
         initial_tokens = self._subagent_tokens_rng.sample_lognormal_integer(
             cfg.subagent_new_tokens_mean, cfg.subagent_new_tokens_median
@@ -380,9 +518,10 @@ class CodingSessionComposer(BaseDatasetComposer):
         cumulative_tokens += initial_tokens
         cumulative_tokens = min(cumulative_tokens, cfg.subagent_max_prompt_tokens)
 
-        num_blocks = max(1, cumulative_tokens // block_size)
-        hash_ids = [
-            self._subagent_hash_rng.randint(0, 2**31 - 1) for _ in range(num_blocks)
+        total_blocks = max(1, cumulative_tokens // block_size)
+        l3_count = max(0, total_blocks - len(child_l1_ids) - len(child_l2_ids))
+        child_l3_ids = [
+            self._subagent_hash_rng.randint(0, 2**31 - 1) for _ in range(l3_count)
         ]
 
         gen_length = self._subagent_gen_rng.sample_lognormal_integer(
@@ -398,11 +537,16 @@ class CodingSessionComposer(BaseDatasetComposer):
         )
         child.system_message = system_text
 
+        hash_ids = child_l1_ids + child_l2_ids + child_l3_ids
+        layer_sizes = CacheLayerSizes(
+            l1=len(child_l1_ids), l2=len(child_l2_ids), l3=len(child_l3_ids)
+        )
         turn = Turn(
             max_tokens=gen_length,
             input_tokens=cumulative_tokens,
             texts=[Text(name="text", contents=[prompt_text])],
             hash_ids=list(hash_ids),
+            cache_layer_sizes=layer_sizes,
         )
         self._finalize_turn(turn)
         child.turns.append(turn)
@@ -425,24 +569,29 @@ class CodingSessionComposer(BaseDatasetComposer):
             if cumulative_tokens > cfg.subagent_max_prompt_tokens:
                 cumulative_tokens = cfg.subagent_max_prompt_tokens
 
-            num_blocks = max(1, cumulative_tokens // block_size)
-            new_block_count = num_blocks - len(hash_ids)
-            if new_block_count > 0:
-                new_ids = [
+            total_blocks = max(1, cumulative_tokens // block_size)
+            current_count = len(child_l1_ids) + len(child_l2_ids) + len(child_l3_ids)
+            new_l3_count = total_blocks - current_count
+            if new_l3_count > 0:
+                child_l3_ids.extend(
                     self._subagent_hash_rng.randint(0, 2**31 - 1)
-                    for _ in range(new_block_count)
-                ]
-                hash_ids.extend(new_ids)
+                    for _ in range(new_l3_count)
+                )
 
             content_type = self._select_content_type(cfg)
             prompt_text = self._content_generator.generate_language_prompt(
                 delta, content_type, session_language
+            )
+            hash_ids = child_l1_ids + child_l2_ids + child_l3_ids
+            layer_sizes = CacheLayerSizes(
+                l1=len(child_l1_ids), l2=len(child_l2_ids), l3=len(child_l3_ids)
             )
             turn = Turn(
                 max_tokens=gen_length,
                 input_tokens=cumulative_tokens,
                 texts=[Text(name="text", contents=[prompt_text])],
                 hash_ids=list(hash_ids),
+                cache_layer_sizes=layer_sizes,
             )
             self._finalize_turn(turn)
             child.turns.append(turn)
