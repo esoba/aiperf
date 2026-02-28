@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ from aiperf.plugin.enums import CustomDatasetType, PluginType
 
 
 class CustomDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer):
+    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
         super().__init__(config, tokenizer)
 
     def create_dataset(self) -> list[Conversation]:
@@ -196,6 +197,11 @@ class CustomDatasetComposer(BaseDatasetComposer):
         kwargs: dict[str, Any] = {}
         loader_metadata = plugins.get_dataset_loader_metadata(dataset_type)
         if loader_metadata.is_trace:
+            if self.prompt_generator is None:
+                raise ValueError(
+                    "Trace datasets require a tokenizer for prompt synthesis. "
+                    "Ensure the endpoint supports tokenization or provide a --tokenizer."
+                )
             kwargs["prompt_generator"] = self.prompt_generator
 
             if loader_metadata.default_block_size is not None:
