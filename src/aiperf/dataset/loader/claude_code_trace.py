@@ -139,13 +139,16 @@ def _group_records_into_api_calls(
             req_id = rec.request_id
 
             # If request_id changes and we have accumulated assistants, flush
+            # but preserve pending_user since the new response is for the same user turn
             if (
                 pending_request_id is not None
                 and req_id is not None
                 and req_id != pending_request_id
                 and pending_assistants
             ):
+                saved_user = pending_user
                 _flush()
+                pending_user = saved_user
 
             pending_assistants.append(rec)
             if req_id is not None:

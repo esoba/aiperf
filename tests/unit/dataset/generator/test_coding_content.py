@@ -104,14 +104,14 @@ class TestCodingContentGenerator:
             num_tokens=10, hash_ids=[1, 2], block_size=5
         )
         assert isinstance(result, str)
-        assert 1 in generator._cache
-        assert 2 in generator._cache
+        assert (1, 5) in generator._cache
+        assert (2, 5) in generator._cache
 
     def test_cache_reuse(self, generator):
         generator._generate_cached_prompt(10, [1, 2], 5)
-        first_1 = generator._cache[1].copy()
+        first_1 = generator._cache[(1, 5)].copy()
         generator._generate_cached_prompt(10, [1, 2], 5)
-        assert generator._cache[1] == first_1
+        assert generator._cache[(1, 5)] == first_1
 
     def test_cached_prompt_invalid_config_raises(self, generator):
         with pytest.raises(ConfigurationError):

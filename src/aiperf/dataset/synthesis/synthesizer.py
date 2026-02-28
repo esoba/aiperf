@@ -88,7 +88,7 @@ class Synthesizer(AIPerfLoggerMixin):
             synthetic_trace = dict(trace)
 
             if not new_hash_ids:
-                isl = trace.get("input_length", self.params.block_size)
+                isl = trace.get("input_length", 0)
                 # Remove hash_ids if we couldn't compute new ones
                 synthetic_trace.pop("hash_ids", None)
             else:

@@ -60,15 +60,15 @@ class SingleTurn(AIPerfBaseModel):
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":
         """Ensure mutually exclusive fields are not set together"""
-        if self.text and self.texts:
+        if self.text is not None and self.texts is not None:
             raise ValueError("text and texts cannot be set together")
-        if self.image and self.images:
+        if self.image is not None and self.images is not None:
             raise ValueError("image and images cannot be set together")
-        if self.audio and self.audios:
+        if self.audio is not None and self.audios is not None:
             raise ValueError("audio and audios cannot be set together")
-        if self.video and self.videos:
+        if self.video is not None and self.videos is not None:
             raise ValueError("video and videos cannot be set together")
-        if self.timestamp and self.delay:
+        if self.timestamp is not None and self.delay is not None:
             raise ValueError("timestamp and delay cannot be set together")
         return self
 
@@ -76,7 +76,8 @@ class SingleTurn(AIPerfBaseModel):
     def validate_at_least_one_modality(self) -> "SingleTurn":
         """Ensure at least one modality is provided"""
         if not any(
-            [
+            field is not None
+            for field in [
                 self.text,
                 self.texts,
                 self.image,
@@ -156,13 +157,13 @@ class RandomPool(AIPerfBaseModel):
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "RandomPool":
         """Ensure mutually exclusive fields are not set together"""
-        if self.text and self.texts:
+        if self.text is not None and self.texts is not None:
             raise ValueError("text and texts cannot be set together")
-        if self.image and self.images:
+        if self.image is not None and self.images is not None:
             raise ValueError("image and images cannot be set together")
-        if self.audio and self.audios:
+        if self.audio is not None and self.audios is not None:
             raise ValueError("audio and audios cannot be set together")
-        if self.video and self.videos:
+        if self.video is not None and self.videos is not None:
             raise ValueError("video and videos cannot be set together")
         return self
 
@@ -170,7 +171,8 @@ class RandomPool(AIPerfBaseModel):
     def validate_at_least_one_modality(self) -> "RandomPool":
         """Ensure at least one modality is provided"""
         if not any(
-            [
+            field is not None
+            for field in [
                 self.text,
                 self.texts,
                 self.image,

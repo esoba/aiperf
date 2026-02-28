@@ -159,7 +159,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
 
         return data
 
-    def _timestamp_within_offsets(self, timestamp: int) -> bool:
+    def _timestamp_within_offsets(self, timestamp: int | float) -> bool:
         return (self._start_offset is None or timestamp >= self._start_offset) and (
             self._end_offset is None or timestamp <= self._end_offset
         )

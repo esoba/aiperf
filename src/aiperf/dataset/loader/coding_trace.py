@@ -627,11 +627,12 @@ class CodingTraceLoader(BaseFileLoader):
 
         for turn in conv.turns:
             total = len(turn.hash_ids)
-            remaining = total - l1_count
+            turn_l1 = min(l1_count, total)
+            remaining = total - turn_l1
             l2_count = min(l2_estimate, max(0, remaining))
             l3_count = max(0, remaining - l2_count)
             turn.cache_layer_sizes = CacheLayerSizes(
-                l1=l1_count, l2=l2_count, l3=l3_count
+                l1=turn_l1, l2=l2_count, l3=l3_count
             )
 
     def _build_child_conversation(
@@ -653,7 +654,9 @@ class CodingTraceLoader(BaseFileLoader):
                 delay_ms = delay_sec * MILLIS_PER_SECOND
             prev_t = req.t
 
-            if i == 0:
+            if req.is_pair_repeat:
+                delta = 1
+            elif i == 0:
                 delta = max(1, req.input_tokens - prefix_tokens)
             else:
                 prev = requests[i - 1]

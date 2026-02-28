@@ -612,3 +612,82 @@ class TestAnthropicMessagesParseResponseStreaming:
         assert isinstance(results[2].data, TextResponseData)
         assert results[2].data.text == " world"
         assert results[3].usage is not None  # message_delta
+
+
+class TestAnthropicMessagesRawMessage:
+    """Tests for raw_message verbatim replay in AnthropicMessagesEndpoint."""
+
+    @pytest.fixture
+    def model_endpoint(self):
+        return create_model_endpoint(EndpointType.ANTHROPIC_MESSAGES)
+
+    @pytest.fixture
+    def endpoint(self, model_endpoint):
+        return create_endpoint_with_mock_transport(
+            AnthropicMessagesEndpoint, model_endpoint
+        )
+
+    def test_raw_message_replaces_entire_message(self, endpoint, model_endpoint):
+        """Turn with raw_message produces that exact dict in the messages list."""
+        raw = {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Let me check."},
+                {
+                    "type": "tool_use",
+                    "id": "tu-1",
+                    "name": "read_file",
+                    "input": {"path": "a.py"},
+                },
+            ],
+        }
+        turn = Turn(raw_message=raw, model="claude-sonnet-4-20250514")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"] == [raw]
+
+    def test_raw_message_takes_precedence_over_raw_content(
+        self, endpoint, model_endpoint
+    ):
+        """raw_message beats raw_content when both are set."""
+        raw = {"role": "user", "content": "from raw_message"}
+        turn = Turn(
+            raw_message=raw,
+            raw_content="should be ignored",
+            model="claude-sonnet-4-20250514",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"] == [raw]
+
+    def test_raw_message_mixed_with_normal_turns(self, endpoint, model_endpoint):
+        """raw_message turns can be mixed with normal turns."""
+        raw = {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "I'll help."}],
+        }
+        turns = [
+            Turn(
+                texts=[Text(contents=["Hello"])],
+                role="user",
+                model="claude-sonnet-4-20250514",
+            ),
+            Turn(raw_message=raw, model="claude-sonnet-4-20250514"),
+            Turn(
+                texts=[Text(contents=["Thanks"])],
+                role="user",
+                model="claude-sonnet-4-20250514",
+            ),
+        ]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 3
+        assert payload["messages"][0]["content"] == "Hello"
+        assert payload["messages"][1] == raw
+        assert payload["messages"][2]["content"] == "Thanks"

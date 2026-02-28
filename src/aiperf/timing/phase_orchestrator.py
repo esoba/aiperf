@@ -218,7 +218,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             except Exception as e:
                 self.error(f"Error executing phase {runner.phase}: {e!r}")
                 await self.cancel()
-                raise e
+                raise
 
             # Remove from active runners when fully complete
             # For seamless phases, this happens after returns complete (background task)
@@ -247,6 +247,6 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         await self._credit_router.cancel_all_credits()
 
         # Cancel all active phase runners (multiple possible with seamless mode)
-        for runner in self._active_runners:
+        for runner in list(self._active_runners):
             runner.cancel()
             self.debug(f"Cancelled active phase runner for phase {runner.phase}")

@@ -294,7 +294,7 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
     prefill_concurrency = (
         loadgen.warmup_prefill_concurrency or loadgen.prefill_concurrency
     )
-    if request_rate is None or arrival_pattern is None:
+    if request_rate is None:
         arrival_pattern = ArrivalPattern.CONCURRENCY_BURST
         if concurrency is None and prefill_concurrency is None:
             concurrency = 1

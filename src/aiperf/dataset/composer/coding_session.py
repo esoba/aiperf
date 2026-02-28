@@ -654,7 +654,7 @@ class CodingSessionComposer(BaseDatasetComposer):
             p *= self._parallel_rng.random()
         return max(2, min(k - 1, cfg.parallel_fan_out_max))
 
-    def _generate_hash_ids(self, count: int, offset: int = 0) -> list[int]:
+    def _generate_hash_ids(self, count: int) -> list[int]:
         """Generate deterministic hash IDs for KV cache blocks."""
         return [self._hash_id_rng.randint(0, 2**31 - 1) for _ in range(count)]
 

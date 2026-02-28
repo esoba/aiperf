@@ -221,14 +221,15 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
     def _assess_and_scale_ttft(self) -> None:
         """Assess TTFT samples and decide whether to add more users (headroom mode)."""
         samples = self._period_ttft_samples
+        self._period_ttft_samples = []
+        self._period_new_tokens = 0
+
         if not samples:
             self.debug("No TTFT samples in assessment period, skipping")
             return
 
         metric_value = self._compute_ttft_metric(samples)
         self._all_ttft_samples.extend(samples)
-        self._period_ttft_samples = []
-        self._period_new_tokens = 0
 
         if metric_value >= self._max_ttft_sec:
             self.info(
@@ -498,8 +499,10 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         if pending.completed_count < pending.expected_count:
             return
 
-        # All branches complete — dispatch join turn using parent's correlation ID
         self._pending_joins.pop(parent_id, None)
+
+        if pending.join_turn_index >= pending.num_turns:
+            return
 
         join_turn = TurnToSend(
             conversation_id=pending.conversation_id,
@@ -608,7 +611,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         if ttft_sec > self._max_ttft_sec:
             count = self._rate_limit_counts.get(corr_id, 0)
             backoff = min(ttft_sec / self._max_ttft_sec - 1.0, 10.0)
-            actual = backoff * (1.5**count)
+            actual = min(backoff * (1.5**count), 30.0)
             self._session_backoffs[corr_id] = actual
             self._rate_limit_counts[corr_id] = count + 1
         else:

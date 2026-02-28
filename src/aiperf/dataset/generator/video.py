@@ -106,7 +106,7 @@ class VideoGenerator(BaseGenerator):
 
     def _generate_frames(self) -> list[Image.Image]:
         """Generate frames based on the synthesis type."""
-        total_frames = int(self.config.duration * self.config.fps)
+        total_frames = max(1, int(self.config.duration * self.config.fps))
         frames = []
 
         if self.config.synth_type == VideoSynthType.MOVING_SHAPES:

@@ -635,7 +635,8 @@ class CodingContentGenerator(BaseGenerator):
             if index == len(hash_ids) - 1:
                 current_block_size = final_block_size
 
-            if hash_id not in self._cache:
+            cache_key = (hash_id, current_block_size)
+            if cache_key not in self._cache:
                 prompt_tokens: list[int] = []
                 if self.tokenizer.block_separation_token_id is not None:
                     prompt_tokens += [self.tokenizer.block_separation_token_id]
@@ -646,9 +647,9 @@ class CodingContentGenerator(BaseGenerator):
                     prompt_tokens += self._sample_tokens(
                         current_block_size, self._tool_pool
                     )
-                self._cache[hash_id] = prompt_tokens
+                self._cache[cache_key] = prompt_tokens
 
-            final_prompt.extend(self._cache[hash_id])
+            final_prompt.extend(self._cache[cache_key])
 
         return final_prompt
 

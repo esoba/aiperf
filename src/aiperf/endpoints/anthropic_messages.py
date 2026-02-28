@@ -98,6 +98,9 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
             messages.append({"role": "user", "content": user_context_message})
 
         for turn in turns:
+            if turn.raw_message is not None:
+                messages.append(turn.raw_message)
+                continue
             role = turn.role or _DEFAULT_ROLE
             content = self._build_turn_content(turn)
             messages.append({"role": role, "content": content})

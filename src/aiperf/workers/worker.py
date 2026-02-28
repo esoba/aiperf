@@ -525,9 +525,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 # Use trace's assistant content for context fidelity in verbatim replay
                 current_turn = session.conversation.turns[session.turn_index]
                 if current_turn.assistant_prefill is not None:
-                    resp_turn = Turn(
-                        role="assistant", raw_content=current_turn.assistant_prefill
-                    )
+                    prefill = current_turn.assistant_prefill
+                    if isinstance(prefill, dict) and "role" in prefill:
+                        resp_turn = Turn(role="assistant", raw_message=prefill)
+                    else:
+                        resp_turn = Turn(role="assistant", raw_content=prefill)
                 session.store_response(resp_turn)
 
         except asyncio.CancelledError:

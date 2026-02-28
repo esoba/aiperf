@@ -135,8 +135,8 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
                 (pos, hash_id) in repeated_hash_ids
                 for pos, hash_id in enumerate(hash_ids)
             ):
-                context_len = isl
-                unique_prompt_len = 0
+                context_len = len(hash_ids) * self.block_size
+                unique_prompt_len = max(0, isl - context_len)
             else:
                 # Count repeated (position, hash_id) pairs
                 repeated_count = sum(
@@ -145,7 +145,7 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
                     if (pos, hash_id) in repeated_hash_ids
                 )
                 context_len = repeated_count * self.block_size
-                unique_prompt_len = isl - context_len
+                unique_prompt_len = max(0, isl - context_len)
 
             self.context_lengths.append(context_len)
             self.unique_prompt_lengths.append(unique_prompt_len)
@@ -271,7 +271,7 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
         if not self._prefix_counter:
             return 0.0
 
-        reused = sum(count for count in self._prefix_counter.values() if count > 1)
-        total = sum(self._prefix_counter.values())
+        reused = sum(1 for count in self._prefix_counter.values() if count > 1)
+        total = len(self._prefix_counter)
 
         return reused / total if total > 0 else 0.0

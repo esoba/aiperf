@@ -304,7 +304,7 @@ class PhaseRunner(TaskManagerMixin):
                 stats = self._progress.create_stats(self._lifecycle)
                 await self._phase_publisher.publish_phase_complete(stats)
 
-            raise e
+            raise
 
     def _create_rampers(self, strategy: TimingStrategyProtocol) -> None:
         """Create rampers for concurrency and rate if ramp durations are configured.

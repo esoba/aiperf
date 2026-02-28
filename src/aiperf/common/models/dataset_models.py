@@ -222,6 +222,12 @@ class Turn(AIPerfBaseModel):
         description="Raw content blocks for verbatim replay. When set, endpoint uses "
         "this directly instead of building from media fields.",
     )
+    raw_message: dict[str, Any] | None = Field(
+        default=None,
+        description="Complete message dict for verbatim replay. When set, endpoint "
+        "uses this as the entire message instead of building from role/content/media. "
+        "Must match the target endpoint's API format.",
+    )
     assistant_prefill: str | list[dict[str, Any]] | None = Field(
         default=None,
         description="Trace assistant response to use as context for subsequent turns. "
@@ -286,6 +292,7 @@ class Turn(AIPerfBaseModel):
             parallel_branch=self.parallel_branch,
             subagent_spawn_id=self.subagent_spawn_id,
             raw_content=None,
+            raw_message=self.raw_message,
             assistant_prefill=self.assistant_prefill,
         )
 
@@ -444,10 +451,7 @@ class Conversation(AIPerfBaseModel):
 
         result: list[ParallelGroupInfo] = []
         for group_id, indices in groups.items():
-            # Join turn is the first turn after the last branch index
             join_index = indices[-1] + 1
-            if join_index >= len(turns):
-                join_index = len(turns) - 1
             result.append(
                 ParallelGroupInfo(
                     group_id=group_id,

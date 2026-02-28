@@ -245,14 +245,15 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
             model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
-            inputs = self._generate_input_payloads(model_endpoint)
-
-            temp_file_path.write_bytes(
-                orjson.dumps(
-                    inputs.model_dump(exclude_none=True, mode="json"),
-                    option=orjson.OPT_INDENT_2,
-                )
+            inputs = await asyncio.to_thread(
+                self._generate_input_payloads, model_endpoint
             )
+
+            payload_bytes = orjson.dumps(
+                inputs.model_dump(exclude_none=True, mode="json"),
+                option=orjson.OPT_INDENT_2,
+            )
+            await asyncio.to_thread(temp_file_path.write_bytes, payload_bytes)
             temp_file_path.replace(file_path)
 
             duration = time.perf_counter() - start_time

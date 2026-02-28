@@ -82,6 +82,10 @@ class CustomDatasetComposer(BaseDatasetComposer):
                     data = load_json_str(line)
                     return self._infer_type(data=data, filename=file_path)
 
+            raise ValueError(
+                f"Cannot infer dataset type: file '{file_path}' is empty or contains only blank lines"
+            )
+
         except ValueError as e:
             self.exception(
                 f"Error inferring dataset type from file: {file_path}: {e!r}"
@@ -183,7 +187,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
             raise ValueError(
                 f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
                 f"--synthesis-prefix-root-multiplier, --synthesis-prompt-len-multiplier) "
-                f"are only supported with mooncake_trace datasets, but got {dataset_type.value}. "
+                f"are only supported with mooncake_trace or coding_trace datasets, but got {dataset_type.value}. "
                 f"Either remove synthesis options or use --custom-dataset-type mooncake_trace."
             )
 

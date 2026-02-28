@@ -211,9 +211,19 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
 
     async def _finalize_compressed(self, index_bytes: bytes) -> None:
         """Close zstd stream and write compressed index."""
-        self._stream_writer.close()
-        self._raw_data_file.close()
-        compressed_data_size = self._compressed_data_path.stat().st_size
+
+        def _do_finalize() -> int:
+            self._stream_writer.close()
+            self._raw_data_file.close()
+            compressed_data_size = self._compressed_data_path.stat().st_size
+
+            zstd = _import_zstandard()
+            compressor = zstd.ZstdCompressor(level=Environment.COMPRESSION.ZSTD_LEVEL)
+            compressed_index = compressor.compress(index_bytes)
+            self._compressed_index_path.write_bytes(compressed_index)
+            return compressed_data_size
+
+        compressed_data_size = await asyncio.to_thread(_do_finalize)
 
         self.info(
             f"Compressed data file finalized: {len(self._session_ids)} conversations, "
@@ -221,11 +231,6 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             f"{compressed_data_size / BYTES_PER_MIB:,.2f} MB compressed "
             f"({compressed_data_size / self._current_offset * 100 if self._current_offset > 0 else 0:.1f}%)"
         )
-
-        zstd = _import_zstandard()
-        compressor = zstd.ZstdCompressor(level=Environment.COMPRESSION.ZSTD_LEVEL)
-        compressed_index = compressor.compress(index_bytes)
-        self._compressed_index_path.write_bytes(compressed_index)
 
         self._compressed_size = compressed_data_size
         self.info(f"Compressed index file created: {self._compressed_index_path}")
@@ -533,8 +538,9 @@ class MemoryMapDatasetClient:
         offset_info = self.index.offsets[conversation_id]
 
         try:
-            self.data_mmap.seek(offset_info.offset)
-            conv_bytes = self.data_mmap.read(offset_info.size)
+            conv_bytes = self.data_mmap[
+                offset_info.offset : offset_info.offset + offset_info.size
+            ]
 
             _logger.debug(
                 lambda: f"Loading conversation '{conversation_id}': offset={offset_info.offset}, size={offset_info.size} bytes"

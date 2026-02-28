@@ -4,8 +4,12 @@
 
 from aiperf.dataset.loader.base_loader import BaseFileLoader, BaseLoader
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
+from aiperf.dataset.loader.claude_code_trace import ClaudeCodeTraceLoader
+from aiperf.dataset.loader.coding_trace import CodingTraceLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import (
+    ClaudeCodeTrace,
+    CodingTrace,
     MooncakeTrace,
     MultiTurn,
     RandomPool,
@@ -21,6 +25,10 @@ __all__ = [
     "BaseFileLoader",
     "BaseLoader",
     "BasePublicDatasetLoader",
+    "ClaudeCodeTrace",
+    "ClaudeCodeTraceLoader",
+    "CodingTrace",
+    "CodingTraceLoader",
     "MediaConversionMixin",
     "MooncakeTrace",
     "MooncakeTraceDatasetLoader",
