@@ -70,6 +70,9 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
         if system:
             payload["system"] = system
 
+        if request_info.tools:
+            payload["tools"] = request_info.tools
+
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 

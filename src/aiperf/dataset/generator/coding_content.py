@@ -17,6 +17,8 @@ Generation uses window slicing from pre-built token pools, same as PromptGenerat
 
 from __future__ import annotations
 
+from typing import Any
+
 from aiperf.common import random_generator as rng
 from aiperf.common.config import PromptConfig
 from aiperf.common.exceptions import ConfigurationError, NotInitializedError
@@ -395,6 +397,209 @@ _LANGUAGE_GENERATORS: dict[str, tuple[str, ...]] = {
 }
 # fmt: on
 
+_TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read the contents of a file at the specified path. Returns the file content as a string with line numbers. Supports text files, images, PDFs, and Jupyter notebooks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The absolute path to the file to read.",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "The line number to start reading from.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "The number of lines to read.",
+                    },
+                },
+                "required": ["file_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Perform an exact string replacement in a file. The old_string must match exactly one location in the file. Use replace_all to change every occurrence.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The absolute path to the file to modify.",
+                    },
+                    "old_string": {
+                        "type": "string",
+                        "description": "The text to search for and replace.",
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": "The replacement text.",
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Replace all occurrences of old_string.",
+                        "default": False,
+                    },
+                },
+                "required": ["file_path", "old_string", "new_string"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": "Search for a regex pattern across files in the codebase. Supports glob filtering, file type filtering, and multiple output modes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "The regular expression pattern to search for.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "File or directory to search in.",
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Glob pattern to filter files (e.g. '*.py').",
+                    },
+                    "output_mode": {
+                        "type": "string",
+                        "enum": ["content", "files_with_matches", "count"],
+                        "description": "Output mode for search results.",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": "Execute a shell command and return its output. The working directory persists between calls. Commands time out after 120 seconds by default.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional timeout in milliseconds.",
+                    },
+                    "run_in_background": {
+                        "type": "boolean",
+                        "description": "Run the command in the background.",
+                    },
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_directory",
+            "description": "List files matching a glob pattern in the project directory tree. Returns matching file paths sorted by modification time.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "The glob pattern to match files against.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "The directory to search in.",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write content to a file at the specified path. Overwrites the existing file if present. Prefer edit_file for modifying existing files.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "The absolute path to the file to write.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content to write to the file.",
+                    },
+                },
+                "required": ["file_path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_references",
+            "description": "Find all references to a symbol across the codebase. Searches for usages of classes, functions, variables, and other identifiers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "The symbol name to find references for.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory scope to search within.",
+                    },
+                    "include_definitions": {
+                        "type": "boolean",
+                        "description": "Include the definition site in results.",
+                        "default": True,
+                    },
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_diagnostics",
+            "description": "Retrieve linter warnings, type errors, and other diagnostics for the specified file or project. Returns structured diagnostic information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file to check. Omit for project-wide diagnostics.",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["error", "warning", "info", "hint"],
+                        "description": "Minimum severity level to report.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+]
+
 
 class CodingContentGenerator(BaseGenerator):
     """Generator for structurally plausible coding content.
@@ -485,6 +690,14 @@ class CodingContentGenerator(BaseGenerator):
             pool = self.build_language_pool(language)
         tokens = self._sample_tokens(num_tokens, pool)
         return self.tokenizer.decode(tokens)
+
+    def generate_tool_definitions(self) -> list[dict[str, Any]]:
+        """Return a copy of the built-in tool definitions.
+
+        Returns OpenAI-format tool schemas matching the tool types this
+        generator produces (read, edit, search, bash) plus extras.
+        """
+        return [dict(t) for t in _TOOL_DEFINITIONS]
 
     def build_language_pool(self, language: str) -> list[int]:
         """Build or return a cached language-specific tool pool.

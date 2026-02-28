@@ -525,11 +525,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 # Use trace's assistant content for context fidelity in verbatim replay
                 current_turn = session.conversation.turns[session.turn_index]
                 if current_turn.assistant_prefill is not None:
-                    prefill = current_turn.assistant_prefill
-                    if isinstance(prefill, dict) and "role" in prefill:
-                        resp_turn = Turn(role="assistant", raw_message=prefill)
-                    else:
-                        resp_turn = Turn(role="assistant", raw_content=prefill)
+                    resp_turn = Turn(
+                        role="assistant", raw_content=current_turn.assistant_prefill
+                    )
                 session.store_response(resp_turn)
 
         except asyncio.CancelledError:
@@ -571,6 +569,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     def _update_circuit_breaker(self, error: ErrorDetails) -> None:
         """Increment consecutive connection errors and trip breaker at threshold."""
         if not self._is_connection_error(error):
+            self._consecutive_connection_errors = 0
             return
 
         self._consecutive_connection_errors += 1
@@ -638,6 +637,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             system_message=system_message,
             user_context_message=user_context_message,
             is_final_turn=credit.is_final_turn,
+            tools=session.conversation.tools,
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
         )

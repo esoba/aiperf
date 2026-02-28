@@ -1218,3 +1218,46 @@ class TestMaxTurns:
 
         for c1, c2 in zip(convs1, convs2, strict=True):
             assert len(c1.turns) == len(c2.turns)
+
+
+class TestToolDefinitions:
+    """Verify conversations include tool definitions."""
+
+    def test_coding_session_conversations_have_tools(self, mock_tokenizer):
+        config = _make_cache_config()
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        parents = [c for c in conversations if not c.is_subagent_child]
+        assert len(parents) > 0
+        for conv in parents:
+            assert conv.tools is not None
+            assert len(conv.tools) == 8
+            for tool in conv.tools:
+                assert tool["type"] == "function"
+                assert "function" in tool
+
+    def test_subagent_children_have_tools_subset(self, mock_tokenizer):
+        config = _make_cache_config(
+            subagent_probability=1.0,
+            subagent_count_mean=2.0,
+            subagent_count_max=3,
+            subagent_turns_mean=4,
+            subagent_turns_median=3,
+            subagent_system_tokens=200,
+            subagent_new_tokens_mean=300,
+            subagent_new_tokens_median=200,
+            subagent_max_prompt_tokens=3000,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        parents = [c for c in conversations if not c.is_subagent_child]
+        children = [c for c in conversations if c.is_subagent_child]
+        assert len(children) > 0
+
+        parent_tool_count = len(parents[0].tools)
+        for child in children:
+            assert child.tools is not None
+            assert len(child.tools) < parent_tool_count
+            assert len(child.tools) == 4

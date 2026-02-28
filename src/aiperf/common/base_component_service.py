@@ -89,7 +89,7 @@ class BaseComponentService(BaseService):
                 timeout=registration_interval,
             )
             if isinstance(result, CommandResponse):
-                if attempt > 1:
+                if attempt >= 1:
                     self.info(
                         f"Service {self.service_id} registered with system controller "
                         f"after {attempt + 1} attempts ({(attempt + 1) * registration_interval:.1f}s)"

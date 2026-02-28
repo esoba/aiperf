@@ -3,7 +3,7 @@
 import pytest
 
 from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models import Turn
+from aiperf.common.models import Text, Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -420,8 +420,6 @@ class TestChatEndpointRawMessage:
 
     def test_raw_message_mixed_with_normal_turns(self, endpoint, model_endpoint):
         """raw_message turns can be mixed with normal turns."""
-        from aiperf.common.models import Text
-
         raw = {"role": "tool", "tool_call_id": "call_1", "content": "result"}
         turns = [
             Turn(texts=[Text(contents=["Hello"])], role="user", model="test-model"),
@@ -438,3 +436,39 @@ class TestChatEndpointRawMessage:
         assert payload["messages"][1] == raw
         assert payload["messages"][2]["role"] == "user"
         assert payload["messages"][2]["content"] == "Thanks"
+
+    def test_tools_included_in_payload(self, endpoint, model_endpoint):
+        """Tool definitions from request_info are included in the payload."""
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_file",
+                    "description": "Read a file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                        "required": ["path"],
+                    },
+                },
+            }
+        ]
+        turn = Turn(
+            texts=[Text(contents=["Read a.py"])], role="user", model="test-model"
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint, turns=[turn], tools=tools
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["tools"] == tools
+
+    def test_tools_omitted_when_none(self, endpoint, model_endpoint):
+        """No tools key in payload when tools is None."""
+        turn = Turn(texts=[Text(contents=["Hello"])], role="user", model="test-model")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert "tools" not in payload

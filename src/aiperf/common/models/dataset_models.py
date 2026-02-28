@@ -418,6 +418,10 @@ class Conversation(AIPerfBaseModel):
         description="Optional per-conversation user context prepended to the first turn. "
         "Unique for each conversation when using --user-context-prompt-length.",
     )
+    tools: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Tool definitions to include in API requests for this conversation.",
+    )
     is_subagent_child: bool = Field(
         default=False,
         description="True if this conversation is a subagent child.",

@@ -124,7 +124,7 @@ class ConversationSource:
     ) -> TurnMetadata:
         """Get metadata for a specific turn by index."""
         metadata = self.get_metadata(conversation_id)
-        if turn_index >= len(metadata.turns):
+        if turn_index < 0 or turn_index >= len(metadata.turns):
             raise ValueError(
                 f"No turn {turn_index} in conversation {conversation_id} "
                 f"(only {len(metadata.turns)} turns exist)"
@@ -143,7 +143,7 @@ class ConversationSource:
 
     def start_child_session(self, conversation_id: str) -> SampledSession:
         """Start a specific child conversation as a new session (for subagent spawns)."""
-        metadata = self._metadata_lookup[conversation_id]
+        metadata = self.get_metadata(conversation_id)
         return SampledSession(
             conversation_id=conversation_id,
             metadata=metadata,

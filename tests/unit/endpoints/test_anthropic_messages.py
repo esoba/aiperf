@@ -691,3 +691,36 @@ class TestAnthropicMessagesRawMessage:
         assert payload["messages"][0]["content"] == "Hello"
         assert payload["messages"][1] == raw
         assert payload["messages"][2]["content"] == "Thanks"
+
+    def test_tools_included_in_payload(self, endpoint, model_endpoint):
+        """Tool definitions from request_info are included in the payload."""
+        tools = [
+            {
+                "name": "read_file",
+                "description": "Read a file",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            }
+        ]
+        turn = Turn(
+            texts=[Text(contents=["Read a.py"])], model="claude-sonnet-4-20250514"
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint, turns=[turn], tools=tools
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["tools"] == tools
+
+    def test_tools_omitted_when_none(self, endpoint, model_endpoint):
+        """No tools key in payload when tools is None."""
+        turn = Turn(texts=[Text(contents=["Hello"])], model="claude-sonnet-4-20250514")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert "tools" not in payload

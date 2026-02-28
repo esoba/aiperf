@@ -181,7 +181,8 @@ def _redirect_stdio_to_devnull() -> None:
     devnull_fd = os.open(os.devnull, os.O_RDWR)
     for fd in (0, 1, 2):
         os.dup2(devnull_fd, fd)
-    os.close(devnull_fd)
+    if devnull_fd > 2:
+        os.close(devnull_fd)
 
     # Recreate Python-level streams from the redirected OS FDs.
     # closefd=False keeps FD ownership at the OS level so that if these

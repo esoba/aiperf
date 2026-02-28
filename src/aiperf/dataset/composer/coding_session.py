@@ -87,6 +87,9 @@ class CodingSessionComposer(BaseDatasetComposer):
         self._delay_rng = rng.derive("coding_session.delay")
         self._max_turns_rng = rng.derive("coding_session.max_turns")
 
+        self._tool_definitions = self._content_generator.generate_tool_definitions()
+        self._subagent_tool_definitions = self._tool_definitions[:4]
+
     def create_dataset(self) -> list[Conversation]:
         cfg = self._coding_config
         conversations: list[Conversation] = []
@@ -162,7 +165,7 @@ class CodingSessionComposer(BaseDatasetComposer):
         self, session_idx: int, cfg: CodingSessionConfig
     ) -> tuple[Conversation, list[Conversation]]:
         session_id = f"coding_session_{session_idx:04d}"
-        conversation = Conversation(session_id=session_id)
+        conversation = Conversation(session_id=session_id, tools=self._tool_definitions)
         child_conversations: list[Conversation] = []
 
         block_size = cfg.block_size
@@ -529,7 +532,11 @@ class CodingSessionComposer(BaseDatasetComposer):
     ) -> Conversation:
         """Generate a subagent child conversation with independent L1 range."""
         child_id = f"{parent_session_id}_{spawn_id}_c{child_idx}"
-        child = Conversation(session_id=child_id, is_subagent_child=True)
+        child = Conversation(
+            session_id=child_id,
+            is_subagent_child=True,
+            tools=self._subagent_tool_definitions,
+        )
 
         block_size = cfg.block_size
 

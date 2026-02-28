@@ -504,3 +504,31 @@ class TestCodingContentGenerator:
     ):
         block = generator._gen_git_diff(language=language)
         assert expected_path_fragment in block
+
+    # -- Tool definitions --
+
+    def test_generate_tool_definitions_returns_valid_schemas(self, generator):
+        tools = generator.generate_tool_definitions()
+        assert isinstance(tools, list)
+        assert len(tools) == 8
+        for tool in tools:
+            assert isinstance(tool, dict)
+            assert tool["type"] == "function"
+            assert "function" in tool
+
+    def test_generate_tool_definitions_all_have_required_fields(self, generator):
+        tools = generator.generate_tool_definitions()
+        for tool in tools:
+            fn = tool["function"]
+            assert "name" in fn
+            assert "description" in fn
+            assert "parameters" in fn
+            assert isinstance(fn["name"], str)
+            assert isinstance(fn["parameters"], dict)
+            assert fn["parameters"]["type"] == "object"
+
+    def test_generate_tool_definitions_returns_copy(self, generator):
+        tools1 = generator.generate_tool_definitions()
+        tools2 = generator.generate_tool_definitions()
+        assert tools1 is not tools2
+        assert tools1[0] is not tools2[0]
