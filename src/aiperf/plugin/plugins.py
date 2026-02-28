@@ -923,6 +923,7 @@ if TYPE_CHECKING:
     # fmt: off
     # ruff: noqa: I001
     from aiperf.accuracy.protocols import AccuracyBenchmarkProtocol, AccuracyGraderProtocol
+    from aiperf.api.routers.base_router import BaseRouter
     from aiperf.common.protocols import CommunicationClientProtocol, CommunicationProtocol, ServiceProtocol
     from aiperf.controller.protocols import ServiceManagerProtocol
     from aiperf.dataset.composer.base import BaseDatasetComposer
@@ -941,14 +942,13 @@ if TYPE_CHECKING:
     from aiperf.transports.base_transports import TransportProtocol
     from aiperf.ui.protocols import AIPerfUIProtocol
     from aiperf.zmq.zmq_proxy_base import BaseZMQProxy
-    from fastapi.routing import APIRouter
     from typing import Literal, overload
     # </generated-imports>
     # <generated-overloads>
     @overload
-    def get_class(category: Literal[PluginType.API_ROUTER, "api_router"], name_or_class_path: APIRouterType | str) -> type[APIRouter]: ...
+    def get_class(category: Literal[PluginType.API_ROUTER, "api_router"], name_or_class_path: APIRouterType | str) -> type[BaseRouter]: ...
     @overload
-    def iter_all(category: Literal[PluginType.API_ROUTER, "api_router"]) -> Iterator[tuple[PluginEntry, type[APIRouter]]]: ...
+    def iter_all(category: Literal[PluginType.API_ROUTER, "api_router"]) -> Iterator[tuple[PluginEntry, type[BaseRouter]]]: ...
     @overload
     def get_class(category: Literal[PluginType.TIMING_STRATEGY, "timing_strategy"], name_or_class_path: TimingMode | str) -> type[TimingStrategyProtocol]: ...
     @overload

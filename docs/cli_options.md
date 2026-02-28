@@ -1019,10 +1019,11 @@ Select the user interface type for displaying benchmark progress. `dashboard` sh
 #### `--api-port` `<int>`
 
 AIPerf API port (enables HTTP + WebSocket endpoints).
+<br>_Constraints: ≥ 1, ≤ 65535_
 
 #### `--api-host` `<str>`
 
-AIPerf API host (requires --api-port).
+AIPerf API host (requires --api-port or AIPERF_API_SERVER_PORT to be set).
 
 <hr>
 
