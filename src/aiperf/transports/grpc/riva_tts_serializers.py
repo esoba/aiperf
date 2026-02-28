@@ -11,16 +11,19 @@ from __future__ import annotations
 from typing import Any
 
 from aiperf.transports.grpc.proto.riva import riva_audio_pb2, riva_tts_pb2
+from aiperf.transports.grpc.riva_encoding import ENCODING_MAP
 from aiperf.transports.grpc.stream_chunk import StreamChunk
 
-# Map string encoding names to protobuf enum values
-_ENCODING_MAP: dict[str, int] = {
-    "LINEAR_PCM": riva_audio_pb2.LINEAR_PCM,
-    "FLAC": riva_audio_pb2.FLAC,
-    "MULAW": riva_audio_pb2.MULAW,
-    "OGGOPUS": riva_audio_pb2.OGGOPUS,
-    "ALAW": riva_audio_pb2.ALAW,
-}
+
+def _response_to_dict(response: Any) -> dict[str, Any]:
+    """Convert a SynthesizeSpeechResponse to a dict."""
+    result: dict[str, Any] = {"audio": response.audio}
+    if response.meta.text:
+        result["meta"] = {
+            "text": response.meta.text,
+            "processed_text": response.meta.processed_text,
+        }
+    return result
 
 
 class RivaTtsSerializer:
@@ -51,7 +54,7 @@ class RivaTtsSerializer:
         request.sample_rate_hz = payload.get("sample_rate_hz", 22050)
 
         encoding_str = payload.get("encoding", "LINEAR_PCM")
-        request.encoding = _ENCODING_MAP.get(encoding_str, riva_audio_pb2.LINEAR_PCM)
+        request.encoding = ENCODING_MAP.get(encoding_str, riva_audio_pb2.LINEAR_PCM)
 
         if request_id:
             request.id.value = request_id
@@ -70,17 +73,7 @@ class RivaTtsSerializer:
         """
         response = riva_tts_pb2.SynthesizeSpeechResponse()
         response.ParseFromString(data)
-
-        result: dict[str, Any] = {
-            "audio": response.audio,
-        }
-        if response.meta.text:
-            result["meta"] = {
-                "text": response.meta.text,
-                "processed_text": response.meta.processed_text,
-            }
-
-        return result, len(data)
+        return _response_to_dict(response), len(data)
 
     @staticmethod
     def deserialize_stream_response(data: bytes) -> StreamChunk:
@@ -94,18 +87,8 @@ class RivaTtsSerializer:
         """
         response = riva_tts_pb2.SynthesizeSpeechResponse()
         response.ParseFromString(data)
-
-        result: dict[str, Any] = {
-            "audio": response.audio,
-        }
-        if response.meta.text:
-            result["meta"] = {
-                "text": response.meta.text,
-                "processed_text": response.meta.processed_text,
-            }
-
         return StreamChunk(
             error_message=None,
-            response_dict=result,
+            response_dict=_response_to_dict(response),
             response_size=len(data),
         )

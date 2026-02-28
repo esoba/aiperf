@@ -30,6 +30,7 @@ from aiperf.transports.grpc.grpc_client import (
     GenericGrpcClient,
     GrpcBidiStreamCall,
     GrpcStreamCall,
+    _GrpcCallBase,
 )
 from aiperf.transports.grpc.status_mapping import grpc_status_to_http
 from aiperf.transports.grpc.stream_chunk import StreamChunk
@@ -551,6 +552,120 @@ class GrpcTransport(BaseTransport):
             return False
         return True
 
+    @staticmethod
+    def _process_stream_chunk(
+        chunk: StreamChunk,
+        record: RequestRecord,
+        trace_data: GrpcTraceData,
+    ) -> bool:
+        """Process a single streaming response chunk, updating record and trace.
+
+        Args:
+            chunk: Deserialized stream chunk.
+            record: RequestRecord to populate.
+            trace_data: Trace data to populate.
+
+        Returns:
+            False if the chunk was an error (caller should break), True otherwise.
+        """
+        if chunk.error_message:
+            error_perf_ns = time.perf_counter_ns()
+            trace_data.error_timestamp_perf_ns = error_perf_ns
+            record.end_perf_ns = error_perf_ns
+            record.error = ErrorDetails(
+                type="gRPC:STREAM_ERROR",
+                message=chunk.error_message,
+                code=500,
+            )
+            record.status = 500
+            return False
+
+        perf_ns = time.perf_counter_ns()
+        trace_data.response_chunks.append((perf_ns, chunk.response_size))
+
+        if trace_data.response_receive_start_perf_ns is None:
+            trace_data.response_receive_start_perf_ns = perf_ns
+            trace_data.response_headers_received_perf_ns = perf_ns
+            record.recv_start_perf_ns = perf_ns
+
+        json_str = orjson.dumps(chunk.response_dict).decode("utf-8")
+        text_response = TextResponse(
+            perf_ns=perf_ns,
+            text=json_str,
+            content_type="application/json",
+        )
+        record.responses.append(text_response)
+        return True
+
+    @staticmethod
+    def _finalize_stream(
+        call: _GrpcCallBase,
+        record: RequestRecord,
+        trace_data: GrpcTraceData,
+    ) -> None:
+        """Finalize a stream after all chunks have been consumed.
+
+        Sets end timing, status 200 on success, and schedules trailing
+        metadata capture. Must be called from an async context — the
+        trailing metadata is captured best-effort.
+
+        Note: This is a sync method that sets fields. The caller is
+        responsible for awaiting trailing metadata separately.
+
+        Args:
+            call: The gRPC call wrapper (for trailing metadata).
+            record: RequestRecord to finalize.
+            trace_data: Trace data to finalize.
+        """
+        end_ns = time.perf_counter_ns()
+        trace_data.response_receive_end_perf_ns = end_ns
+        if record.end_perf_ns is None:
+            record.end_perf_ns = end_ns
+        if record.error is None:
+            trace_data.grpc_status_code = 0  # OK
+            trace_data.response_status_code = 200
+            trace_data.response_reason = "OK"
+            record.status = 200
+
+    async def _run_with_cancel_timer(
+        self,
+        coro: Any,
+        cancel_after_ns: int,
+        record: RequestRecord,
+        call: _GrpcCallBase | None = None,
+        label: str = "gRPC",
+    ) -> None:
+        """Run a coroutine with a cancellation timer.
+
+        Args:
+            coro: The coroutine to run.
+            cancel_after_ns: Cancel after this many ns.
+            record: RequestRecord to populate on cancellation.
+            call: Optional gRPC call to cancel on timeout.
+            label: Label for debug logging.
+        """
+        timeout_s = cancel_after_ns / NANOS_PER_SECOND
+        task = asyncio.create_task(coro)
+        try:
+            await asyncio.wait_for(task, timeout=timeout_s)
+        except asyncio.TimeoutError:
+            task.cancel()
+            if call is not None:
+                call.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            end_ns = time.perf_counter_ns()
+            record.end_perf_ns = end_ns
+            record.cancellation_perf_ns = end_ns
+            record.error = ErrorDetails(
+                type="RequestCancellationError",
+                message=f"Request cancelled {timeout_s:.3f}s after being sent",
+                code=499,
+            )
+            self.debug(
+                lambda: f"{label} request cancelled {timeout_s:.3f}s after being sent"
+            )
+
     async def _send_unary_request(
         self,
         *,
@@ -686,50 +801,18 @@ class GrpcTransport(BaseTransport):
             async for chunk_bytes in stream_call:
                 chunk = self._serializer.deserialize_stream_response(chunk_bytes)
 
-                if chunk.error_message:
-                    error_perf_ns = time.perf_counter_ns()
-                    trace_data.error_timestamp_perf_ns = error_perf_ns
-                    record.end_perf_ns = error_perf_ns
-                    record.error = ErrorDetails(
-                        type="gRPC:STREAM_ERROR",
-                        message=chunk.error_message,
-                        code=500,
-                    )
-                    record.status = 500
+                if not self._process_stream_chunk(chunk, record, trace_data):
                     break
 
-                perf_ns = time.perf_counter_ns()
-                trace_data.response_chunks.append((perf_ns, chunk.response_size))
-
-                if trace_data.response_receive_start_perf_ns is None:
-                    trace_data.response_receive_start_perf_ns = perf_ns
-                    trace_data.response_headers_received_perf_ns = perf_ns
-                    record.recv_start_perf_ns = perf_ns
-
-                json_str = orjson.dumps(chunk.response_dict).decode("utf-8")
-                text_response = TextResponse(
-                    perf_ns=perf_ns,
-                    text=json_str,
-                    content_type="application/json",
-                )
-                record.responses.append(text_response)
-
                 if first_token_callback and not first_token_acquired:
-                    ttft_ns = perf_ns - record.start_perf_ns
+                    last_response = record.responses[-1]
+                    ttft_ns = last_response.perf_ns - record.start_perf_ns
                     first_token_acquired = await first_token_callback(
-                        ttft_ns, text_response
+                        ttft_ns, last_response
                     )
 
-            end_ns = time.perf_counter_ns()
-            trace_data.response_receive_end_perf_ns = end_ns
-            if record.end_perf_ns is None:
-                record.end_perf_ns = end_ns
+            self._finalize_stream(stream_call, record, trace_data)
             if record.error is None:
-                trace_data.grpc_status_code = 0  # OK
-                trace_data.response_status_code = 200
-                trace_data.response_reason = "OK"
-                record.status = 200
-                # Best-effort trailing metadata capture
                 with contextlib.suppress(Exception):
                     trailing = await stream_call.trailing_metadata()
                     trace_data.response_headers = _metadata_to_dict(trailing)
@@ -750,26 +833,13 @@ class GrpcTransport(BaseTransport):
             stream_call = client.server_stream(
                 self._stream_method, request_bytes, metadata=grpc_metadata
             )
-            timeout_s = cancel_after_ns / NANOS_PER_SECOND
-            task = asyncio.create_task(_consume_stream(stream_call))
-            try:
-                await asyncio.wait_for(task, timeout=timeout_s)
-            except asyncio.TimeoutError:
-                task.cancel()
-                stream_call.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-                end_ns = time.perf_counter_ns()
-                record.end_perf_ns = end_ns
-                record.cancellation_perf_ns = end_ns
-                record.error = ErrorDetails(
-                    type="RequestCancellationError",
-                    message=f"Request cancelled {timeout_s:.3f}s after being sent",
-                    code=499,
-                )
-                self.debug(
-                    lambda: f"gRPC streaming request cancelled {timeout_s:.3f}s after being sent"
-                )
+            await self._run_with_cancel_timer(
+                _consume_stream(stream_call),
+                cancel_after_ns,
+                record,
+                call=stream_call,
+                label="gRPC streaming",
+            )
 
     async def _send_bidi_streaming_request(
         self,
@@ -841,48 +911,18 @@ class GrpcTransport(BaseTransport):
             async for resp_bytes in bidi_call:
                 chunk = deserialize_bidi(resp_bytes)
 
-                if chunk.error_message:
-                    error_ns = time.perf_counter_ns()
-                    trace_data.error_timestamp_perf_ns = error_ns
-                    record.end_perf_ns = error_ns
-                    record.error = ErrorDetails(
-                        type="gRPC:STREAM_ERROR",
-                        message=chunk.error_message,
-                        code=500,
-                    )
-                    record.status = 500
+                if not self._process_stream_chunk(chunk, record, trace_data):
                     break
 
-                perf_ns = time.perf_counter_ns()
-                trace_data.response_chunks.append((perf_ns, chunk.response_size))
-
-                if trace_data.response_receive_start_perf_ns is None:
-                    trace_data.response_receive_start_perf_ns = perf_ns
-                    trace_data.response_headers_received_perf_ns = perf_ns
-
-                json_str = orjson.dumps(chunk.response_dict).decode("utf-8")
-                text_response = TextResponse(
-                    perf_ns=perf_ns,
-                    text=json_str,
-                    content_type="application/json",
-                )
-                record.responses.append(text_response)
-
                 if first_token_callback and not first_token_acquired:
-                    ttft_ns = perf_ns - record.start_perf_ns
+                    last_response = record.responses[-1]
+                    ttft_ns = last_response.perf_ns - record.start_perf_ns
                     first_token_acquired = await first_token_callback(
-                        ttft_ns, text_response
+                        ttft_ns, last_response
                     )
 
-            end_ns = time.perf_counter_ns()
-            trace_data.response_receive_end_perf_ns = end_ns
-            if record.end_perf_ns is None:
-                record.end_perf_ns = end_ns
+            self._finalize_stream(bidi_call, record, trace_data)
             if record.error is None:
-                trace_data.grpc_status_code = 0
-                trace_data.response_status_code = 200
-                trace_data.response_reason = "OK"
-                record.status = 200
                 with contextlib.suppress(Exception):
                     trailing = await bidi_call.trailing_metadata()
                     trace_data.response_headers = _metadata_to_dict(trailing)
@@ -901,23 +941,10 @@ class GrpcTransport(BaseTransport):
             bidi_call = client.bidi_stream(
                 self._bidi_stream_method, metadata=grpc_metadata
             )
-            timeout_s = cancel_after_ns / NANOS_PER_SECOND
-            task = asyncio.create_task(_run_bidi(bidi_call))
-            try:
-                await asyncio.wait_for(task, timeout=timeout_s)
-            except asyncio.TimeoutError:
-                task.cancel()
-                bidi_call.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-                end_ns = time.perf_counter_ns()
-                record.end_perf_ns = end_ns
-                record.cancellation_perf_ns = end_ns
-                record.error = ErrorDetails(
-                    type="RequestCancellationError",
-                    message=f"Request cancelled {timeout_s:.3f}s after being sent",
-                    code=499,
-                )
-                self.debug(
-                    lambda: f"gRPC bidi request cancelled {timeout_s:.3f}s after being sent"
-                )
+            await self._run_with_cancel_timer(
+                _run_bidi(bidi_call),
+                cancel_after_ns,
+                record,
+                call=bidi_call,
+                label="gRPC bidi",
+            )

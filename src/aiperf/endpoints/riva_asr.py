@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from typing import Any
 
 from aiperf.common.models import InferenceServerResponse, ParsedResponse, RequestInfo
 from aiperf.endpoints.base_endpoint import BaseEndpoint
+from aiperf.endpoints.riva_helpers import get_extra
 
 
 def _extract_audio_bytes(request_info: RequestInfo) -> bytes:
@@ -37,12 +39,30 @@ def _extract_audio_bytes(request_info: RequestInfo) -> bytes:
     # Audio content may be base64-encoded or raw bytes stored as string
     try:
         return base64.b64decode(audio_content)
-    except Exception:
+    except (ValueError, binascii.Error):
         return (
             audio_content.encode("utf-8")
             if isinstance(audio_content, str)
             else audio_content
         )
+
+
+def _parse_asr_response(
+    response: InferenceServerResponse, endpoint: BaseEndpoint
+) -> ParsedResponse | None:
+    """Parse a Riva ASR response into TextResponseData with transcript."""
+    json_obj = response.get_json()
+    if not json_obj:
+        return None
+
+    transcript = json_obj.get("transcript", "")
+    if not transcript:
+        return None
+
+    return ParsedResponse(
+        perf_ns=response.perf_ns,
+        data=endpoint.make_text_response_data(transcript),
+    )
 
 
 class RivaAsrOfflineEndpoint(BaseEndpoint):
@@ -54,11 +74,7 @@ class RivaAsrOfflineEndpoint(BaseEndpoint):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        extra = (
-            dict(self.model_endpoint.endpoint.extra)
-            if self.model_endpoint.endpoint.extra
-            else {}
-        )
+        extra = get_extra(self)
         self._language_code: str = extra.get("language_code", "en-US")
         self._sample_rate_hertz: int = int(extra.get("sample_rate_hertz", 16000))
         self._encoding: str = extra.get("encoding", "LINEAR_PCM")
@@ -92,18 +108,7 @@ class RivaAsrOfflineEndpoint(BaseEndpoint):
         Returns:
             ParsedResponse with transcript text, or None.
         """
-        json_obj = response.get_json()
-        if not json_obj:
-            return None
-
-        transcript = json_obj.get("transcript", "")
-        if not transcript:
-            return None
-
-        return ParsedResponse(
-            perf_ns=response.perf_ns,
-            data=self.make_text_response_data(transcript),
-        )
+        return _parse_asr_response(response, self)
 
 
 class RivaAsrStreamingEndpoint(BaseEndpoint):
@@ -118,11 +123,7 @@ class RivaAsrStreamingEndpoint(BaseEndpoint):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        extra = (
-            dict(self.model_endpoint.endpoint.extra)
-            if self.model_endpoint.endpoint.extra
-            else {}
-        )
+        extra = get_extra(self)
         self._language_code: str = extra.get("language_code", "en-US")
         self._sample_rate_hertz: int = int(extra.get("sample_rate_hertz", 16000))
         self._encoding: str = extra.get("encoding", "LINEAR_PCM")
@@ -143,10 +144,10 @@ class RivaAsrStreamingEndpoint(BaseEndpoint):
         """
         audio_bytes = _extract_audio_bytes(request_info)
 
-        # Split audio into chunks for streaming
-        chunks = []
-        for i in range(0, len(audio_bytes), self._chunk_size):
-            chunks.append(audio_bytes[i : i + self._chunk_size])
+        chunks = [
+            audio_bytes[i : i + self._chunk_size]
+            for i in range(0, len(audio_bytes), self._chunk_size)
+        ]
 
         return {
             "language_code": self._language_code,
@@ -167,15 +168,4 @@ class RivaAsrStreamingEndpoint(BaseEndpoint):
         Returns:
             ParsedResponse with transcript text, or None.
         """
-        json_obj = response.get_json()
-        if not json_obj:
-            return None
-
-        transcript = json_obj.get("transcript", "")
-        if not transcript:
-            return None
-
-        return ParsedResponse(
-            perf_ns=response.perf_ns,
-            data=self.make_text_response_data(transcript),
-        )
+        return _parse_asr_response(response, self)

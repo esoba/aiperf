@@ -14,6 +14,8 @@ from aiperf.endpoints.riva_tts import (
     RivaTtsEndpoint,
     RivaTtsStreamingEndpoint,
     _calc_duration_ms,
+    _parse_tts_response,
+    _RivaTtsBaseEndpoint,
 )
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
@@ -355,3 +357,99 @@ class TestRivaTtsStreamingEndpointParseResponse:
     def test_parse_response_no_audio(self, endpoint) -> None:
         response = create_mock_response(json_data={})
         assert endpoint.parse_response(response) is None
+
+
+# ---------------------------------------------------------------------------
+# _RivaTtsBaseEndpoint inheritance
+# ---------------------------------------------------------------------------
+class TestRivaTtsBaseEndpointInheritance:
+    """Verify both TTS endpoints share the same base class."""
+
+    def test_batch_inherits(self) -> None:
+        assert issubclass(RivaTtsEndpoint, _RivaTtsBaseEndpoint)
+
+    def test_streaming_inherits(self) -> None:
+        assert issubclass(RivaTtsStreamingEndpoint, _RivaTtsBaseEndpoint)
+
+    @pytest.mark.parametrize(
+        "cls,endpoint_type",
+        [
+            (RivaTtsEndpoint, EndpointType.RIVA_TTS),
+            (RivaTtsStreamingEndpoint, EndpointType.RIVA_TTS_STREAMING),
+        ],
+    )
+    def test_shared_format_payload(
+        self, cls: type, endpoint_type: EndpointType
+    ) -> None:
+        """Both TTS endpoints should produce identical payloads."""
+        model_endpoint = create_model_endpoint(endpoint_type)
+        endpoint = create_endpoint_with_mock_transport(cls, model_endpoint)
+        turn = Turn(texts=[Text(contents=["hello"])])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["text"] == "hello"
+        assert payload["encoding"] == "LINEAR_PCM"
+
+    @pytest.mark.parametrize(
+        "cls,endpoint_type",
+        [
+            (RivaTtsEndpoint, EndpointType.RIVA_TTS),
+            (RivaTtsStreamingEndpoint, EndpointType.RIVA_TTS_STREAMING),
+        ],
+    )
+    def test_shared_parse_response(
+        self, cls: type, endpoint_type: EndpointType
+    ) -> None:
+        """Both TTS endpoints should parse responses identically."""
+        model_endpoint = create_model_endpoint(endpoint_type)
+        endpoint = create_endpoint_with_mock_transport(cls, model_endpoint)
+        audio_b64 = base64.b64encode(b"\x01\x02").decode()
+        response = create_mock_response(json_data={"audio": audio_b64})
+
+        parsed = endpoint.parse_response(response)
+        assert parsed is not None
+        assert parsed.data.audio_bytes == b"\x01\x02"
+
+
+# ---------------------------------------------------------------------------
+# _parse_tts_response helper
+# ---------------------------------------------------------------------------
+class TestParseTtsResponse:
+    """Tests for the shared _parse_tts_response helper."""
+
+    def test_returns_audio_data(self) -> None:
+        audio_b64 = base64.b64encode(b"\x01\x02\x03").decode()
+        response = create_mock_response(json_data={"audio": audio_b64})
+        parsed = _parse_tts_response(
+            response, sample_rate_hz=22050, encoding="LINEAR_PCM"
+        )
+
+        assert parsed is not None
+        assert parsed.data.audio_bytes == b"\x01\x02\x03"
+        assert parsed.data.sample_rate_hz == 22050
+
+    def test_no_json_returns_none(self) -> None:
+        response = create_mock_response(json_data=None)
+        assert _parse_tts_response(response, 22050, "LINEAR_PCM") is None
+
+    def test_no_audio_returns_none(self) -> None:
+        response = create_mock_response(json_data={"meta": {}})
+        assert _parse_tts_response(response, 22050, "LINEAR_PCM") is None
+
+    def test_empty_audio_returns_none(self) -> None:
+        response = create_mock_response(json_data={"audio": ""})
+        assert _parse_tts_response(response, 22050, "LINEAR_PCM") is None
+
+    def test_raw_bytes_audio(self) -> None:
+        response = create_mock_response(json_data={"audio": b"\x01\x02"})
+        parsed = _parse_tts_response(response, 22050, "LINEAR_PCM")
+        assert parsed is not None
+        assert parsed.data.audio_bytes == b"\x01\x02"
+
+    def test_preserves_perf_ns(self) -> None:
+        audio_b64 = base64.b64encode(b"\x01").decode()
+        response = create_mock_response(perf_ns=42, json_data={"audio": audio_b64})
+        parsed = _parse_tts_response(response, 22050, "LINEAR_PCM")
+        assert parsed is not None
+        assert parsed.perf_ns == 42

@@ -29,16 +29,16 @@ class GrpcUnaryResult:
     trailing_metadata: tuple[tuple[str, str | bytes], ...]
 
 
-class GrpcStreamCall:
-    """Wrapper around grpc.aio.UnaryStreamCall exposing metadata access.
+class _GrpcCallBase:
+    """Shared base for gRPC streaming call wrappers.
 
-    Provides async iteration over response chunks plus access to
+    Provides async iteration over response chunks and access to
     initial/trailing metadata for trace data capture.
     """
 
     __slots__ = ("_call",)
 
-    def __init__(self, call: grpc.aio.UnaryStreamCall) -> None:
+    def __init__(self, call: Any) -> None:
         self._call = call
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
@@ -59,17 +59,21 @@ class GrpcStreamCall:
         return self._call.cancel()
 
 
-class GrpcBidiStreamCall:
+class GrpcStreamCall(_GrpcCallBase):
+    """Wrapper around grpc.aio.UnaryStreamCall exposing metadata access."""
+
+    def __init__(self, call: grpc.aio.UnaryStreamCall) -> None:
+        super().__init__(call)
+
+
+class GrpcBidiStreamCall(_GrpcCallBase):
     """Wrapper around grpc.aio.StreamStreamCall for bidirectional streaming.
 
-    Provides write/read methods plus metadata access for bidi streaming RPCs
-    like Riva ASR StreamingRecognize.
+    Adds write/done_writing methods for the client-to-server direction.
     """
 
-    __slots__ = ("_call",)
-
     def __init__(self, call: grpc.aio.StreamStreamCall) -> None:
-        self._call = call
+        super().__init__(call)
 
     async def write(self, data: bytes) -> None:
         """Send request bytes to the server stream."""
@@ -78,23 +82,6 @@ class GrpcBidiStreamCall:
     async def done_writing(self) -> None:
         """Signal the end of the client stream."""
         await self._call.done_writing()
-
-    async def __aiter__(self) -> AsyncIterator[bytes]:
-        """Yield raw response bytes from the server stream."""
-        async for chunk in self._call:
-            yield chunk
-
-    async def initial_metadata(self) -> grpc.aio.Metadata:
-        """Await and return the server's initial metadata."""
-        return await self._call.initial_metadata()
-
-    async def trailing_metadata(self) -> grpc.aio.Metadata:
-        """Await and return the server's trailing metadata."""
-        return await self._call.trailing_metadata()
-
-    def cancel(self) -> bool:
-        """Cancel the underlying RPC call."""
-        return self._call.cancel()
 
 
 class GenericGrpcClient(AIPerfLoggerMixin):

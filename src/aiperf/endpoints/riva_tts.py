@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from aiperf.common.models import InferenceServerResponse, ParsedResponse, RequestInfo
 from aiperf.common.models.record_models import AudioResponseData
 from aiperf.endpoints.base_endpoint import BaseEndpoint
+from aiperf.endpoints.riva_helpers import get_extra
 
 
 def _calc_duration_ms(
@@ -38,8 +40,6 @@ def _parse_tts_response(
 
     # Audio may be bytes or base64-encoded string from JSON serialization
     if isinstance(audio, str):
-        import base64
-
         audio_bytes = base64.b64decode(audio)
     else:
         audio_bytes = bytes(audio) if not isinstance(audio, bytes) else audio
@@ -57,20 +57,12 @@ def _parse_tts_response(
     )
 
 
-class RivaTtsEndpoint(BaseEndpoint):
-    """Riva TTS batch endpoint for text-to-speech synthesis.
-
-    Sends text to Riva TTS and returns synthesized audio.
-    Configure via --extra: voice_name, language_code, encoding, sample_rate_hz.
-    """
+class _RivaTtsBaseEndpoint(BaseEndpoint):
+    """Shared base for Riva TTS batch and streaming endpoints."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        extra = (
-            dict(self.model_endpoint.endpoint.extra)
-            if self.model_endpoint.endpoint.extra
-            else {}
-        )
+        extra = get_extra(self)
         self._voice_name: str = extra.get("voice_name", "")
         self._language_code: str = extra.get("language_code", "en-US")
         self._encoding: str = extra.get("encoding", "LINEAR_PCM")
@@ -116,60 +108,17 @@ class RivaTtsEndpoint(BaseEndpoint):
         return _parse_tts_response(response, self._sample_rate_hz, self._encoding)
 
 
-class RivaTtsStreamingEndpoint(BaseEndpoint):
+class RivaTtsEndpoint(_RivaTtsBaseEndpoint):
+    """Riva TTS batch endpoint for text-to-speech synthesis.
+
+    Sends text to Riva TTS and returns synthesized audio.
+    Configure via --extra: voice_name, language_code, encoding, sample_rate_hz.
+    """
+
+
+class RivaTtsStreamingEndpoint(_RivaTtsBaseEndpoint):
     """Riva TTS streaming endpoint for text-to-speech synthesis.
 
     Same as batch but uses server-streaming RPC (SynthesizeOnline)
     to receive audio chunks as they are generated.
     """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        extra = (
-            dict(self.model_endpoint.endpoint.extra)
-            if self.model_endpoint.endpoint.extra
-            else {}
-        )
-        self._voice_name: str = extra.get("voice_name", "")
-        self._language_code: str = extra.get("language_code", "en-US")
-        self._encoding: str = extra.get("encoding", "LINEAR_PCM")
-        self._sample_rate_hz: int = int(extra.get("sample_rate_hz", 22050))
-
-    def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
-        """Format Riva TTS request payload from text input.
-
-        Args:
-            request_info: Request context with text in turns[0].texts.
-
-        Returns:
-            Dict payload for TTS synthesis.
-        """
-        if not request_info.turns:
-            raise ValueError("Riva TTS streaming endpoint requires at least one turn.")
-
-        turn = request_info.turns[0]
-        prompts = [
-            content for text in turn.texts for content in text.contents if content
-        ]
-        text = " ".join(prompts) if prompts else ""
-
-        return {
-            "text": text,
-            "voice_name": self._voice_name,
-            "language_code": self._language_code,
-            "encoding": self._encoding,
-            "sample_rate_hz": self._sample_rate_hz,
-        }
-
-    def parse_response(
-        self, response: InferenceServerResponse
-    ) -> ParsedResponse | None:
-        """Parse Riva TTS streaming response chunk into AudioResponseData.
-
-        Args:
-            response: Raw response chunk from inference server.
-
-        Returns:
-            ParsedResponse with AudioResponseData, or None.
-        """
-        return _parse_tts_response(response, self._sample_rate_hz, self._encoding)

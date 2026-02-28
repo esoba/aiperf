@@ -16,6 +16,7 @@ from aiperf.transports.grpc.riva_nlp_serializers import (
     RivaTextClassifySerializer,
     RivaTokenClassifySerializer,
     RivaTransformTextSerializer,
+    _serialize_text_list_request,
 )
 from aiperf.transports.grpc.stream_chunk import StreamChunk
 
@@ -687,6 +688,86 @@ class TestAnalyzeEntitiesStreamResponse:
 # ---------------------------------------------------------------------------
 # Cross-cutting: All NLP serializers stream error path
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# _serialize_text_list_request shared helper
+# ---------------------------------------------------------------------------
+class TestSerializeTextListRequest:
+    """Tests for the shared _serialize_text_list_request helper."""
+
+    @pytest.mark.parametrize(
+        "request_cls",
+        [
+            riva_nlp_pb2.TextClassRequest,
+            riva_nlp_pb2.TokenClassRequest,
+            riva_nlp_pb2.TextTransformRequest,
+        ],
+    )
+    def test_fills_text_field(self, request_cls: type) -> None:
+        """All text-list request types should have texts populated."""
+        payload = {"texts": ["one", "two"]}
+        data = _serialize_text_list_request(request_cls(), payload, "model", "")
+        parsed = request_cls()
+        parsed.ParseFromString(data)
+        assert list(parsed.text) == ["one", "two"]
+
+    @pytest.mark.parametrize(
+        "request_cls",
+        [
+            riva_nlp_pb2.TextClassRequest,
+            riva_nlp_pb2.TokenClassRequest,
+            riva_nlp_pb2.TextTransformRequest,
+        ],
+    )
+    def test_fills_model_name(self, request_cls: type) -> None:
+        data = _serialize_text_list_request(
+            request_cls(), {"texts": []}, "my_model", ""
+        )
+        parsed = request_cls()
+        parsed.ParseFromString(data)
+        assert parsed.model.model_name == "my_model"
+
+    def test_fills_request_id(self) -> None:
+        data = _serialize_text_list_request(
+            riva_nlp_pb2.TextClassRequest(), {"texts": ["t"]}, "m", "req-42"
+        )
+        parsed = riva_nlp_pb2.TextClassRequest()
+        parsed.ParseFromString(data)
+        assert parsed.id.value == "req-42"
+
+    def test_no_request_id(self) -> None:
+        data = _serialize_text_list_request(
+            riva_nlp_pb2.TextClassRequest(), {"texts": ["t"]}, "m", ""
+        )
+        parsed = riva_nlp_pb2.TextClassRequest()
+        parsed.ParseFromString(data)
+        assert not parsed.HasField("id")
+
+    def test_fills_top_n(self) -> None:
+        data = _serialize_text_list_request(
+            riva_nlp_pb2.TextClassRequest(), {"texts": [], "top_n": 10}, "m", ""
+        )
+        parsed = riva_nlp_pb2.TextClassRequest()
+        parsed.ParseFromString(data)
+        assert parsed.top_n == 10
+
+    def test_all_text_list_serializers_delegate(self) -> None:
+        """TextClassify, TokenClassify, TransformText should all use _serialize_text_list_request."""
+        payload = {"texts": ["hello"], "language_code": "de-DE"}
+        for serializer_cls, proto_cls in [
+            (RivaTextClassifySerializer, riva_nlp_pb2.TextClassRequest),
+            (RivaTokenClassifySerializer, riva_nlp_pb2.TokenClassRequest),
+            (RivaTransformTextSerializer, riva_nlp_pb2.TextTransformRequest),
+        ]:
+            data = serializer_cls.serialize_request(
+                payload, model_name="m", request_id="r1"
+            )
+            parsed = proto_cls()
+            parsed.ParseFromString(data)
+            assert list(parsed.text) == ["hello"]
+            assert parsed.model.language_code == "de-DE"
+            assert parsed.id.value == "r1"
+
+
 class TestAllNlpStreamErrors:
     """Verify all NLP serializers return error for streaming deserialization."""
 

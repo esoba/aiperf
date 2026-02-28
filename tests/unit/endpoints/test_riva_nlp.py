@@ -15,6 +15,8 @@ from aiperf.endpoints.riva_nlp import (
     RivaTextClassifyEndpoint,
     RivaTokenClassifyEndpoint,
     RivaTransformTextEndpoint,
+    _parse_texts_response,
+    _RivaTextListEndpoint,
 )
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
@@ -440,3 +442,89 @@ class TestRivaAnalyzeEntitiesEndpoint:
     def test_parse_response_no_json(self, endpoint) -> None:
         response = create_mock_response(json_data=None)
         assert endpoint.parse_response(response) is None
+
+
+# ---------------------------------------------------------------------------
+# _RivaTextListEndpoint base class
+# ---------------------------------------------------------------------------
+class TestRivaTextListEndpointInheritance:
+    """Verify shared base class is used by all text-list NLP endpoints."""
+
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            RivaTextClassifyEndpoint,
+            RivaTokenClassifyEndpoint,
+            RivaTransformTextEndpoint,
+            RivaPunctuateTextEndpoint,
+        ],
+    )
+    def test_inherits_from_base(self, cls: type) -> None:
+        assert issubclass(cls, _RivaTextListEndpoint)
+
+    @pytest.mark.parametrize(
+        "cls,endpoint_type",
+        [
+            (RivaTextClassifyEndpoint, EndpointType.RIVA_TEXT_CLASSIFY),
+            (RivaTokenClassifyEndpoint, EndpointType.RIVA_TOKEN_CLASSIFY),
+            (RivaTransformTextEndpoint, EndpointType.RIVA_TRANSFORM_TEXT),
+            (RivaPunctuateTextEndpoint, EndpointType.RIVA_PUNCTUATE_TEXT),
+        ],
+    )
+    def test_shared_format_payload(
+        self, cls: type, endpoint_type: EndpointType
+    ) -> None:
+        """All text-list endpoints should produce the same texts list from format_payload."""
+        model_endpoint = create_model_endpoint(endpoint_type)
+        endpoint = create_endpoint_with_mock_transport(cls, model_endpoint)
+        turn = Turn(texts=[Text(contents=["a", "b"])])
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["texts"] == ["a", "b"]
+
+    def test_non_text_list_endpoints_do_not_inherit(self) -> None:
+        """NaturalQuery, AnalyzeIntent, AnalyzeEntities should NOT inherit."""
+        assert not issubclass(RivaNaturalQueryEndpoint, _RivaTextListEndpoint)
+        assert not issubclass(RivaAnalyzeIntentEndpoint, _RivaTextListEndpoint)
+        assert not issubclass(RivaAnalyzeEntitiesEndpoint, _RivaTextListEndpoint)
+
+
+# ---------------------------------------------------------------------------
+# _parse_texts_response helper
+# ---------------------------------------------------------------------------
+class TestParseTextsResponse:
+    """Tests for the shared _parse_texts_response helper."""
+
+    @pytest.fixture
+    def endpoint(self):
+        model_endpoint = create_model_endpoint(EndpointType.RIVA_TRANSFORM_TEXT)
+        return create_endpoint_with_mock_transport(
+            RivaTransformTextEndpoint, model_endpoint
+        )
+
+    def test_single_text(self, endpoint) -> None:
+        response = create_mock_response(json_data={"texts": ["Hello!"]})
+        parsed = _parse_texts_response(response, endpoint)
+
+        assert parsed is not None
+        assert parsed.data.get_text() == "Hello!"
+
+    def test_multiple_texts_joined(self, endpoint) -> None:
+        response = create_mock_response(json_data={"texts": ["Hello", "World!"]})
+        parsed = _parse_texts_response(response, endpoint)
+
+        assert parsed is not None
+        assert parsed.data.get_text() == "Hello World!"
+
+    def test_empty_texts_returns_none(self, endpoint) -> None:
+        response = create_mock_response(json_data={"texts": []})
+        assert _parse_texts_response(response, endpoint) is None
+
+    def test_no_json_returns_none(self, endpoint) -> None:
+        response = create_mock_response(json_data=None)
+        assert _parse_texts_response(response, endpoint) is None
+
+    def test_missing_texts_key_returns_none(self, endpoint) -> None:
+        response = create_mock_response(json_data={"other": "data"})
+        assert _parse_texts_response(response, endpoint) is None

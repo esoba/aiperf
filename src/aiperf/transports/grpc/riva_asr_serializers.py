@@ -11,15 +11,8 @@ from __future__ import annotations
 from typing import Any
 
 from aiperf.transports.grpc.proto.riva import riva_asr_pb2, riva_audio_pb2
+from aiperf.transports.grpc.riva_encoding import ENCODING_MAP
 from aiperf.transports.grpc.stream_chunk import StreamChunk
-
-_ENCODING_MAP: dict[str, int] = {
-    "LINEAR_PCM": riva_audio_pb2.LINEAR_PCM,
-    "FLAC": riva_audio_pb2.FLAC,
-    "MULAW": riva_audio_pb2.MULAW,
-    "OGGOPUS": riva_audio_pb2.OGGOPUS,
-    "ALAW": riva_audio_pb2.ALAW,
-}
 
 
 def _build_recognition_config(
@@ -35,7 +28,7 @@ def _build_recognition_config(
     """
     config = riva_asr_pb2.RecognitionConfig()
     encoding_str = payload.get("encoding", "LINEAR_PCM")
-    config.encoding = _ENCODING_MAP.get(encoding_str, riva_audio_pb2.LINEAR_PCM)
+    config.encoding = ENCODING_MAP.get(encoding_str, riva_audio_pb2.LINEAR_PCM)
     config.sample_rate_hertz = payload.get("sample_rate_hertz", 16000)
     config.language_code = payload.get("language_code", "en-US")
     config.max_alternatives = payload.get("max_alternatives", 1)
@@ -45,6 +38,33 @@ def _build_recognition_config(
     if payload.get("model"):
         config.model = payload["model"]
     return config
+
+
+def _serialize_recognize_request(
+    payload: dict[str, Any], model_name: str, request_id: str = ""
+) -> bytes:
+    """Serialize a RecognizeRequest from payload dict.
+
+    Args:
+        payload: Dict with audio (bytes), encoding, sample_rate_hertz, language_code.
+        model_name: Used as the model field in RecognitionConfig if no explicit model.
+        request_id: Optional request ID.
+
+    Returns:
+        Serialized protobuf bytes.
+    """
+    request = riva_asr_pb2.RecognizeRequest()
+    request.config.CopyFrom(_build_recognition_config(payload))
+    if not request.config.model and model_name:
+        request.config.model = model_name
+
+    audio = payload.get("audio", b"")
+    request.audio = audio if isinstance(audio, bytes) else audio.encode("utf-8")
+
+    if request_id:
+        request.id.value = request_id
+
+    return request.SerializeToString()
 
 
 def _extract_transcript(results: Any) -> str:
@@ -73,28 +93,8 @@ class RivaAsrOfflineSerializer:
     def serialize_request(
         payload: dict[str, Any], model_name: str, request_id: str = ""
     ) -> bytes:
-        """Convert dict payload to serialized RecognizeRequest bytes.
-
-        Args:
-            payload: Dict with audio (bytes), encoding, sample_rate_hertz, language_code.
-            model_name: Used as the model field in RecognitionConfig if no explicit model.
-            request_id: Optional request ID.
-
-        Returns:
-            Serialized protobuf bytes.
-        """
-        request = riva_asr_pb2.RecognizeRequest()
-        request.config.CopyFrom(_build_recognition_config(payload))
-        if not request.config.model and model_name:
-            request.config.model = model_name
-
-        audio = payload.get("audio", b"")
-        request.audio = audio if isinstance(audio, bytes) else audio.encode("utf-8")
-
-        if request_id:
-            request.id.value = request_id
-
-        return request.SerializeToString()
+        """Convert dict payload to serialized RecognizeRequest bytes."""
+        return _serialize_recognize_request(payload, model_name, request_id)
 
     @staticmethod
     def deserialize_response(data: bytes) -> tuple[dict[str, Any], int]:
@@ -148,28 +148,8 @@ class RivaAsrStreamingSerializer:
     def serialize_request(
         payload: dict[str, Any], model_name: str, request_id: str = ""
     ) -> bytes:
-        """Serialize the full audio as a single RecognizeRequest (fallback for unary).
-
-        Args:
-            payload: Dict with audio, encoding, sample_rate_hertz, language_code.
-            model_name: Model name.
-            request_id: Optional request ID.
-
-        Returns:
-            Serialized RecognizeRequest bytes.
-        """
-        request = riva_asr_pb2.RecognizeRequest()
-        request.config.CopyFrom(_build_recognition_config(payload))
-        if not request.config.model and model_name:
-            request.config.model = model_name
-
-        audio = payload.get("audio", b"")
-        request.audio = audio if isinstance(audio, bytes) else audio.encode("utf-8")
-
-        if request_id:
-            request.id.value = request_id
-
-        return request.SerializeToString()
+        """Serialize the full audio as a single RecognizeRequest (fallback for unary)."""
+        return _serialize_recognize_request(payload, model_name, request_id)
 
     @staticmethod
     def serialize_stream_config(

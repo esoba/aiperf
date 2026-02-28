@@ -10,7 +10,12 @@ import pytest
 
 from aiperf.common.models import Turn
 from aiperf.common.models.dataset_models import Audio
-from aiperf.endpoints.riva_asr import RivaAsrOfflineEndpoint, RivaAsrStreamingEndpoint
+from aiperf.endpoints.riva_asr import (
+    RivaAsrOfflineEndpoint,
+    RivaAsrStreamingEndpoint,
+    _extract_audio_bytes,
+    _parse_asr_response,
+)
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
@@ -331,3 +336,81 @@ class TestRivaAsrStreamingParseResponse:
 
         assert parsed is not None
         assert parsed.perf_ns == 12345
+
+
+# ---------------------------------------------------------------------------
+# Shared _parse_asr_response helper
+# ---------------------------------------------------------------------------
+class TestParseAsrResponse:
+    """Tests for the shared _parse_asr_response helper used by both endpoints."""
+
+    @pytest.fixture
+    def endpoint(self):
+        model_endpoint = create_model_endpoint(EndpointType.RIVA_ASR_OFFLINE)
+        return create_endpoint_with_mock_transport(
+            RivaAsrOfflineEndpoint, model_endpoint
+        )
+
+    def test_returns_parsed_response(self, endpoint) -> None:
+        response = create_mock_response(json_data={"transcript": "hello"})
+        parsed = _parse_asr_response(response, endpoint)
+        assert parsed is not None
+        assert parsed.data.get_text() == "hello"
+
+    def test_no_json_returns_none(self, endpoint) -> None:
+        response = create_mock_response(json_data=None)
+        assert _parse_asr_response(response, endpoint) is None
+
+    def test_empty_transcript_returns_none(self, endpoint) -> None:
+        response = create_mock_response(json_data={"transcript": ""})
+        assert _parse_asr_response(response, endpoint) is None
+
+    def test_missing_transcript_key_returns_none(self, endpoint) -> None:
+        response = create_mock_response(json_data={"results": []})
+        assert _parse_asr_response(response, endpoint) is None
+
+    def test_both_endpoints_use_shared_helper(self) -> None:
+        """Both ASR endpoints should delegate to _parse_asr_response."""
+        for cls, etype in [
+            (RivaAsrOfflineEndpoint, EndpointType.RIVA_ASR_OFFLINE),
+            (RivaAsrStreamingEndpoint, EndpointType.RIVA_ASR_STREAMING),
+        ]:
+            me = create_model_endpoint(etype)
+            ep = create_endpoint_with_mock_transport(cls, me)
+            response = create_mock_response(json_data={"transcript": "test"})
+            parsed = ep.parse_response(response)
+            assert parsed is not None
+            assert parsed.data.get_text() == "test"
+
+
+# ---------------------------------------------------------------------------
+# _extract_audio_bytes
+# ---------------------------------------------------------------------------
+class TestExtractAudioBytes:
+    """Tests for _extract_audio_bytes helper."""
+
+    def test_base64_audio(self) -> None:
+        audio = b"\x00\x01\x02\x03"
+        turn = _make_audio_turn(audio)
+        request_info = create_request_info(
+            model_endpoint=create_model_endpoint(EndpointType.RIVA_ASR_OFFLINE),
+            turns=[turn],
+        )
+        assert _extract_audio_bytes(request_info) == audio
+
+    def test_empty_turns_raises(self) -> None:
+        request_info = create_request_info(
+            model_endpoint=create_model_endpoint(EndpointType.RIVA_ASR_OFFLINE),
+            turns=[],
+        )
+        with pytest.raises(ValueError, match="requires at least one turn"):
+            _extract_audio_bytes(request_info)
+
+    def test_no_audio_raises(self) -> None:
+        turn = Turn()
+        request_info = create_request_info(
+            model_endpoint=create_model_endpoint(EndpointType.RIVA_ASR_OFFLINE),
+            turns=[turn],
+        )
+        with pytest.raises(ValueError, match="requires audio data"):
+            _extract_audio_bytes(request_info)

@@ -41,6 +41,32 @@ def _not_streaming(data: bytes) -> StreamChunk:
     )
 
 
+def _serialize_text_list_request(
+    request: Any,
+    payload: dict[str, Any],
+    model_name: str,
+    request_id: str,
+) -> bytes:
+    """Serialize a text-list NLP request (TextClass, TokenClass, TextTransform).
+
+    Args:
+        request: Protobuf request object with text, top_n, model, and id fields.
+        payload: Dict with texts, top_n, model_name, language_code.
+        model_name: Fallback model name.
+        request_id: Optional request ID.
+
+    Returns:
+        Serialized protobuf bytes.
+    """
+    for text in payload.get("texts", []):
+        request.text.append(text)
+    request.top_n = payload.get("top_n", 0)
+    request.model.CopyFrom(_make_nlp_model_params(payload, model_name))
+    if request_id:
+        request.id.value = request_id
+    return request.SerializeToString()
+
+
 class RivaTextClassifySerializer:
     """Serializer for Riva ClassifyText API."""
 
@@ -48,14 +74,9 @@ class RivaTextClassifySerializer:
     def serialize_request(
         payload: dict[str, Any], model_name: str, request_id: str = ""
     ) -> bytes:
-        request = riva_nlp_pb2.TextClassRequest()
-        for text in payload.get("texts", []):
-            request.text.append(text)
-        request.top_n = payload.get("top_n", 0)
-        request.model.CopyFrom(_make_nlp_model_params(payload, model_name))
-        if request_id:
-            request.id.value = request_id
-        return request.SerializeToString()
+        return _serialize_text_list_request(
+            riva_nlp_pb2.TextClassRequest(), payload, model_name, request_id
+        )
 
     @staticmethod
     def deserialize_response(data: bytes) -> tuple[dict[str, Any], int]:
@@ -82,14 +103,9 @@ class RivaTokenClassifySerializer:
     def serialize_request(
         payload: dict[str, Any], model_name: str, request_id: str = ""
     ) -> bytes:
-        request = riva_nlp_pb2.TokenClassRequest()
-        for text in payload.get("texts", []):
-            request.text.append(text)
-        request.top_n = payload.get("top_n", 0)
-        request.model.CopyFrom(_make_nlp_model_params(payload, model_name))
-        if request_id:
-            request.id.value = request_id
-        return request.SerializeToString()
+        return _serialize_text_list_request(
+            riva_nlp_pb2.TokenClassRequest(), payload, model_name, request_id
+        )
 
     @staticmethod
     def deserialize_response(data: bytes) -> tuple[dict[str, Any], int]:
@@ -119,14 +135,9 @@ class RivaTransformTextSerializer:
     def serialize_request(
         payload: dict[str, Any], model_name: str, request_id: str = ""
     ) -> bytes:
-        request = riva_nlp_pb2.TextTransformRequest()
-        for text in payload.get("texts", []):
-            request.text.append(text)
-        request.top_n = payload.get("top_n", 0)
-        request.model.CopyFrom(_make_nlp_model_params(payload, model_name))
-        if request_id:
-            request.id.value = request_id
-        return request.SerializeToString()
+        return _serialize_text_list_request(
+            riva_nlp_pb2.TextTransformRequest(), payload, model_name, request_id
+        )
 
     @staticmethod
     def deserialize_response(data: bytes) -> tuple[dict[str, Any], int]:
