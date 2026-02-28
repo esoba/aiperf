@@ -533,6 +533,7 @@
             "default_block_size": {
               "anyOf": [
                 {
+                  "minimum": 1,
                   "type": "integer"
                 },
                 {

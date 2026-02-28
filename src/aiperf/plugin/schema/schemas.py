@@ -337,6 +337,7 @@ class CustomDatasetLoaderMetadata(BaseModel):
     )
     default_block_size: int | None = Field(
         default=None,
+        ge=1,
         description=(
             "Default token block size for hash-based prompt caching. "
             "Used when the user does not explicitly set --isl-block-size. "
