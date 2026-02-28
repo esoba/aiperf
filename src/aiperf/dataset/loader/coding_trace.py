@@ -81,6 +81,11 @@ class CodingTraceLoader(BaseFileLoader):
         self._min_requests = user_config.input.synthesis.min_requests
         self._warm_prefix_pct = user_config.input.warm_prefix_pct
         self._output_token_budget_ratio = user_config.input.output_token_budget_ratio
+        # L2 block estimate for cache layer annotation
+        cs = user_config.input.coding_session
+        self._l2_block_estimate = (
+            cs.l2_tokens // cs.block_size if cs.block_size > 0 else 24
+        )
         self._skipped_max_isl = 0
         self._skipped_min_requests = 0
         # Per-conversation parallel annotations: conv_id -> {request_index -> (group_id, branch)}
@@ -586,12 +591,11 @@ class CodingTraceLoader(BaseFileLoader):
             )
         return conversations
 
-    @staticmethod
-    def _annotate_cache_layers(conv: Conversation) -> None:
+    def _annotate_cache_layers(self, conv: Conversation) -> None:
         """Annotate turns with L1/L2/L3 cache layer sizes from hash_id stability.
 
         L1 = hash_ids present in ALL turns (global intersection)
-        L2 = estimated as min(24, remaining) blocks (~1.5K/64 from blog data)
+        L2 = estimated from config (l2_tokens // block_size)
         L3 = remainder
         """
         turns_with_ids = [t for t in conv.turns if t.hash_ids]
@@ -605,11 +609,12 @@ class CodingTraceLoader(BaseFileLoader):
             l1_set &= s
 
         l1_count = len(l1_set)
+        l2_estimate = self._l2_block_estimate
 
         for turn in conv.turns:
             total = len(turn.hash_ids)
             remaining = total - l1_count
-            l2_count = min(24, max(0, remaining))
+            l2_count = min(l2_estimate, max(0, remaining))
             l3_count = max(0, remaining - l2_count)
             turn.cache_layer_sizes = CacheLayerSizes(
                 l1=l1_count, l2=l2_count, l3=l3_count

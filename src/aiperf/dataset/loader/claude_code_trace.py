@@ -22,9 +22,11 @@ import orjson
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models.dataset_models import SubagentSpawnInfo
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.models import (
     ClaudeCodeApiCall,
+    ClaudeCodeManifest,
     ClaudeCodeTrace,
     ClaudeCodeTraceRecord,
 )
@@ -173,6 +175,9 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
         super().__init__(filename=filename, user_config=user_config, **kwargs)
         self._prompt_generator = prompt_generator
         self._synthetic_mode = prompt_generator is not None
+        self._manifest: ClaudeCodeManifest | None = None
+        self._parent_trace_id: str | None = None
+        self._subagent_traces: dict[str, tuple[ClaudeCodeTrace, int]] = {}
 
     @classmethod
     def can_load(
@@ -229,13 +234,19 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
     def load_dataset(self) -> dict[str, list[ClaudeCodeTrace]]:
         """Load Claude Code traces from JSONL file(s).
 
+        When loading from a directory with a _manifest.json, uses the manifest
+        to link parent and subagent sessions. Otherwise each JSONL file becomes
+        an independent conversation.
+
         Returns:
             Dictionary of trace_id -> list containing one ClaudeCodeTrace.
         """
         path = Path(self.filename)
-        jsonl_files: list[Path] = []
 
         if path.is_dir():
+            manifest = self._load_manifest(path)
+            if manifest is not None:
+                return self._load_with_manifest(path, manifest)
             jsonl_files = sorted(path.glob("*.jsonl"))
             self.info(f"Loading {len(jsonl_files)} JSONL files from {path}")
         elif path.is_file():
@@ -244,36 +255,49 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
             raise FileNotFoundError(f"Path not found: {path}")
 
         result: dict[str, list[ClaudeCodeTrace]] = {}
-
         for jsonl_file in jsonl_files:
-            records = self._parse_jsonl(jsonl_file)
-            if not records:
-                continue
-
-            session_id = self._extract_session_id(records, jsonl_file)
-            system_prompt = self._extract_system_prompt(records)
-
-            # Filter to user/assistant records only
-            conversation_records = [
-                r for r in records if r.type in ("user", "assistant")
-            ]
-            if not conversation_records:
-                continue
-
-            api_calls = _group_records_into_api_calls(conversation_records)
-            if not api_calls:
-                continue
-
-            trace_id = f"cc_{jsonl_file.stem}"
-            trace = ClaudeCodeTrace(
-                id=trace_id,
-                session_id=session_id,
-                api_calls=api_calls,
-                system_prompt=system_prompt,
-            )
-            result[trace_id] = [trace]
+            trace = self._load_single_file(jsonl_file)
+            if trace is not None:
+                result[trace.id] = [trace]
 
         self.info(f"Loaded {len(result)} Claude Code traces")
+        return result
+
+    def _load_with_manifest(
+        self, directory: Path, manifest: ClaudeCodeManifest
+    ) -> dict[str, list[ClaudeCodeTrace]]:
+        """Load traces using manifest to link parent/child sessions."""
+        result: dict[str, list[ClaudeCodeTrace]] = {}
+
+        # Load parent
+        parent_path = directory / manifest.parent
+        parent_trace = self._load_single_file(parent_path)
+        if parent_trace is None:
+            self.warning(f"Parent file {manifest.parent} could not be loaded")
+            return result
+
+        result[parent_trace.id] = [parent_trace]
+
+        # Store manifest info for convert_to_conversations
+        self._manifest = manifest
+        self._parent_trace_id = parent_trace.id
+
+        # Load subagent children
+        self._subagent_traces: dict[str, tuple[ClaudeCodeTrace, int]] = {}
+        for link in manifest.subagents:
+            child_path = directory / link.file
+            child_trace = self._load_single_file(child_path)
+            if child_trace is not None:
+                result[child_trace.id] = [child_trace]
+                self._subagent_traces[child_trace.id] = (
+                    child_trace,
+                    link.spawn_after_api_call,
+                )
+
+        self.info(
+            f"Loaded {len(result)} Claude Code traces "
+            f"(1 parent, {len(self._subagent_traces)} subagents)"
+        )
         return result
 
     def convert_to_conversations(
@@ -284,19 +308,41 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
         In verbatim mode: Creates Turns with raw_content (user content blocks)
         and assistant_prefill (assistant response blocks).
         In synthetic mode: Extracts token counts and generates synthetic content.
+
+        When a manifest links parent/child sessions, produces SubagentSpawnInfo
+        on the parent and marks children as is_subagent_child.
         """
         conversations: list[Conversation] = []
+        child_conversations: list[Conversation] = []
+
+        # Build spawn info mapping: parent_trace_id -> {turn_index -> [(spawn_id, child_id)]}
+        spawn_map: dict[str, dict[int, list[tuple[str, str]]]] = {}
+        child_trace_ids: set[str] = set()
+        if self._subagent_traces:
+            for spawn_counter, (child_id, (_, spawn_after)) in enumerate(
+                self._subagent_traces.items()
+            ):
+                spawn_id = f"s{spawn_counter}"
+                child_trace_ids.add(child_id)
+                parent_id = self._parent_trace_id
+                spawn_map.setdefault(parent_id, {}).setdefault(spawn_after, []).append(
+                    (spawn_id, child_id)
+                )
 
         for trace_id, traces in data.items():
             trace = traces[0]
+            is_child = trace_id in child_trace_ids
             conversation = Conversation(
                 session_id=trace_id,
                 system_message=trace.system_prompt,
+                is_subagent_child=is_child,
             )
 
             prev_timestamp_ms: float | None = None
+            # Collect spawn_id assignments for join turns (applied after loop)
+            join_turn_spawn_ids: dict[int, str] = {}
 
-            for api_call in trace.api_calls:
+            for call_idx, api_call in enumerate(trace.api_calls):
                 delay_ms: float | None = None
                 if prev_timestamp_ms is not None and api_call.timestamp_ms is not None:
                     delay_ms = api_call.timestamp_ms - prev_timestamp_ms
@@ -308,12 +354,38 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
                 turn = self._build_turn(api_call, delay_ms)
                 conversation.turns.append(turn)
 
-            if conversation.turns:
+                # Register SubagentSpawnInfo; mark the join turn with spawn_id
+                spawns_at_turn = spawn_map.get(trace_id, {}).get(call_idx, [])
+                for spawn_id, child_id in spawns_at_turn:
+                    join_idx = min(call_idx + 1, len(trace.api_calls) - 1)
+                    join_turn_spawn_ids[join_idx] = spawn_id
+                    conversation.subagent_spawns.append(
+                        SubagentSpawnInfo(
+                            spawn_id=spawn_id,
+                            child_conversation_ids=[child_id],
+                            join_turn_index=join_idx,
+                        )
+                    )
+
+            # Apply spawn_id to join turns (adaptive_scale checks next_meta.subagent_spawn_id)
+            for join_idx, spawn_id in join_turn_spawn_ids.items():
+                if join_idx < len(conversation.turns):
+                    conversation.turns[join_idx].subagent_spawn_id = spawn_id
+
+            if not conversation.turns:
+                continue
+
+            if is_child:
+                child_conversations.append(conversation)
+            else:
                 conversations.append(conversation)
 
+        conversations.extend(child_conversations)
+
+        total_turns = sum(len(c.turns) for c in conversations)
         self.info(
             f"Converted {len(conversations)} traces to conversations "
-            f"({sum(len(c.turns) for c in conversations)} total turns)"
+            f"({total_turns} total turns, {len(child_conversations)} subagent children)"
         )
         return conversations
 
@@ -353,6 +425,44 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
             input_tokens=api_call.input_tokens,
             texts=[Text(name="text", contents=[prompt])],
         )
+
+    def _load_single_file(self, filepath: Path) -> ClaudeCodeTrace | None:
+        """Load a single JSONL file into a ClaudeCodeTrace."""
+        records = self._parse_jsonl(filepath)
+        if not records:
+            return None
+
+        session_id = self._extract_session_id(records, filepath)
+        system_prompt = self._extract_system_prompt(records)
+
+        conversation_records = [r for r in records if r.type in ("user", "assistant")]
+        if not conversation_records:
+            return None
+
+        api_calls = _group_records_into_api_calls(conversation_records)
+        if not api_calls:
+            return None
+
+        trace_id = f"cc_{filepath.stem}"
+        return ClaudeCodeTrace(
+            id=trace_id,
+            session_id=session_id,
+            api_calls=api_calls,
+            system_prompt=system_prompt,
+        )
+
+    @staticmethod
+    def _load_manifest(directory: Path) -> ClaudeCodeManifest | None:
+        """Load _manifest.json from a directory if present."""
+        manifest_path = directory / "_manifest.json"
+        if not manifest_path.is_file():
+            return None
+        try:
+            with open(manifest_path, "rb") as f:
+                raw = orjson.loads(f.read())
+            return ClaudeCodeManifest.model_validate(raw)
+        except Exception:
+            return None
 
     @staticmethod
     def _parse_jsonl(filepath: Path) -> list[ClaudeCodeTraceRecord]:

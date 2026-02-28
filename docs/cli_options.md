@@ -621,7 +621,7 @@ Median thinking tokens per tool-use turn (lognormal).
 
 Probability of stripping thinking blocks at non-tool-result boundary. Causes L2+L3 hash_id regeneration (cache invalidation).
 <br>_Constraints: ≥ 0.0, ≤ 1.0_
-<br>_Default: `0.1`_
+<br>_Default: `1.0`_
 
 #### `--coding-session-cache-ttl-sec` `<float>`
 

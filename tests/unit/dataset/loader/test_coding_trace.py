@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.common.config import (
+    CodingSessionConfig,
     EndpointConfig,
     InputConfig,
     InputTokensConfig,
@@ -1273,3 +1274,254 @@ class TestCodingTraceLoader:
         meta = conv.metadata()
         assert meta.turns[0].hash_ids == [1, 2, 3]
         assert meta.turns[1].hash_ids == [1, 2, 3, 4, 5]
+
+
+# ============================================================================
+# Trace Loader L2 Block Estimate (Config-Driven)
+# ============================================================================
+
+
+class TestAnnotateCacheLayersConfigDriven:
+    """Verify _annotate_cache_layers uses config-driven L2 estimate."""
+
+    @pytest.fixture
+    def mock_prompt_generator(self):
+        gen = MagicMock()
+        gen.tokenizer.resolved_name = "test-tokenizer"
+        gen.generate = MagicMock(return_value="synthetic text prompt")
+        gen.generate_prompt = MagicMock(return_value="x" * 400)
+        return gen
+
+    def _make_config(
+        self, *, l2_tokens: int = 1500, block_size: int = 64
+    ) -> UserConfig:
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.0,
+                output_token_budget_ratio=1.0,
+                coding_session=CodingSessionConfig(
+                    l2_tokens=l2_tokens,
+                    block_size=block_size,
+                ),
+            ),
+        )
+
+    def test_l2_block_estimate_from_config_defaults(self, mock_prompt_generator):
+        """Default config: l2_tokens=1500, block_size=64 -> estimate=23."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        config = self._make_config()
+        loader = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        assert loader._l2_block_estimate == 1500 // 64
+
+    @pytest.mark.parametrize(
+        "l2_tokens,block_size,expected",
+        [
+            (1500, 64, 23),
+            (3200, 64, 50),
+            (0, 64, 0),
+            (128, 128, 1),
+            (1500, 32, 46),
+        ],
+    )  # fmt: skip
+    def test_l2_block_estimate_computed_correctly(
+        self, mock_prompt_generator, l2_tokens: int, block_size: int, expected: int
+    ) -> None:
+        """l2_block_estimate = l2_tokens // block_size for various configs."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        config = self._make_config(l2_tokens=l2_tokens, block_size=block_size)
+        loader = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        assert loader._l2_block_estimate == expected
+
+    def test_l2_block_estimate_fallback_on_zero_block_size(
+        self, mock_prompt_generator
+    ) -> None:
+        """block_size=0 falls back to hardcoded 24."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        # Use model_construct to bypass ge=1 validation on block_size
+        cs = CodingSessionConfig.model_construct(l2_tokens=1500, block_size=0)
+        config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.0,
+                output_token_budget_ratio=1.0,
+                coding_session=cs,
+            ),
+        )
+        loader = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+        assert loader._l2_block_estimate == 24
+
+    def test_annotate_uses_config_estimate_not_hardcoded(
+        self, mock_prompt_generator
+    ) -> None:
+        """Cache layer annotation uses the config-derived L2 estimate.
+
+        With l2_tokens=3200 and block_size=64, estimate=50 (not hardcoded 24).
+        Tests _annotate_cache_layers directly on a constructed Conversation
+        to avoid pullback detection complications.
+        """
+        from aiperf.common.models import Conversation, Turn
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        config = self._make_config(l2_tokens=3200, block_size=64)
+        loader = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+
+        # L1 intersection = IDs 0..4 (present in all turns, superset growth)
+        shared = list(range(5))
+        extra1 = list(range(100, 160))
+        conv = Conversation(
+            session_id="test",
+            turns=[
+                Turn(
+                    max_tokens=500,
+                    input_tokens=1000,
+                    hash_ids=shared + extra1,
+                ),
+                Turn(
+                    max_tokens=1000,
+                    input_tokens=3000,
+                    hash_ids=shared + extra1 + list(range(200, 240)),
+                ),
+            ],
+        )
+
+        loader._annotate_cache_layers(conv)
+
+        l1_expected = 65  # intersection of both turns (5 shared + 60 extra1)
+        l2_estimate = 3200 // 64  # 50
+
+        for turn in conv.turns:
+            sizes = turn.cache_layer_sizes
+            assert sizes.l1 == l1_expected
+            remaining = len(turn.hash_ids) - l1_expected
+            expected_l2 = min(l2_estimate, max(0, remaining))
+            assert sizes.l2 == expected_l2
+            assert sizes.l3 == max(0, remaining - expected_l2)
+
+    def test_annotate_small_l2_leaves_more_for_l3(self, mock_prompt_generator) -> None:
+        """With small l2_tokens, more blocks are classified as L3.
+
+        l2_tokens=64, block_size=64 -> estimate=1. Most non-L1 blocks become L3.
+        Tests _annotate_cache_layers directly.
+        """
+        from aiperf.common.models import Conversation, Turn
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        config = self._make_config(l2_tokens=64, block_size=64)
+        loader = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=config,
+        )
+
+        shared = list(range(3))
+        extra = list(range(100, 120))
+        conv = Conversation(
+            session_id="test",
+            turns=[
+                Turn(
+                    max_tokens=200,
+                    input_tokens=500,
+                    hash_ids=shared + extra,
+                ),
+                Turn(
+                    max_tokens=500,
+                    input_tokens=1000,
+                    hash_ids=shared + extra + list(range(200, 220)),
+                ),
+            ],
+        )
+
+        loader._annotate_cache_layers(conv)
+
+        # L1 = intersection = 3 + 20 = 23 (shared + extra in both)
+        l1_expected = 23
+        for turn in conv.turns:
+            sizes = turn.cache_layer_sizes
+            assert sizes.l1 == l1_expected
+            assert sizes.l2 == min(1, max(0, len(turn.hash_ids) - l1_expected))
+            assert sizes.l3 == max(0, len(turn.hash_ids) - l1_expected - sizes.l2)
+
+    def test_annotate_different_l2_estimates_change_layer_split(
+        self, mock_prompt_generator
+    ) -> None:
+        """Different L2 config values produce different L2/L3 splits.
+
+        This is the key behavioral test: with l2_estimate=50, non-L1 blocks
+        up to 50 are L2. With l2_estimate=2, only 2 are L2 and the rest are L3.
+        """
+        from aiperf.common.models import Conversation, Turn
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        shared = list(range(5))
+        extra = list(range(100, 160))
+
+        def _make_conv() -> Conversation:
+            return Conversation(
+                session_id="test",
+                turns=[
+                    Turn(
+                        max_tokens=500,
+                        input_tokens=1000,
+                        hash_ids=shared + extra,
+                    ),
+                    Turn(
+                        max_tokens=1000,
+                        input_tokens=3000,
+                        hash_ids=shared + extra + list(range(200, 260)),
+                    ),
+                ],
+            )
+
+        # L1 = 65 for both (intersection)
+        # Turn 2 has 125 total IDs -> remaining = 60
+
+        # With l2_tokens=3200 -> estimate=50 -> L2=50, L3=10
+        config_large = self._make_config(l2_tokens=3200, block_size=64)
+        loader_large = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=config_large,
+        )
+        conv_large = _make_conv()
+        loader_large._annotate_cache_layers(conv_large)
+
+        # With l2_tokens=128 -> estimate=2 -> L2=2, L3=58
+        config_small = self._make_config(l2_tokens=128, block_size=64)
+        loader_small = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=config_small,
+        )
+        conv_small = _make_conv()
+        loader_small._annotate_cache_layers(conv_small)
+
+        # Turn 2: 60 non-L1 blocks
+        large_t2 = conv_large.turns[1].cache_layer_sizes
+        small_t2 = conv_small.turns[1].cache_layer_sizes
+
+        assert large_t2.l2 == 50
+        assert large_t2.l3 == 10
+        assert small_t2.l2 == 2
+        assert small_t2.l3 == 58

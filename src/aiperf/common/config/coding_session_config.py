@@ -415,7 +415,7 @@ class CodingSessionConfig(BaseConfig):
     thinking_strip_probability: Annotated[
         float,
         Field(
-            default=0.1,
+            default=1.0,
             ge=0.0,
             le=1.0,
             description="Probability of stripping thinking blocks at non-tool-result boundary. "
@@ -424,7 +424,7 @@ class CodingSessionConfig(BaseConfig):
         CLIParameter(
             name=("--coding-session-thinking-strip-probability",), group=_CLI_GROUP
         ),
-    ] = 0.1
+    ] = 1.0
 
     cache_ttl_sec: Annotated[
         float,

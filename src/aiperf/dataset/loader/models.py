@@ -448,6 +448,29 @@ class ClaudeCodeTrace(AIPerfBaseModel):
         return self
 
 
+class ClaudeCodeSubagentLink(AIPerfBaseModel):
+    """Links a subagent JSONL file to a parent session spawn point."""
+
+    file: str = Field(description="JSONL filename for the subagent session.")
+    spawn_after_api_call: int = Field(
+        description="0-based index of the parent API call after which this subagent spawns."
+    )
+
+
+class ClaudeCodeManifest(AIPerfBaseModel):
+    """Manifest linking parent and subagent sessions in a directory.
+
+    When present as _manifest.json in a trace directory, declares which
+    JSONL file is the parent session and which are subagent children.
+    """
+
+    parent: str = Field(description="JSONL filename for the parent session.")
+    subagents: list[ClaudeCodeSubagentLink] = Field(
+        default_factory=list,
+        description="Subagent sessions spawned from the parent.",
+    )
+
+
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
     bound=SingleTurn

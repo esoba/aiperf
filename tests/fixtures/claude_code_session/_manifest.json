@@ -1,0 +1,9 @@
+{
+  "parent": "parent.jsonl",
+  "subagents": [
+    {
+      "file": "child.jsonl",
+      "spawn_after_api_call": 1
+    }
+  ]
+}

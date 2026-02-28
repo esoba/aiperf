@@ -586,3 +586,173 @@ class TestWorkingSetL1Sharing:
 
         # Deduped should be strictly less than naive (L1 counted once vs N times)
         assert len(all_ids) < naive_total
+
+
+# ============================================================================
+# Subagent L1 Isolation Tests
+# ============================================================================
+
+
+class TestSubagentL1Isolation:
+    """Verify subagent children use an independent L1 range starting at 2**30."""
+
+    @pytest.fixture
+    def subagent_config(self):
+        return _make_cache_config(
+            num_sessions=5,
+            l1_tokens=640,
+            l2_tokens=128,
+            block_size=64,
+            parallel_probability=0.0,
+            subagent_probability=1.0,
+            subagent_count_mean=2.0,
+            subagent_count_max=3,
+            subagent_turns_mean=4,
+            subagent_turns_median=3,
+            subagent_system_tokens=200,
+            subagent_new_tokens_mean=300,
+            subagent_new_tokens_median=200,
+            subagent_max_prompt_tokens=3000,
+        )
+
+    def test_subagent_l1_offset_constant(self):
+        """Class constant _SUBAGENT_L1_OFFSET equals 2**30."""
+        assert CodingSessionComposer._SUBAGENT_L1_OFFSET == 2**30
+
+    def test_subagent_l1_ids_start_at_offset(self, subagent_config, mock_tokenizer):
+        """Child L1 IDs start at 2**30, not 0."""
+        composer = CodingSessionComposer(subagent_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        children = [c for c in conversations if c.is_subagent_child]
+        assert len(children) > 0
+
+        offset = 2**30
+        for child in children:
+            first_turn = child.turns[0]
+            l1_count = first_turn.cache_layer_sizes.l1
+            if l1_count == 0:
+                continue
+            l1_ids = first_turn.hash_ids[:l1_count]
+            assert l1_ids[0] >= offset, (
+                f"Child L1 should start at {offset}, got {l1_ids[0]}"
+            )
+            assert l1_ids == list(range(offset, offset + l1_count))
+
+    def test_parent_l1_ids_start_at_zero(self, subagent_config, mock_tokenizer):
+        """Parent L1 IDs still start at 0 (unchanged behavior)."""
+        composer = CodingSessionComposer(subagent_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        parents = [c for c in conversations if not c.is_subagent_child]
+        l1_count = subagent_config.input.coding_session.l1_tokens // 64
+        for parent in parents:
+            first_turn = parent.turns[0]
+            l1_ids = first_turn.hash_ids[:l1_count]
+            assert l1_ids == list(range(l1_count))
+
+    def test_zero_overlap_between_parent_and_child_l1(
+        self, subagent_config, mock_tokenizer
+    ):
+        """Parent L1 set and child L1 set have zero intersection."""
+        composer = CodingSessionComposer(subagent_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        parents = [c for c in conversations if not c.is_subagent_child]
+        children = [c for c in conversations if c.is_subagent_child]
+        assert len(children) > 0
+
+        parent_l1_set: set[int] = set()
+        for parent in parents:
+            l1_count = parent.turns[0].cache_layer_sizes.l1
+            parent_l1_set.update(parent.turns[0].hash_ids[:l1_count])
+
+        child_l1_set: set[int] = set()
+        for child in children:
+            l1_count = child.turns[0].cache_layer_sizes.l1
+            child_l1_set.update(child.turns[0].hash_ids[:l1_count])
+
+        overlap = parent_l1_set & child_l1_set
+        assert len(overlap) == 0, (
+            f"Expected zero L1 overlap, got {len(overlap)} shared IDs"
+        )
+
+    def test_multiple_children_share_same_l1_range(
+        self, subagent_config, mock_tokenizer
+    ):
+        """All subagent children use the same L1 ID range."""
+        composer = CodingSessionComposer(subagent_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        children = [c for c in conversations if c.is_subagent_child]
+        assert len(children) >= 2
+
+        # Collect all child L1 ranges
+        child_l1_ranges: list[list[int]] = []
+        for child in children:
+            l1_count = child.turns[0].cache_layer_sizes.l1
+            if l1_count > 0:
+                child_l1_ranges.append(child.turns[0].hash_ids[:l1_count])
+
+        # All children with the same L1 count should have the same L1 IDs
+        if len(child_l1_ranges) >= 2:
+            for l1_range in child_l1_ranges[1:]:
+                if len(l1_range) == len(child_l1_ranges[0]):
+                    assert l1_range == child_l1_ranges[0]
+
+    def test_child_l1_stable_across_turns(self, subagent_config, mock_tokenizer):
+        """Within a child conversation, L1 IDs remain constant across all turns."""
+        composer = CodingSessionComposer(subagent_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        children = [c for c in conversations if c.is_subagent_child]
+        assert len(children) > 0
+
+        for child in children:
+            l1_count = child.turns[0].cache_layer_sizes.l1
+            if l1_count == 0:
+                continue
+            l1_first = child.turns[0].hash_ids[:l1_count]
+            for turn in child.turns[1:]:
+                assert turn.hash_ids[:l1_count] == l1_first
+
+    def test_child_l2_independent_from_parent(self, subagent_config, mock_tokenizer):
+        """Child L2 IDs are randomly generated, independent from parent L2."""
+        composer = CodingSessionComposer(subagent_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        parents = [c for c in conversations if not c.is_subagent_child]
+        children = [c for c in conversations if c.is_subagent_child]
+        assert len(children) > 0
+
+        # Get parent L2 IDs from first parent
+        parent = parents[0]
+        p_l1 = parent.turns[0].cache_layer_sizes.l1
+        p_l2 = parent.turns[0].cache_layer_sizes.l2
+        parent_l2_set = set(parent.turns[0].hash_ids[p_l1 : p_l1 + p_l2])
+
+        # At least one child should have different L2 IDs
+        any_different = False
+        for child in children:
+            c_l1 = child.turns[0].cache_layer_sizes.l1
+            c_l2 = child.turns[0].cache_layer_sizes.l2
+            if c_l2 > 0:
+                child_l2_set = set(child.turns[0].hash_ids[c_l1 : c_l1 + c_l2])
+                if child_l2_set != parent_l2_set:
+                    any_different = True
+                    break
+        assert any_different, "Expected child L2 IDs to differ from parent"
+
+
+# ============================================================================
+# Config Default Tests
+# ============================================================================
+
+
+class TestCodingSessionConfigDefaults:
+    """Verify updated default values in CodingSessionConfig."""
+
+    def test_thinking_strip_probability_defaults_to_one(self):
+        """thinking_strip_probability defaults to 1.0 (always strip)."""
+        cfg = CodingSessionConfig(enabled=True)
+        assert cfg.thinking_strip_probability == 1.0

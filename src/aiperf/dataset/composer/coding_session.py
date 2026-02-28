@@ -479,6 +479,10 @@ class CodingSessionComposer(BaseDatasetComposer):
             p *= self._subagent_rng.random()
         return max(1, min(k - 1, cfg.subagent_count_max))
 
+    # Subagent L1 IDs start at this offset so zero blocks overlap with parent.
+    # Real subagent tool sets diverge from byte 0 (different tool definitions).
+    _SUBAGENT_L1_OFFSET = 2**30
+
     def _generate_subagent_child(
         self,
         parent_session_id: str,
@@ -487,18 +491,19 @@ class CodingSessionComposer(BaseDatasetComposer):
         cfg: CodingSessionConfig,
         session_language: str,
     ) -> Conversation:
-        """Generate a subagent child conversation with L1 prefix sharing."""
+        """Generate a subagent child conversation with independent L1 range."""
         child_id = f"{parent_session_id}_{spawn_id}_c{child_idx}"
         child = Conversation(session_id=child_id, is_subagent_child=True)
 
         block_size = cfg.block_size
 
-        # L1: prefix of global L1 range (subagent has smaller tool set)
+        # L1: independent range (subagent has different tool set, diverges from byte 0)
         max_blocks = cfg.subagent_max_prompt_tokens // block_size
         l1_count = min(
             min(cfg.subagent_system_tokens, cfg.l1_tokens) // block_size, max_blocks
         )
-        child_l1_ids = list(range(l1_count))
+        offset = self._SUBAGENT_L1_OFFSET
+        child_l1_ids = list(range(offset, offset + l1_count))
 
         # L2: own random IDs (capped so L1+L2 don't exceed budget)
         l2_count = min(cfg.l2_tokens // block_size, max(0, max_blocks - l1_count))

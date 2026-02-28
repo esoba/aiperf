@@ -701,6 +701,406 @@ class TestClaudeCodeTraceLoader:
         trace = list(data.values())[0][0]
         assert trace.session_id == "sess-abc"
 
+    def test_subagent_manifest_loading(self, tmp_path, default_user_config):
+        """Test loading a directory with manifest linking parent and child sessions."""
+        # Parent session: 3 API calls, spawns subagent after call 1
+        parent_records = [
+            {
+                "type": "user",
+                "message": {"content": "Build me a web app"},
+                "sessionId": "parent-sess",
+                "timestamp": "2025-06-01T10:00:00Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Starting..."}],
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                    "stop_reason": "end_turn",
+                },
+                "requestId": "req-p1",
+            },
+            {
+                "type": "user",
+                "message": {"content": "Use React for the frontend"},
+                "sessionId": "parent-sess",
+                "timestamp": "2025-06-01T10:00:05Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tu-task",
+                            "name": "Task",
+                            "input": {"prompt": "Set up React"},
+                        }
+                    ],
+                    "usage": {"input_tokens": 200, "output_tokens": 50},
+                    "stop_reason": "tool_use",
+                },
+                "requestId": "req-p2",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tu-task",
+                            "content": "React setup complete",
+                        }
+                    ]
+                },
+                "sessionId": "parent-sess",
+                "timestamp": "2025-06-01T10:00:20Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "All done!"}],
+                    "usage": {"input_tokens": 300, "output_tokens": 30},
+                    "stop_reason": "end_turn",
+                },
+                "requestId": "req-p3",
+            },
+        ]
+
+        # Child session
+        child_records = [
+            {
+                "type": "user",
+                "message": {"content": "Set up React project"},
+                "sessionId": "child-sess",
+                "timestamp": "2025-06-01T10:00:06Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Installing deps..."}],
+                    "usage": {"input_tokens": 80, "output_tokens": 15},
+                    "stop_reason": "end_turn",
+                },
+                "requestId": "req-c1",
+            },
+        ]
+
+        # Write files
+        _make_jsonl_file(tmp_path, "parent.jsonl", parent_records)
+        _make_jsonl_file(tmp_path, "child_react.jsonl", child_records)
+
+        # Write manifest
+        manifest = {
+            "parent": "parent.jsonl",
+            "subagents": [{"file": "child_react.jsonl", "spawn_after_api_call": 1}],
+        }
+        (tmp_path / "_manifest.json").write_text(json.dumps(manifest))
+
+        loader = ClaudeCodeTraceLoader(
+            filename=str(tmp_path), user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        assert len(data) == 2
+
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+
+        # Find parent and child
+        parent = next(c for c in conversations if not c.is_subagent_child)
+        child = next(c for c in conversations if c.is_subagent_child)
+
+        assert len(parent.turns) == 3
+        assert len(child.turns) == 1
+        assert len(parent.subagent_spawns) == 1
+        assert parent.subagent_spawns[0].spawn_id == "s0"
+        assert parent.subagent_spawns[0].child_conversation_ids == [child.session_id]
+        assert parent.subagent_spawns[0].join_turn_index == 2
+
+        # The join turn (not spawn turn) gets subagent_spawn_id
+        assert parent.turns[1].subagent_spawn_id is None
+        assert parent.turns[2].subagent_spawn_id == "s0"
+
+    def test_spawn_id_on_join_turn_not_spawn_turn(self, tmp_path, default_user_config):
+        """Verify subagent_spawn_id is placed on the join turn, not the spawning turn.
+
+        adaptive_scale checks next_meta.subagent_spawn_id to decide when to
+        dispatch children. The spawn_id must be on the join turn so that:
+        1. The spawn turn (turn N) is sent normally
+        2. After turn N completes, adaptive_scale sees spawn_id on turn N+1
+        3. Children are dispatched instead of sending turn N+1 immediately
+        4. When children complete, turn N+1 (the join turn) is sent
+        """
+        # Parent: 4 API calls. Spawn after call 0, so join_turn_index = 1
+        parent_records = [
+            {
+                "type": "user",
+                "message": {"content": "Start"},
+                "sessionId": "p",
+                "timestamp": "2025-01-01T00:00:00Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "OK"}],
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                    "stop_reason": "tool_use",
+                },
+                "requestId": "r1",
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "t1", "content": "done"}
+                    ]
+                },
+                "sessionId": "p",
+                "timestamp": "2025-01-01T00:00:05Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Next step"}],
+                    "usage": {"input_tokens": 200, "output_tokens": 40},
+                    "stop_reason": "tool_use",
+                },
+                "requestId": "r2",
+            },
+            {
+                "type": "user",
+                "message": {"content": "Continue"},
+                "sessionId": "p",
+                "timestamp": "2025-01-01T00:00:10Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "More work"}],
+                    "usage": {"input_tokens": 300, "output_tokens": 60},
+                    "stop_reason": "tool_use",
+                },
+                "requestId": "r3",
+            },
+            {
+                "type": "user",
+                "message": {"content": "Finish"},
+                "sessionId": "p",
+                "timestamp": "2025-01-01T00:00:15Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Done"}],
+                    "usage": {"input_tokens": 400, "output_tokens": 30},
+                    "stop_reason": "end_turn",
+                },
+                "requestId": "r4",
+            },
+        ]
+        child_records = [
+            {
+                "type": "user",
+                "message": {"content": "child task"},
+                "sessionId": "c",
+                "timestamp": "2025-01-01T00:00:01Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "child done"}],
+                    "usage": {"input_tokens": 50, "output_tokens": 10},
+                    "stop_reason": "end_turn",
+                },
+                "requestId": "rc1",
+            },
+        ]
+
+        _make_jsonl_file(tmp_path, "parent.jsonl", parent_records)
+        _make_jsonl_file(tmp_path, "child.jsonl", child_records)
+        manifest = {
+            "parent": "parent.jsonl",
+            "subagents": [{"file": "child.jsonl", "spawn_after_api_call": 0}],
+        }
+        (tmp_path / "_manifest.json").write_text(json.dumps(manifest))
+
+        loader = ClaudeCodeTraceLoader(
+            filename=str(tmp_path), user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        parent = next(c for c in conversations if not c.is_subagent_child)
+
+        assert len(parent.turns) == 4
+        # Spawn after call 0 -> join at turn 1
+        assert parent.subagent_spawns[0].join_turn_index == 1
+        # Turn 0 (spawn turn) must NOT have spawn_id
+        assert parent.turns[0].subagent_spawn_id is None
+        # Turn 1 (join turn) MUST have spawn_id
+        assert parent.turns[1].subagent_spawn_id == "s0"
+        # Remaining turns are normal
+        assert parent.turns[2].subagent_spawn_id is None
+        assert parent.turns[3].subagent_spawn_id is None
+
+    def test_spawn_id_placement_with_multiple_subagents(
+        self, tmp_path, default_user_config
+    ):
+        """Verify spawn_id placement when multiple subagents spawn at different points."""
+        parent_records = []
+        # 5 API calls (10 records: 5 user + 5 assistant)
+        for i in range(5):
+            parent_records.append(
+                {
+                    "type": "user",
+                    "message": {"content": f"Turn {i}"},
+                    "sessionId": "p",
+                    "timestamp": f"2025-01-01T00:00:{i * 5:02d}Z",
+                }
+            )
+            parent_records.append(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": f"Response {i}"}],
+                        "usage": {"input_tokens": 100 * (i + 1), "output_tokens": 20},
+                        "stop_reason": "end_turn",
+                    },
+                    "requestId": f"r{i}",
+                }
+            )
+
+        def _child(sid):
+            return [
+                {
+                    "type": "user",
+                    "message": {"content": "task"},
+                    "sessionId": sid,
+                    "timestamp": "2025-01-01T00:00:01Z",
+                },
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "done"}],
+                        "usage": {"input_tokens": 50, "output_tokens": 10},
+                        "stop_reason": "end_turn",
+                    },
+                    "requestId": "rc1",
+                },
+            ]
+
+        _make_jsonl_file(tmp_path, "parent.jsonl", parent_records)
+        _make_jsonl_file(tmp_path, "child_a.jsonl", _child("ca"))
+        _make_jsonl_file(tmp_path, "child_b.jsonl", _child("cb"))
+
+        manifest = {
+            "parent": "parent.jsonl",
+            "subagents": [
+                {"file": "child_a.jsonl", "spawn_after_api_call": 1},
+                {"file": "child_b.jsonl", "spawn_after_api_call": 3},
+            ],
+        }
+        (tmp_path / "_manifest.json").write_text(json.dumps(manifest))
+
+        loader = ClaudeCodeTraceLoader(
+            filename=str(tmp_path), user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        parent = next(c for c in conversations if not c.is_subagent_child)
+
+        assert len(parent.turns) == 5
+        assert len(parent.subagent_spawns) == 2
+
+        # First spawn: after call 1 -> join at turn 2
+        assert parent.subagent_spawns[0].join_turn_index == 2
+        # Second spawn: after call 3 -> join at turn 4
+        assert parent.subagent_spawns[1].join_turn_index == 4
+
+        # Only join turns have spawn_id, all others are None
+        expected_spawn_ids = [None, None, "s0", None, "s1"]
+        for i, expected in enumerate(expected_spawn_ids):
+            assert parent.turns[i].subagent_spawn_id == expected, (
+                f"Turn {i}: expected spawn_id={expected!r}, "
+                f"got {parent.turns[i].subagent_spawn_id!r}"
+            )
+
+    def test_spawn_at_last_turn_join_clamps_to_last(
+        self, tmp_path, default_user_config
+    ):
+        """When spawn_after_api_call is the last turn, join_turn_index clamps."""
+        parent_records = [
+            {
+                "type": "user",
+                "message": {"content": "Only turn"},
+                "sessionId": "p",
+                "timestamp": "2025-01-01T00:00:00Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Done"}],
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                    "stop_reason": "end_turn",
+                },
+                "requestId": "r1",
+            },
+            {
+                "type": "user",
+                "message": {"content": "Last turn"},
+                "sessionId": "p",
+                "timestamp": "2025-01-01T00:00:05Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Final"}],
+                    "usage": {"input_tokens": 200, "output_tokens": 30},
+                    "stop_reason": "end_turn",
+                },
+                "requestId": "r2",
+            },
+        ]
+        child_records = [
+            {
+                "type": "user",
+                "message": {"content": "task"},
+                "sessionId": "c",
+                "timestamp": "2025-01-01T00:00:01Z",
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "done"}],
+                    "usage": {"input_tokens": 50, "output_tokens": 10},
+                    "stop_reason": "end_turn",
+                },
+                "requestId": "rc1",
+            },
+        ]
+
+        _make_jsonl_file(tmp_path, "parent.jsonl", parent_records)
+        _make_jsonl_file(tmp_path, "child.jsonl", child_records)
+        manifest = {
+            "parent": "parent.jsonl",
+            # Spawn after last call (index 1) -> join clamps to min(2, 2-1) = 1
+            "subagents": [{"file": "child.jsonl", "spawn_after_api_call": 1}],
+        }
+        (tmp_path / "_manifest.json").write_text(json.dumps(manifest))
+
+        loader = ClaudeCodeTraceLoader(
+            filename=str(tmp_path), user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        parent = next(c for c in conversations if not c.is_subagent_child)
+
+        assert len(parent.turns) == 2
+        # join_turn_index clamps to last turn
+        assert parent.subagent_spawns[0].join_turn_index == 1
+        # spawn_id goes on the clamped join turn (turn 1), not turn 0
+        assert parent.turns[0].subagent_spawn_id is None
+        assert parent.turns[1].subagent_spawn_id == "s0"
+
     def test_session_id_fallback_to_filename(self, tmp_path, default_user_config):
         records = [
             {
