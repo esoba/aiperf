@@ -346,11 +346,11 @@ class TestCodingTraceLoader:
         ]
 
         flat = loader._flatten_requests(nested)
-        assert len(flat) == 4
+        # Only parent and leaf child are flattened; subtree child (300, with
+        # nested requests) is skipped — handled by _extract_subagent_subtrees
+        assert len(flat) == 2
         assert flat[0].input_tokens == 1000
         assert flat[1].input_tokens == 200
-        assert flat[2].input_tokens == 300
-        assert flat[3].input_tokens == 50
 
     def test_flatten_skips_container_entries(
         self, mock_prompt_generator, default_user_config
@@ -856,14 +856,12 @@ class TestCodingTraceLoader:
         ]
 
         flat = loader._flatten_requests(nested)
-        assert len(flat) == 3
-        # Results sorted by absolute time
-        assert flat[0].t == 10.0  # main: 0 + 10
+        # Subtree child (type=subagent, with nested requests) is skipped;
+        # only the parent request is flattened. Subtree children are handled
+        # by _extract_subagent_subtrees instead.
+        assert len(flat) == 1
+        assert flat[0].t == 10.0
         assert flat[0].input_tokens == 1000
-        assert flat[1].t == 16.0  # 0 + 10 + 5 + 1
-        assert flat[1].input_tokens == 200
-        assert flat[2].t == 18.0  # 0 + 10 + 5 + 3
-        assert flat[2].input_tokens == 300
 
     def test_flatten_sorts_by_absolute_time(
         self, mock_prompt_generator, default_user_config

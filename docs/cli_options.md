@@ -444,6 +444,18 @@ Maximum prompt tokens before a session is retired.
 <br>_Constraints: ≥ 1_
 <br>_Default: `215000`_
 
+#### `--coding-session-max-turns-mean` `<int>`
+
+Mean session turn count (lognormal). 0 disables turn-count limiting (sessions grow until token ceiling only).
+<br>_Constraints: ≥ 0_
+<br>_Default: `0`_
+
+#### `--coding-session-max-turns-median` `<int>`
+
+Median session turn count (lognormal). 0 disables turn-count limiting.
+<br>_Constraints: ≥ 0_
+<br>_Default: `0`_
+
 #### `--coding-session-initial-prefix-mean` `<int>`
 
 Mean of the lognormal distribution for the initial prefix tokens.
@@ -634,6 +646,18 @@ Main agent KV cache TTL in seconds for working set eviction.
 Subagent KV cache TTL in seconds for working set eviction.
 <br>_Constraints: > 0_
 <br>_Default: `300.0`_
+
+#### `--coding-session-delay-mean-ms` `<int>`
+
+Mean inter-turn delay in milliseconds (lognormal). 0 disables delays (back-to-back turns).
+<br>_Constraints: ≥ 0_
+<br>_Default: `0`_
+
+#### `--coding-session-delay-median-ms` `<int>`
+
+Median inter-turn delay in milliseconds (lognormal). 0 disables delays.
+<br>_Constraints: ≥ 0_
+<br>_Default: `0`_
 
 ### Audio Input
 

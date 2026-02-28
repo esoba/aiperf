@@ -34,6 +34,20 @@ _MODULES = (
     "factory", "gateway", "indexer", "manager", "monitor", "notifier",
     "observer", "parser", "provider", "queue", "resolver", "scanner",
     "session", "sink", "source", "stream", "transformer", "uploader",
+    # web / HTTP
+    "api", "webhook", "cors", "oauth", "graphql", "grpc", "websocket",
+    "rate_limiter", "proxy", "load_balancer", "reverse_proxy",
+    # database / data
+    "migration", "schema", "repository", "connection_pool", "query_builder",
+    "data_loader", "orm", "replication", "sharding", "backup",
+    # ML / data science
+    "inference", "tokenizer", "embedding", "feature_store", "model_registry",
+    "trainer", "evaluator", "dataset", "sampler", "checkpoint",
+    # DevOps / infra
+    "deployer", "provisioner", "orchestrator", "health_check", "autoscaler",
+    "dns_resolver", "cert_manager", "secret_store", "telemetry", "alerter",
+    # security
+    "firewall", "encryptor", "key_manager", "audit", "compliance",
 )
 
 _CLASSES = (
@@ -47,6 +61,21 @@ _CLASSES = (
     "TemplateEngine", "SignalHandler", "ProtocolAdapter", "BufferManager",
     "ThrottleController", "RegistryClient", "LockManager", "SnapshotStore",
     "AuditLogger", "FeatureToggle", "MigrationRunner", "DeploymentManager",
+    # HTTP layer
+    "HttpClient", "RouteResolver", "CorsMiddleware", "AuthMiddleware",
+    "ResponseSerializer", "RequestParser", "WebSocketManager", "ApiGateway",
+    # data layer
+    "QueryExecutor", "TransactionManager", "MigrationEngine", "PoolManager",
+    "ReplicaSelector", "ShardRouter", "CursorIterator", "ChangeStream",
+    # error types
+    "RetryableError", "ValidationError", "TimeoutError", "QuotaExceeded",
+    "ConflictError", "NotFoundError", "AuthorizationError", "RateLimitError",
+    # ML / inference
+    "ModelLoader", "TokenEncoder", "EmbeddingStore", "FeatureExtractor",
+    "InferenceEngine", "BatchScheduler", "GradientAccumulator", "Checkpoint",
+    # infra / orchestration
+    "ServiceMesh", "HealthProbe", "AutoScaler", "SecretProvider",
+    "CertRotator", "DnsCache", "TelemetryExporter", "AlertDispatcher",
 )
 
 _METHODS = (
@@ -57,6 +86,12 @@ _METHODS = (
     "decompress", "authenticate", "authorize", "revoke", "checkpoint",
     "rollback", "migrate", "replicate", "synchronize", "reconcile",
     "invalidate", "prefetch", "evict", "rebalance", "throttle", "retry",
+    "render", "persist", "hydrate", "prune", "drain", "backfill",
+    "enqueue", "dequeue", "broadcast", "handshake", "negotiate", "probe",
+    "rotate", "shard", "merge", "split", "compact", "snapshot",
+    "finalize", "abort", "resume", "suspend", "escalate", "demote",
+    "promote", "quarantine", "scrub", "warm_up", "cool_down", "heal",
+    "reclaim", "tombstone", "seal", "unseal", "bootstrap", "teardown",
 )
 
 _TYPES = (
@@ -74,6 +109,12 @@ _VARS = (
     "status", "event", "message", "signal", "metric", "timestamp", "duration",
     "timeout", "retries", "threshold", "capacity", "interval", "priority",
     "sequence", "channel", "endpoint", "header", "session", "connection",
+    "pipeline", "schema", "trace_id", "tenant_id", "batch_size", "page_size",
+    "shard_key", "replica_id", "worker_id", "partition_key", "ttl",
+    "max_retries", "backoff", "jitter", "watermark", "checkpoint_id",
+    "correlation_id", "span_id", "parent_id", "depth", "fanout",
+    "concurrency", "rate", "window", "lag", "drift", "skew",
+    "epoch", "generation", "version", "revision", "digest", "nonce",
 )
 
 _FILE_PATHS = (
@@ -91,29 +132,67 @@ _FILE_PATHS = (
     ".github/workflows/ci.yml", "kubernetes/deployment.yaml",
 )
 
+_HTTP_ROUTES = (
+    "/api/v1/users", "/api/v1/items", "/api/v1/orders", "/api/v1/auth/login",
+    "/api/v1/auth/refresh", "/api/v2/search", "/api/v2/analytics",
+    "/health", "/ready", "/metrics", "/api/v1/webhooks", "/api/v1/uploads",
+    "/api/v1/notifications", "/api/v1/settings", "/api/v1/billing",
+    "/api/v1/teams/{team_id}/members", "/api/v1/projects/{project_id}/runs",
+    "/api/v1/tenants/{tenant_id}/quota", "/internal/gc", "/internal/debug/pprof",
+)
+
+_DB_TABLES = (
+    "users", "orders", "items", "sessions", "audit_log", "migrations",
+    "api_keys", "rate_limits", "notifications", "webhooks", "tenants",
+    "permissions", "invitations", "uploads", "billing_events",
+    "job_queue", "dead_letter", "feature_flags", "schema_versions", "locks",
+)
+
+_STATUS_CODES = (
+    "200 OK", "201 Created", "204 No Content", "301 Moved Permanently",
+    "400 Bad Request", "401 Unauthorized", "403 Forbidden", "404 Not Found",
+    "409 Conflict", "429 Too Many Requests", "500 Internal Server Error",
+    "502 Bad Gateway", "503 Service Unavailable", "504 Gateway Timeout",
+)
+
 _LANG_FILE_PATHS: dict[str, tuple[str, ...]] = {
     "python": (
         "src/main.py", "src/config.py", "src/models.py", "src/routes.py",
         "src/utils.py", "src/middleware.py", "src/database.py", "src/auth.py",
         "tests/test_main.py", "tests/test_models.py", "tests/conftest.py",
         "pyproject.toml", "Dockerfile", "Makefile",
+        "src/api/v1/endpoints.py", "src/api/v1/schemas.py", "src/api/deps.py",
+        "src/core/security.py", "src/core/events.py", "src/services/worker.py",
+        "src/repositories/base.py", "tests/integration/test_api.py",
     ),
     "go": (
         "lib/core.go", "lib/handler.go", "lib/service.go", "lib/types.go",
         "pkg/api/server.go", "pkg/api/client.go", "pkg/store/store.go",
         "cmd/server/main.go", "internal/config/config.go",
         "go.mod", "go.sum", "Makefile",
+        "internal/middleware/auth.go", "internal/middleware/ratelimit.go",
+        "internal/repository/postgres.go", "internal/service/worker.go",
+        "pkg/api/middleware.go", "pkg/api/routes.go",
+        "internal/telemetry/tracing.go", "internal/health/probe.go",
     ),
     "rust": (
         "src/lib.rs", "src/main.rs", "src/config.rs", "src/error.rs",
         "src/handler.rs", "src/models.rs", "src/routes.rs",
         "Cargo.toml", "Cargo.lock",
+        "src/middleware/auth.rs", "src/middleware/tracing.rs",
+        "src/repository/mod.rs", "src/repository/postgres.rs",
+        "src/service/mod.rs", "src/service/worker.rs",
+        "tests/integration/api_test.rs", "benches/throughput.rs",
     ),
     "typescript": (
         "src/index.ts", "src/app.ts", "src/types.ts", "src/api.ts",
         "src/components/App.tsx", "src/components/Form.tsx",
         "src/utils.ts", "src/middleware.ts", "src/routes.ts",
         "package.json", "tsconfig.json", "Dockerfile",
+        "src/services/auth.service.ts", "src/services/worker.service.ts",
+        "src/middleware/rate-limiter.ts", "src/middleware/error-handler.ts",
+        "src/models/user.model.ts", "src/models/order.model.ts",
+        "src/repositories/base.repository.ts", "tests/integration/api.test.ts",
     ),
 }
 
@@ -125,6 +204,13 @@ _ERROR_MESSAGES = (
     "index out of range", "null pointer dereference", "type mismatch",
     "missing required field", "duplicate key", "constraint violation",
     "circular dependency detected", "maximum recursion depth exceeded",
+    "transaction aborted", "lock timeout after 30s", "quota exceeded",
+    "connection pool exhausted", "certificate expired", "DNS resolution failed",
+    "checksum mismatch", "payload too large", "stale read",
+    "leader election in progress", "shard unavailable", "replica lag exceeded",
+    "write conflict detected", "token revoked", "session expired",
+    "circuit breaker open", "backpressure applied", "partition offline",
+    "consensus timeout", "snapshot corrupted", "migration in progress",
 )
 
 _CLI_COMMANDS = (
@@ -138,6 +224,27 @@ _CLI_COMMANDS = (
     "make build", "make test", "make lint",
     "curl -s http://localhost:8080/health",
     "ps aux | grep python", "top -bn1 | head -20",
+    # k8s / infra
+    "kubectl describe pod app-7d4b8f-xz9k", "kubectl logs -f deploy/api --tail=100",
+    "kubectl rollout status deploy/worker", "kubectl top nodes",
+    "helm upgrade --install app ./chart -f values.yaml",
+    "terraform plan -out=tfplan", "terraform apply tfplan",
+    # redis / data stores
+    "redis-cli INFO memory", "redis-cli --latency-history -i 1",
+    "pg_dump -Fc mydb > backup.dump", "mongosh --eval 'db.stats()'",
+    # perf / profiling
+    "perf stat -e cache-misses,cache-references ./bin/server",
+    "strace -c -p $(pgrep server)", "valgrind --tool=memcheck ./bin/app",
+    "pprof -http=:6060 http://localhost:6060/debug/pprof/heap",
+    # load testing
+    "wrk -t12 -c400 -d30s http://localhost:8080/api/v1/items",
+    "hey -n 10000 -c 100 http://localhost:8080/health",
+    "ab -n 5000 -c 50 http://localhost:8080/",
+    # misc dev
+    "find . -name '*.py' | xargs wc -l | tail -1",
+    "du -sh node_modules/ target/ dist/",
+    "lsof -i :8080", "ss -tlnp | grep 8080",
+    "journalctl -u myapp --since '1 hour ago'",
 )
 
 _GO_PACKAGES = (
@@ -166,6 +273,7 @@ _DECORATORS = (
 )
 
 _USER_REQUESTS = (
+    # simple one-liners (original)
     "Fix the failing test in {module} — it returns {error}",
     "Add retry logic to {cls}.{method}() with exponential backoff",
     "Refactor the {method} function to use async/await instead of callbacks",
@@ -196,6 +304,46 @@ _USER_REQUESTS = (
     "The {cls}.{method}() docstring is wrong — update it to match the code",
     "Implement batch processing for {method}() to handle bulk {var} updates",
     "Add WebSocket support to {cls} for real-time {var} updates",
+    # multi-step tasks
+    "Migrate {cls}.{method}() from sync to async — it's called in 3 places across {module} and needs backward compat",
+    "Split the {cls} class into two: one for {method} and one for the {var} lifecycle management",
+    "We need to add {method}() to {cls}, then wire it into the {module} pipeline and add an integration test",
+    "Extract the {method} logic from {cls} into a standalone service, update all callers, and add a deprecation warning to the old path",
+    "Rewrite the {module} retry logic: replace the sleep loop with a proper backoff strategy using {cls}",
+    # error context prompts
+    "Getting {error} after upgrading {module} to the latest version — only happens under load",
+    "The {cls}.{method}() call started returning {error} after we merged the {var} migration PR",
+    "Users are reporting {error} intermittently — the {module} logs show {var} is sometimes null",
+    "After deploying the {method} change, we see {error} on about 5%% of requests to {cls}",
+    "The staging environment throws {error} but prod is fine — suspect it's the {var} config difference",
+    # file path references
+    "Look at {module}/{cls}.{method}() — the {var} parameter is never validated before being passed to the database layer",
+    "In the {module} service, the {method}() function at line ~200 has a subtle bug with {var} boundary handling",
+    "The {cls} constructor in {module} initializes {var} too early — move it to the {method}() call site",
+    # constraint-carrying
+    "Add {method}() to {cls} without breaking the existing API contract — we have downstream consumers",
+    "Optimize {cls}.{method}() for the case where {var} has over 10K entries, but keep the simple path fast too",
+    "Fix the {error} in {module} — but don't change the public interface, we're in a code freeze for other modules",
+    "Add telemetry to {cls}.{method}() without adding any new dependencies to the {module} package",
+    # multi-sentence with background
+    "We profiled the {method} endpoint and {var} is growing unbounded in {cls}. We need to add eviction or cap the size. The 99th percentile latency spiked 3x last week.",
+    "The {cls} pool keeps hitting {error} during peak hours. We scaled horizontally but the issue persists. I think {method}() is holding a lock too long.",
+    "After the last {module} refactor, {cls}.{method}() no longer returns deterministic results. The old tests still pass but the integration tests are flaky. Might be a race condition on {var}.",
+    "We're moving from REST to gRPC for the {module} service. Start by converting {cls}.{method}() — it's the most latency-sensitive endpoint. Keep the REST handler as a thin adapter for backward compat.",
+    # review / debugging style
+    "Can you review the {cls}.{method}() implementation? I think the error handling around {var} is wrong",
+    "Why does {cls} create a new {var} on every call to {method}()? Seems wasteful",
+    "Walk me through the {method}() flow in {module} — I need to understand where {var} gets validated",
+    "Is there a reason {cls}.{method}() catches Exception instead of the specific {error}?",
+    # infra / DevOps
+    "Add a Dockerfile for the {module} service that runs {cls} on port 8080 with health checks",
+    "The k8s deployment for {module} keeps OOMKilling — add memory limits and check if {cls} leaks during {method}()",
+    "Set up a GitHub Action that runs the {module} tests, lints with ruff, and blocks merge on failure",
+    "Add Prometheus metrics for {cls}.{method}() — we need p50/p95/p99 latency and error rate by status code",
+    # data / schema
+    "Add a new {var} column to the {module} table with a default value and backfill script",
+    "The {cls} serializer is dropping {var} fields when they're empty lists — should preserve them as []",
+    "Normalize the {var} schema in {module}: split the nested object into its own table with a foreign key",
 )
 
 _TEXT_POOL_BLOCKS = 200
@@ -211,6 +359,7 @@ _TOOL_POOL_BLOCK_COUNTS: dict[str, int] = {
     "_gen_bash_output": 150,
     "_gen_json_response": 90,
     "_gen_error_traceback": 60,
+    "_gen_tool_use_block": 45,
     "_gen_git_diff": 18,
     "_gen_cicd_output": 18,
     "_gen_config_file": 18,
@@ -225,6 +374,7 @@ _LANGUAGE_POOL_BLOCK_COUNTS: dict[str, int] = {
     "_gen_bash_output": 115,
     "_gen_json_response": 70,
     "_gen_error_traceback": 45,
+    "_gen_tool_use_block": 30,
     "_gen_test_output": 25,
     "_gen_config_file": 20,
     "_gen_git_diff": 15,
@@ -234,6 +384,7 @@ _LANGUAGE_POOL_BLOCK_COUNTS: dict[str, int] = {
 
 _LANGUAGE_AGNOSTIC_GENERATORS = (
     "_gen_bash_output", "_gen_json_response", "_gen_git_diff",
+    "_gen_tool_use_block",
 )
 
 _LANGUAGE_GENERATORS: dict[str, tuple[str, ...]] = {
@@ -504,11 +655,22 @@ class CodingContentGenerator(BaseGenerator):
     # -- Template generators --
 
     def _gen_python_code(self) -> str:
+        return self._template_rng.choice(
+            [
+                self._gen_python_class,
+                self._gen_python_functions,
+                self._gen_python_test,
+                self._gen_python_http_handler,
+                self._gen_python_data_model,
+            ]
+        )()
+
+    def _gen_python_class(self) -> str:
         r = self._template_rng
         cls = r.choice(_CLASSES)
         mod = r.choice(_MODULES)
-        m1, m2 = r.sample(_METHODS, 2)
-        v1, v2 = r.sample(_VARS, 2)
+        m1, m2, m3 = r.sample(_METHODS, 3)
+        v1, v2, v3 = r.sample(_VARS, 3)
         t1, t2 = r.sample(_TYPES, 2)
         dec = r.choice(_DECORATORS)
         imp_mod = r.choice(_MODULES)
@@ -523,9 +685,12 @@ from {mod}.{imp_mod} import {imp_cls}
 class {cls}:
     \"\"\"Handles {m1} operations for {mod}.\"\"\"
 
+    _default_{v3} = 64
+
     def __init__(self, {v1}: {t1}, {v2}: {t2} = None):
         self._{v1} = {v1}
         self._{v2} = {v2}
+        self._{v3} = self._default_{v3}
         self._initialized = False
 
     {dec}
@@ -541,14 +706,225 @@ class {cls}:
             return {v2}
         except Exception as e:
             raise ValueError("{err}") from e
+
+    def {m3}(self) -> None:
+        self._initialized = True
+        self._{v3} = 0
+"""
+
+    def _gen_python_functions(self) -> str:
+        r = self._template_rng
+        m1, m2, m3 = r.sample(_METHODS, 3)
+        v1, v2, v3 = r.sample(_VARS, 3)
+        t1, t2, t3 = r.sample(_TYPES, 3)
+        mod = r.choice(_MODULES)
+        imp_mod = r.choice(_MODULES)
+        cls = r.choice(_CLASSES)
+        err = r.choice(_ERROR_MESSAGES)
+
+        return f"""\
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
+from {mod}.{imp_mod} import {cls}
+
+logger = logging.getLogger(__name__)
+
+
+async def {m1}({v1}: {t1}, {v2}: {t2} | None = None) -> {t3}:
+    async with _acquire_{v3}({v1}) as {v3}:
+        {v2} = await {cls}().{m2}({v3})
+        return [{v2} for _ in range(10) if {v2} is not None]
+
+
+@asynccontextmanager
+async def _acquire_{v3}({v1}: {t1}) -> AsyncIterator[{t2}]:
+    {v3} = {mod}.{m3}({v1})
+    try:
+        yield {v3}
+    finally:
+        await {v3}.close()
+
+
+def {m2}_sync({v1}: {t1}, *, max_retries: int = 3) -> {t2}:
+    for attempt in range(max_retries):
+        try:
+            return {mod}.{m2}({v1})
+        except RuntimeError:
+            if attempt == max_retries - 1:
+                raise
+            logger.warning("{err}, attempt %d", attempt + 1)
+    raise AssertionError("unreachable")
+"""
+
+    def _gen_python_test(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        mod = r.choice(_MODULES)
+        m1, m2, m3 = r.sample(_METHODS, 3)
+        v1, v2 = r.sample(_VARS, 2)
+        err = r.choice(_ERROR_MESSAGES)
+
+        return f"""\
+import pytest
+from unittest.mock import AsyncMock, patch
+
+from {mod} import {cls}
+
+
+class Test{cls}:
+    @pytest.fixture
+    def instance(self):
+        return {cls}({v1}="test_value")
+
+    @pytest.mark.asyncio
+    async def test_{m1}_returns_expected(self, instance):
+        instance._{m2} = AsyncMock(return_value=42)
+        result = await instance.{m1}()
+        assert result == 42
+        instance._{m2}.assert_awaited_once()
+
+    @pytest.mark.parametrize("{v1}", ["alpha", "beta", "gamma"])
+    def test_{m2}_with_values(self, instance, {v1}):
+        instance._{v1} = {v1}
+        result = instance.{m2}()
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_{m3}_raises_on_{v2}(self, instance):
+        with pytest.raises(ValueError, match="{err}"):
+            await instance.{m3}(None)
+
+    @pytest.mark.asyncio
+    async def test_{m1}_with_mock_dependency(self, instance):
+        with patch("{mod}.{m2}") as mock:
+            mock.return_value = {{{{"key": "{v2}"}}}}\n            result = await instance.{m1}()
+            assert "{v2}" in str(result)
+"""
+
+    def _gen_python_http_handler(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        mod = r.choice(_MODULES)
+        m1, m2 = r.sample(_METHODS, 2)
+        v1, v2, v3 = r.sample(_VARS, 3)
+        route = r.choice(_HTTP_ROUTES)
+        table = r.choice(_DB_TABLES)
+        err = r.choice(_ERROR_MESSAGES)
+
+        return f"""\
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
+
+from {mod}.{cls.lower()} import {cls}
+
+router = APIRouter(prefix="{route}", tags=["{mod}"])
+
+
+class {cls}Request(BaseModel):
+    {v1}: str = Field(description="Primary {v1} identifier")
+    {v2}: int = Field(default=10, ge=1, le=100, description="Page size")
+    {v3}: str | None = Field(default=None, description="Optional filter")
+
+
+class {cls}Response(BaseModel):
+    items: list[dict] = Field(description="Result items from {table}")
+    total: int = Field(description="Total count")
+    page: int = Field(description="Current page number")
+
+
+@router.post("/", response_model={cls}Response, status_code=201)
+async def {m1}(
+    body: {cls}Request,
+    svc: {cls} = Depends(),
+) -> {cls}Response:
+    try:
+        items = await svc.{m1}(body.{v1}, page_size=body.{v2})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {cls}Response(items=items, total=len(items), page=1)
+
+
+@router.get("/{{{{{v1}}}}}")
+async def {m2}({v1}: str, svc: {cls} = Depends()) -> dict:
+    result = await svc.{m2}({v1})
+    if result is None:
+        raise HTTPException(status_code=404, detail="{err}")
+    return {{"status": "ok", "data": result}}
+"""
+
+    def _gen_python_data_model(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        v1, v2, v3, v4 = r.sample(_VARS, 4)
+        m1 = r.choice(_METHODS)
+        table = r.choice(_DB_TABLES)
+
+        return f"""\
+from __future__ import annotations
+
+from datetime import datetime
+from enum import StrEnum
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class {cls}Status(StrEnum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    DELETED = "deleted"
+
+
+class {cls}Config(BaseModel):
+    {v1}: str = Field(description="{cls} {v1} identifier")
+    {v2}: int = Field(default=0, ge=0, description="Current {v2} count")
+    {v3}: float = Field(default=1.0, gt=0, description="Rate limit for {m1}")
+    status: {cls}Status = Field(default={cls}Status.PENDING, description="Lifecycle status")
+    {v4}: dict[str, str] = Field(default_factory=dict, description="Arbitrary {v4}")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    source_table: str = Field(default="{table}", description="Backing store table")
+
+    @field_validator("{v1}")
+    @classmethod
+    def _validate_{v1}(cls, v: str) -> str:
+        if not v or len(v) > 256:
+            raise ValueError("{v1} must be 1-256 characters")
+        return v.strip()
+
+    @field_validator("{v3}")
+    @classmethod
+    def _validate_{v3}(cls, v: float) -> float:
+        if v > 10_000:
+            raise ValueError("{v3} exceeds max rate")
+        return v
+
+    def {m1}(self) -> bool:
+        return self.status == {cls}Status.ACTIVE and self.{v2} > 0
 """
 
     def _gen_go_code(self) -> str:
+        return self._template_rng.choice(
+            [
+                self._gen_go_struct,
+                self._gen_go_http_handler,
+                self._gen_go_errors,
+                self._gen_go_test,
+            ]
+        )()
+
+    def _gen_go_struct(self) -> str:
         r = self._template_rng
         pkg1, pkg2 = r.sample(list(_GO_PACKAGES), 2)
         cls = r.choice(_CLASSES)
         m1, m2 = r.sample(_METHODS, 2)
-        v1, v2 = r.sample(_VARS, 2)
+        v1, v2, v3 = r.sample(_VARS, 3)
         pkg_name = r.choice(_MODULES)
         err = r.choice(_ERROR_MESSAGES)
 
@@ -561,8 +937,9 @@ import (
 )
 
 type {cls} struct {{{{
-    {v1} string
-    {v2} int
+    {v1} string `json:"{v1}"`
+    {v2} int    `json:"{v2},omitempty"`
+    {v3} bool   `json:"-"`
     mu  sync.RWMutex
 }}}}
 
@@ -583,25 +960,191 @@ func (s *{cls}) {m1.title()}(ctx context.Context) error {{{{
 func (s *{cls}) {m2.title()}() (string, error) {{{{
     s.mu.RLock()
     defer s.mu.RUnlock()
+    if !s.{v3} {{{{
+        return "", {pkg1}.Errorf("%w: not initialized", Err{cls})
+    }}}}
     return {pkg2}.Sprintf("%s:%d", s.{v1}, s.{v2}), nil
 }}}}
 """
 
+    def _gen_go_http_handler(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        m1, m2 = r.sample(_METHODS, 2)
+        v1, v2 = r.sample(_VARS, 2)
+        pkg_name = r.choice(_MODULES)
+        table = r.choice(_DB_TABLES)
+        err = r.choice(_ERROR_MESSAGES)
+        status_code = r.choice(
+            ["http.StatusOK", "http.StatusCreated", "http.StatusAccepted"]
+        )
+
+        return f"""\
+package {pkg_name}
+
+import (
+    "encoding/json"
+    "net/http"
+    "log/slog"
+)
+
+type {m1.title()}Request struct {{{{
+    {v1.title()} string `json:"{v1}" binding:"required"`
+    {v2.title()} int    `json:"{v2}" binding:"gte=0"`
+}}}}
+
+type {m1.title()}Response struct {{{{
+    Items []map[string]any `json:"items"`
+    Total int              `json:"total"`
+}}}}
+
+func (h *{cls}) {m1.title()}Handler(w http.ResponseWriter, r *http.Request) {{{{
+    var req {m1.title()}Request
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {{{{
+        slog.Error("{err}", "handler", "{m1}")
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }}}}
+
+    items, err := h.svc.{m2.title()}(r.Context(), req.{v1.title()})
+    if err != nil {{{{
+        slog.Error("{err}", "table", "{table}")
+        http.Error(w, "{err}", http.StatusInternalServerError)
+        return
+    }}}}
+
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader({status_code})
+    json.NewEncoder(w).Encode({m1.title()}Response{{{{Items: items, Total: len(items)}}}})
+}}}}
+"""
+
+    def _gen_go_errors(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        pkg_name = r.choice(_MODULES)
+        e1, e2, e3 = r.sample(_ERROR_MESSAGES, 3)
+        m1 = r.choice(_METHODS)
+        v1 = r.choice(_VARS)
+
+        return f"""\
+package {pkg_name}
+
+import (
+    "errors"
+    "fmt"
+)
+
+var (
+    Err{cls}         = errors.New("{e1}")
+    ErrNot{m1.title()} = errors.New("{e2}")
+    ErrInvalid{v1.title()} = errors.New("{e3}")
+)
+
+type {cls}Error struct {{{{
+    Op      string
+    {v1.title()} string
+    Err     error
+}}}}
+
+func (e *{cls}Error) Error() string {{{{
+    return fmt.Sprintf("%s %s: %v", e.Op, e.{v1.title()}, e.Err)
+}}}}
+
+func (e *{cls}Error) Unwrap() error {{{{
+    return e.Err
+}}}}
+
+func Wrap{cls}Error(op, {v1} string, err error) error {{{{
+    return &{cls}Error{{{{Op: op, {v1.title()}: {v1}, Err: err}}}}
+}}}}
+"""
+
+    def _gen_go_test(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        pkg_name = r.choice(_MODULES)
+        m1, m2 = r.sample(_METHODS, 2)
+        v1, v2 = r.sample(_VARS, 2)
+
+        return f"""\
+package {pkg_name}_test
+
+import (
+    "context"
+    "testing"
+)
+
+func Test{cls}_{m1.title()}(t *testing.T) {{{{
+    tests := []struct {{{{
+        name    string
+        {v1}    string
+        want    int
+        wantErr bool
+    }}}}{{{{
+        {{{{"valid {v1}", "test_value", 42, false}}}},
+        {{{{"empty {v1}", "", 0, true}}}},
+        {{{{"long {v1}", "a]very_long_value_that_exceeds_limit", 0, true}}}},
+    }}}}
+
+    for _, tt := range tests {{{{
+        t.Run(tt.name, func(t *testing.T) {{{{
+            s := New{cls}(tt.{v1})
+            got, err := s.{m1.title()}(context.Background())
+            if (err != nil) != tt.wantErr {{{{
+                t.Errorf("{m1.title()}() error = %v, wantErr %v", err, tt.wantErr)
+                return
+            }}}}
+            if got != tt.want {{{{
+                t.Errorf("{m1.title()}() = %v, want %v", got, tt.want)
+            }}}}
+        }}}})
+    }}}}
+}}}}
+
+func Test{cls}_{m2.title()}_Concurrent(t *testing.T) {{{{
+    s := New{cls}("{v2}")
+    ctx := context.Background()
+    errs := make(chan error, 10)
+    for i := 0; i < 10; i++ {{{{
+        go func() {{{{ errs <- s.{m2.title()}(ctx) }}}}()
+    }}}}
+    for i := 0; i < 10; i++ {{{{
+        if err := <-errs; err != nil {{{{
+            t.Errorf("concurrent {m2}: %v", err)
+        }}}}
+    }}}}
+}}}}
+"""
+
     def _gen_rust_code(self) -> str:
+        return self._template_rng.choice(
+            [
+                self._gen_rust_struct,
+                self._gen_rust_http_handler,
+                self._gen_rust_errors,
+                self._gen_rust_test,
+            ]
+        )()
+
+    def _gen_rust_struct(self) -> str:
         r = self._template_rng
         cr1, cr2 = r.sample(list(_RUST_CRATES), 2)
         cls = r.choice(_CLASSES)
         m1, m2 = r.sample(_METHODS, 2)
-        v1, v2 = r.sample(_VARS, 2)
+        v1, v2, v3 = r.sample(_VARS, 3)
         err = r.choice(_ERROR_MESSAGES)
 
         return f"""\
 use {cr1};
 use {cr2};
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct {cls} {{{{
     {v1}: String,
     {v2}: Vec<u8>,
+    #[serde(default)]
+    {v3}: Option<u64>,
     initialized: bool,
 }}}}
 
@@ -610,6 +1153,7 @@ impl {cls} {{{{
         Self {{{{
             {v1}: {v1}.into(),
             {v2}: Vec::new(),
+            {v3}: None,
             initialized: false,
         }}}}
     }}}}
@@ -622,19 +1166,187 @@ impl {cls} {{{{
     }}}}
 
     async fn {m2}(&self) -> Result<(), anyhow::Error> {{{{
-        let {v2} = self.{v1}.as_bytes();
+        let _{v2} = self.{v1}.as_bytes();
+        tracing::debug!("{m2} completed for {{}}", self.{v1});
         Ok(())
     }}}}
 }}}}
 """
 
+    def _gen_rust_http_handler(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        m1, m2 = r.sample(_METHODS, 2)
+        v1, v2 = r.sample(_VARS, 2)
+        mod = r.choice(_MODULES)
+
+        return f"""\
+use axum::{{extract::{{Path, State}}, http::StatusCode, Json}};
+use serde::{{Deserialize, Serialize}};
+use std::sync::Arc;
+
+use crate::{mod}::{cls};
+
+#[derive(Debug, Deserialize)]
+pub struct {m1.title()}Request {{{{
+    {v1}: String,
+    {v2}: Option<i64>,
+}}}}
+
+#[derive(Debug, Serialize)]
+pub struct {m1.title()}Response {{{{
+    id: String,
+    {v1}: String,
+    created: bool,
+}}}}
+
+pub async fn {m1}_handler(
+    State(svc): State<Arc<{cls}>>,
+    Json(body): Json<{m1.title()}Request>,
+) -> Result<Json<{m1.title()}Response>, StatusCode> {{{{
+    let result = svc
+        .{m1}(&body.{v1})
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json({m1.title()}Response {{{{
+        id: result.id.to_string(),
+        {v1}: body.{v1},
+        created: true,
+    }}}}))
+}}}}
+
+pub async fn {m2}_handler(
+    State(svc): State<Arc<{cls}>>,
+    Path({v1}): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {{{{
+    svc.{m2}(&{v1})
+        .await
+        .map(|v| Json(serde_json::json!({{{{"status": "ok", "data": v}}}})))
+        .map_err(|_| StatusCode::NOT_FOUND)
+}}}}
+"""
+
+    def _gen_rust_errors(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        e1, e2, e3 = r.sample(_ERROR_MESSAGES, 3)
+        v1 = r.choice(_VARS)
+        mod = r.choice(_MODULES)
+
+        return f"""\
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum {cls}Error {{{{
+    #[error("{e1}")]
+    NotInitialized,
+
+    #[error("{e2}: {{{{{v1}}}}}")]
+    InvalidInput {{{{ {v1}: String }}}},
+
+    #[error("{e3}")]
+    Internal(#[from] anyhow::Error),
+
+    #[error("io error in {mod}")]
+    Io(#[from] std::io::Error),
+
+    #[error("serialization failed")]
+    Serde(#[from] serde_json::Error),
+}}}}
+
+impl {cls}Error {{{{
+    pub fn is_retryable(&self) -> bool {{{{
+        matches!(self, Self::Internal(_) | Self::Io(_))
+    }}}}
+
+    pub fn status_code(&self) -> u16 {{{{
+        match self {{{{
+            Self::NotInitialized => 503,
+            Self::InvalidInput {{{{ .. }}}} => 400,
+            Self::Internal(_) => 500,
+            Self::Io(_) => 502,
+            Self::Serde(_) => 422,
+        }}}}
+    }}}}
+}}}}
+"""
+
+    def _gen_rust_test(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        m1, m2 = r.sample(_METHODS, 2)
+        v1, v2 = r.sample(_VARS, 2)
+        err = r.choice(_ERROR_MESSAGES)
+        cr = r.choice(_RUST_CRATES)
+
+        return f"""\
+use {cr};
+
+#[cfg(test)]
+mod tests {{{{
+    use super::*;
+
+    fn make_{cls.lower()}() -> {cls} {{{{
+        {cls}::new("{v1}_test")
+    }}}}
+
+    #[tokio::test]
+    async fn test_{m1}_success() {{{{
+        let mut svc = make_{cls.lower()}();
+        svc.initialized = true;
+        let result = svc.{m1}().await;
+        assert!(result.is_ok(), "expected Ok, got {{:?}}", result);
+    }}}}
+
+    #[tokio::test]
+    async fn test_{m1}_not_initialized() {{{{
+        let mut svc = make_{cls.lower()}();
+        let err = svc.{m1}().await.unwrap_err();
+        assert!(err.to_string().contains("{err}"));
+    }}}}
+
+    #[test]
+    fn test_{m2}_returns_bytes() {{{{
+        let svc = make_{cls.lower()}();
+        let {v2} = svc.{v1}.as_bytes();
+        assert!(!{v2}.is_empty());
+    }}}}
+
+    #[tokio::test]
+    async fn test_{m1}_concurrent() {{{{
+        let svc = std::sync::Arc::new(tokio::sync::Mutex::new(make_{cls.lower()}()));
+        let mut handles = vec![];
+        for _ in 0..5 {{{{
+            let svc = svc.clone();
+            handles.push(tokio::spawn(async move {{{{
+                svc.lock().await.{m1}().await
+            }}}}));
+        }}}}
+        for h in handles {{{{
+            let _ = h.await.unwrap();
+        }}}}
+    }}}}
+}}}}
+"""
+
     def _gen_typescript_code(self) -> str:
+        return self._template_rng.choice(
+            [
+                self._gen_typescript_class,
+                self._gen_typescript_http_handler,
+                self._gen_typescript_types,
+                self._gen_typescript_test,
+            ]
+        )()
+
+    def _gen_typescript_class(self) -> str:
         r = self._template_rng
         imp = r.choice(_TS_IMPORTS)
         imp_cls = r.choice(_CLASSES)
         cls = r.choice(_CLASSES)
-        m1, m2 = r.sample(_METHODS, 2)
-        v1, v2 = r.sample(_VARS, 2)
+        m1, m2, m3 = r.sample(_METHODS, 3)
+        v1, v2, v3 = r.sample(_VARS, 3)
         err = r.choice(_ERROR_MESSAGES)
 
         return f"""\
@@ -647,53 +1359,527 @@ interface {cls}Config {{{{
 }}}}
 
 export class {cls} {{{{
-  private {v1}: string;
-  private {v2}: number;
+  #{v1}: string;
+  #{v2}: number;
+  readonly {v3}: string;
 
   constructor(config: {cls}Config) {{{{
-    this.{v1} = config.{v1};
-    this.{v2} = config.{v2} ?? 0;
+    this.#{v1} = config.{v1};
+    this.#{v2} = config.{v2} ?? 0;
+    this.{v3} = crypto.randomUUID();
   }}}}
 
   async {m1}({v1}: string): Promise<void> {{{{
     try {{{{
       const {v2} = await this.{m2}({v1});
-      console.log(`${{{{this.{v1}}}}}: ${{{{{v2}}}}}`);
+      console.log(`${{{{this.#{v1}}}}}: ${{{{{v2}}}}}`);
     }}}} catch (err) {{{{
       throw new Error(`{err}`);
     }}}}
   }}}}
 
+  async {m3}(): Promise<boolean> {{{{
+    return this.#{v2} > 0;
+  }}}}
+
   private async {m2}({v1}: string): Promise<number> {{{{
-    return this.{v2};
+    return this.#{v2};
   }}}}
 }}}}
 """
 
-    def _gen_bash_output(self) -> str:
+    def _gen_typescript_http_handler(self) -> str:
         r = self._template_rng
-        cmd = r.choice(_CLI_COMMANDS)
-        files = r.sample(list(_FILE_PATHS), 5)
+        cls = r.choice(_CLASSES)
+        m1, m2 = r.sample(_METHODS, 2)
+        v1, v2 = r.sample(_VARS, 2)
+        route = r.choice(_HTTP_ROUTES)
+        err = r.choice(_ERROR_MESSAGES)
+
+        return f"""\
+import {{ Hono }} from 'hono';
+import {{ z }} from 'zod';
+import {{ {cls} }} from './{cls.lower()}';
+
+const {m1}Schema = z.object({{{{
+  {v1}: z.string().min(1).max(256),
+  {v2}: z.number().int().positive().optional(),
+}}}});
+
+type {m1.title()}Input = z.infer<typeof {m1}Schema>;
+
+const app = new Hono();
+
+app.post('{route}', async (c) => {{{{
+  const body = {m1}Schema.safeParse(await c.req.json());
+  if (!body.success) {{{{
+    return c.json({{{{ error: body.error.flatten() }}}}, 400);
+  }}}}
+
+  const svc = new {cls}();
+  try {{{{
+    const result = await svc.{m1}(body.data.{v1});
+    return c.json({{{{ status: 'ok', data: result }}}}, 201);
+  }}}} catch (err) {{{{
+    return c.json({{{{ error: '{err}' }}}}, 500);
+  }}}}
+}}}});
+
+app.get('{route}/:id', async (c) => {{{{
+  const id = c.req.param('id');
+  const svc = new {cls}();
+  const item = await svc.{m2}(id);
+  if (!item) return c.json({{{{ error: 'not found' }}}}, 404);
+  return c.json({{{{ status: 'ok', data: item }}}});
+}}}});
+
+export default app;
+"""
+
+    def _gen_typescript_types(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        v1, v2, v3 = r.sample(_VARS, 3)
+        m1, m2 = r.sample(_METHODS, 2)
+        err = r.choice(_ERROR_MESSAGES)
+
+        return f"""\
+export type {cls}Status = 'pending' | 'active' | 'failed' | 'completed';
+
+export interface {cls}Event {{{{
+  kind: '{m1}' | '{m2}' | 'error';
+  {v1}: string;
+  timestamp: number;
+}}}}
+
+export type {m1.title()}Event = Extract<{cls}Event, {{{{ kind: '{m1}' }}}}>;
+export type ErrorEvent = Extract<{cls}Event, {{{{ kind: 'error' }}}}>;
+
+export interface {cls}Config {{{{
+  readonly {v1}: string;
+  readonly {v2}: number;
+  readonly {v3}?: Record<string, unknown>;
+}}}}
+
+export type Partial{cls} = Partial<{cls}Config> & Pick<{cls}Config, '{v1}'>;
+
+export function is{cls}Event(e: unknown): e is {cls}Event {{{{
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    'kind' in e &&
+    typeof (e as {cls}Event).{v1} === 'string'
+  );
+}}}}
+
+export function assert{cls}Status(s: string): asserts s is {cls}Status {{{{
+  const valid: {cls}Status[] = ['pending', 'active', 'failed', 'completed'];
+  if (!valid.includes(s as {cls}Status)) {{{{
+    throw new Error(`{err}: ${{{{s}}}}`);
+  }}}}
+}}}}
+"""
+
+    def _gen_typescript_test(self) -> str:
+        r = self._template_rng
+        cls = r.choice(_CLASSES)
+        m1, m2, m3 = r.sample(_METHODS, 3)
+        v1, v2 = r.sample(_VARS, 2)
+        err = r.choice(_ERROR_MESSAGES)
         mod = r.choice(_MODULES)
+
+        return f"""\
+import {{ describe, it, expect, beforeEach, vi }} from 'vitest';
+import {{ {cls} }} from '../{mod}';
+
+describe('{cls}', () => {{{{
+  let instance: {cls};
+
+  beforeEach(() => {{{{
+    instance = new {cls}({{{{ {v1}: 'test', timeout: 5000 }}}});
+    vi.clearAllMocks();
+  }}}});
+
+  describe('{m1}', () => {{{{
+    it('should return expected value', async () => {{{{
+      const result = await instance.{m1}('{v2}');
+      expect(result).toBeDefined();
+      expect(typeof result).toBe('object');
+    }}}});
+
+    it('should throw on invalid input', async () => {{{{
+      await expect(instance.{m1}('')).rejects.toThrow('{err}');
+    }}}});
+  }}}});
+
+  describe('{m2}', () => {{{{
+    it('should call dependency', async () => {{{{
+      const spy = vi.spyOn(instance as any, '{m3}');
+      await instance.{m2}('{v1}');
+      expect(spy).toHaveBeenCalledOnce();
+    }}}});
+  }}}});
+
+  it('should handle concurrent calls', async () => {{{{
+    const promises = Array.from({{{{ length: 5 }}}}, () => instance.{m1}('{v1}'));
+    const results = await Promise.all(promises);
+    expect(results).toHaveLength(5);
+  }}}});
+}}}});
+"""
+
+    def _file_pool(self, language: str | None) -> tuple[str, ...]:
+        if language:
+            return _LANG_FILE_PATHS.get(language, _FILE_PATHS)
+        return _FILE_PATHS
+
+    def _gen_tool_use_block(self, language: str | None = None) -> str:
+        r = self._template_rng
+        return r.choice(
+            [
+                lambda: self._gen_tool_read(language=language),
+                lambda: self._gen_tool_edit(language=language),
+                lambda: self._gen_tool_search(language=language),
+                lambda: self._gen_tool_bash(language=language),
+            ]
+        )()
+
+    def _gen_tool_read(self, language: str | None = None) -> str:
+        r = self._template_rng
+        file_pool = self._file_pool(language)
+        f = r.choice(file_pool)
+        start_line = r.randint(1, 200)
+        cls = r.choice(_CLASSES)
+        m1, m2 = r.sample(_METHODS, 2)
+        v1, v2 = r.sample(_VARS, 2)
+        mod = r.choice(_MODULES)
+        err = r.choice(_ERROR_MESSAGES)
+
+        lang_lines: dict[str | None, list[str]] = {
+            "python": [
+                f"def {m1}(self, {v1}):",
+                f"self._{v1} = {v1}",
+                f"{v2} = {mod}.{m2}({v1})",
+                f"if {v1} is None:",
+                f'    raise ValueError("{err}")',
+                f"return {v2}",
+                f'logger.debug(f"{cls}.{m1}: {{{{{v1}}}}}")',
+                "",
+            ],
+            "go": [
+                f"func (s *{cls}) {m1.title()}(ctx context.Context) error {{",
+                f"s.{v1} = {v1}",
+                f"{v2}, err := s.{m2.title()}(ctx)",
+                "if err != nil {",
+                f'return fmt.Errorf("{err}: %w", err)',
+                "}",
+                "return nil",
+                "",
+            ],
+            "rust": [
+                f"pub async fn {m1}(&mut self) -> Result<()> {{",
+                f"let {v1} = self.{v2}.clone();",
+                f"let {v2} = self.{m2}(&{v1}).await?;",
+                f"if {v2}.is_empty() {{",
+                f'anyhow::bail!("{err}");',
+                "}",
+                "Ok(())",
+                "",
+            ],
+            "typescript": [
+                f"async {m1}({v1}: string): Promise<void> {{",
+                f"this.{v1} = {v1};",
+                f"const {v2} = await this.{m2}({v1});",
+                f"if (!{v2}) {{",
+                f"  throw new Error('{err}');",
+                "}",
+                f"console.log(`{cls}.{m1}: ${{{{{v2}}}}}`);",
+                "",
+            ],
+        }
+        code_lines = lang_lines.get(language, lang_lines["python"])
+
+        lines = []
+        for i in range(start_line, start_line + r.randint(15, 30)):
+            indent = "    " if r.random() > 0.3 else "        "
+            line_content = r.choice(code_lines)
+            lines.append(f"{i:>6}\t{indent}{line_content}")
+
+        content = "\n".join(lines)
+        return f"""\
+<tool_name>read</tool_name>
+<parameter name="file_path">{f}</parameter>
+<result>
+{content}
+</result>
+"""
+
+    def _gen_tool_edit(self, language: str | None = None) -> str:
+        r = self._template_rng
+        file_pool = self._file_pool(language)
+        f = r.choice(file_pool)
+        m1, m2 = r.sample(_METHODS, 2)
+        v1, v2 = r.sample(_VARS, 2)
+        cls = r.choice(_CLASSES)
+        err = r.choice(_ERROR_MESSAGES)
+
+        edits: dict[str | None, tuple[str, str]] = {
+            "python": (
+                f"    def {m1}(self, {v1}):\n        return self._{m2}({v1})",
+                f"    async def {m1}(self, {v1}: str) -> dict:\n"
+                f"        try:\n"
+                f"            {v2} = await self._{m2}({v1})\n"
+                f"            if {v2} is None:\n"
+                f'                raise ValueError("{err}")\n'
+                f'            return {{{{"status": "ok", "data": {v2}}}}}\n'
+                f"        except Exception as exc:\n"
+                f'            logger.error("{cls}.{m1} failed: %s", exc)\n'
+                f"            raise",
+            ),
+            "go": (
+                f"func (s *{cls}) {m1.title()}() error {{{{\n    return nil\n}}}}",
+                f"func (s *{cls}) {m1.title()}(ctx context.Context) error {{{{\n"
+                f"    {v2}, err := s.{m2.title()}(ctx)\n"
+                f"    if err != nil {{{{\n"
+                f'        return fmt.Errorf("{err}: %w", err)\n'
+                f"    }}}}\n"
+                f"    s.{v1} = {v2}\n"
+                f"    return nil\n"
+                f"}}}}",
+            ),
+            "rust": (
+                f"fn {m1}(&self) -> Result<()> {{{{\n    Ok(())\n}}}}",
+                f"async fn {m1}(&mut self) -> Result<()> {{{{\n"
+                f"    let {v2} = self.{m2}().await?;\n"
+                f'    anyhow::ensure!(!{v2}.is_empty(), "{err}");\n'
+                f"    self.{v1} = {v2};\n"
+                f"    Ok(())\n"
+                f"}}}}",
+            ),
+            "typescript": (
+                f"{m1}({v1}: string) {{{{\n    return this.{m2}({v1});\n}}}}",
+                f"async {m1}({v1}: string): Promise<Record<string, unknown>> {{{{\n"
+                f"    const {v2} = await this.{m2}({v1});\n"
+                f"    if (!{v2}) throw new Error('{err}');\n"
+                f"    return {{ status: 'ok', data: {v2} }};\n"
+                f"}}}}",
+            ),
+        }
+        old_str, new_str = edits.get(language, edits["python"])
+
+        return f"""\
+<tool_name>edit</tool_name>
+<parameter name="file_path">{f}</parameter>
+<parameter name="old_string">{old_str}</parameter>
+<parameter name="new_string">{new_str}</parameter>
+<result>
+The file {f} has been updated successfully.
+</result>
+"""
+
+    def _gen_tool_search(self, language: str | None = None) -> str:
+        r = self._template_rng
+        file_pool = self._file_pool(language)
+
+        lang_patterns: dict[str | None, list[str]] = {
+            "python": [
+                f"class {r.choice(_CLASSES)}",
+                f"def {r.choice(_METHODS)}",
+                f"import {r.choice(_MODULES)}",
+                f"async def {r.choice(_METHODS)}",
+            ],
+            "go": [
+                f"func {r.choice(_METHODS).title()}",
+                f"type {r.choice(_CLASSES)} struct",
+                f'"{r.choice(list(_GO_PACKAGES))}"',
+                f"func New{r.choice(_CLASSES)}",
+            ],
+            "rust": [
+                f"fn {r.choice(_METHODS)}",
+                f"pub struct {r.choice(_CLASSES)}",
+                f"use {r.choice(list(_RUST_CRATES))}",
+                f"impl {r.choice(_CLASSES)}",
+            ],
+            "typescript": [
+                f"class {r.choice(_CLASSES)}",
+                f"export function {r.choice(_METHODS)}",
+                f"import {{ {r.choice(_CLASSES)} }}",
+                f"interface {r.choice(_CLASSES)}",
+            ],
+        }
+        patterns = lang_patterns.get(language, lang_patterns["python"])
+        pattern = r.choice([*patterns, r.choice(_ERROR_MESSAGES)])
+
+        files = r.sample(list(file_pool), min(r.randint(3, 6), len(file_pool)))
+        matches = []
+        for f in files:
+            line_num = r.randint(1, 400)
+            ctx = r.choice(_VARS)
+            matches.append(f"{f}:{line_num}:    {pattern}({ctx})")
+
+        content = "\n".join(matches)
+        return f"""\
+<tool_name>search</tool_name>
+<parameter name="pattern">{pattern}</parameter>
+<result>
+{content}
+</result>
+"""
+
+    def _gen_tool_bash(self, language: str | None = None) -> str:
+        r = self._template_rng
+        mod = r.choice(_MODULES)
+        cls = r.choice(_CLASSES)
+        methods = r.sample(list(_METHODS), 4)
+        n_pass = r.randint(10, 80)
+        n_fail = r.randint(0, 3)
+        dur = r.uniform(0.5, 30.0)
+
+        lang_cmds: dict[str | None, str] = {
+            "python": "pytest -xvs tests/",
+            "go": "go test -v ./...",
+            "rust": "cargo test",
+            "typescript": "npx vitest run",
+        }
+        cmd = lang_cmds.get(language, r.choice(_CLI_COMMANDS))
+
+        test_lines = []
+        for m in methods:
+            passed = r.random() > 0.2
+            if language == "go":
+                status = "ok" if passed else "FAIL"
+                test_lines.append(
+                    f"--- {status}: Test{m.title()} ({r.uniform(0.001, 2.0):.3f}s)"
+                )
+            elif language == "rust":
+                status = "ok" if passed else "FAILED"
+                test_lines.append(f"test {mod}::{cls.lower()}::test_{m} ... {status}")
+            elif language == "typescript":
+                mark = "\u2713" if passed else "\u2717"
+                test_lines.append(f"  {mark} {cls} > {m} ({r.randint(1, 500)} ms)")
+            else:
+                status = "PASSED" if passed else "FAILED"
+                test_lines.append(f"tests/test_{mod}.py::Test{cls}::test_{m} {status}")
+        test_output = "\n".join(test_lines)
+
+        return f"""\
+<tool_name>bash</tool_name>
+<parameter name="command">{cmd}</parameter>
+<result>
+{test_output}
+
+{n_pass} passed, {n_fail} failed in {dur:.2f}s
+</result>
+"""
+
+    def _gen_bash_output(self, language: str | None = None) -> str:
+        r = self._template_rng
+        return r.choice(
+            [
+                lambda: self._gen_bash_file_explore(language=language),
+                lambda: self._gen_bash_build_test(language=language),
+                lambda: self._gen_bash_git_workflow(language=language),
+            ]
+        )()
+
+    def _gen_bash_file_explore(self, language: str | None = None) -> str:
+        r = self._template_rng
+        file_pool = self._file_pool(language)
+        ext_cmds: dict[str | None, tuple[str, str]] = {
+            "python": ("find . -name '*.py'", "src/**/*.py"),
+            "go": ("find . -name '*.go'", "**/*.go"),
+            "rust": ("find . -name '*.rs'", "src/**/*.rs"),
+            "typescript": ("find . -name '*.ts'", "src/**/*.ts"),
+        }
+        find_cmd, glob_pat = ext_cmds.get(language, ext_cmds["python"])
+        cmd = r.choice(("ls -la", find_cmd, "tree src/", "wc -l"))
+        files = r.sample(list(file_pool), min(r.randint(4, 8), len(file_pool)))
         file_listing = "\n".join(
             f"  {f:<42} {r.randint(1, 500):>4} lines  {r.randint(1, 50):>3}K"
             for f in files
         )
-        n_pkgs = r.randint(10, 200)
-        build_time = r.uniform(0.5, 30.0)
+        total_lines = r.randint(500, 15000)
 
         return f"""\
 $ {cmd}
 {file_listing}
-$ cd {mod} && make build
-Building {mod}...
-Compiling {n_pkgs} packages
-  Finished release target(s) in {build_time:.1f}s
-$ echo $?
-0
+$ wc -l {glob_pat} | tail -1
+  {total_lines} total
+$ du -sh .
+  {r.randint(1, 500)}M\t.
 """
 
-    def _gen_json_response(self) -> str:
+    def _gen_bash_build_test(self, language: str | None = None) -> str:
+        r = self._template_rng
+        mod = r.choice(_MODULES)
+        n_pkgs = r.randint(10, 200)
+        build_time = r.uniform(0.5, 30.0)
+        n_pass = r.randint(20, 150)
+        n_fail = r.randint(0, 5)
+        test_time = r.uniform(1.0, 60.0)
+
+        lang_build: dict[str | None, tuple[str, str]] = {
+            "python": (
+                "pip install -e '.[dev]'",
+                f"pytest tests/ -x\n  {n_pass} passed, {n_fail} failed in {test_time:.1f}s",
+            ),
+            "go": (
+                f"go build ./cmd/{mod}\n  Compiled {n_pkgs} packages in {build_time:.1f}s",
+                f"go test -v -race ./...\n  {n_pass} passed, {n_fail} failed in {test_time:.1f}s",
+            ),
+            "rust": (
+                f"cargo build --release\n  Compiling {n_pkgs} crates\n  Finished in {build_time:.1f}s",
+                f"cargo test\n  {n_pass} passed, {n_fail} failed in {test_time:.1f}s",
+            ),
+            "typescript": (
+                f"npm ci && npm run build\n  Resolved {n_pkgs} packages in {build_time:.1f}s",
+                f"npx vitest run\n  {n_pass} passed, {n_fail} failed in {test_time:.1f}s",
+            ),
+        }
+        build_cmd, test_cmd = lang_build.get(language, lang_build["python"])
+
+        return f"""\
+$ {build_cmd}
+$ {test_cmd}
+$ echo $?
+{"0" if n_fail == 0 else "1"}
+"""
+
+    def _gen_bash_git_workflow(self, language: str | None = None) -> str:
+        r = self._template_rng
+        file_pool = self._file_pool(language)
+        branch = f"{r.choice(_MODULES)}/{r.choice(_METHODS)}-{r.choice(_VARS)}"
+        mod = r.choice(_MODULES)
+        files = r.sample(list(file_pool), min(3, len(file_pool)))
+        changed = "\n".join(f"  M {f}" for f in files)
+        hash1 = f"{r.randint(1000000, 9999999):07x}"
+        hash2 = f"{r.randint(1000000, 9999999):07x}"
+
+        return f"""\
+$ git checkout -b {branch}
+Switched to a new branch '{branch}'
+$ git status
+On branch {branch}
+Changes not staged for commit:
+{changed}
+$ git add -A && git commit -m "feat: {r.choice(_METHODS)} {r.choice(_VARS)} in {mod}"
+[{branch} {hash1}] feat: {r.choice(_METHODS)} {r.choice(_VARS)} in {mod}
+ {len(files)} files changed, {r.randint(10, 200)} insertions(+), {r.randint(1, 50)} deletions(-)
+$ git log --oneline -3
+{hash1} feat: {r.choice(_METHODS)} {r.choice(_VARS)} in {mod}
+{hash2} fix: {r.choice(_ERROR_MESSAGES)}
+"""
+
+    def _gen_json_response(self, language: str | None = None) -> str:
+        return self._template_rng.choice(
+            [
+                self._gen_json_object,
+                self._gen_json_paginated,
+                self._gen_json_error,
+            ]
+        )()
+
+    def _gen_json_object(self) -> str:
         r = self._template_rng
         m1, m2 = r.sample(_METHODS, 2)
         v1, v2, v3 = r.sample(_VARS, 3)
@@ -727,11 +1913,68 @@ $ echo $?
 }}}}
 """
 
+    def _gen_json_paginated(self) -> str:
+        r = self._template_rng
+        v1, v2 = r.sample(_VARS, 2)
+        cls = r.choice(_CLASSES)
+        total = r.randint(50, 5000)
+        page = r.randint(1, 20)
+        per_page = r.choice([10, 20, 50, 100])
+        items = [
+            f'    {{{{"id": "{cls.lower()}_{r.randint(1000, 9999)}", "{v1}": "{r.choice(_MODULES)}", "{v2}": {r.randint(0, 100)}}}}}'
+            for _ in range(min(per_page, 5))
+        ]
+        items_str = ",\n".join(items)
+
+        return f"""\
+{{{{
+  "data": [
+{items_str}
+  ],
+  "pagination": {{{{
+    "page": {page},
+    "per_page": {per_page},
+    "total": {total},
+    "total_pages": {(total + per_page - 1) // per_page},
+    "has_next": {str(page * per_page < total).lower()},
+    "has_prev": {str(page > 1).lower()}
+  }}}}
+}}}}
+"""
+
+    def _gen_json_error(self) -> str:
+        r = self._template_rng
+        err = r.choice(_ERROR_MESSAGES)
+        status = r.choice(_STATUS_CODES)
+        code = status.split()[0]
+        trace_id = f"{r.randint(100000, 999999):06x}-{r.randint(100000, 999999):06x}"
+        v1 = r.choice(_VARS)
+        cls = r.choice(_CLASSES)
+
+        return f"""\
+{{{{
+  "error": {{{{
+    "code": {code},
+    "status": "{status}",
+    "message": "{err}",
+    "details": [
+      {{{{
+        "field": "{v1}",
+        "reason": "{err}",
+        "type": "{cls}"
+      }}}}
+    ],
+    "trace_id": "{trace_id}",
+    "documentation_url": "https://docs.example.com/errors/{code}"
+  }}}}
+}}}}
+"""
+
     def _gen_error_traceback(self, language: str | None = None) -> str:
         r = self._template_rng
         err = r.choice(_ERROR_MESSAGES)
         cls = r.choice(_CLASSES)
-        m1, m2 = r.sample(_METHODS, 2)
+        m1, m2, m3, m4 = r.sample(_METHODS, 4)
 
         lang_to_kind = {
             "python": "python",
@@ -747,37 +1990,61 @@ $ echo $?
         file_pool = (
             _LANG_FILE_PATHS.get(language, _FILE_PATHS) if language else _FILE_PATHS
         )
-        f1, f2, f3 = r.sample(list(file_pool), 3)
+        f1, f2, f3, f4 = r.sample(list(file_pool), 4)
         if kind == "python":
             v = r.choice(_VARS)
             mod = r.choice(_MODULES)
+            err2 = r.choice(_ERROR_MESSAGES)
+            cls2 = r.choice(_CLASSES)
             return f"""\
 Traceback (most recent call last):
   File "{f1}", line {r.randint(10, 500)}, in {m1}
     result = self.{m2}(data)
   File "{f2}", line {r.randint(10, 300)}, in {m2}
+    {v} = await self._{m3}()
+  File "{f3}", line {r.randint(10, 200)}, in _{m3}
+    return {mod}.{m4}({v})
+  File "{f4}", line {r.randint(1, 200)}, in {m4}
     raise ValueError("{err}")
-  File "{f3}", line {r.randint(1, 200)}, in __init__
-    self._{v} = {mod}.{m1}()
 ValueError: {err}
 
 During handling of the above exception, another exception occurred:
 
-RuntimeError: {cls}.{m1}() failed: {err}
+Traceback (most recent call last):
+  File "{f1}", line {r.randint(10, 500)}, in {m1}
+    self._{v} = {mod}.{m1}()
+  File "{f2}", line {r.randint(10, 300)}, in __init__
+    raise RuntimeError("{err2}")
+RuntimeError: {cls}.{m1}() failed: {err2}
+
+The above exception was the direct cause of the following exception:
+
+{cls2}Error: {cls}.{m1}() aborted after {err}: {err2}
 """
         elif kind == "go":
+            g1 = r.randint(1, 100)
+            g2 = r.randint(101, 200)
+            cls2 = r.choice(_CLASSES)
             return f"""\
-goroutine {r.randint(1, 100)} [running]:
+goroutine {g1} [running]:
 runtime/debug.Stack()
     /usr/local/go/src/runtime/debug/stack.go:{r.randint(10, 50)}
 main.{cls}.{m1.title()}(...)
     {f1}:{r.randint(10, 300)}
 main.{cls}.{m2.title()}(0xc000{r.randint(10000, 99999):05x})
     {f2}:{r.randint(10, 300)}
+main.{cls}.{m3.title()}(0xc000{r.randint(10000, 99999):05x}, 0x{r.randint(100, 999):x})
+    {f3}:{r.randint(10, 300)}
 panic: {err}
+
+goroutine {g2} [select]:
+main.{cls2}.{m4.title()}(0xc000{r.randint(10000, 99999):05x})
+    {f4}:{r.randint(10, 300)} +0x{r.randint(100, 999):x}
+created by main.New{cls2}
+    {f4}:{r.randint(10, 100)}
 """
         elif kind == "rust":
-            mod1, mod2 = r.sample(list(_MODULES), 2)
+            mod1, mod2, mod3 = r.sample(list(_MODULES), 3)
             return f"""\
 thread 'main' panicked at '{err}', {f1}:{r.randint(10, 300)}
 stack backtrace:
@@ -786,39 +2053,50 @@ stack backtrace:
              at {f1}:{r.randint(10, 300)}
    2: {mod2}::{cls}::{m2}
              at {f2}:{r.randint(10, 300)}
-   3: std::rt::lang_start
+   3: {mod3}::{cls}::{m3}
+             at {f3}:{r.randint(10, 300)}
+   4: {mod1}::main
+             at {f4}:{r.randint(10, 300)}
+   5: std::rt::lang_start::{{{{closure}}}}
+             at /rustc/src/rt.rs:{r.randint(50, 200)}
+   6: std::rt::lang_start
              at /rustc/src/rt.rs:{r.randint(50, 200)}
 note: run with `RUST_BACKTRACE=1` for a full backtrace
 """
         else:
             async_cls = r.choice(_CLASSES)
             async_method = r.choice(_METHODS)
+            cls2 = r.choice(_CLASSES)
             return f"""\
 Error: {err}
     at {cls}.{m1} ({f1}:{r.randint(10, 300)}:{r.randint(1, 40)})
     at {cls}.{m2} ({f2}:{r.randint(10, 300)}:{r.randint(1, 40)})
+    at {cls2}.{m3} ({f3}:{r.randint(10, 300)}:{r.randint(1, 40)})
     at processTicksAndRejections (node:internal/process/task_queues:{r.randint(50, 100)})
-    at async {async_cls}.{async_method} ({f3}:{r.randint(10, 300)})
+    at async {async_cls}.{async_method} ({f4}:{r.randint(10, 300)})
+Caused by: {r.choice(_ERROR_MESSAGES)}
+    at {cls2}.{m4} ({f3}:{r.randint(10, 300)}:{r.randint(1, 40)})
 """
 
-    def _gen_git_diff(self) -> str:
+    def _gen_git_diff(self, language: str | None = None) -> str:
         r = self._template_rng
-        f1, f2 = r.sample(list(_FILE_PATHS), 2)
-        m1, m2 = r.sample(_METHODS, 2)
-        v1, v2 = r.sample(_VARS, 2)
+        file_pool = self._file_pool(language)
+        f1, f2, f3 = r.sample(list(file_pool), 3)
+        m1, m2, m3 = r.sample(_METHODS, 3)
+        v1, v2, v3 = r.sample(_VARS, 3)
         cls = r.choice(_CLASSES)
         ln = r.randint(10, 200)
+        ln2 = r.randint(50, 300)
         err = r.choice(_ERROR_MESSAGES)
-        idx1a, idx1b = r.randint(1000000, 9999999), r.randint(1000000, 9999999)
-        idx2a, idx2b = r.randint(1000000, 9999999), r.randint(1000000, 9999999)
-        hunk2_old, hunk2_new = r.randint(1, 50), r.randint(1, 50)
+        mod = r.choice(_MODULES)
+        idx = lambda: f"{r.randint(1000000, 9999999):07x}"  # noqa: E731
+        hunk_old, hunk_new = r.randint(1, 50), r.randint(1, 50)
+        commit_hash = f"{r.randint(1000000, 9999999):07x}"
 
-        return f"""\
-diff --git a/{f1} b/{f1}
-index {idx1a:07x}..{idx1b:07x} 100644
---- a/{f1}
-+++ b/{f1}
-@@ -{ln},8 +{ln},12 @@ class {cls}:
+        lang_hunks: dict[str | None, tuple[str, str, str]] = {
+            "python": (
+                f"""\
+@@ -{ln},8 +{ln},14 @@ class {cls}:
      def {m1}(self):
 -        {v1} = self._{m2}()
 -        return {v1}
@@ -829,18 +2107,124 @@ index {idx1a:07x}..{idx1b:07x} 100644
 +            return {v1}
 +        except Exception as e:
 +            logger.error(f"{cls}.{m1} failed: {{{{e}}}}")
-+            raise
++            raise""",
+                f"""\
+@@ -{ln2},5 +{ln2},9 @@ def {m2}({v1}):
+     {v2} = {mod}.{m3}({v1})
+-    return {v2}
++    if not {v2}:
++        raise RuntimeError("{err}")
++    logger.info("{m2} completed: %s", {v2})
++    return {{{{"{v1}": {v2}, "status": "ok"}}}}""",
+                f"""\
+@@ -{hunk_old},3 +{hunk_new},7 @@
++import logging
++from {mod} import {cls}
++
++logger = logging.getLogger(__name__)""",
+            ),
+            "go": (
+                f"""\
+@@ -{ln},6 +{ln},12 @@ func (s *{cls}) {m1.title()}() error {{{{
+-    return nil
++    {v1}, err := s.{m2.title()}(ctx)
++    if err != nil {{{{
++        return fmt.Errorf("{err}: %w", err)
++    }}}}
++    s.{v2} = {v1}
++    return nil""",
+                f"""\
+@@ -{ln2},4 +{ln2},8 @@ func (s *{cls}) {m2.title()}() (string, error) {{{{
+     s.mu.RLock()
+     defer s.mu.RUnlock()
+-    return s.{v1}, nil
++    if s.{v1} == "" {{{{
++        return "", fmt.Errorf("{err}")
++    }}}}
++    return fmt.Sprintf("%s:%d", s.{v1}, s.{v2}), nil""",
+                f"""\
+@@ -{hunk_old},3 +{hunk_new},7 @@
++import (
++    "fmt"
++    "log/slog"
++)""",
+            ),
+            "rust": (
+                f"""\
+@@ -{ln},5 +{ln},11 @@ impl {cls} {{{{
+     pub fn {m1}(&self) -> Result<()> {{{{
+-        Ok(())
++        let {v1} = self.{m2}()?;
++        if {v1}.is_empty() {{{{
++            anyhow::bail!("{err}");
++        }}}}
++        tracing::info!("{m1} completed: {{}}", {v1});
++        Ok(())""",
+                f"""\
+@@ -{ln2},4 +{ln2},7 @@ impl {cls} {{{{
+     fn {m2}(&self) -> Result<String> {{{{
+-        Ok(self.{v1}.clone())
++        let {v2} = &self.{v1};
++        anyhow::ensure!(!{v2}.is_empty(), "{err}");
++        Ok({v2}.clone())""",
+                f"""\
+@@ -{hunk_old},3 +{hunk_new},6 @@
++use anyhow::Result;
++use tracing;
++use {mod}::{cls};""",
+            ),
+            "typescript": (
+                f"""\
+@@ -{ln},6 +{ln},12 @@ export class {cls} {{{{
+   {m1}({v1}: string) {{{{
+-    return this.{m2}({v1});
++    try {{{{
++      const {v2} = await this.{m2}({v1});
++      if (!{v2}) throw new Error('{err}');
++      return {{ status: 'ok', data: {v2} }};
++    }}}} catch (err) {{{{
++      console.error(`{cls}.{m1} failed: ${{{{err}}}}`);
++      throw err;
++    }}}}""",
+                f"""\
+@@ -{ln2},4 +{ln2},7 @@ export class {cls} {{{{
+   private {m2}({v1}: string): {v2} {{{{
+-    return this.#{v1};
++    if (!this.#{v1}) {{{{
++      throw new Error('{err}');
++    }}}}
++    return this.#{v1};""",
+                f"""\
+@@ -{hunk_old},3 +{hunk_new},6 @@
++import {{ {cls} }} from './{mod}';
++import type {{ {v3.title()} }} from './types';
++""",
+            ),
+        }
+        hunk1, hunk2, hunk3 = lang_hunks.get(language, lang_hunks["python"])
 
-     def {m2}(self):
-         return self._{v2}
+        return f"""\
+commit {commit_hash}
+Author: dev <dev@example.com>
+Date:   Mon Jan 15 14:32:00 2025 +0000
+
+    feat({mod}): add async {m1} with error handling
+
+diff --git a/{f1} b/{f1}
+index {idx()}..{idx()} 100644
+--- a/{f1}
++++ b/{f1}
+{hunk1}
 diff --git a/{f2} b/{f2}
-index {idx2a:07x}..{idx2b:07x} 100644
+index {idx()}..{idx()} 100644
 --- a/{f2}
 +++ b/{f2}
-@@ -{hunk2_old},3 +{hunk2_new},5 @@
-+import logging
-+
-+logger = logging.getLogger(__name__)
+{hunk2}
+diff --git a/{f3} b/{f3}
+index {idx()}..{idx()} 100644
+--- a/{f3}
++++ b/{f3}
+{hunk3}
 """
 
     def _gen_cicd_output(self, language: str | None = None) -> str:
@@ -1106,6 +2490,10 @@ clean:
         }
         example = lang_examples.get(language, r.choice(list(lang_examples.values())))
 
+        v2, v3 = r.sample(_VARS, 2)
+        err2 = r.choice(_ERROR_MESSAGES)
+        env_var = f"AIPERF_{mod.upper()}_{v1.upper()}"
+
         return f"""\
 # {cls}
 
@@ -1118,6 +2506,17 @@ The `{cls}` class provides {m1} and {m2} operations for the `{mod}` module.
 ```{example["fence"]}
 {example["code"]}
 ```
+
+## Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `{v1}` | {example["param_type"]} | required | Primary {v1} identifier |
+| `{v2}` | {example["param_type"]} | `None` | Optional {v2} override |
+| `{v3}` | int | `10` | Maximum {v3} per batch |
+| `timeout` | float | `30.0` | Operation timeout in seconds |
+
+Environment variable override: `{env_var}`
 
 ## API Reference
 
@@ -1135,6 +2534,14 @@ Performs the {m1} operation.
 Performs the {m2} operation.
 
 **Raises:** `ValueError` if {err}.
+
+## Errors
+
+| Error | Condition | Recovery |
+|-------|-----------|----------|
+| `ValueError` | {err} | Check {v1} parameter |
+| `RuntimeError` | {err2} | Retry with backoff |
+| `TimeoutError` | Operation exceeds timeout | Increase timeout or reduce {v3} |
 """
 
     def _gen_test_output(self, language: str | None = None) -> str:
@@ -1219,7 +2626,7 @@ Performs the {m2} operation.
     def _gen_user_prompt(self) -> str:
         r = self._template_rng
         template = r.choice(_USER_REQUESTS)
-        return template.format(
+        base = template.format(
             module=r.choice(_MODULES),
             cls=r.choice(_CLASSES),
             method=r.choice(_METHODS),
@@ -1227,3 +2634,49 @@ Performs the {m2} operation.
             error=r.choice(_ERROR_MESSAGES),
             type=r.choice(_TYPES),
         )
+
+        if r.random() < 0.3:
+            base += "\n\n" + self._gen_prompt_context()
+        return base
+
+    def _gen_prompt_context(self) -> str:
+        r = self._template_rng
+        kind = r.choice(["snippet", "error_output", "constraint"])
+        if kind == "snippet":
+            cls = r.choice(_CLASSES)
+            m1 = r.choice(_METHODS)
+            v1, v2 = r.sample(_VARS, 2)
+            f = r.choice(_FILE_PATHS)
+            return (
+                f"Here's the relevant code from `{f}`:\n\n"
+                f"```\n"
+                f"class {cls}:\n"
+                f"    def {m1}(self, {v1}):\n"
+                f"        {v2} = self._{v1}\n"
+                f"        return {v2}\n"
+                f"```"
+            )
+        elif kind == "error_output":
+            err = r.choice(_ERROR_MESSAGES)
+            cls = r.choice(_CLASSES)
+            m1 = r.choice(_METHODS)
+            f = r.choice(_FILE_PATHS)
+            return (
+                f"Error output:\n\n"
+                f"```\n"
+                f'  File "{f}", line {r.randint(10, 300)}, in {m1}\n'
+                f'    raise RuntimeError("{err}")\n'
+                f"RuntimeError: {err}\n"
+                f"```"
+            )
+        else:
+            return r.choice(
+                (
+                    "Constraint: no new dependencies allowed in this PR.",
+                    "This is on the hot path — keep allocations minimal.",
+                    "Must remain backward-compatible with the v1 API.",
+                    f"The {r.choice(_MODULES)} service is frozen — only touch {r.choice(_MODULES)}.",
+                    f"Target is under {r.randint(5, 50)}ms p99 latency.",
+                    "We need this for the release on Friday — keep it simple.",
+                )
+            )

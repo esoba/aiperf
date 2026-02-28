@@ -13,6 +13,7 @@ from aiperf.common.config import (
 )
 from aiperf.common.models.dataset_models import CacheLayerSizes
 from aiperf.dataset.composer.coding_session import CodingSessionComposer
+from aiperf.dataset.loader.models import CodingTrace
 
 
 @pytest.fixture
@@ -756,3 +757,464 @@ class TestCodingSessionConfigDefaults:
         """thinking_strip_probability defaults to 1.0 (always strip)."""
         cfg = CodingSessionConfig(enabled=True)
         assert cfg.thinking_strip_probability == 1.0
+
+
+# ============================================================================
+# CodingTrace Export Tests
+# ============================================================================
+
+
+def _make_export_config(**overrides):
+    """Helper to build a UserConfig for trace export tests."""
+    session_kwargs = {
+        "enabled": True,
+        "num_sessions": 3,
+        "system_prompt_tokens": 100,
+        "new_tokens_mean": 500,
+        "new_tokens_median": 300,
+        "max_prompt_tokens": 5000,
+        "initial_prefix_mean": 1000,
+        "initial_prefix_median": 800,
+        "generation_length_mean": 100,
+        "generation_length_median": 80,
+        "block_size": 64,
+        "l1_tokens": 640,
+        "l2_tokens": 128,
+        "subagent_probability": 0.0,
+        "parallel_probability": 0.0,
+        "thinking_tokens_mean": 0,
+    }
+    session_kwargs.update(overrides)
+    return UserConfig(
+        endpoint=EndpointConfig(model_names=["test_model"], streaming=True),
+        loadgen=LoadGeneratorConfig(benchmark_duration=300),
+        input=InputConfig(
+            coding_session=CodingSessionConfig(**session_kwargs),
+            prompt=PromptConfig(),
+        ),
+    )
+
+
+class TestToCodingTracesBasic:
+    """Tests for basic to_coding_traces() conversion."""
+
+    def test_produces_one_trace_per_session(self, mock_tokenizer):
+        config = _make_export_config(num_sessions=3)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        assert len(traces) == 3
+
+    def test_trace_ids_match_session_ids(self, mock_tokenizer):
+        config = _make_export_config(num_sessions=2)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        assert traces[0].id == "coding_session_0000"
+        assert traces[1].id == "coding_session_0001"
+
+    def test_trace_has_correct_metadata(self, mock_tokenizer):
+        config = _make_export_config(
+            num_sessions=1, block_size=64, system_prompt_tokens=100, l1_tokens=640
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        trace = traces[0]
+        assert trace.block_size == 64
+        assert trace.system_tokens == 100
+        assert trace.tool_tokens == 640
+
+    def test_request_count_matches_turn_count(self, mock_tokenizer):
+        config = _make_export_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        parent_convs = [c for c in conversations if not c.is_subagent_child]
+        assert len(traces[0].requests) == len(parent_convs[0].turns)
+
+    def test_request_tokens_match_turns(self, mock_tokenizer):
+        config = _make_export_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        parent = [c for c in conversations if not c.is_subagent_child][0]
+        for req, turn in zip(traces[0].requests, parent.turns, strict=True):
+            assert req.input_tokens == turn.input_tokens
+            assert req.output_tokens == turn.max_tokens
+            assert req.hash_ids == turn.hash_ids
+
+    def test_last_request_has_end_turn_stop(self, mock_tokenizer):
+        config = _make_export_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        assert traces[0].requests[-1].stop == "end_turn"
+
+    def test_non_last_requests_have_tool_use_stop(self, mock_tokenizer):
+        config = _make_export_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        for req in traces[0].requests[:-1]:
+            assert req.stop == "tool_use"
+
+    def test_raises_before_create_dataset(self, mock_tokenizer):
+        config = _make_export_config()
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        with pytest.raises(RuntimeError, match="Must call create_dataset"):
+            composer.to_coding_traces()
+
+    def test_trace_validates_as_coding_trace(self, mock_tokenizer):
+        """Exported traces are valid CodingTrace models."""
+        config = _make_export_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        for trace in traces:
+            # Round-trip through model_validate
+            data = trace.model_dump(by_alias=True)
+            reloaded = CodingTrace.model_validate(data)
+            assert reloaded.id == trace.id
+            assert len(reloaded.requests) == len(trace.requests)
+
+
+class TestToCodingTracesWithSubagents:
+    """Tests for subagent nesting in to_coding_traces()."""
+
+    @pytest.fixture
+    def subagent_config(self):
+        return _make_export_config(
+            num_sessions=3,
+            subagent_probability=1.0,
+            subagent_count_mean=2.0,
+            subagent_count_max=3,
+            subagent_turns_mean=3,
+            subagent_turns_median=2,
+            subagent_system_tokens=200,
+            subagent_new_tokens_mean=300,
+            subagent_new_tokens_median=200,
+            subagent_max_prompt_tokens=3000,
+        )
+
+    def test_subagent_children_nested_in_requests(
+        self, subagent_config, mock_tokenizer
+    ):
+        composer = CodingSessionComposer(subagent_config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+
+        # Find at least one trace with nested requests
+        has_nested = False
+        for trace in traces:
+            for req in trace.requests:
+                if req.requests:
+                    has_nested = True
+                    break
+        assert has_nested, "Expected nested subagent requests"
+
+    def test_nested_request_token_counts(self, subagent_config, mock_tokenizer):
+        """Nested subagent requests have valid token counts."""
+        composer = CodingSessionComposer(subagent_config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        for trace in traces:
+            for req in trace.requests:
+                for nested in req.requests:
+                    if nested.type == "subagent" and nested.input_tokens == 0:
+                        # Container wrapper — actual child requests are inside
+                        for child in nested.requests:
+                            assert child.input_tokens > 0
+                            assert child.output_tokens > 0
+                    else:
+                        assert nested.input_tokens > 0
+                        assert nested.output_tokens > 0
+
+
+class TestToCodingTracesWithParallel:
+    """Tests for parallel group nesting in to_coding_traces()."""
+
+    @pytest.fixture
+    def parallel_config(self):
+        return _make_export_config(
+            num_sessions=3,
+            parallel_probability=1.0,
+            parallel_fan_out_mean=3.0,
+            parallel_fan_out_max=4,
+            parallel_branch_tokens_mean=500,
+            parallel_branch_tokens_median=300,
+        )
+
+    def test_parallel_groups_produce_nested_requests(
+        self, parallel_config, mock_tokenizer
+    ):
+        composer = CodingSessionComposer(parallel_config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+
+        has_nested = False
+        for trace in traces:
+            for req in trace.requests:
+                if req.requests:
+                    has_nested = True
+                    assert len(req.requests) >= 2
+                    break
+        assert has_nested, "Expected nested parallel requests"
+
+
+class TestWriteTraces:
+    """Tests for write_traces() serialization."""
+
+    def test_writes_json_files(self, mock_tokenizer, tmp_path):
+        config = _make_export_config(num_sessions=2)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        CodingSessionComposer.write_traces(traces, tmp_path)
+
+        json_files = sorted(tmp_path.glob("*.json"))
+        assert len(json_files) == 2
+        assert json_files[0].name == "coding_session_0000.json"
+        assert json_files[1].name == "coding_session_0001.json"
+
+    def test_written_files_are_valid_json(self, mock_tokenizer, tmp_path):
+        import orjson
+
+        config = _make_export_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        CodingSessionComposer.write_traces(traces, tmp_path)
+
+        json_file = tmp_path / "coding_session_0000.json"
+        data = orjson.loads(json_file.read_bytes())
+        assert data["id"] == "coding_session_0000"
+        assert "requests" in data
+        assert len(data["requests"]) > 0
+
+    def test_written_files_use_alias_names(self, mock_tokenizer, tmp_path):
+        """JSON uses 'in'/'out' aliases, not 'input_tokens'/'output_tokens'."""
+        import orjson
+
+        config = _make_export_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        CodingSessionComposer.write_traces(traces, tmp_path)
+
+        json_file = tmp_path / "coding_session_0000.json"
+        data = orjson.loads(json_file.read_bytes())
+        first_req = data["requests"][0]
+        assert "in" in first_req
+        assert "out" in first_req
+
+    def test_written_files_round_trip_to_coding_trace(self, mock_tokenizer, tmp_path):
+        """Written JSON files can be parsed back into CodingTrace objects."""
+        import orjson
+
+        config = _make_export_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        CodingSessionComposer.write_traces(traces, tmp_path)
+
+        json_file = tmp_path / "coding_session_0000.json"
+        data = orjson.loads(json_file.read_bytes())
+        reloaded = CodingTrace.model_validate(data)
+        assert reloaded.id == traces[0].id
+        assert len(reloaded.requests) == len(traces[0].requests)
+
+    def test_creates_output_directory(self, mock_tokenizer, tmp_path):
+        config = _make_export_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        nested_dir = tmp_path / "nested" / "output"
+        CodingSessionComposer.write_traces(traces, nested_dir)
+
+        assert nested_dir.exists()
+        assert len(list(nested_dir.glob("*.json"))) == 1
+
+
+class TestRoundTrip:
+    """Test full round-trip: CodingSessionComposer -> CodingTrace JSON -> CodingTraceLoader."""
+
+    def test_round_trip_basic(self, mock_tokenizer, tmp_path):
+        """Generate -> export -> load -> verify structure matches."""
+        import orjson
+
+        config = _make_export_config(num_sessions=2)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        CodingSessionComposer.write_traces(traces, tmp_path)
+
+        # Verify each JSON file is a valid CodingTrace
+        parents = [c for c in conversations if not c.is_subagent_child]
+        for parent in parents:
+            json_file = tmp_path / f"{parent.session_id}.json"
+            assert json_file.exists()
+            data = orjson.loads(json_file.read_bytes())
+            loaded = CodingTrace.model_validate(data)
+
+            assert loaded.id == parent.session_id
+            assert len(loaded.requests) == len(parent.turns)
+
+            for req, turn in zip(loaded.requests, parent.turns, strict=True):
+                assert req.input_tokens == turn.input_tokens
+                assert req.output_tokens == turn.max_tokens
+                assert req.hash_ids == turn.hash_ids
+
+    def test_round_trip_preserves_hash_ids(self, mock_tokenizer, tmp_path):
+        """Hash IDs survive the round-trip through JSON."""
+        import orjson
+
+        config = _make_export_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        traces = composer.to_coding_traces()
+        CodingSessionComposer.write_traces(traces, tmp_path)
+
+        parent = [c for c in conversations if not c.is_subagent_child][0]
+        json_file = tmp_path / f"{parent.session_id}.json"
+        data = orjson.loads(json_file.read_bytes())
+        loaded = CodingTrace.model_validate(data)
+
+        for req, turn in zip(loaded.requests, parent.turns, strict=True):
+            assert req.hash_ids == turn.hash_ids
+
+
+class TestInterTurnDelay:
+    """Tests for inter-turn delay sampling."""
+
+    def test_delay_disabled_by_default(self, mock_tokenizer):
+        config = _make_cache_config()
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conv in conversations:
+            for turn in conv.turns:
+                assert turn.delay is None
+
+    def test_delay_first_turn_always_none(self, mock_tokenizer):
+        config = _make_cache_config(delay_mean_ms=5000, delay_median_ms=3000)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conv in conversations:
+            assert conv.turns[0].delay is None
+
+    def test_delay_non_first_turns_have_positive_delay(self, mock_tokenizer):
+        config = _make_cache_config(delay_mean_ms=5000, delay_median_ms=3000)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conv in conversations:
+            for turn in conv.turns[1:]:
+                assert turn.delay is not None
+                assert turn.delay > 0
+
+    def test_delay_deterministic(self, mock_tokenizer):
+        config = _make_cache_config(delay_mean_ms=5000, delay_median_ms=3000)
+        composer1 = CodingSessionComposer(config, mock_tokenizer)
+        convs1 = composer1.create_dataset()
+
+        composer2 = CodingSessionComposer(config, mock_tokenizer)
+        convs2 = composer2.create_dataset()
+
+        for c1, c2 in zip(convs1, convs2, strict=True):
+            delays1 = [t.delay for t in c1.turns]
+            delays2 = [t.delay for t in c2.turns]
+            assert delays1 == delays2
+
+    def test_delay_subagent_children(self, mock_tokenizer):
+        config = _make_cache_config(
+            delay_mean_ms=5000,
+            delay_median_ms=3000,
+            subagent_probability=1.0,
+            max_prompt_tokens=10000,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        child_convs = [c for c in conversations if c.is_subagent_child]
+        assert len(child_convs) > 0
+
+        for child in child_convs:
+            assert child.turns[0].delay is None
+            for turn in child.turns[1:]:
+                assert turn.delay is not None
+                assert turn.delay > 0
+
+
+class TestMaxTurns:
+    """Tests for session turn count limiting."""
+
+    def test_max_turns_disabled_by_default(self, mock_tokenizer):
+        config = _make_cache_config()
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        # With defaults (max_turns_mean=0), sessions should have multiple turns
+        # limited only by token ceiling
+        for conv in conversations:
+            assert len(conv.turns) >= 2
+
+    def test_max_turns_limits_session_length(self, mock_tokenizer):
+        config = _make_cache_config(
+            max_turns_mean=5,
+            max_turns_median=5,
+            max_prompt_tokens=500_000,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conv in conversations:
+            sequential_turns = [t for t in conv.turns if t.parallel_group is None]
+            assert len(sequential_turns) <= 5
+
+    def test_max_turns_token_ceiling_still_applies(self, mock_tokenizer):
+        config = _make_cache_config(
+            max_turns_mean=100,
+            max_turns_median=100,
+            max_prompt_tokens=2000,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conv in conversations:
+            for turn in conv.turns:
+                assert turn.input_tokens <= 2000
+
+    def test_max_turns_deterministic(self, mock_tokenizer):
+        config = _make_cache_config(
+            max_turns_mean=8,
+            max_turns_median=5,
+            max_prompt_tokens=500_000,
+        )
+        composer1 = CodingSessionComposer(config, mock_tokenizer)
+        convs1 = composer1.create_dataset()
+
+        composer2 = CodingSessionComposer(config, mock_tokenizer)
+        convs2 = composer2.create_dataset()
+
+        for c1, c2 in zip(convs1, convs2, strict=True):
+            assert len(c1.turns) == len(c2.turns)

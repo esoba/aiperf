@@ -82,6 +82,27 @@ class CodingSessionConfig(BaseConfig):
         CLIParameter(name=("--coding-session-max-prompt-tokens",), group=_CLI_GROUP),
     ] = 215_000
 
+    max_turns_mean: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Mean session turn count (lognormal). 0 disables turn-count limiting "
+            "(sessions grow until token ceiling only).",
+        ),
+        CLIParameter(name=("--coding-session-max-turns-mean",), group=_CLI_GROUP),
+    ] = 0
+
+    max_turns_median: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Median session turn count (lognormal). 0 disables turn-count limiting.",
+        ),
+        CLIParameter(name=("--coding-session-max-turns-median",), group=_CLI_GROUP),
+    ] = 0
+
     initial_prefix_mean: Annotated[
         int,
         Field(
@@ -447,3 +468,25 @@ class CodingSessionConfig(BaseConfig):
             name=("--coding-session-subagent-cache-ttl-sec",), group=_CLI_GROUP
         ),
     ] = 300.0
+
+    delay_mean_ms: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Mean inter-turn delay in milliseconds (lognormal). "
+            "0 disables delays (back-to-back turns).",
+        ),
+        CLIParameter(name=("--coding-session-delay-mean-ms",), group=_CLI_GROUP),
+    ] = 0
+
+    delay_median_ms: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Median inter-turn delay in milliseconds (lognormal). "
+            "0 disables delays.",
+        ),
+        CLIParameter(name=("--coding-session-delay-median-ms",), group=_CLI_GROUP),
+    ] = 0

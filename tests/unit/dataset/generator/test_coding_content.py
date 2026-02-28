@@ -131,21 +131,27 @@ class TestCodingContentGenerator:
     # -- Structural plausibility --
 
     def test_structural_plausibility_python(self, generator):
-        block = generator._gen_python_code()
-        assert "class " in block
-        assert "def " in block
-        assert "import " in block
+        blocks = [generator._gen_python_code() for _ in range(20)]
+        combined = "\n".join(blocks)
+        assert "def " in combined
+        assert "import " in combined
 
     def test_structural_plausibility_go(self, generator):
-        block = generator._gen_go_code()
-        assert "func " in block
-        assert "package " in block
+        blocks = [generator._gen_go_code() for _ in range(20)]
+        combined = "\n".join(blocks)
+        assert "func " in combined or "func(" in combined
+        assert "package " in combined
 
     def test_structural_plausibility_rust(self, generator):
-        block = generator._gen_rust_code()
-        assert "fn " in block
-        assert "struct " in block
-        assert "use " in block
+        blocks = [generator._gen_rust_code() for _ in range(20)]
+        combined = "\n".join(blocks)
+        assert "fn " in combined
+        assert "use " in combined
+
+    def test_structural_plausibility_typescript(self, generator):
+        blocks = [generator._gen_typescript_code() for _ in range(20)]
+        combined = "\n".join(blocks)
+        assert any(kw in combined for kw in ["import ", "export "])
 
     def test_structural_plausibility_diff(self, generator):
         block = generator._gen_git_diff()
@@ -154,13 +160,88 @@ class TestCodingContentGenerator:
         assert "+++" in block
 
     def test_structural_plausibility_json(self, generator):
-        block = generator._gen_json_response()
-        assert '"status"' in block
-        assert '"data"' in block
+        blocks = [generator._gen_json_response() for _ in range(10)]
+        combined = "\n".join(blocks)
+        assert '"status"' in combined or '"data"' in combined or '"error"' in combined
 
     def test_structural_plausibility_error(self, generator):
         block = generator._gen_error_traceback()
         assert any(kw in block for kw in ["Traceback", "panic:", "panicked", "Error:"])
+
+    # -- Variant diversity --
+
+    def test_python_variant_diversity(self, generator):
+        blocks = [generator._gen_python_code() for _ in range(50)]
+        combined = "\n".join(blocks)
+        patterns = ["class ", "pytest", "FastAPI", "BaseModel", "asynccontextmanager"]
+        found = [p for p in patterns if p in combined]
+        assert len(found) >= 2, f"Expected multiple Python patterns, found: {found}"
+
+    def test_go_variant_diversity(self, generator):
+        blocks = [generator._gen_go_code() for _ in range(50)]
+        combined = "\n".join(blocks)
+        patterns = ["struct {", "func Test", "errors.New", "json.NewDecoder"]
+        found = [p for p in patterns if p in combined]
+        assert len(found) >= 2, f"Expected multiple Go patterns, found: {found}"
+
+    def test_rust_variant_diversity(self, generator):
+        blocks = [generator._gen_rust_code() for _ in range(50)]
+        combined = "\n".join(blocks)
+        patterns = ["pub struct", "#[tokio::test]", "thiserror", "axum"]
+        found = [p for p in patterns if p in combined]
+        assert len(found) >= 2, f"Expected multiple Rust patterns, found: {found}"
+
+    def test_typescript_variant_diversity(self, generator):
+        blocks = [generator._gen_typescript_code() for _ in range(50)]
+        combined = "\n".join(blocks)
+        patterns = ["class ", "describe(", "z.object", "type "]
+        found = [p for p in patterns if p in combined]
+        assert len(found) >= 2, f"Expected multiple TS patterns, found: {found}"
+
+    # -- Tool use blocks --
+
+    def test_tool_use_block_structure(self, generator):
+        blocks = [generator._gen_tool_use_block() for _ in range(20)]
+        combined = "\n".join(blocks)
+        assert "<tool_name>" in combined
+        assert "</result>" in combined
+
+    def test_tool_use_block_variant_diversity(self, generator):
+        blocks = [generator._gen_tool_use_block() for _ in range(30)]
+        combined = "\n".join(blocks)
+        tools = ["read", "edit", "search", "bash"]
+        found = [t for t in tools if f"<tool_name>{t}</tool_name>" in combined]
+        assert len(found) >= 2, f"Expected multiple tool types, found: {found}"
+
+    # -- Richer prompts --
+
+    def test_user_prompt_average_length(self, generator):
+        prompts = [generator._gen_user_prompt() for _ in range(100)]
+        avg_len = sum(len(p) for p in prompts) / len(prompts)
+        assert avg_len > 60, f"Average prompt length {avg_len:.0f} too short"
+
+    def test_user_prompt_some_have_context(self, generator):
+        prompts = [generator._gen_user_prompt() for _ in range(100)]
+        multiline = [p for p in prompts if "\n\n" in p]
+        assert len(multiline) >= 5, "Expected some prompts with context paragraphs"
+
+    # -- Bash output variants --
+
+    def test_bash_output_variant_diversity(self, generator):
+        blocks = [generator._gen_bash_output() for _ in range(30)]
+        combined = "\n".join(blocks)
+        patterns = ["git checkout", "make build", "wc -l", "du -sh"]
+        found = [p for p in patterns if p in combined]
+        assert len(found) >= 2, f"Expected multiple bash patterns, found: {found}"
+
+    # -- JSON response variants --
+
+    def test_json_response_variant_diversity(self, generator):
+        blocks = [generator._gen_json_response() for _ in range(30)]
+        combined = "\n".join(blocks)
+        patterns = ['"pagination"', '"error"', '"items"']
+        found = [p for p in patterns if p in combined]
+        assert len(found) >= 2, f"Expected multiple JSON shapes, found: {found}"
 
     # -- Tool pool variety --
 
@@ -172,7 +253,7 @@ class TestCodingContentGenerator:
             generator._gen_json_response(),
         ]
         combined = "\n".join(blocks)
-        patterns = ["class ", "func ", "diff --git", '"status"', "def "]
+        patterns = ["def ", "func ", "diff --git", '"status"', '"data"', '"error"']
         found = [p for p in patterns if p in combined]
         assert len(found) >= 3, f"Expected variety in blocks, found only: {found}"
 
@@ -303,3 +384,123 @@ class TestCodingContentGenerator:
     def test_gen_markdown_doc_with_language(self, generator, language, expected_fence):
         block = generator._gen_markdown_doc(language=language)
         assert expected_fence in block
+
+    def test_gen_markdown_doc_has_config_and_errors(self, generator):
+        block = generator._gen_markdown_doc(language="python")
+        assert "## Configuration" in block
+        assert "## Errors" in block
+
+    # -- Git diff expanded --
+
+    def test_gen_git_diff_has_commit_header(self, generator):
+        block = generator._gen_git_diff()
+        assert "commit " in block
+        assert "Author:" in block
+
+    # -- Language-aware generators --
+
+    @pytest.mark.parametrize(
+        "language,expected_path_fragment",
+        [
+            ("python", ".py"),
+            ("go", ".go"),
+            ("rust", ".rs"),
+            ("typescript", ".ts"),
+        ],
+    )
+    def test_tool_read_uses_language_files(
+        self, generator, language, expected_path_fragment
+    ):
+        blocks = [generator._gen_tool_read(language=language) for _ in range(10)]
+        combined = "\n".join(blocks)
+        assert expected_path_fragment in combined
+
+    @pytest.mark.parametrize(
+        "language,expected_syntax",
+        [
+            ("python", "def "),
+            ("go", "func "),
+            ("rust", "fn "),
+            ("typescript", "async "),
+        ],
+    )
+    def test_tool_read_uses_language_syntax(self, generator, language, expected_syntax):
+        blocks = [generator._gen_tool_read(language=language) for _ in range(10)]
+        combined = "\n".join(blocks)
+        assert expected_syntax in combined
+
+    @pytest.mark.parametrize(
+        "language,expected_path_fragment",
+        [
+            ("python", ".py"),
+            ("go", ".go"),
+            ("rust", ".rs"),
+            ("typescript", ".ts"),
+        ],
+    )
+    def test_tool_edit_uses_language_files(
+        self, generator, language, expected_path_fragment
+    ):
+        blocks = [generator._gen_tool_edit(language=language) for _ in range(10)]
+        combined = "\n".join(blocks)
+        assert expected_path_fragment in combined
+
+    @pytest.mark.parametrize(
+        "language,expected_pattern",
+        [
+            ("python", "def "),
+            ("go", "func "),
+            ("rust", "fn "),
+            ("typescript", "interface "),
+        ],
+    )
+    def test_tool_search_uses_language_patterns(
+        self, generator, language, expected_pattern
+    ):
+        blocks = [generator._gen_tool_search(language=language) for _ in range(20)]
+        combined = "\n".join(blocks)
+        assert expected_pattern in combined
+
+    @pytest.mark.parametrize(
+        "language,expected_cmd",
+        [
+            ("python", "pytest"),
+            ("go", "go test"),
+            ("rust", "cargo test"),
+            ("typescript", "vitest"),
+        ],
+    )
+    def test_tool_bash_uses_language_commands(self, generator, language, expected_cmd):
+        block = generator._gen_tool_bash(language=language)
+        assert expected_cmd in block
+
+    @pytest.mark.parametrize(
+        "language,expected_path_fragment",
+        [
+            ("python", ".py"),
+            ("go", ".go"),
+            ("rust", ".rs"),
+            ("typescript", ".ts"),
+        ],
+    )
+    def test_bash_output_uses_language_files(
+        self, generator, language, expected_path_fragment
+    ):
+        blocks = [generator._gen_bash_output(language=language) for _ in range(20)]
+        combined = "\n".join(blocks)
+        assert expected_path_fragment in combined
+
+    @pytest.mark.parametrize(
+        "language,expected_path_fragment",
+        [
+            ("python", ".py"),
+            ("go", ".go"),
+            ("rust", ".rs"),
+            ("typescript", ".ts"),
+        ],
+    )
+    def test_git_diff_uses_language_files(
+        self, generator, language, expected_path_fragment
+    ):
+        block = generator._gen_git_diff(language=language)
+        assert expected_path_fragment in block

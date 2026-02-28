@@ -171,8 +171,8 @@ class CodingTraceLoader(BaseFileLoader):
                 self._skipped_max_isl += skipped
                 flat_requests = truncated
 
-            # Split at context resets (pull-backs)
-            segments = self._detect_pullbacks(flat_requests)
+            # Split at context resets (pull-backs), skipping parallel branches
+            segments = self._detect_pullbacks(flat_requests, parallel_annotations)
 
             # Build identity-based annotation lookup for O(1) per-request
             annotated_ids: dict[int, tuple[str, int]] = {}
@@ -206,26 +206,26 @@ class CodingTraceLoader(BaseFileLoader):
                 if seg_annotations:
                     self._parallel_annotations[conv_id] = seg_annotations
 
-                # Store subagent extraction data for this conversation
+                # Store subagent extraction data for this conversation.
+                # parent_idx is an index into the original trace.requests
+                # (top-level list), so look up the parent by identity.
                 if subtrees:
                     spawn_counter = 0
                     extractions: list[tuple[str, list[CodingTraceRequest], int]] = []
                     for child_flat, parent_idx in subtrees:
-                        # Find the parent request in this segment
-                        if parent_idx < len(flat_requests):
-                            parent_req = flat_requests[parent_idx]
-                            # Find parent's local index in this segment
-                            parent_local = None
-                            for local_idx, req in enumerate(segment):
-                                if id(req) == id(parent_req):
-                                    parent_local = local_idx
-                                    break
-                            if parent_local is not None:
-                                spawn_id = f"s{spawn_counter}"
-                                spawn_counter += 1
-                                # Join is the turn after the parent
-                                join_idx = min(parent_local + 1, len(segment) - 1)
-                                extractions.append((spawn_id, child_flat, join_idx))
+                        if parent_idx >= len(trace.requests):
+                            continue
+                        parent_req = trace.requests[parent_idx]
+                        # Find parent's local index in this segment
+                        parent_local = None
+                        for local_idx, req in enumerate(segment):
+                            if id(req) == id(parent_req):
+                                parent_local = local_idx
+                                break
+                        if parent_local is not None:
+                            spawn_id = f"s{spawn_counter}"
+                            spawn_counter += 1
+                            extractions.append((spawn_id, child_flat, parent_local))
                     if extractions:
                         self._subagent_extractions[conv_id] = extractions
 
@@ -244,17 +244,20 @@ class CodingTraceLoader(BaseFileLoader):
 
         return result
 
+    @staticmethod
     def _flatten_requests(
-        self,
         requests: list[CodingTraceRequest],
         base_time: float = 0.0,
     ) -> list[CodingTraceRequest]:
-        """Recursively flatten nested subagent requests into a chronological sequence.
+        """Flatten nested requests into a chronological sequence.
 
-        Converts subagent-relative timestamps to absolute time and sorts the
+        Converts child-relative timestamps to absolute time and sorts the
         result chronologically so inter-request delays are computed correctly.
-        Only flattens leaf children (no nested requests); subtrees with nested
-        requests are treated as subagents and extracted separately.
+
+        Only flattens leaf children (children with no nested requests of their
+        own). Subtree children (depth > 1) are skipped here because they are
+        extracted independently by _extract_subagent_subtrees and turned into
+        separate child conversations.
         """
         flat: list[CodingTraceRequest] = []
         for req in requests:
@@ -263,16 +266,14 @@ class CodingTraceLoader(BaseFileLoader):
                 req.t = abs_time
                 flat.append(req)
             if req.requests:
-                # Only flatten leaf children (no nested requests of their own)
                 for child in req.requests:
                     if not child.requests:
                         child_abs = abs_time + child.t
                         if child.input_tokens > 0:
                             child.t = child_abs
                             flat.append(child)
-                    else:
-                        # Subtree children are flattened recursively for backward compat
-                        flat.extend(self._flatten_requests([child], base_time=abs_time))
+                    # Subtree children (child.requests non-empty) are handled
+                    # by _extract_subagent_subtrees — do not flatten inline.
         flat.sort(key=lambda r: r.t)
         return flat
 
@@ -377,6 +378,7 @@ class CodingTraceLoader(BaseFileLoader):
     @staticmethod
     def _detect_pullbacks(
         requests: list[CodingTraceRequest],
+        parallel_annotations: dict[int, tuple[str, int]] | None = None,
     ) -> list[list[CodingTraceRequest]]:
         """Split requests at context resets (pull-backs).
 
@@ -384,13 +386,25 @@ class CodingTraceLoader(BaseFileLoader):
         removed in the next request, indicating the context was reset.
         Each segment becomes a separate conversation.
 
+        Transitions involving parallel branches are exempt: branch requests
+        fork from a shared parent context and each adds unique blocks, so
+        inter-branch transitions naturally remove the previous branch's blocks
+        without indicating a context reset.
+
         Returns list of request segments (at least one).
         """
         if not requests:
             return []
 
+        par = parallel_annotations or {}
+
         segments: list[list[CodingTraceRequest]] = [[requests[0]]]
         for i in range(1, len(requests)):
+            # Skip pullback detection when either side is a parallel branch
+            if i in par or (i - 1) in par:
+                segments[-1].append(requests[i])
+                continue
+
             prev_ids = set(requests[i - 1].hash_ids)
             curr_ids = set(requests[i].hash_ids)
 
