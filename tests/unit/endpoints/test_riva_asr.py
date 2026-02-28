@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for Riva ASR endpoints."""
+"""Tests for Riva ASR endpoint."""
 
 from __future__ import annotations
 
@@ -11,8 +11,7 @@ import pytest
 from aiperf.common.models import Turn
 from aiperf.common.models.dataset_models import Audio
 from aiperf.endpoints.riva_asr import (
-    RivaAsrOfflineEndpoint,
-    RivaAsrStreamingEndpoint,
+    RivaAsrEndpoint,
     _extract_audio_bytes,
     _parse_asr_response,
 )
@@ -32,22 +31,20 @@ def _make_audio_turn(audio_bytes: bytes) -> Turn:
 
 
 # ---------------------------------------------------------------------------
-# RivaAsrOfflineEndpoint.format_payload
+# RivaAsrEndpoint.format_payload (offline / non-streaming)
 # ---------------------------------------------------------------------------
 class TestRivaAsrOfflineFormatPayload:
     @pytest.fixture
     def model_endpoint(self):
         return create_model_endpoint(
-            EndpointType.RIVA_ASR_OFFLINE,
+            EndpointType.RIVA_ASR,
             model_name="asr_model",
             extra=[("language_code", "en-US"), ("sample_rate_hertz", 16000)],
         )
 
     @pytest.fixture
     def endpoint(self, model_endpoint):
-        return create_endpoint_with_mock_transport(
-            RivaAsrOfflineEndpoint, model_endpoint
-        )
+        return create_endpoint_with_mock_transport(RivaAsrEndpoint, model_endpoint)
 
     def test_format_payload_with_audio(self, endpoint, model_endpoint) -> None:
         audio = b"\x00\x01\x02\x03" * 100
@@ -74,10 +71,8 @@ class TestRivaAsrOfflineFormatPayload:
 
     def test_format_payload_default_config(self) -> None:
         """Endpoint with no extra config should use defaults."""
-        model_endpoint = create_model_endpoint(EndpointType.RIVA_ASR_OFFLINE)
-        endpoint = create_endpoint_with_mock_transport(
-            RivaAsrOfflineEndpoint, model_endpoint
-        )
+        model_endpoint = create_model_endpoint(EndpointType.RIVA_ASR)
+        endpoint = create_endpoint_with_mock_transport(RivaAsrEndpoint, model_endpoint)
         audio = b"\x01\x02"
         turn = _make_audio_turn(audio)
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
@@ -91,12 +86,10 @@ class TestRivaAsrOfflineFormatPayload:
     def test_format_payload_custom_encoding(self) -> None:
         """Custom encoding from extra config should be used."""
         model_endpoint = create_model_endpoint(
-            EndpointType.RIVA_ASR_OFFLINE,
+            EndpointType.RIVA_ASR,
             extra=[("encoding", "FLAC")],
         )
-        endpoint = create_endpoint_with_mock_transport(
-            RivaAsrOfflineEndpoint, model_endpoint
-        )
+        endpoint = create_endpoint_with_mock_transport(RivaAsrEndpoint, model_endpoint)
         turn = _make_audio_turn(b"\x01\x02")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
@@ -116,15 +109,13 @@ class TestRivaAsrOfflineFormatPayload:
 
 
 # ---------------------------------------------------------------------------
-# RivaAsrOfflineEndpoint.parse_response
+# RivaAsrEndpoint.parse_response (offline)
 # ---------------------------------------------------------------------------
 class TestRivaAsrOfflineParseResponse:
     @pytest.fixture
     def endpoint(self):
-        model_endpoint = create_model_endpoint(EndpointType.RIVA_ASR_OFFLINE)
-        return create_endpoint_with_mock_transport(
-            RivaAsrOfflineEndpoint, model_endpoint
-        )
+        model_endpoint = create_model_endpoint(EndpointType.RIVA_ASR)
+        return create_endpoint_with_mock_transport(RivaAsrEndpoint, model_endpoint)
 
     def test_parse_response_with_transcript(self, endpoint) -> None:
         response = create_mock_response(json_data={"transcript": "hello world"})
@@ -165,13 +156,13 @@ class TestRivaAsrOfflineParseResponse:
 
 
 # ---------------------------------------------------------------------------
-# RivaAsrStreamingEndpoint.format_payload
+# RivaAsrEndpoint.format_payload (streaming)
 # ---------------------------------------------------------------------------
 class TestRivaAsrStreamingFormatPayload:
     @pytest.fixture
     def model_endpoint(self):
         return create_model_endpoint(
-            EndpointType.RIVA_ASR_STREAMING,
+            EndpointType.RIVA_ASR,
             model_name="asr_model",
             streaming=True,
             extra=[("chunk_size", 4000)],
@@ -179,9 +170,7 @@ class TestRivaAsrStreamingFormatPayload:
 
     @pytest.fixture
     def endpoint(self, model_endpoint):
-        return create_endpoint_with_mock_transport(
-            RivaAsrStreamingEndpoint, model_endpoint
-        )
+        return create_endpoint_with_mock_transport(RivaAsrEndpoint, model_endpoint)
 
     def test_format_payload_chunks_audio(self, endpoint, model_endpoint) -> None:
         audio = b"\x00" * 10000
@@ -223,12 +212,8 @@ class TestRivaAsrStreamingFormatPayload:
 
     def test_format_payload_default_chunk_size(self) -> None:
         """Default chunk size should be DEFAULT_CHUNK_SIZE (8000)."""
-        model_endpoint = create_model_endpoint(
-            EndpointType.RIVA_ASR_STREAMING, streaming=True
-        )
-        endpoint = create_endpoint_with_mock_transport(
-            RivaAsrStreamingEndpoint, model_endpoint
-        )
+        model_endpoint = create_model_endpoint(EndpointType.RIVA_ASR, streaming=True)
+        endpoint = create_endpoint_with_mock_transport(RivaAsrEndpoint, model_endpoint)
         audio = b"\x00" * 20000  # 20000 / 8000 = 3 chunks (2 full + 1 partial)
         turn = _make_audio_turn(audio)
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
@@ -255,13 +240,11 @@ class TestRivaAsrStreamingFormatPayload:
     def test_format_payload_custom_language(self) -> None:
         """Custom language_code should be used."""
         model_endpoint = create_model_endpoint(
-            EndpointType.RIVA_ASR_STREAMING,
+            EndpointType.RIVA_ASR,
             streaming=True,
             extra=[("language_code", "es-ES")],
         )
-        endpoint = create_endpoint_with_mock_transport(
-            RivaAsrStreamingEndpoint, model_endpoint
-        )
+        endpoint = create_endpoint_with_mock_transport(RivaAsrEndpoint, model_endpoint)
         turn = _make_audio_turn(b"\x01")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
@@ -295,17 +278,13 @@ class TestRivaAsrStreamingFormatPayload:
 
 
 # ---------------------------------------------------------------------------
-# RivaAsrStreamingEndpoint.parse_response
+# RivaAsrEndpoint.parse_response (streaming)
 # ---------------------------------------------------------------------------
 class TestRivaAsrStreamingParseResponse:
     @pytest.fixture
     def endpoint(self):
-        model_endpoint = create_model_endpoint(
-            EndpointType.RIVA_ASR_STREAMING, streaming=True
-        )
-        return create_endpoint_with_mock_transport(
-            RivaAsrStreamingEndpoint, model_endpoint
-        )
+        model_endpoint = create_model_endpoint(EndpointType.RIVA_ASR, streaming=True)
+        return create_endpoint_with_mock_transport(RivaAsrEndpoint, model_endpoint)
 
     def test_parse_response_with_transcript(self, endpoint) -> None:
         response = create_mock_response(
@@ -342,14 +321,12 @@ class TestRivaAsrStreamingParseResponse:
 # Shared _parse_asr_response helper
 # ---------------------------------------------------------------------------
 class TestParseAsrResponse:
-    """Tests for the shared _parse_asr_response helper used by both endpoints."""
+    """Tests for the shared _parse_asr_response helper."""
 
     @pytest.fixture
     def endpoint(self):
-        model_endpoint = create_model_endpoint(EndpointType.RIVA_ASR_OFFLINE)
-        return create_endpoint_with_mock_transport(
-            RivaAsrOfflineEndpoint, model_endpoint
-        )
+        model_endpoint = create_model_endpoint(EndpointType.RIVA_ASR)
+        return create_endpoint_with_mock_transport(RivaAsrEndpoint, model_endpoint)
 
     def test_returns_parsed_response(self, endpoint) -> None:
         response = create_mock_response(json_data={"transcript": "hello"})
@@ -369,18 +346,15 @@ class TestParseAsrResponse:
         response = create_mock_response(json_data={"results": []})
         assert _parse_asr_response(response, endpoint) is None
 
-    def test_both_endpoints_use_shared_helper(self) -> None:
-        """Both ASR endpoints should delegate to _parse_asr_response."""
-        for cls, etype in [
-            (RivaAsrOfflineEndpoint, EndpointType.RIVA_ASR_OFFLINE),
-            (RivaAsrStreamingEndpoint, EndpointType.RIVA_ASR_STREAMING),
-        ]:
-            me = create_model_endpoint(etype)
-            ep = create_endpoint_with_mock_transport(cls, me)
-            response = create_mock_response(json_data={"transcript": "test"})
-            parsed = ep.parse_response(response)
-            assert parsed is not None
-            assert parsed.data.get_text() == "test"
+    @pytest.mark.parametrize("streaming", [False, True])
+    def test_both_modes_use_shared_helper(self, streaming: bool) -> None:
+        """Both streaming and non-streaming modes should delegate to _parse_asr_response."""
+        me = create_model_endpoint(EndpointType.RIVA_ASR, streaming=streaming)
+        ep = create_endpoint_with_mock_transport(RivaAsrEndpoint, me)
+        response = create_mock_response(json_data={"transcript": "test"})
+        parsed = ep.parse_response(response)
+        assert parsed is not None
+        assert parsed.data.get_text() == "test"
 
 
 # ---------------------------------------------------------------------------
@@ -393,14 +367,14 @@ class TestExtractAudioBytes:
         audio = b"\x00\x01\x02\x03"
         turn = _make_audio_turn(audio)
         request_info = create_request_info(
-            model_endpoint=create_model_endpoint(EndpointType.RIVA_ASR_OFFLINE),
+            model_endpoint=create_model_endpoint(EndpointType.RIVA_ASR),
             turns=[turn],
         )
         assert _extract_audio_bytes(request_info) == audio
 
     def test_empty_turns_raises(self) -> None:
         request_info = create_request_info(
-            model_endpoint=create_model_endpoint(EndpointType.RIVA_ASR_OFFLINE),
+            model_endpoint=create_model_endpoint(EndpointType.RIVA_ASR),
             turns=[],
         )
         with pytest.raises(ValueError, match="requires at least one turn"):
@@ -409,7 +383,7 @@ class TestExtractAudioBytes:
     def test_no_audio_raises(self) -> None:
         turn = Turn()
         request_info = create_request_info(
-            model_endpoint=create_model_endpoint(EndpointType.RIVA_ASR_OFFLINE),
+            model_endpoint=create_model_endpoint(EndpointType.RIVA_ASR),
             turns=[turn],
         )
         with pytest.raises(ValueError, match="requires audio data"):

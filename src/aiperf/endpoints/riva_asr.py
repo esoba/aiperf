@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""NVIDIA Riva ASR (Automatic Speech Recognition) endpoints for offline and streaming."""
+"""NVIDIA Riva ASR (Automatic Speech Recognition) endpoint."""
 
 from __future__ import annotations
 
@@ -65,57 +65,11 @@ def _parse_asr_response(
     )
 
 
-class RivaAsrOfflineEndpoint(BaseEndpoint):
-    """Riva ASR offline endpoint for batch speech recognition.
+class RivaAsrEndpoint(BaseEndpoint):
+    """Riva ASR endpoint for speech recognition (offline and streaming).
 
-    Sends complete audio to Riva ASR and returns the full transcript.
-    Configure via --extra: language_code, sample_rate_hertz, encoding.
-    """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        extra = get_extra(self)
-        self._language_code: str = extra.get("language_code", "en-US")
-        self._sample_rate_hertz: int = int(extra.get("sample_rate_hertz", 16000))
-        self._encoding: str = extra.get("encoding", "LINEAR_PCM")
-
-    def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
-        """Format Riva ASR offline request payload with audio data.
-
-        Args:
-            request_info: Request context with audio in turns[0].audios.
-
-        Returns:
-            Dict payload for ASR recognition.
-        """
-        audio_bytes = _extract_audio_bytes(request_info)
-
-        return {
-            "audio": audio_bytes,
-            "language_code": self._language_code,
-            "sample_rate_hertz": self._sample_rate_hertz,
-            "encoding": self._encoding,
-        }
-
-    def parse_response(
-        self, response: InferenceServerResponse
-    ) -> ParsedResponse | None:
-        """Parse Riva ASR offline response into TextResponseData.
-
-        Args:
-            response: Raw response from inference server.
-
-        Returns:
-            ParsedResponse with transcript text, or None.
-        """
-        return _parse_asr_response(response, self)
-
-
-class RivaAsrStreamingEndpoint(BaseEndpoint):
-    """Riva ASR streaming endpoint for bidirectional speech recognition.
-
-    Streams audio chunks to Riva ASR and receives transcript results
-    as they become available. Uses bidi streaming gRPC.
+    When ``--streaming`` is enabled, audio is chunked and sent via bidi
+    streaming gRPC. Otherwise, complete audio is sent in a single unary call.
     Configure via --extra: language_code, sample_rate_hertz, encoding, chunk_size.
     """
 
@@ -130,40 +84,46 @@ class RivaAsrStreamingEndpoint(BaseEndpoint):
         self._chunk_size: int = int(extra.get("chunk_size", self.DEFAULT_CHUNK_SIZE))
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
-        """Format Riva ASR streaming request payload with audio chunks.
+        """Format Riva ASR request payload with audio data.
 
-        The payload includes config for the first message and chunked audio
-        for subsequent messages. The transport's bidi streaming handler
-        reads ``audio_chunks`` to send individual stream messages.
+        When streaming, the payload includes ``audio_chunks`` for bidi streaming.
+        Otherwise, it includes ``audio`` as a single blob.
 
         Args:
             request_info: Request context with audio in turns[0].audios.
 
         Returns:
-            Dict payload with config and audio_chunks for bidi streaming.
+            Dict payload for ASR recognition.
         """
         audio_bytes = _extract_audio_bytes(request_info)
 
-        chunks = [
-            audio_bytes[i : i + self._chunk_size]
-            for i in range(0, len(audio_bytes), self._chunk_size)
-        ]
+        if self.model_endpoint.endpoint.streaming:
+            chunks = [
+                audio_bytes[i : i + self._chunk_size]
+                for i in range(0, len(audio_bytes), self._chunk_size)
+            ]
+            return {
+                "language_code": self._language_code,
+                "sample_rate_hertz": self._sample_rate_hertz,
+                "encoding": self._encoding,
+                "interim_results": True,
+                "audio_chunks": chunks,
+            }
 
         return {
+            "audio": audio_bytes,
             "language_code": self._language_code,
             "sample_rate_hertz": self._sample_rate_hertz,
             "encoding": self._encoding,
-            "interim_results": True,
-            "audio_chunks": chunks,
         }
 
     def parse_response(
         self, response: InferenceServerResponse
     ) -> ParsedResponse | None:
-        """Parse Riva ASR streaming response into TextResponseData.
+        """Parse Riva ASR response into TextResponseData.
 
         Args:
-            response: Raw response chunk from inference server.
+            response: Raw response from inference server.
 
         Returns:
             ParsedResponse with transcript text, or None.

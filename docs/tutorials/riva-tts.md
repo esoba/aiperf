@@ -5,16 +5,16 @@ SPDX-License-Identifier: Apache-2.0
 
 # Profile NVIDIA Riva TTS with AIPerf
 
-AIPerf supports benchmarking [NVIDIA Riva](https://developer.nvidia.com/riva) Text-to-Speech (TTS) services over gRPC. Two endpoint types are available: batch synthesis and server-streaming synthesis.
+AIPerf supports benchmarking [NVIDIA Riva](https://developer.nvidia.com/riva) Text-to-Speech (TTS) services over gRPC. A single `riva_tts` endpoint type supports both batch synthesis and server-streaming synthesis, controlled by the `--streaming` flag.
 
-## Endpoint Types
+## Endpoint Modes
 
-| Endpoint Type | gRPC Method | Streaming | Use Case |
+| Mode | gRPC Method | Flag | Use Case |
 |---|---|---|---|
-| `riva_tts` | `/nvidia.riva.tts.RivaSpeechSynthesis/Synthesize` | No | Batch synthesis, returns complete audio |
-| `riva_tts_streaming` | `/nvidia.riva.tts.RivaSpeechSynthesis/SynthesizeOnline` | Yes (server) | Streaming synthesis, returns audio chunks |
+| Batch (default) | `/nvidia.riva.tts.RivaSpeechSynthesis/Synthesize` | — | Batch synthesis, returns complete audio |
+| Streaming | `/nvidia.riva.tts.RivaSpeechSynthesis/SynthesizeOnline` | `--streaming` | Streaming synthesis, returns audio chunks |
 
-Both endpoints accept text input and return synthesized audio. Since Riva uses gRPC, the URL must use the `grpc://` or `grpcs://` scheme.
+Both modes accept text input and return synthesized audio. Since Riva uses gRPC, the URL must use the `grpc://` or `grpcs://` scheme.
 
 ---
 
@@ -28,7 +28,7 @@ The default Riva gRPC port is `50051`.
 
 ## Section 2. Batch TTS (Synthesize)
 
-Send text to Riva and receive the complete synthesized audio. Use `riva_tts` when you want to measure end-to-end synthesis latency for complete utterances.
+Send text to Riva and receive the complete synthesized audio. Omit `--streaming` for batch mode when you want to measure end-to-end synthesis latency for complete utterances.
 
 ### Profile with Synthetic Text
 
@@ -94,15 +94,15 @@ aiperf profile \
 
 ## Section 3. Streaming TTS (SynthesizeOnline)
 
-Stream synthesized audio chunks as they are generated. Use `riva_tts_streaming` to measure time-to-first-audio-chunk and streaming throughput.
+Stream synthesized audio chunks as they are generated. Add `--streaming` to measure time-to-first-audio-chunk and streaming throughput.
 
-The streaming endpoint uses gRPC server-side streaming (`SynthesizeOnline`). Riva begins returning audio data before the entire utterance is synthesized.
+The streaming mode uses gRPC server-side streaming (`SynthesizeOnline`). Riva begins returning audio data before the entire utterance is synthesized.
 
 ```bash
 aiperf profile \
     --model riva-tts \
     --url grpc://localhost:50051 \
-    --endpoint-type riva_tts_streaming \
+    --endpoint-type riva_tts \
     --streaming \
     --synthetic-input-tokens-mean 100 \
     --request-count 100 \
@@ -115,7 +115,7 @@ aiperf profile \
 aiperf profile \
     --model riva-tts \
     --url grpc://localhost:50051 \
-    --endpoint-type riva_tts_streaming \
+    --endpoint-type riva_tts \
     --streaming \
     --extra-inputs voice_name:English-US.Male-1 \
     --extra-inputs sample_rate_hz:44100 \
@@ -178,7 +178,7 @@ Riva TTS endpoints produce `AudioResponseData` with:
 - **encoding** -- audio encoding format
 - **duration_ms** -- calculated audio duration (LINEAR_PCM only)
 
-Both TTS endpoints set `produces_tokens: false`, `produces_audio: true`, and `tokenizes_input: true`. This means input token counts are tracked but output token metrics are not available. AIPerf reports request-level metrics:
+The TTS endpoint sets `produces_tokens: false`, `produces_audio: true`, and `tokenizes_input: true`. This means input token counts are tracked but output token metrics are not available. AIPerf reports request-level metrics:
 
 - **Request Latency** -- end-to-end time from request send to response received
 - **Request Throughput** -- requests completed per second

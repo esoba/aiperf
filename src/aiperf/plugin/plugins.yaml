@@ -473,29 +473,11 @@ endpoint:
   # NVIDIA Riva Speech and NLP Endpoints
   # ===========================================================================
 
-  riva_asr_offline:
-    class: aiperf.endpoints.riva_asr:RivaAsrOfflineEndpoint
+  riva_asr:
+    class: aiperf.endpoints.riva_asr:RivaAsrEndpoint
     description: |
-      NVIDIA Riva ASR offline (batch) endpoint for speech recognition.
-      Sends complete audio to Riva ASR and returns the full transcript.
-      Configure via --extra: language_code, sample_rate_hertz, encoding.
-    metadata:
-      endpoint_path: null
-      supports_streaming: false
-      produces_tokens: false
-      tokenizes_input: false
-      supports_audio: true
-      metrics_title: Riva ASR Offline Metrics
-      service_kind: riva
-      grpc:
-        serializer: aiperf.transports.grpc.riva_asr_serializers:RivaAsrOfflineSerializer
-        method: /nvidia.riva.asr.RivaSpeechRecognition/Recognize
-
-  riva_asr_streaming:
-    class: aiperf.endpoints.riva_asr:RivaAsrStreamingEndpoint
-    description: |
-      NVIDIA Riva ASR streaming endpoint for bidirectional speech recognition.
-      Streams audio chunks and receives transcript results in real-time.
+      NVIDIA Riva ASR endpoint for speech recognition.
+      Supports both offline (unary) and streaming (bidi) modes via --streaming.
       Configure via --extra: language_code, sample_rate_hertz, encoding, chunk_size.
     metadata:
       endpoint_path: null
@@ -503,36 +485,18 @@ endpoint:
       produces_tokens: false
       tokenizes_input: false
       supports_audio: true
-      metrics_title: Riva ASR Streaming Metrics
+      metrics_title: Riva ASR Metrics
       service_kind: riva
       grpc:
-        serializer: aiperf.transports.grpc.riva_asr_serializers:RivaAsrStreamingSerializer
+        serializer: aiperf.transports.grpc.riva_asr_serializers:RivaAsrSerializer
         method: /nvidia.riva.asr.RivaSpeechRecognition/Recognize
         bidi_stream_method: /nvidia.riva.asr.RivaSpeechRecognition/StreamingRecognize
 
   riva_tts:
     class: aiperf.endpoints.riva_tts:RivaTtsEndpoint
     description: |
-      NVIDIA Riva TTS batch endpoint for text-to-speech synthesis.
-      Sends text and returns synthesized audio.
-      Configure via --extra: voice_name, language_code, encoding, sample_rate_hz.
-    metadata:
-      endpoint_path: null
-      supports_streaming: false
-      produces_tokens: false
-      tokenizes_input: true
-      produces_audio: true
-      metrics_title: Riva TTS Metrics
-      service_kind: riva
-      grpc:
-        serializer: aiperf.transports.grpc.riva_tts_serializers:RivaTtsSerializer
-        method: /nvidia.riva.tts.RivaSpeechSynthesis/Synthesize
-
-  riva_tts_streaming:
-    class: aiperf.endpoints.riva_tts:RivaTtsStreamingEndpoint
-    description: |
-      NVIDIA Riva TTS streaming endpoint for text-to-speech synthesis.
-      Sends text and receives synthesized audio chunks as they are generated.
+      NVIDIA Riva TTS endpoint for text-to-speech synthesis.
+      Supports both batch (unary) and streaming modes via --streaming.
       Configure via --extra: voice_name, language_code, encoding, sample_rate_hz.
     metadata:
       endpoint_path: null
@@ -540,7 +504,7 @@ endpoint:
       produces_tokens: false
       tokenizes_input: true
       produces_audio: true
-      metrics_title: Riva TTS Streaming Metrics
+      metrics_title: Riva TTS Metrics
       service_kind: riva
       grpc:
         serializer: aiperf.transports.grpc.riva_tts_serializers:RivaTtsSerializer

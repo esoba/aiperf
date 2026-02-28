@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Riva ASR gRPC serializers for offline and streaming speech recognition.
+"""Riva ASR gRPC serializer for speech recognition (unary and bidi streaming).
 
 Converts between endpoint dict payloads and Riva ASR protobuf wire bytes.
 Discovered via plugins.yaml endpoint metadata (``grpc.serializer``).
@@ -83,10 +83,12 @@ def _extract_transcript(results: Any) -> str:
     return " ".join(transcripts)
 
 
-class RivaAsrOfflineSerializer:
-    """Riva ASR offline (batch) gRPC serializer.
+class RivaAsrSerializer:
+    """Riva ASR gRPC serializer for unary and bidirectional streaming.
 
-    Serializes RecognizeRequest and deserializes RecognizeResponse.
+    Handles both offline (RecognizeRequest) and streaming
+    (StreamingRecognizeRequest) protocols. The gRPC transport selects
+    the appropriate methods based on ``endpoint.streaming``.
     """
 
     @staticmethod
@@ -94,61 +96,6 @@ class RivaAsrOfflineSerializer:
         payload: dict[str, Any], model_name: str, request_id: str = ""
     ) -> bytes:
         """Convert dict payload to serialized RecognizeRequest bytes."""
-        return _serialize_recognize_request(payload, model_name, request_id)
-
-    @staticmethod
-    def deserialize_response(data: bytes) -> tuple[dict[str, Any], int]:
-        """Deserialize RecognizeResponse bytes to a dict and wire size.
-
-        Args:
-            data: Raw bytes from the gRPC wire.
-
-        Returns:
-            Tuple of (response dict with transcript, wire size).
-        """
-        response = riva_asr_pb2.RecognizeResponse()
-        response.ParseFromString(data)
-
-        transcript = _extract_transcript(response.results)
-
-        result: dict[str, Any] = {
-            "transcript": transcript,
-            "results": [
-                {
-                    "alternatives": [
-                        {
-                            "transcript": alt.transcript,
-                            "confidence": alt.confidence,
-                        }
-                        for alt in r.alternatives
-                    ],
-                }
-                for r in response.results
-            ],
-        }
-        return result, len(data)
-
-    @staticmethod
-    def deserialize_stream_response(data: bytes) -> StreamChunk:
-        """Not used for offline ASR but required by protocol."""
-        return StreamChunk(
-            error_message="Offline ASR does not support streaming responses",
-            response_dict=None,
-            response_size=len(data),
-        )
-
-
-class RivaAsrStreamingSerializer:
-    """Riva ASR streaming gRPC serializer for bidirectional streaming.
-
-    Implements the bidi streaming protocol: config message first, then audio chunks.
-    """
-
-    @staticmethod
-    def serialize_request(
-        payload: dict[str, Any], model_name: str, request_id: str = ""
-    ) -> bytes:
-        """Serialize the full audio as a single RecognizeRequest (fallback for unary)."""
         return _serialize_recognize_request(payload, model_name, request_id)
 
     @staticmethod
@@ -197,16 +144,40 @@ class RivaAsrStreamingSerializer:
 
     @staticmethod
     def deserialize_response(data: bytes) -> tuple[dict[str, Any], int]:
-        """Deserialize RecognizeResponse bytes (fallback for unary)."""
+        """Deserialize RecognizeResponse bytes to a dict and wire size.
+
+        Args:
+            data: Raw bytes from the gRPC wire.
+
+        Returns:
+            Tuple of (response dict with transcript, wire size).
+        """
         response = riva_asr_pb2.RecognizeResponse()
         response.ParseFromString(data)
+
         transcript = _extract_transcript(response.results)
-        return {"transcript": transcript}, len(data)
+
+        result: dict[str, Any] = {
+            "transcript": transcript,
+            "results": [
+                {
+                    "alternatives": [
+                        {
+                            "transcript": alt.transcript,
+                            "confidence": alt.confidence,
+                        }
+                        for alt in r.alternatives
+                    ],
+                }
+                for r in response.results
+            ],
+        }
+        return result, len(data)
 
     @staticmethod
     def deserialize_stream_response(data: bytes) -> StreamChunk:
-        """Deserialize a server-stream response (not used for bidi, but required)."""
-        return RivaAsrStreamingSerializer.deserialize_bidi_response(data)
+        """Deserialize a streaming response (delegates to bidi deserialization)."""
+        return RivaAsrSerializer.deserialize_bidi_response(data)
 
     @staticmethod
     def deserialize_bidi_response(data: bytes) -> StreamChunk:

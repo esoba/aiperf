@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""NVIDIA Riva TTS (Text-to-Speech) endpoints for batch and streaming synthesis."""
+"""NVIDIA Riva TTS (Text-to-Speech) endpoint for batch and streaming synthesis."""
 
 from __future__ import annotations
 
@@ -57,8 +57,13 @@ def _parse_tts_response(
     )
 
 
-class _RivaTtsBaseEndpoint(BaseEndpoint):
-    """Shared base for Riva TTS batch and streaming endpoints."""
+class RivaTtsEndpoint(BaseEndpoint):
+    """Riva TTS endpoint for text-to-speech synthesis (batch and streaming).
+
+    When ``--streaming`` is enabled, uses server-streaming RPC (SynthesizeOnline)
+    to receive audio chunks as they are generated. Otherwise, uses unary Synthesize.
+    Configure via --extra: voice_name, language_code, encoding, sample_rate_hz.
+    """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -106,19 +111,3 @@ class _RivaTtsBaseEndpoint(BaseEndpoint):
             ParsedResponse with AudioResponseData, or None.
         """
         return _parse_tts_response(response, self._sample_rate_hz, self._encoding)
-
-
-class RivaTtsEndpoint(_RivaTtsBaseEndpoint):
-    """Riva TTS batch endpoint for text-to-speech synthesis.
-
-    Sends text to Riva TTS and returns synthesized audio.
-    Configure via --extra: voice_name, language_code, encoding, sample_rate_hz.
-    """
-
-
-class RivaTtsStreamingEndpoint(_RivaTtsBaseEndpoint):
-    """Riva TTS streaming endpoint for text-to-speech synthesis.
-
-    Same as batch but uses server-streaming RPC (SynthesizeOnline)
-    to receive audio chunks as they are generated.
-    """

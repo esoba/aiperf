@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for Riva TTS endpoints."""
+"""Tests for Riva TTS endpoint."""
 
 from __future__ import annotations
 
@@ -12,10 +12,8 @@ from aiperf.common.models import Text, Turn
 from aiperf.common.models.record_models import AudioResponseData
 from aiperf.endpoints.riva_tts import (
     RivaTtsEndpoint,
-    RivaTtsStreamingEndpoint,
     _calc_duration_ms,
     _parse_tts_response,
-    _RivaTtsBaseEndpoint,
 )
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
@@ -67,7 +65,7 @@ class TestCalcDurationMs:
 
 
 # ---------------------------------------------------------------------------
-# RivaTtsEndpoint.format_payload
+# RivaTtsEndpoint.format_payload (non-streaming)
 # ---------------------------------------------------------------------------
 class TestRivaTtsEndpointFormatPayload:
     @pytest.fixture
@@ -255,19 +253,17 @@ class TestRivaTtsEndpointParseResponse:
 
 
 # ---------------------------------------------------------------------------
-# RivaTtsStreamingEndpoint
+# RivaTtsEndpoint (streaming mode)
 # ---------------------------------------------------------------------------
-class TestRivaTtsStreamingEndpointFormatPayload:
+class TestRivaTtsStreamingFormatPayload:
     @pytest.fixture
     def endpoint(self):
         model_endpoint = create_model_endpoint(
-            EndpointType.RIVA_TTS_STREAMING,
+            EndpointType.RIVA_TTS,
             model_name="tts_model",
             streaming=True,
         )
-        return create_endpoint_with_mock_transport(
-            RivaTtsStreamingEndpoint, model_endpoint
-        )
+        return create_endpoint_with_mock_transport(RivaTtsEndpoint, model_endpoint)
 
     def test_format_payload_basic(self, endpoint) -> None:
         model_endpoint = endpoint.model_endpoint
@@ -287,12 +283,8 @@ class TestRivaTtsStreamingEndpointFormatPayload:
 
     def test_format_payload_default_config(self) -> None:
         """Streaming endpoint with no extra should use defaults."""
-        model_endpoint = create_model_endpoint(
-            EndpointType.RIVA_TTS_STREAMING, streaming=True
-        )
-        endpoint = create_endpoint_with_mock_transport(
-            RivaTtsStreamingEndpoint, model_endpoint
-        )
+        model_endpoint = create_model_endpoint(EndpointType.RIVA_TTS, streaming=True)
+        endpoint = create_endpoint_with_mock_transport(RivaTtsEndpoint, model_endpoint)
         turn = Turn(texts=[Text(contents=["test"])])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
@@ -306,7 +298,7 @@ class TestRivaTtsStreamingEndpointFormatPayload:
     def test_format_payload_custom_config(self) -> None:
         """Custom config from extra should be used."""
         model_endpoint = create_model_endpoint(
-            EndpointType.RIVA_TTS_STREAMING,
+            EndpointType.RIVA_TTS,
             streaming=True,
             extra=[
                 ("voice_name", "German-Female-1"),
@@ -315,9 +307,7 @@ class TestRivaTtsStreamingEndpointFormatPayload:
                 ("sample_rate_hz", 44100),
             ],
         )
-        endpoint = create_endpoint_with_mock_transport(
-            RivaTtsStreamingEndpoint, model_endpoint
-        )
+        endpoint = create_endpoint_with_mock_transport(RivaTtsEndpoint, model_endpoint)
         turn = Turn(texts=[Text(contents=["Hallo Welt"])])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
@@ -329,15 +319,11 @@ class TestRivaTtsStreamingEndpointFormatPayload:
         assert payload["sample_rate_hz"] == 44100
 
 
-class TestRivaTtsStreamingEndpointParseResponse:
+class TestRivaTtsStreamingParseResponse:
     @pytest.fixture
     def endpoint(self):
-        model_endpoint = create_model_endpoint(
-            EndpointType.RIVA_TTS_STREAMING, streaming=True
-        )
-        return create_endpoint_with_mock_transport(
-            RivaTtsStreamingEndpoint, model_endpoint
-        )
+        model_endpoint = create_model_endpoint(EndpointType.RIVA_TTS, streaming=True)
+        return create_endpoint_with_mock_transport(RivaTtsEndpoint, model_endpoint)
 
     def test_parse_response_with_audio(self, endpoint) -> None:
         audio = b"\x00\x01" * 50
@@ -360,30 +346,17 @@ class TestRivaTtsStreamingEndpointParseResponse:
 
 
 # ---------------------------------------------------------------------------
-# _RivaTtsBaseEndpoint inheritance
+# Streaming and non-streaming produce identical payloads/responses
 # ---------------------------------------------------------------------------
-class TestRivaTtsBaseEndpointInheritance:
-    """Verify both TTS endpoints share the same base class."""
+class TestRivaTtsUnifiedBehavior:
+    """Verify both streaming modes produce identical payloads and responses."""
 
-    def test_batch_inherits(self) -> None:
-        assert issubclass(RivaTtsEndpoint, _RivaTtsBaseEndpoint)
-
-    def test_streaming_inherits(self) -> None:
-        assert issubclass(RivaTtsStreamingEndpoint, _RivaTtsBaseEndpoint)
-
-    @pytest.mark.parametrize(
-        "cls,endpoint_type",
-        [
-            (RivaTtsEndpoint, EndpointType.RIVA_TTS),
-            (RivaTtsStreamingEndpoint, EndpointType.RIVA_TTS_STREAMING),
-        ],
-    )
-    def test_shared_format_payload(
-        self, cls: type, endpoint_type: EndpointType
-    ) -> None:
-        """Both TTS endpoints should produce identical payloads."""
-        model_endpoint = create_model_endpoint(endpoint_type)
-        endpoint = create_endpoint_with_mock_transport(cls, model_endpoint)
+    @pytest.mark.parametrize("streaming", [False, True])
+    def test_shared_format_payload(self, streaming: bool) -> None:
+        model_endpoint = create_model_endpoint(
+            EndpointType.RIVA_TTS, streaming=streaming
+        )
+        endpoint = create_endpoint_with_mock_transport(RivaTtsEndpoint, model_endpoint)
         turn = Turn(texts=[Text(contents=["hello"])])
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
         payload = endpoint.format_payload(request_info)
@@ -391,19 +364,12 @@ class TestRivaTtsBaseEndpointInheritance:
         assert payload["text"] == "hello"
         assert payload["encoding"] == "LINEAR_PCM"
 
-    @pytest.mark.parametrize(
-        "cls,endpoint_type",
-        [
-            (RivaTtsEndpoint, EndpointType.RIVA_TTS),
-            (RivaTtsStreamingEndpoint, EndpointType.RIVA_TTS_STREAMING),
-        ],
-    )
-    def test_shared_parse_response(
-        self, cls: type, endpoint_type: EndpointType
-    ) -> None:
-        """Both TTS endpoints should parse responses identically."""
-        model_endpoint = create_model_endpoint(endpoint_type)
-        endpoint = create_endpoint_with_mock_transport(cls, model_endpoint)
+    @pytest.mark.parametrize("streaming", [False, True])
+    def test_shared_parse_response(self, streaming: bool) -> None:
+        model_endpoint = create_model_endpoint(
+            EndpointType.RIVA_TTS, streaming=streaming
+        )
+        endpoint = create_endpoint_with_mock_transport(RivaTtsEndpoint, model_endpoint)
         audio_b64 = base64.b64encode(b"\x01\x02").decode()
         response = create_mock_response(json_data={"audio": audio_b64})
 
