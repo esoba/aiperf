@@ -549,8 +549,21 @@
             }
           ],
           "default": null,
-          "description": "Fully-qualified gRPC method path for streaming RPC. Required if supports_streaming is true.",
+          "description": "Fully-qualified gRPC method path for server-streaming RPC. Required if supports_streaming is true.",
           "title": "Stream Method"
+        },
+        "bidi_stream_method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fully-qualified gRPC method path for bidirectional streaming RPC (e.g., ASR streaming).",
+          "title": "Bidi Stream Method"
         }
       },
       "required": [

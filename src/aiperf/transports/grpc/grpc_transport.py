@@ -26,7 +26,11 @@ from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import ErrorDetails, RequestInfo, RequestRecord, TextResponse
 from aiperf.transports.base_transports import BaseTransport, FirstTokenCallback
-from aiperf.transports.grpc.grpc_client import GenericGrpcClient, GrpcStreamCall
+from aiperf.transports.grpc.grpc_client import (
+    GenericGrpcClient,
+    GrpcBidiStreamCall,
+    GrpcStreamCall,
+)
 from aiperf.transports.grpc.status_mapping import grpc_status_to_http
 from aiperf.transports.grpc.stream_chunk import StreamChunk
 from aiperf.transports.grpc.trace_data import GrpcTraceData
@@ -139,6 +143,7 @@ class GrpcTransport(BaseTransport):
         self._serializer: GrpcSerializerProtocol | None = None
         self._unary_method: str | None = None
         self._stream_method: str | None = None
+        self._bidi_stream_method: str | None = None
 
     @staticmethod
     def _parse_target(url: str) -> str:
@@ -247,6 +252,7 @@ class GrpcTransport(BaseTransport):
         self._serializer = serializer_cls()
         self._unary_method = metadata.grpc.method
         self._stream_method = metadata.grpc.stream_method
+        self._bidi_stream_method = metadata.grpc.bidi_stream_method
 
         self.debug(lambda: f"gRPC serializer loaded: {metadata.grpc.serializer}")
 
@@ -406,8 +412,21 @@ class GrpcTransport(BaseTransport):
             )
 
             is_streaming = self.model_endpoint.endpoint.streaming
+            is_bidi = is_streaming and self._bidi_stream_method is not None
 
-            if is_streaming:
+            if is_bidi:
+                await self._send_bidi_streaming_request(
+                    client=client,
+                    record=record,
+                    trace_data=trace_data,
+                    payload=payload,
+                    model_name=model_name,
+                    request_id=request_info.x_request_id or "",
+                    grpc_metadata=grpc_metadata,
+                    first_token_callback=first_token_callback,
+                    cancel_after_ns=request_info.cancel_after_ns,
+                )
+            elif is_streaming:
                 await self._send_streaming_request(
                     client=client,
                     record=record,
@@ -750,4 +769,155 @@ class GrpcTransport(BaseTransport):
                 )
                 self.debug(
                     lambda: f"gRPC streaming request cancelled {timeout_s:.3f}s after being sent"
+                )
+
+    async def _send_bidi_streaming_request(
+        self,
+        *,
+        client: GenericGrpcClient,
+        record: RequestRecord,
+        trace_data: GrpcTraceData,
+        payload: dict[str, Any],
+        model_name: str,
+        request_id: str,
+        grpc_metadata: list[tuple[str, str]] | None,
+        first_token_callback: FirstTokenCallback | None,
+        cancel_after_ns: int | None,
+    ) -> None:
+        """Send a bidirectional streaming RPC (e.g., Riva ASR StreamingRecognize).
+
+        The serializer must implement ``serialize_stream_config()``,
+        ``serialize_stream_chunk()``, and ``deserialize_bidi_response()``.
+        The first message contains config, subsequent messages carry audio chunks.
+
+        Args:
+            client: gRPC client to send the request with.
+            record: RequestRecord to populate.
+            trace_data: Trace data to populate.
+            payload: Dict payload from the endpoint's format_payload().
+            model_name: Model name for the request.
+            request_id: Request ID string.
+            grpc_metadata: gRPC metadata tuples.
+            first_token_callback: Optional callback on first non-error response.
+            cancel_after_ns: Cancel after this many ns, or None for no cancellation.
+        """
+        if self._serializer is None:
+            raise RuntimeError("Serializer not initialized")
+        if self._bidi_stream_method is None:
+            raise RuntimeError("Bidi stream method not configured")
+
+        serialize_config = getattr(self._serializer, "serialize_stream_config", None)
+        serialize_chunk = getattr(self._serializer, "serialize_stream_chunk", None)
+        deserialize_bidi = getattr(self._serializer, "deserialize_bidi_response", None)
+        if not all((serialize_config, serialize_chunk, deserialize_bidi)):
+            raise RuntimeError(
+                "Serializer must implement serialize_stream_config(), "
+                "serialize_stream_chunk(), and deserialize_bidi_response() for bidi streaming"
+            )
+
+        first_token_acquired = False
+
+        async def _run_bidi(bidi_call: GrpcBidiStreamCall) -> None:
+            nonlocal first_token_acquired
+
+            # Send config message first
+            config_bytes = serialize_config(payload, model_name, request_id)
+            config_size = len(config_bytes)
+            trace_data.request_chunks.append((time.perf_counter_ns(), config_size))
+            await bidi_call.write(config_bytes)
+
+            # Send audio chunks from payload
+            audio_chunks = payload.get("audio_chunks", [])
+            for chunk_data in audio_chunks:
+                chunk_bytes = serialize_chunk(chunk_data)
+                trace_data.request_chunks.append(
+                    (time.perf_counter_ns(), len(chunk_bytes))
+                )
+                await bidi_call.write(chunk_bytes)
+
+            await bidi_call.done_writing()
+
+            # Read responses
+            async for resp_bytes in bidi_call:
+                chunk = deserialize_bidi(resp_bytes)
+
+                if chunk.error_message:
+                    error_ns = time.perf_counter_ns()
+                    trace_data.error_timestamp_perf_ns = error_ns
+                    record.end_perf_ns = error_ns
+                    record.error = ErrorDetails(
+                        type="gRPC:STREAM_ERROR",
+                        message=chunk.error_message,
+                        code=500,
+                    )
+                    record.status = 500
+                    break
+
+                perf_ns = time.perf_counter_ns()
+                trace_data.response_chunks.append((perf_ns, chunk.response_size))
+
+                if trace_data.response_receive_start_perf_ns is None:
+                    trace_data.response_receive_start_perf_ns = perf_ns
+                    trace_data.response_headers_received_perf_ns = perf_ns
+
+                json_str = orjson.dumps(chunk.response_dict).decode("utf-8")
+                text_response = TextResponse(
+                    perf_ns=perf_ns,
+                    text=json_str,
+                    content_type="application/json",
+                )
+                record.responses.append(text_response)
+
+                if first_token_callback and not first_token_acquired:
+                    ttft_ns = perf_ns - record.start_perf_ns
+                    first_token_acquired = await first_token_callback(
+                        ttft_ns, text_response
+                    )
+
+            end_ns = time.perf_counter_ns()
+            trace_data.response_receive_end_perf_ns = end_ns
+            if record.end_perf_ns is None:
+                record.end_perf_ns = end_ns
+            if record.error is None:
+                trace_data.grpc_status_code = 0
+                trace_data.response_status_code = 200
+                trace_data.response_reason = "OK"
+                record.status = 200
+                with contextlib.suppress(Exception):
+                    trailing = await bidi_call.trailing_metadata()
+                    trace_data.response_headers = _metadata_to_dict(trailing)
+
+        if cancel_after_ns is None:
+            bidi_call = client.bidi_stream(
+                self._bidi_stream_method, metadata=grpc_metadata
+            )
+            await _run_bidi(bidi_call)
+        else:
+            if not await self._wait_for_channel_ready(
+                client=client, record=record, trace_data=trace_data
+            ):
+                return
+
+            bidi_call = client.bidi_stream(
+                self._bidi_stream_method, metadata=grpc_metadata
+            )
+            timeout_s = cancel_after_ns / NANOS_PER_SECOND
+            task = asyncio.create_task(_run_bidi(bidi_call))
+            try:
+                await asyncio.wait_for(task, timeout=timeout_s)
+            except asyncio.TimeoutError:
+                task.cancel()
+                bidi_call.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                end_ns = time.perf_counter_ns()
+                record.end_perf_ns = end_ns
+                record.cancellation_perf_ns = end_ns
+                record.error = ErrorDetails(
+                    type="RequestCancellationError",
+                    message=f"Request cancelled {timeout_s:.3f}s after being sent",
+                    code=499,
+                )
+                self.debug(
+                    lambda: f"gRPC bidi request cancelled {timeout_s:.3f}s after being sent"
                 )

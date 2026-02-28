@@ -740,6 +740,17 @@ class ImageResponseData(BaseResponseData):
     )
 
 
+class AudioResponseData(BaseResponseData):
+    """Response data containing synthesized audio."""
+
+    audio_bytes: bytes = Field(description="Raw audio bytes")
+    sample_rate_hz: int = Field(description="Audio sample rate in Hz")
+    encoding: str = Field(default="LINEAR_PCM", description="Audio encoding format")
+    duration_ms: float | None = Field(
+        default=None, description="Audio duration in milliseconds"
+    )
+
+
 class VideoResponseData(BaseResponseData):
     """Parsed video generation response data.
 
@@ -820,6 +831,7 @@ class ParsedResponse(AIPerfBaseModel):
         | EmbeddingResponseData
         | RankingsResponseData
         | ImageResponseData
+        | AudioResponseData
         | VideoResponseData
         | BaseResponseData
         | None

@@ -242,7 +242,11 @@ class GrpcEndpointConfig(BaseModel):
     )
     stream_method: str | None = Field(
         default=None,
-        description="Fully-qualified gRPC method path for streaming RPC. Required if supports_streaming is true.",
+        description="Fully-qualified gRPC method path for server-streaming RPC. Required if supports_streaming is true.",
+    )
+    bidi_stream_method: str | None = Field(
+        default=None,
+        description="Fully-qualified gRPC method path for bidirectional streaming RPC (e.g., ASR streaming).",
     )
 
 
