@@ -107,25 +107,21 @@ class CustomDatasetComposer(BaseDatasetComposer):
         Raises:
             ValueError: If the type field is invalid or no loader can handle the data format
         """
-        # Check for explicit type field first (most efficient)
-        if data is not None and "type" in data:
-            try:
-                # Try to convert the type string to enum
-                explicit_type = CustomDatasetType(data["type"])
-                LoaderClass = plugins.get_class(
-                    PluginType.CUSTOM_DATASET_LOADER, explicit_type
-                )
-                if not LoaderClass.can_load(data, filename):
-                    raise ValueError(
-                        f"Explicit type field {explicit_type} specified, but loader {LoaderClass.__name__} "
-                        "cannot handle the data format. Please specify --custom-dataset-type explicitly."
-                    )
-                self.info(f"Using explicit type field: {explicit_type}")
-                return explicit_type
-            except (ValueError, KeyError) as e:
+        # Check for explicit type field first (most efficient).
+        # Skip values that aren't known dataset types (e.g. Bailian's "type": "text"
+        # is a request type, not a dataset type) and fall through to structural detection.
+        if data is not None and data.get("type") in CustomDatasetType:
+            explicit_type = CustomDatasetType(data["type"])
+            LoaderClass = plugins.get_class(
+                PluginType.CUSTOM_DATASET_LOADER, explicit_type
+            )
+            if not LoaderClass.can_load(data, filename):
                 raise ValueError(
-                    f"Invalid type field value: {data['type']}. Please specify --custom-dataset-type explicitly."
-                ) from e
+                    f"Explicit type field {explicit_type} specified, but loader {LoaderClass.__name__} "
+                    "cannot handle the data format. Please specify --custom-dataset-type explicitly."
+                )
+            self.info(f"Using explicit type field: {explicit_type}")
+            return explicit_type
 
         detected_type = None
         for entry, LoaderClass in plugins.iter_all(PluginType.CUSTOM_DATASET_LOADER):

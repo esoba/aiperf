@@ -263,7 +263,8 @@ class BailianTrace(AIPerfBaseModel):
     belong to the same session and are ordered by ``turn``.
 
     Important: Bailian traces use a block size of 16 tokens per salted SipHash
-    block.  Set ``--isl-block-size 16`` when using this format.
+    block.  Use ``--isl-block-size 16`` when using this format (this is set
+    automatically in CLI flows).
 
     Examples:
     - Root request:  ``{"chat_id": 159, "parent_chat_id": -1, "timestamp": 61.114, "input_length": 521, "output_length": 132, "type": "text", "turn": 1, "hash_ids": [1089, 1090, 1091]}``

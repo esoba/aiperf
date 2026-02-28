@@ -91,6 +91,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
 
         Called after parsing but before filtering. Default is a no-op.
         """
+        pass
 
     @abstractmethod
     def _group_traces(self, items: list[TraceT]) -> dict[str, list[TraceT]]:
