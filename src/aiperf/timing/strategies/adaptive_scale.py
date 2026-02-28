@@ -105,7 +105,6 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         # Active state
         self._active_users = 0
         self._period_ttft_samples: list[float] = []
-        self._all_ttft_samples: list[float] = []
         self._period_new_tokens = 0
 
         # Per-session rate limiting state
@@ -196,16 +195,19 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             if now_ns - last_ns > ttl:
                 expired.append(corr_id)
 
+        needs_recompute = False
         for corr_id in expired:
             self._session_last_active_ns.pop(corr_id, None)
             self._session_is_subagent.pop(corr_id, None)
-            removed_ids = self._session_hash_ids.pop(corr_id, None)
-            if removed_ids is not None:
-                self._active_hash_ids = (
-                    set().union(*self._session_hash_ids.values())
-                    if self._session_hash_ids
-                    else set()
-                )
+            if self._session_hash_ids.pop(corr_id, None) is not None:
+                needs_recompute = True
+
+        if needs_recompute:
+            self._active_hash_ids = (
+                set().union(*self._session_hash_ids.values())
+                if self._session_hash_ids
+                else set()
+            )
 
         if expired:
             self.debug(f"TTL evicted {len(expired)} expired sessions from working set")
@@ -229,7 +231,6 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             return
 
         metric_value = self._compute_ttft_metric(samples)
-        self._all_ttft_samples.extend(samples)
 
         if metric_value >= self._max_ttft_sec:
             self.info(
@@ -564,6 +565,10 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             return
 
         self._pending_subagent_joins.pop(parent_corr_id, None)
+
+        if pending.join_turn_index >= pending.parent_num_turns:
+            return
+
         join_turn = TurnToSend(
             conversation_id=pending.parent_conversation_id,
             x_correlation_id=parent_corr_id,
@@ -631,6 +636,10 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         self._period_total_count += 1
         if self._evaluate_slos(credit_return):
             self._period_good_count += 1
+            if self._enable_rate_limiting:
+                corr_id = credit_return.credit.x_correlation_id
+                self._session_backoffs.pop(corr_id, None)
+                self._rate_limit_counts.pop(corr_id, None)
         elif self._enable_rate_limiting:
             corr_id = credit_return.credit.x_correlation_id
             count = self._rate_limit_counts.get(corr_id, 0)

@@ -321,6 +321,10 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         """
         await self._collect_and_process_metrics()
 
+    async def collect_and_process_metrics(self) -> None:
+        """Public interface for on-demand metrics collection (e.g., final scrape)."""
+        await self._collect_and_process_metrics()
+
     async def _collect_and_process_metrics(self) -> None:
         """Collect metrics from all GPUs and send via callback.
 

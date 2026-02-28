@@ -192,7 +192,7 @@ class ConfidenceAggregation(AggregationStrategy):
                         if not unit:
                             unit = metric_result.unit
 
-            if not values:
+            if len(values) < 2:
                 continue
 
             # Create flattened key for output (e.g., "time_to_first_token_p99")

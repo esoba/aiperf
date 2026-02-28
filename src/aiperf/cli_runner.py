@@ -163,7 +163,8 @@ def _run_multi_benchmark(
         )
 
     # Set default to simple if ui_type wasn't explicitly set
-    if "ui_type" not in service_config.model_fields_set:
+    auto_set_ui = "ui_type" not in service_config.model_fields_set
+    if auto_set_ui:
         service_config.ui_type = UIType.SIMPLE
 
     # Set up logging so output is visible
@@ -172,7 +173,7 @@ def _run_multi_benchmark(
     logger = AIPerfLogger(__name__)
 
     # Inform user about UI mode (now that logging is set up)
-    if "ui_type" not in service_config.model_fields_set:
+    if auto_set_ui:
         logger.info(
             "Multi-run mode: UI automatically set to 'simple' "
             "(use '--ui none' to disable UI output)"
