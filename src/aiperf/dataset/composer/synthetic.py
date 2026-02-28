@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import InputDefaults
@@ -39,17 +41,13 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 "setting the mean to a positive value."
             )
 
-    def create_dataset(self) -> list[Conversation]:
+    def create_dataset(self) -> Iterator[Conversation]:
         """Create a synthetic conversation dataset from the given configuration.
 
-        It generates a set of conversations with a varying number of turns,
-        where each turn contains synthetic text, image, and audio payloads.
-
-        Returns:
-            list[Conversation]: A list of conversation objects.
+        Yields conversations one at a time, where each conversation contains
+        a varying number of turns with synthetic text, image, and audio payloads.
         """
-        conversations = []
-        for _ in range(self.config.input.conversation.num_dataset_entries):
+        for session_index in range(self.config.input.conversation.num_dataset_entries):
             conversation = Conversation(session_id=self.session_id_generator.next())
 
             num_turns = self._turn_sampler_rng.sample_positive_normal_integer(
@@ -61,11 +59,10 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             for turn_idx in range(num_turns):
                 turn = self._create_turn(is_first=(turn_idx == 0))
                 conversation.turns.append(turn)
-            conversations.append(conversation)
 
-        # Finalize all conversations (turn metadata + context prompts)
-        self._finalize_conversations(conversations)
-        return conversations
+            # Finalize conversation-level context prompts
+            self._finalize_conversation(conversation, session_index)
+            yield conversation
 
     def _create_turn(self, is_first: bool) -> Turn:
         """Create a turn object that contains synthetic payloads to send.

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from aiperf.common.models import Conversation
@@ -47,7 +48,7 @@ class CustomDatasetLoaderProtocol(Protocol):
 
     def convert_to_conversations(
         self, custom_data: dict[str, list["CustomDatasetT"]]
-    ) -> list[Conversation]: ...
+    ) -> Iterable[Conversation]: ...
 
 
 @runtime_checkable

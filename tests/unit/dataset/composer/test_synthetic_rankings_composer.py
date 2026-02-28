@@ -18,7 +18,7 @@ def test_create_dataset_structure(synthetic_config, mock_tokenizer):
     synthetic_config.input.rankings.passages.stddev = 1
     composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
 
-    dataset = composer.create_dataset()
+    dataset = list(composer.create_dataset())
     assert len(dataset) == synthetic_config.input.conversation.num_dataset_entries
 
     for conv in dataset:
@@ -42,7 +42,7 @@ def test_passage_count_distribution(synthetic_config, mock_tokenizer):
     synthetic_config.input.rankings.passages.stddev = 2
     composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
 
-    dataset = composer.create_dataset()
+    dataset = list(composer.create_dataset())
     passage_counts = [len(conv.turns[0].texts[1].contents) for conv in dataset]
 
     assert all(1 <= c <= 10 for c in passage_counts)
@@ -56,10 +56,10 @@ def test_reproducibility_fixed_seed(synthetic_config, mock_tokenizer):
     synthetic_config.input.random_seed = 42
 
     composer1 = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
-    data1 = composer1.create_dataset()
+    data1 = list(composer1.create_dataset())
 
     composer2 = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
-    data2 = composer2.create_dataset()
+    data2 = list(composer2.create_dataset())
 
     # Session IDs differ (fresh), but text contents should match
     for c1, c2 in zip(data1, data2, strict=True):
@@ -78,7 +78,7 @@ def test_rankings_specific_token_options(synthetic_config, mock_tokenizer):
     synthetic_config.input.random_seed = 42
 
     composer = SyntheticRankingsDatasetComposer(synthetic_config, mock_tokenizer)
-    dataset = composer.create_dataset()
+    dataset = list(composer.create_dataset())
 
     # Verify that data was generated
     assert len(dataset) > 0

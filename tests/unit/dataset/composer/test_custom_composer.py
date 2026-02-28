@@ -64,34 +64,26 @@ class TestCoreFunctionality:
         composer._create_loader_instance(dataset_type)
         assert isinstance(composer.loader, expected_instance)
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
-    def test_create_dataset_trace(
-        self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
-    ):
+    def test_create_dataset_trace(self, mock_check_file, trace_config, mock_tokenizer):
         """Test that create_dataset returns correct type."""
-        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
         composer = CustomDatasetComposer(trace_config, mock_tokenizer)
-        conversations = composer.create_dataset()
+        conversations = list(composer.create_dataset())
 
         assert len(conversations) == 3
         assert all(isinstance(c, Conversation) for c in conversations)
         assert all(isinstance(turn, Turn) for c in conversations for turn in c.turns)
         assert all(len(turn.texts) == 1 for c in conversations for turn in c.turns)
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
-    def test_max_tokens_config(
-        self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
-    ):
-        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
+    def test_max_tokens_config(self, mock_check_file, trace_config, mock_tokenizer):
         trace_config.input.prompt.output_tokens.mean = 120
         trace_config.input.prompt.output_tokens.stddev = 8.0
 
         composer = CustomDatasetComposer(trace_config, mock_tokenizer)
-        conversations = composer.create_dataset()
+        conversations = list(composer.create_dataset())
 
         assert len(conversations) > 0
         # With global RNG, verify max_tokens is set to a positive integer
@@ -104,7 +96,6 @@ class TestCoreFunctionality:
                 # Should be roughly around the mean of 120 (within 3 stddev)
                 assert 96 < turn.max_tokens < 144
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("builtins.open", mock_open(read_data=MOCK_TRACE_CONTENT))
     @patch("pathlib.Path.iterdir", return_value=[])
@@ -112,17 +103,15 @@ class TestCoreFunctionality:
         self,
         mock_iterdir,
         mock_check_file,
-        mock_parallel_decode,
         custom_config,
         mock_tokenizer,
     ):
         """Test that max_tokens can be set from the custom file"""
-        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
         mock_check_file.return_value = None
         custom_config.input.custom_dataset_type = CustomDatasetType.MOONCAKE_TRACE
 
         composer = CustomDatasetComposer(custom_config, mock_tokenizer)
-        conversations = composer.create_dataset()
+        conversations = list(composer.create_dataset())
 
         for conversation in conversations:
             for turn in conversation.turns:
@@ -151,9 +140,8 @@ class TestErrorHandling:
         mock_get_class.return_value = mock_loader_class
 
         composer = CustomDatasetComposer(custom_config, mock_tokenizer)
-        result = composer.create_dataset()
+        result = list(composer.create_dataset())
 
-        assert isinstance(result, list)
         assert len(result) == 0
 
 

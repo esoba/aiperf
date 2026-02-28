@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from aiperf.common import random_generator as rng
 from aiperf.common.config import InputDefaults, UserConfig
 from aiperf.common.models import Conversation, Text, Turn
@@ -33,26 +35,25 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
                 f"Using default sampling strategy for synthetic rankings dataset: {InputDefaults.DATASET_SAMPLING_STRATEGY}"
             )
 
-    def create_dataset(self) -> list[Conversation]:
+    def create_dataset(self) -> Iterator[Conversation]:
         """Generate synthetic dataset for the rankings endpoint.
 
         Each conversation contains one turn with one query and multiple passages.
         """
-        conversations: list[Conversation] = []
         num_entries = self.config.input.conversation.num_dataset_entries
         num_passages_mean = self.config.input.rankings.passages.mean
         num_passages_std = self.config.input.rankings.passages.stddev
 
-        for _ in range(num_entries):
+        for session_index in range(num_entries):
             num_passages = self._passages_rng.sample_positive_normal_integer(
                 num_passages_mean, num_passages_std
             )
             conversation = Conversation(session_id=self.session_id_generator.next())
             turn = self._create_turn(num_passages=num_passages)
             conversation.turns.append(turn)
-            conversations.append(conversation)
-
-        return conversations
+            # Finalize conversation-level context prompts
+            self._finalize_conversation(conversation, session_index)
+            yield conversation
 
     def _create_turn(self, num_passages: int) -> Turn:
         """Create a single ranking turn with one synthetic query and multiple synthetic passages.

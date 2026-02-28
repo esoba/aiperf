@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import logging
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from pydantic import ValidationError
@@ -112,8 +112,7 @@ class TestBailianTraceDatasetLoader:
     def mock_prompt_generator(self):
         generator = Mock()
         generator.generate.return_value = "Generated prompt text"
-        generator._decoded_cache = {}
-        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+        generator._cache = {}
         return generator
 
     @pytest.fixture
@@ -415,12 +414,7 @@ class TestBailianTraceDatasetLoader:
 
     # ---- convert_to_conversations ----
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
-    def test_convert_to_conversations(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
-    ):
-        mock_parallel_decode.return_value = ["decoded prompt 1", "decoded prompt 2"]
-
+    def test_convert_to_conversations(self, mock_prompt_generator, default_user_config):
         trace_data = {
             "100": [
                 BailianTrace(
@@ -447,7 +441,7 @@ class TestBailianTraceDatasetLoader:
             user_config=default_user_config,
             prompt_generator=mock_prompt_generator,
         )
-        conversations = loader.convert_to_conversations(trace_data)
+        conversations = list(loader.convert_to_conversations(trace_data))
 
         assert len(conversations) == 2
         assert conversations[0].session_id == "100"
@@ -460,7 +454,7 @@ class TestBailianTraceDatasetLoader:
             user_config=default_user_config,
             prompt_generator=mock_prompt_generator,
         )
-        assert loader.convert_to_conversations({}) == []
+        assert list(loader.convert_to_conversations({})) == []
 
     def test_convert_without_hash_ids(self, mock_prompt_generator, default_user_config):
         """When hash_ids is empty, falls back to normal prompt generation."""
@@ -480,62 +474,18 @@ class TestBailianTraceDatasetLoader:
             user_config=default_user_config,
             prompt_generator=mock_prompt_generator,
         )
-        conversations = loader.convert_to_conversations(trace_data)
+        conversations = list(loader.convert_to_conversations(trace_data))
 
         assert len(conversations) == 1
         mock_prompt_generator.generate.assert_called_once_with(
-            mean=100, stddev=0, hash_ids=[]
+            mean=100, stddev=0, hash_ids=[], block_size=512
         )
-
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
-    def test_parallel_decode_length_mismatch_raises(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
-    ):
-        """strict=True in zip guards against silent data loss."""
-        mock_parallel_decode.return_value = ["only one"]  # expecting 2
-
-        trace_data = {
-            "1": [
-                BailianTrace(
-                    chat_id=1,
-                    timestamp=1.0,
-                    input_length=10,
-                    output_length=5,
-                    hash_ids=[1],
-                )
-            ],
-            "2": [
-                BailianTrace(
-                    chat_id=2,
-                    timestamp=2.0,
-                    input_length=20,
-                    output_length=10,
-                    hash_ids=[2],
-                )
-            ],
-        }
-
-        loader = BailianTraceDatasetLoader(
-            filename="dummy.jsonl",
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
-        )
-
-        with pytest.raises(ValueError, match="zip"):
-            loader.convert_to_conversations(trace_data)
 
     # ---- multi-turn conversation conversion ----
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_multi_turn_conversation_ordering(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
+        self, mock_prompt_generator, default_user_config
     ):
-        mock_parallel_decode.return_value = [
-            "prompt turn 1",
-            "prompt turn 2",
-            "prompt turn 3",
-        ]
-
         trace_data = {
             "100": [
                 BailianTrace(
@@ -572,7 +522,7 @@ class TestBailianTraceDatasetLoader:
             user_config=default_user_config,
             prompt_generator=mock_prompt_generator,
         )
-        conversations = loader.convert_to_conversations(trace_data)
+        conversations = list(loader.convert_to_conversations(trace_data))
 
         assert len(conversations) == 1
         conv = conversations[0]
@@ -613,8 +563,7 @@ class TestBailianTraceSynthesisIntegration:
     def mock_prompt_generator(self):
         generator = Mock()
         generator.generate.return_value = "Generated prompt text"
-        generator._decoded_cache = {}
-        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+        generator._cache = {}
         return generator
 
     def test_speedup_ratio_scales_timestamps(self, mock_prompt_generator):

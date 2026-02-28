@@ -225,7 +225,9 @@ def hashes_to_texts(
         if hash_ids:
             # Use PromptGenerator to generate text from hash_ids
             # This uses the Shakespeare corpus and caches blocks by hash_id
-            text = prompt_generator.generate(mean=input_len, hash_ids=hash_ids)
+            text = prompt_generator.generate(
+                mean=input_len, hash_ids=hash_ids, block_size=block_size
+            )
         else:
             # No hash_ids - generate plain text of target length
             text = prompt_generator.generate(mean=input_len)

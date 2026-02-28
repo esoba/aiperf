@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
@@ -41,12 +42,11 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
 
     @abstractmethod
-    def create_dataset(self) -> list[Conversation]:
-        """
-        Create a set of conversation objects from the given configuration.
+    def create_dataset(self) -> Iterator[Conversation]:
+        """Create conversation objects from the given configuration.
 
-        Returns:
-            list[Conversation]: A list of conversation objects.
+        Yields Conversation objects one at a time so callers can stream
+        them directly to the backing store without materializing the full list.
         """
         ...
 
@@ -151,63 +151,38 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             and self.config.input.prompt.prefix_prompt.length > 0
         )
 
-    def _finalize_conversations(self, conversations: list[Conversation]) -> None:
-        """Finalize conversations by adding conversation-level context prompts.
+    def _finalize_conversation(
+        self, conversation: Conversation, session_index: int
+    ) -> None:
+        """Inject context prompts into a single conversation.
 
-        Injects shared system prompts and per-conversation user context prompts.
-        Note: Turn-level finalization (_finalize_turn) is handled by each composer
-        according to its needs (eager in synthetic, lazy in custom).
-
-        Args:
-            conversations: List of conversations to finalize
-        """
-        self._inject_context_prompts(conversations)
-
-    def _inject_context_prompts(self, conversations: list[Conversation]) -> None:
-        """Inject shared system and user context prompts into conversations.
-
-        Sets the system_message and context_message fields on Conversation objects,
-        which endpoint formatters will prepend to the first turn when creating payloads.
+        Sets the system_message and user_context_message fields, which
+        endpoint formatters prepend to the first turn when creating payloads.
 
         Args:
-            conversations: List of conversations to inject prompts into
+            conversation: Conversation to finalize.
+            session_index: Position of this conversation in the dataset
+                (used for per-session user context prompt generation).
         """
         if self.prompt_generator is None:
             return
 
         config = self.config.input.prompt.prefix_prompt
-        has_shared_system = config.shared_system_prompt_length is not None
-        has_user_context = config.user_context_prompt_length is not None
 
-        if not (has_shared_system or has_user_context):
-            return
+        if config.shared_system_prompt_length is not None:
+            prompt = self._get_shared_system_prompt()
+            if prompt:
+                conversation.system_message = prompt
 
-        self.debug(
-            lambda: f"Injecting context prompts into {len(conversations)} conversations"
-        )
+        if config.user_context_prompt_length is not None:
+            conversation.user_context_message = (
+                self.prompt_generator.generate_user_context_prompt(session_index)
+            )
 
-        # Get shared system prompt once (same for all sessions)
-        shared_system_prompt = None
-        if has_shared_system:
-            shared_system_prompt = self.prompt_generator.get_shared_system_prompt()
-
-        # Iterate through conversations and set conversation-level fields
-        for session_index, conversation in enumerate(conversations):
-            # Set shared system prompt
-            if shared_system_prompt:
-                conversation.system_message = shared_system_prompt
-                self.trace(
-                    lambda conv=conversation: f"Set system_message on conversation {conv.session_id}"
-                )
-
-            # Set user context prompt (unique per session)
-            if has_user_context:
-                user_context = self.prompt_generator.generate_user_context_prompt(
-                    session_index
-                )
-                conversation.user_context_message = user_context
-                self.trace(
-                    lambda idx=session_index,
-                    conv=conversation: f"Set user_context_message for session {idx} "
-                    f"(conversation {conv.session_id})"
-                )
+    def _get_shared_system_prompt(self) -> str | None:
+        """Return the shared system prompt, computing and caching on first call."""
+        if not hasattr(self, "_shared_system_prompt_cache"):
+            self._shared_system_prompt_cache: str | None = (
+                self.prompt_generator.get_shared_system_prompt()
+            )
+        return self._shared_system_prompt_cache

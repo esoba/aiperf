@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import time
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 import orjson
@@ -31,6 +32,7 @@ from aiperf.common.messages import (
 from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import (
     Conversation,
+    ConversationMetadata,
     DatasetClientMetadata,
     DatasetMetadata,
     InputsFile,
@@ -86,11 +88,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
-        self.dataset: dict[
-            str, Conversation
-        ] = {}  # conversation ID -> Conversation mapping
         self.dataset_metadata: DatasetMetadata | None = None
         self._conversation_ids_cache: list[str] = []
+        self._conversation_count: int = 0
         self.dataset_configured = asyncio.Event()
 
         # In Kubernetes mode, use compress_only to stream directly to compressed files.
@@ -132,7 +132,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.info(lambda: f"Configuring dataset for {self.service_id}")
         begin = time.perf_counter()
         await self._configure_dataset()
-        await self._generate_inputs_json_file()
         await self._configure_dataset_client_and_free_memory()
 
         duration = time.perf_counter() - begin
@@ -140,8 +139,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _configure_dataset_client_and_free_memory(self) -> None:
         """Configure the dataset client for serving fallback requests, then free memory."""
-        conversation_count = len(self.dataset)
-
         if not self._compress_only:
             client_metadata = self._backing_store.get_client_metadata()
             ClientStoreClass = plugins.get_class(
@@ -149,25 +146,22 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
             self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
             await self._dataset_client.initialize()
+            await self._generate_inputs_json_file()
 
         self.dataset_configured.set()
 
-        # Reassign to new empty containers (not .clear()) to release object references,
-        # then run gc.collect() twice to ensure circular references are cleaned up.
-        self.dataset = {}
-        self._conversation_ids_cache = []
+        # Run gc.collect() twice to ensure circular references are cleaned up.
         gc.collect()
         gc.collect()
 
         if self._compress_only:
             self.info(
-                f"Kubernetes mode: skipped local client, freed {conversation_count} "
-                "conversations from memory (workers handle all requests)"
+                f"Kubernetes mode: skipped local client, compressed {self._conversation_count} "
+                "conversations into backing store)"
             )
         else:
             self.info(
-                f"Dataset client initialized and freed {conversation_count} "
-                "conversations from memory"
+                f"Dataset client initialized, {self._conversation_count} conversations in backing store"
             )
 
     async def _configure_tokenizer(self) -> None:
@@ -185,7 +179,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             resolve_alias=tokenizer_config.should_resolve_alias,
         )
 
-    def _generate_input_payloads(
+    async def _generate_input_payloads(
         self,
         model_endpoint: ModelEndpointInfo,
     ) -> InputsFile:
@@ -201,7 +195,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             f"class: {endpoint.__class__.__name__}",
         )
         session_payloads_map: dict[str, list] = {}
-        for conversation in self.dataset.values():
+        for conv_metadata in self.dataset_metadata.conversations:
+            conversation = await self._dataset_client.get_conversation(
+                conv_metadata.conversation_id
+            )
             session_id = conversation.session_id
             if session_id not in session_payloads_map:
                 session_payloads_map[session_id] = []
@@ -245,7 +242,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
             model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
-            inputs = self._generate_input_payloads(model_endpoint)
+            inputs = await self._generate_input_payloads(model_endpoint)
 
             temp_file_path.write_bytes(
                 orjson.dumps(
@@ -293,7 +290,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
         return await loader.convert_to_conversations(dataset)
 
-    def _load_custom_dataset(self) -> list[Conversation]:
+    def _load_custom_dataset(self) -> Iterable[Conversation]:
         ComposerClass = plugins.get_class(
             PluginType.DATASET_COMPOSER, ComposerType.CUSTOM
         )
@@ -303,7 +300,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
         return "rankings" in endpoint_type.lower()
 
-    def _load_synthetic_dataset(self) -> list[Conversation]:
+    def _load_synthetic_dataset(self) -> Iterable[Conversation]:
         endpoint_type = self.user_config.endpoint.type
 
         if self._is_rankings_endpoint(endpoint_type):
@@ -334,16 +331,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         else:
             conversations = self._load_synthetic_dataset()
 
-        self.dataset = {conv.session_id: conv for conv in conversations}
-        self._conversation_ids_cache = [
-            conversation.session_id for conversation in conversations
-        ]
-
-        # Initialize backing store and stream conversations to mmap files
-        # Workers read directly from these files
+        # Stream conversations to backing store and collect metadata on the fly.
+        # Each conversation is written to mmap and then can be GC'd — we never
+        # hold the full dataset in memory.
         await self._backing_store.initialize()
-        conversations_dict = {conv.session_id: conv for conv in conversations}
-        await self._backing_store.add_conversations(conversations_dict)
+        metadata_list: list[ConversationMetadata] = []
+        for conversation in conversations:
+            await self._backing_store.add_conversation(
+                conversation.session_id, conversation
+            )
+            metadata_list.append(conversation.metadata())
+        self._conversation_count = len(metadata_list)
         await self._backing_store.finalize()
         # In Kubernetes mode (compress_only=True), files are already compressed
         # during finalize(). In local mode, uncompressed files are used directly.
@@ -362,7 +360,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
 
         self.dataset_metadata = DatasetMetadata(
-            conversations=[conversation.metadata() for conversation in conversations],
+            conversations=metadata_list,
             sampling_strategy=self.user_config.input.dataset_sampling_strategy,
         )
         self.info(

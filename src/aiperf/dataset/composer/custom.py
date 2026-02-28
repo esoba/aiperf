@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -19,11 +20,12 @@ class CustomDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
         super().__init__(config, tokenizer)
 
-    def create_dataset(self) -> list[Conversation]:
+    def create_dataset(self) -> Iterator[Conversation]:
         """Create conversations from a file or directory.
 
-        Returns:
-            list[Conversation]: A list of conversation objects.
+        Yields conversations one at a time, finalizing each inline so
+        the caller can stream them directly to the backing store without
+        materializing the full list.
         """
         # TODO: (future) for K8s, we need to transfer file data from SC (across node)
         check_file_exists(self.config.input.file)
@@ -44,14 +46,13 @@ class CustomDatasetComposer(BaseDatasetComposer):
         dataset = self.loader.load_dataset()
         conversations = self.loader.convert_to_conversations(dataset)
 
-        # Finalize all turns with metadata (custom datasets need this)
-        for conversation in conversations:
+        for session_index, conversation in enumerate(conversations):
+            # Finalize all turns with metadata (custom datasets need this)
             for turn in conversation.turns:
                 self._finalize_turn(turn)
-
-        # Finalize conversation-level context prompts
-        self._finalize_conversations(conversations)
-        return conversations
+            # Finalize conversation-level context prompts
+            self._finalize_conversation(conversation, session_index)
+            yield conversation
 
     def _infer_dataset_type(self, file_path: str) -> CustomDatasetType:
         """Infer the custom dataset type from the input file.

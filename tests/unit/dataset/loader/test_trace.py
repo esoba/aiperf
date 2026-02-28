@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import logging
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from pydantic import ValidationError
@@ -111,9 +111,7 @@ class TestMooncakeTraceDatasetLoader:
         generator = Mock()
         generator.generate.return_value = "Generated prompt text"
         # Required for convert_to_conversations() to check string cache
-        generator._decoded_cache = {}
-        # Mock _build_token_sequence to return a simple token list
-        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+        generator._cache = {}
         return generator
 
     @pytest.fixture
@@ -356,18 +354,8 @@ class TestMooncakeTraceDatasetLoader:
         # Check that the skipped traces message is logged
         assert f"Skipped {expected_skipped:,} traces" in caplog.text
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
-    def test_convert_to_conversations(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
-    ):
+    def test_convert_to_conversations(self, mock_prompt_generator, default_user_config):
         """Test conversion of trace data to conversations."""
-        # Mock parallel_decode to return decoded prompts
-        mock_parallel_decode.return_value = [
-            "decoded prompt 1",
-            "decoded prompt 2",
-            "decoded prompt 3",
-        ]
-
         # Setup trace data
         trace_data = {
             "session-1": [
@@ -401,7 +389,7 @@ class TestMooncakeTraceDatasetLoader:
             user_config=default_user_config,
             prompt_generator=mock_prompt_generator,
         )
-        conversations = loader.convert_to_conversations(trace_data)
+        conversations = list(loader.convert_to_conversations(trace_data))
 
         assert len(conversations) == 3
 
@@ -432,7 +420,7 @@ class TestMooncakeTraceDatasetLoader:
             user_config=default_user_config,
             prompt_generator=mock_prompt_generator,
         )
-        conversations = loader.convert_to_conversations({})
+        conversations = list(loader.convert_to_conversations({}))
 
         assert len(conversations) == 0
 
@@ -453,7 +441,7 @@ class TestMooncakeTraceDatasetLoader:
             user_config=default_user_config,
             prompt_generator=mock_prompt_generator,
         )
-        conversations = loader.convert_to_conversations(trace_data)
+        conversations = list(loader.convert_to_conversations(trace_data))
 
         assert len(conversations) == 1  # One conversation with multiple turns
         conversation = conversations[0]
@@ -801,8 +789,8 @@ class TestMooncakeTraceDatasetLoader:
 class TestMooncakeTraceReproducibility:
     """Tests for reproducibility of Mooncake trace prompt generation.
 
-    These tests verify that the two-phase Mooncake flow with parallel_decode
-    yields identical prompts across runs when the RNG is seeded consistently.
+    These tests verify that HashIdRandomGenerator-based generation yields
+    identical prompts across runs when the RNG is seeded consistently.
     """
 
     @pytest.fixture
@@ -810,8 +798,7 @@ class TestMooncakeTraceReproducibility:
         """Create a mock prompt generator for testing."""
         generator = Mock()
         generator.generate.return_value = "Generated prompt text"
-        generator._decoded_cache = {}
-        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+        generator._cache = {}
         return generator
 
     @pytest.fixture
@@ -826,9 +813,8 @@ class TestMooncakeTraceReproducibility:
             ),
         )
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
     def test_mooncake_flow_reproducibility_with_same_seed(
-        self, mock_parallel_decode, mock_tokenizer_cls, user_config_for_reproducibility
+        self, mock_tokenizer_cls, user_config_for_reproducibility
     ):
         """Verify Mooncake flow produces identical prompts across runs with same seed.
 
@@ -838,16 +824,7 @@ class TestMooncakeTraceReproducibility:
         from aiperf.common import random_generator as rng
         from aiperf.dataset.generator import PromptGenerator
 
-        # Mock parallel_decode to return deterministic results based on input
-        def deterministic_decode(token_sequences, tokenizer_name):
-            return [
-                f"decoded_prompt_{i}_{len(seq)}"
-                for i, seq in enumerate(token_sequences)
-            ]
-
-        mock_parallel_decode.side_effect = deterministic_decode
-
-        # Create trace data with hash_ids to exercise the two-phase flow
+        # Create trace data with hash_ids
         trace_data = {
             "session-1": [
                 MooncakeTrace(
@@ -913,39 +890,6 @@ class TestMooncakeTraceReproducibility:
             f"First run: {prompts1}, Second run: {prompts2}"
         )
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
-    def test_parallel_decode_length_mismatch_raises(
-        self, mock_parallel_decode, mock_prompt_generator, default_user_config
-    ):
-        """Verify that length mismatch between pending_decodes and decoded_prompts raises.
-
-        This tests the strict=True behavior in zip() that guards against silent data loss.
-        """
-        # Mock parallel_decode to return FEWER results than expected
-        mock_parallel_decode.return_value = ["decoded prompt 1"]  # Only 1, expecting 3
-
-        trace_data = {
-            "session-1": [
-                MooncakeTrace(input_length=100, hash_ids=[1, 2], timestamp=1000),
-            ],
-            "session-2": [
-                MooncakeTrace(input_length=200, hash_ids=[3, 4, 5], timestamp=2000),
-            ],
-            "session-3": [
-                MooncakeTrace(input_length=150, hash_ids=[6], timestamp=3000),
-            ],
-        }
-
-        loader = MooncakeTraceDatasetLoader(
-            filename="dummy.jsonl",
-            user_config=default_user_config,
-            prompt_generator=mock_prompt_generator,
-        )
-
-        # Should raise ValueError due to strict=True in zip
-        with pytest.raises(ValueError, match="zip"):
-            loader.convert_to_conversations(trace_data)
-
 
 # ============================================================================
 # Synthesis Integration Tests
@@ -986,8 +930,7 @@ class TestMooncakeTraceSynthesisIntegration:
         """Create a mock prompt generator for testing."""
         generator = Mock()
         generator.generate.return_value = "Generated prompt text"
-        generator._decoded_cache = {}
-        generator._build_token_sequence.return_value = [1, 2, 3, 4, 5]
+        generator._cache = {}
         return generator
 
     @pytest.fixture

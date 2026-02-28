@@ -1,20 +1,41 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
+import hashlib
 from abc import abstractmethod
+from collections.abc import Iterator
 from typing import Any, Generic, TypeVar
 
 from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
-from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader
+from aiperf.dataset.loader.parallel_convert import parallel_convert
 from aiperf.dataset.synthesis.models import SynthesisParams
 from aiperf.dataset.synthesis.synthesizer import Synthesizer
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 TraceT = TypeVar("TraceT")
+
+_MIN_TRACES_FOR_PARALLEL = 10
+
+
+def _compute_file_hash(filepath: str) -> str:
+    """Compute SHA256 hash of file content (first 16 hex chars).
+
+    Falls back to hashing the filepath string if the file cannot be read.
+    """
+    try:
+        hasher = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()[:16]
+    except (OSError, TypeError):
+        return hashlib.sha256(filepath.encode()).hexdigest()[:16]
 
 
 class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
@@ -22,8 +43,8 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
 
     Provides common infrastructure for loading trace-format datasets
     (Mooncake, Bailian, etc.) including shared initialization, timestamp
-    filtering, 3-phase prompt generation with parallel decode, and
-    synthesis integration.
+    filtering, parallel prompt generation with deterministic per-hash_id
+    re-seeding, and synthesis integration.
 
     Subclasses must implement:
     - `can_load`: data format detection
@@ -50,14 +71,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self._end_offset = user_config.input.fixed_schedule_end_offset
         self._max_isl = user_config.input.synthesis.max_isl
         self._max_osl = user_config.input.synthesis.max_osl
-
-        # Use the resolved tokenizer name so worker processes can load from cache
-        # without needing alias resolution or network access.
-        self._tokenizer_name = (
-            prompt_generator.tokenizer.resolved_name
-            or user_config.tokenizer.name
-            or user_config.endpoint.model_names[0]
-        )
+        self._trace_id: str = ""
 
         # Precedence: user CLI --isl-block-size > plugin metadata default > hardcoded fallback
         user_block_size = user_config.input.prompt.input_tokens.block_size
@@ -171,6 +185,10 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
+
+        self._trace_id = _compute_file_hash(self.filename)
+        self.prompt_generator._hash_id_corpus_rng.set_trace_id(self._trace_id)
+        self.debug(lambda: f"Trace ID: {self._trace_id} for {self.filename}")
         items: list[TraceT] = []
 
         with open(self.filename) as f:
@@ -202,7 +220,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         return data
 
     # ------------------------------------------------------------------
-    # convert_to_conversations — 3-phase prompt generation
+    # convert_to_conversations
     # ------------------------------------------------------------------
 
     def _get_text_input(self, trace: TraceT) -> str | None:
@@ -227,77 +245,70 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         )
 
     def convert_to_conversations(
-        self, data: dict[str, list[TraceT]]
-    ) -> list[Conversation]:
-        """Convert trace sessions to :class:`Conversation` objects.
+        self,
+        data: dict[str, list[TraceT]],
+        num_workers: int | None = None,
+        batch_size: int = 100,
+    ) -> Iterator[Conversation]:
+        """Convert trace sessions to conversations using parallel workers.
 
-        Uses a three-phase approach for optimal performance:
+        Uses multiprocessing Pool with shared memory for the token corpus.
+        Each worker gets its own HashIdRandomGenerator to produce deterministic
+        token sequences per hash_id regardless of worker count or order.
 
-        1. Build token sequences, checking the string cache first.
-        2. Batch parallel decode for all cache misses.
-        3. Assemble final :class:`Conversation` objects.
+        Falls back to single-threaded conversion for small datasets.
+
+        Yields:
+            Conversation objects in session order.
         """
-        # Phase 1: Build token sequences and identify cache misses
-        pending_decodes: list[tuple[str, int, list[int], tuple]] = []
-        conversations_data: dict[str, list[tuple[TraceT, str | None]]] = {}
+        sessions = list(data.items())
+        if not sessions:
+            return
 
-        for session_id, traces in data.items():
-            conversations_data[session_id] = []
-            for idx, trace in enumerate(traces):
+        total_traces = sum(len(traces) for _, traces in sessions)
+        if total_traces < _MIN_TRACES_FOR_PARALLEL:
+            yield from self._convert_single_threaded(sessions)
+            return
+
+        pg = self.prompt_generator
+        serialized = [
+            (sid, [t.model_dump() for t in traces])  # type: ignore[union-attr]
+            for sid, traces in sessions
+        ]
+
+        yield from parallel_convert(
+            sessions=serialized,
+            tokenizer_name=pg.tokenizer.resolved_name,
+            corpus=pg._tokenized_corpus,
+            base_seed=pg._hash_id_corpus_rng.seed,
+            block_size=self._block_size,
+            sep_token=pg.tokenizer.block_separation_token_id,
+            trace_id=self._trace_id,
+            num_workers=num_workers,
+            batch_size=batch_size,
+        )
+
+    def _convert_single_threaded(
+        self, sessions: list[tuple[str, list[TraceT]]]
+    ) -> Iterator[Conversation]:
+        """Fallback single-threaded conversion for small datasets."""
+        for session_id, traces in sessions:
+            conversation = Conversation(session_id=session_id)
+            for trace in traces:
                 text_input = self._get_text_input(trace)
                 if text_input is not None:
-                    conversations_data[session_id].append((trace, text_input))
-                    continue
-
-                hash_ids: list[int] = getattr(trace, "hash_ids", None) or []
-                input_length: int = getattr(trace, "input_length", 0)
-
-                if hash_ids:
-                    cache_key = (
-                        tuple(hash_ids),
-                        input_length,
-                        self._block_size,
-                    )
-                    if cache_key in self.prompt_generator._decoded_cache:
-                        prompt = self.prompt_generator._decoded_cache[cache_key]
-                        conversations_data[session_id].append((trace, prompt))
-                    else:
-                        tokens = self.prompt_generator._build_token_sequence(
-                            input_length, hash_ids, self._block_size
-                        )
-                        pending_decodes.append((session_id, idx, tokens, cache_key))
-                        conversations_data[session_id].append((trace, None))
+                    prompt = text_input
                 else:
+                    hash_ids: list[int] = getattr(trace, "hash_ids", None) or []
+                    input_length: int = getattr(trace, "input_length", 0)
                     prompt = self.prompt_generator.generate(
-                        mean=input_length, stddev=0, hash_ids=[]
+                        mean=input_length,
+                        stddev=0,
+                        hash_ids=hash_ids,
+                        block_size=self._block_size,
                     )
-                    conversations_data[session_id].append((trace, prompt))
-
-        # Phase 2: Batch parallel decode for all cache misses
-        if pending_decodes:
-            self.debug(
-                lambda: f"Parallel decoding {len(pending_decodes)} prompts "
-                f"({len(data)} conversations)"
-            )
-            token_sequences = [p[2] for p in pending_decodes]
-            decoded_prompts = parallel_decode(token_sequences, self._tokenizer_name)
-
-            for (session_id, idx, _, cache_key), prompt in zip(
-                pending_decodes, decoded_prompts, strict=True
-            ):
-                self.prompt_generator._decoded_cache[cache_key] = prompt
-                trace, _ = conversations_data[session_id][idx]
-                conversations_data[session_id][idx] = (trace, prompt)
-
-        # Phase 3: Build final conversation objects
-        conversations: list[Conversation] = []
-        for session_id, trace_prompt_pairs in conversations_data.items():
-            conversation = Conversation(session_id=session_id)
-            for trace, prompt in trace_prompt_pairs:
                 conversation.turns.append(self._build_turn(trace, prompt))
-            conversations.append(conversation)
-
-        return conversations
+            yield conversation
 
     # ------------------------------------------------------------------
     # Synthesis — shared orchestration with subclass hooks

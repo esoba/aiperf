@@ -13,10 +13,47 @@ from aiperf.common.exceptions import (
     InvalidStateError,
     NotInitializedError,
 )
+from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.generator.base import BaseGenerator
 
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
+
+
+def sample_tokens_from_corpus(
+    corpus: list[int],
+    num_tokens: int,
+    rng_to_use: rng.RandomGenerator,
+    sep_token: int | None = None,
+) -> list[int]:
+    """Sample tokens from a corpus with optional separator token.
+
+    Args:
+        corpus: Token corpus as a list of token IDs.
+        num_tokens: Number of tokens to sample.
+        rng_to_use: RandomGenerator for sampling start position.
+        sep_token: Optional separator token to prepend (BOS/EOS).
+
+    Returns:
+        List of sampled token IDs.
+    """
+    corpus_len = len(corpus)
+    tokens: list[int] = []
+
+    if sep_token is not None:
+        tokens.append(sep_token)
+        num_tokens -= 1
+
+    start = rng_to_use.randrange(corpus_len)
+    end = start + num_tokens
+
+    if end <= corpus_len:
+        tokens.extend(corpus[start:end])
+    else:
+        tokens.extend(corpus[start:])
+        tokens.extend(corpus[: end - corpus_len])
+
+    return tokens
 
 
 class PromptGenerator(BaseGenerator):
@@ -47,14 +84,15 @@ class PromptGenerator(BaseGenerator):
         self._corpus_rng = rng.derive("dataset.prompt.corpus")
         self._prefix_rng = rng.derive("dataset.prompt.prefix")
 
+        # Hash-ID-based RNG for deterministic per-hash_id generation.
+        # Re-seeds itself for each hash_id, enabling identical random
+        # sequences per hash block regardless of processing order or workers.
+        self._hash_id_corpus_rng = HashIdRandomGenerator.from_base_rng(self._corpus_rng)
+
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
 
         # Cached prompts: block ID -> list of tokens
         self._cache: dict[int, list[int]] = {}
-
-        # Decoded string cache: (hash_ids tuple, num_tokens, block_size) -> decoded string
-        # This avoids redundant tokenizer.decode() calls for repeated hash_id combinations
-        self._decoded_cache: dict[tuple[tuple[int, ...], int, int], str] = {}
 
         # TODO: move this under initialize() method
         # Initialize corpus if not already done
@@ -154,6 +192,7 @@ class PromptGenerator(BaseGenerator):
         mean: int | None = None,
         stddev: int | None = None,
         hash_ids: list[int] | None = None,
+        block_size: int | None = None,
     ) -> str:
         """Generate a synthetic prompt with the configuration parameters.
         Serves as a wrapper around other internal methods to provide a unified interface.
@@ -162,6 +201,8 @@ class PromptGenerator(BaseGenerator):
             mean: The mean of the normal distribution.
             stddev: The standard deviation of the normal distribution.
             hash_ids: A list of hash indices used for token reuse.
+            block_size: Override block size for hash-ID generation.
+                Defaults to config value or :data:`InputTokensDefaults.BLOCK_SIZE`.
 
         Returns:
             A synthetic prompt as a string.
@@ -169,10 +210,12 @@ class PromptGenerator(BaseGenerator):
         if hash_ids:
             if mean is None:
                 raise ValueError("mean must be provided when hash_ids is set.")
-            block_size = (
-                self.config.input_tokens.block_size or InputTokensDefaults.BLOCK_SIZE
+            effective_block_size = (
+                block_size
+                or self.config.input_tokens.block_size
+                or InputTokensDefaults.BLOCK_SIZE
             )
-            return self._generate_cached_prompt(mean, hash_ids, block_size)
+            return self._generate_cached_prompt(mean, hash_ids, effective_block_size)
 
         num_tokens = self.calculate_num_tokens(mean, stddev)
         return self.generate_prompt(num_tokens)
@@ -208,11 +251,12 @@ class PromptGenerator(BaseGenerator):
         hash_ids: list[int],
         block_size: int,
     ) -> str:
-        """
-        Generate a prompt containing exactly `num_tokens` by reusing previously generated prompts
-        stored in `_cache`. Each hash index in `hash_ids` corresponds to a block of
-        `block_size` tokens. If a hash index is found in `_cache`, its stored prompt is reused.
-        Otherwise, a new prompt is generated using `generate_prompt()` and stored in `_cache`.
+        """Generate a prompt by reusing previously generated token blocks.
+
+        Each hash_id in `hash_ids` corresponds to a block of `block_size` tokens.
+        If a hash_id is found in `_cache`, its stored tokens are reused. Otherwise,
+        tokens are generated deterministically using HashIdRandomGenerator re-seeding
+        and stored in `_cache`.
 
         Args:
             num_tokens: The number of tokens required in the prompt.
@@ -221,43 +265,6 @@ class PromptGenerator(BaseGenerator):
 
         Returns:
             str: A synthetic prompt as a string.
-
-        Raises:
-            ConfigurationError: If the input parameters are not compatible.
-        """
-        # Check decoded string cache first to avoid redundant decode calls
-        cache_key = (tuple(hash_ids), num_tokens, block_size)
-        if cache_key in self._decoded_cache:
-            return self._decoded_cache[cache_key]
-
-        # Build token sequence using _build_token_sequence (shared logic)
-        final_prompt = self._build_token_sequence(num_tokens, hash_ids, block_size)
-
-        # Decode and cache the result
-        decoded = self.tokenizer.decode(final_prompt, skip_special_tokens=False)
-        self._decoded_cache[cache_key] = decoded
-        return decoded
-
-    def _build_token_sequence(
-        self,
-        num_tokens: int,
-        hash_ids: list[int],
-        block_size: int,
-    ) -> list[int]:
-        """
-        Build a token sequence without decoding. Used for batch parallel decode.
-
-        Each hash index in `hash_ids` corresponds to a block of `block_size` tokens.
-        If a hash index is found in `_cache`, its stored tokens are reused.
-        Otherwise, new tokens are sampled and stored in `_cache`.
-
-        Args:
-            num_tokens: The number of tokens required in the prompt.
-            hash_ids: A list of hash IDs to use for token reuse.
-            block_size: The number of tokens allocated per hash block.
-
-        Returns:
-            list[int]: A list of token IDs.
 
         Raises:
             ConfigurationError: If the input parameters are not compatible.
@@ -280,21 +287,17 @@ class PromptGenerator(BaseGenerator):
                 current_block_size = final_block_size
 
             if hash_id not in self._cache:
-                # To ensure that the prompt doesn't merge chunks, we insert a BOS or EOS token
-                # at the beginning. Length is maintained and the prompt generates the expected
-                # number of tokens. If no BOS or EOS token is available, we don't insert one.
-                prompt_tokens: list[int] = []
-                if self.tokenizer.block_separation_token_id is not None:
-                    prompt_tokens += [self.tokenizer.block_separation_token_id]
-                    prompt_tokens += self._sample_tokens(current_block_size - 1)
-                else:
-                    prompt_tokens += self._sample_tokens(current_block_size)
-
-                self._cache[hash_id] = prompt_tokens  # store to cache
+                self._hash_id_corpus_rng.reseed_for_hash_id(hash_id)
+                self._cache[hash_id] = sample_tokens_from_corpus(
+                    self._tokenized_corpus,
+                    current_block_size,
+                    self._hash_id_corpus_rng,
+                    self.tokenizer.block_separation_token_id,
+                )
 
             final_prompt.extend(self._cache[hash_id])
 
-        return final_prompt
+        return self.tokenizer.decode(final_prompt, skip_special_tokens=False)
 
     def _sample_tokens(self, num_tokens: int) -> list[int]:
         """Generate a list of token IDs containing exactly `num_tokens` number of tokens

@@ -245,10 +245,10 @@ class TestBaseDatasetComposer:
         composer2 = ConcreteBaseComposer(base_config, mock_tokenizer)
         assert composer2.prefix_prompt_enabled is False
 
-    def test_inject_context_prompts_with_shared_system_prompt(
+    def test_finalize_conversation_with_shared_system_prompt(
         self, base_config, mock_tokenizer
     ):
-        """Test _inject_context_prompts with shared system prompt."""
+        """Test _finalize_conversation with shared system prompt."""
         base_config.input.prompt.prefix_prompt.shared_system_prompt_length = 50
         base_config.input.prompt.prefix_prompt.length = 0
         base_config.input.conversation.num = 3
@@ -259,7 +259,6 @@ class TestBaseDatasetComposer:
         ):
             composer = ConcreteBaseComposer(base_config, mock_tokenizer)
 
-        # Create mock conversations
         from aiperf.common.models import Conversation
 
         conversations = [
@@ -268,13 +267,13 @@ class TestBaseDatasetComposer:
             Conversation(session_id="conv_2"),
         ]
 
-        # Mock the prompt generator method
         with patch.object(
             composer.prompt_generator,
             "get_shared_system_prompt",
             return_value="shared system prompt text",
         ):
-            composer._inject_context_prompts(conversations)
+            for i, conv in enumerate(conversations):
+                composer._finalize_conversation(conv, i)
 
         # All conversations should have the same system message
         assert conversations[0].system_message == "shared system prompt text"
@@ -285,17 +284,16 @@ class TestBaseDatasetComposer:
         assert conversations[1].user_context_message is None
         assert conversations[2].user_context_message is None
 
-    def test_inject_context_prompts_with_user_context_prompt(
+    def test_finalize_conversation_with_user_context_prompt(
         self, base_config, mock_tokenizer
     ):
-        """Test _inject_context_prompts with user context prompts."""
+        """Test _finalize_conversation with user context prompts."""
         base_config.input.prompt.prefix_prompt.user_context_prompt_length = 30
         base_config.input.prompt.prefix_prompt.length = 0
         base_config.input.conversation.num = 3
 
         composer = ConcreteBaseComposer(base_config, mock_tokenizer)
 
-        # Create mock conversations
         from aiperf.common.models import Conversation
 
         conversations = [
@@ -304,7 +302,6 @@ class TestBaseDatasetComposer:
             Conversation(session_id="conv_2"),
         ]
 
-        # Mock the prompt generator method
         def mock_generate_user_context(index):
             return f"user context {index}"
 
@@ -313,7 +310,8 @@ class TestBaseDatasetComposer:
             "generate_user_context_prompt",
             side_effect=mock_generate_user_context,
         ):
-            composer._inject_context_prompts(conversations)
+            for i, conv in enumerate(conversations):
+                composer._finalize_conversation(conv, i)
 
         # Each conversation should have unique user context
         assert conversations[0].user_context_message == "user context 0"
@@ -324,10 +322,8 @@ class TestBaseDatasetComposer:
         assert conversations[1].system_message is None
         assert conversations[2].system_message is None
 
-    def test_inject_context_prompts_with_both_prompts(
-        self, base_config, mock_tokenizer
-    ):
-        """Test _inject_context_prompts with both shared system and user context prompts."""
+    def test_finalize_conversation_with_both_prompts(self, base_config, mock_tokenizer):
+        """Test _finalize_conversation with both shared system and user context prompts."""
         base_config.input.prompt.prefix_prompt.shared_system_prompt_length = 50
         base_config.input.prompt.prefix_prompt.user_context_prompt_length = 30
         base_config.input.prompt.prefix_prompt.length = 0
@@ -339,7 +335,6 @@ class TestBaseDatasetComposer:
         ):
             composer = ConcreteBaseComposer(base_config, mock_tokenizer)
 
-        # Create mock conversations
         from aiperf.common.models import Conversation
 
         conversations = [
@@ -347,7 +342,6 @@ class TestBaseDatasetComposer:
             Conversation(session_id="conv_1"),
         ]
 
-        # Mock both prompt generator methods
         def mock_generate_user_context(index):
             return f"user context {index}"
 
@@ -363,7 +357,8 @@ class TestBaseDatasetComposer:
                 side_effect=mock_generate_user_context,
             ),
         ):
-            composer._inject_context_prompts(conversations)
+            for i, conv in enumerate(conversations):
+                composer._finalize_conversation(conv, i)
 
         # Both conversations should have system message
         assert conversations[0].system_message == "shared system prompt"
@@ -372,8 +367,8 @@ class TestBaseDatasetComposer:
         assert conversations[0].user_context_message == "user context 0"
         assert conversations[1].user_context_message == "user context 1"
 
-    def test_inject_context_prompts_with_no_prompts(self, base_config, mock_tokenizer):
-        """Test _inject_context_prompts when no context prompts are configured."""
+    def test_finalize_conversation_with_no_prompts(self, base_config, mock_tokenizer):
+        """Test _finalize_conversation when no context prompts are configured."""
         base_config.input.prompt.prefix_prompt.length = 0
         base_config.input.prompt.prefix_prompt.shared_system_prompt_length = None
         base_config.input.prompt.prefix_prompt.user_context_prompt_length = None
@@ -381,7 +376,6 @@ class TestBaseDatasetComposer:
 
         composer = ConcreteBaseComposer(base_config, mock_tokenizer)
 
-        # Create mock conversations
         from aiperf.common.models import Conversation
 
         conversations = [
@@ -389,8 +383,8 @@ class TestBaseDatasetComposer:
             Conversation(session_id="conv_1"),
         ]
 
-        # Should not call any prompt generator methods
-        composer._inject_context_prompts(conversations)
+        for i, conv in enumerate(conversations):
+            composer._finalize_conversation(conv, i)
 
         # No messages should be set
         assert conversations[0].system_message is None
