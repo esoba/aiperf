@@ -217,6 +217,16 @@ class Turn(AIPerfBaseModel):
         default=None,
         description="Spawn ID if this turn is blocked by a subagent spawn.",
     )
+    raw_content: str | list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Raw content blocks for verbatim replay. When set, endpoint uses "
+        "this directly instead of building from media fields.",
+    )
+    assistant_prefill: str | list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Trace assistant response to use as context for subsequent turns. "
+        "When set, worker uses this instead of server response for turn history.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -275,6 +285,8 @@ class Turn(AIPerfBaseModel):
             parallel_group=self.parallel_group,
             parallel_branch=self.parallel_branch,
             subagent_spawn_id=self.subagent_spawn_id,
+            raw_content=None,
+            assistant_prefill=self.assistant_prefill,
         )
 
 

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import Field, model_validator
 
@@ -363,8 +363,98 @@ class MooncakeTrace(AIPerfBaseModel):
         return self
 
 
+class ClaudeCodeTraceRecord(AIPerfBaseModel):
+    """A single record from a Claude Code JSONL session transcript."""
+
+    type: str = Field(
+        description="Record type: user, assistant, system, progress, etc."
+    )
+    message: dict[str, Any] | None = Field(
+        default=None, description="Message payload with content, usage, model, etc."
+    )
+    session_id: str | None = Field(
+        default=None, alias="sessionId", description="Claude Code session identifier."
+    )
+    timestamp: str | None = Field(
+        default=None, description="ISO timestamp of the record."
+    )
+    request_id: str | None = Field(
+        default=None,
+        alias="requestId",
+        description="Groups assistant records from the same API response.",
+    )
+    uuid: str | None = Field(
+        default=None, description="Unique identifier for this record."
+    )
+    parent_uuid: str | None = Field(
+        default=None,
+        alias="parentUuid",
+        description="Parent record UUID for threading.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class ClaudeCodeApiCall(AIPerfBaseModel):
+    """A reconstructed API call from grouped trace records."""
+
+    user_content: str | list[dict[str, Any]] = Field(
+        description="User message content (string or content blocks)."
+    )
+    assistant_content: list[dict[str, Any]] = Field(
+        description="Assistant response content blocks (text, tool_use, thinking)."
+    )
+    model: str | None = Field(default=None, description="Model used for this API call.")
+    input_tokens: int = Field(
+        default=0, description="Input token count from usage data."
+    )
+    output_tokens: int = Field(
+        default=0, description="Output token count from usage data."
+    )
+    cache_creation_input_tokens: int = Field(
+        default=0, description="Cache creation input tokens from usage data."
+    )
+    cache_read_input_tokens: int = Field(
+        default=0, description="Cache read input tokens from usage data."
+    )
+    timestamp_ms: float | None = Field(
+        default=None, description="Timestamp in milliseconds from the trace."
+    )
+    stop_reason: str | None = Field(
+        default=None, description="Stop reason (end_turn, tool_use, etc.)."
+    )
+
+
+class ClaudeCodeTrace(AIPerfBaseModel):
+    """A full Claude Code session parsed into API calls."""
+
+    type: Literal[CustomDatasetType.CLAUDE_CODE_TRACE] = (
+        CustomDatasetType.CLAUDE_CODE_TRACE
+    )
+    id: str = Field(description="Unique identifier for this trace.")
+    session_id: str = Field(description="Claude Code session ID.")
+    api_calls: list[ClaudeCodeApiCall] = Field(
+        description="Reconstructed API calls from the session."
+    )
+    system_prompt: str | None = Field(
+        default=None, description="System prompt extracted from the trace."
+    )
+
+    @model_validator(mode="after")
+    def validate_has_api_calls(self) -> "ClaudeCodeTrace":
+        """Ensure the trace has at least one API call."""
+        if not self.api_calls:
+            raise ValueError("A Claude Code trace must have at least one API call")
+        return self
+
+
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
-    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | CodingTrace,
+    bound=SingleTurn
+    | MultiTurn
+    | RandomPool
+    | MooncakeTrace
+    | CodingTrace
+    | ClaudeCodeTrace,
 )
 """A union type of all custom data types."""

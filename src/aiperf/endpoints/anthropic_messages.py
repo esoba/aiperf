@@ -109,7 +109,11 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
 
         Returns a plain string for simple single-text turns,
         or a list of content blocks for complex turns.
+        When raw_content is set (verbatim replay), it is used directly.
         """
+        if turn.raw_content is not None:
+            return turn.raw_content
+
         if (
             len(turn.texts) == 1
             and len(turn.texts[0].contents) == 1

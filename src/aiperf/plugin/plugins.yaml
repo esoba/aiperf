@@ -399,6 +399,16 @@ dataset_composer:
 # Auto-detection: the custom composer tries loaders in priority order based on can_load().
 # =============================================================================
 custom_dataset_loader:
+  claude_code_trace:
+    class: aiperf.dataset.loader.claude_code_trace:ClaudeCodeTraceLoader
+    description: |
+      Loads Claude Code JSONL session transcripts for verbatim replay or
+      synthetic generation. Supports tool_use/tool_result content blocks,
+      extended thinking, and multi-turn conversations.
+    metadata:
+      supports_multi_turn: true
+      supports_timing: true
+
   coding_trace:
     class: aiperf.dataset.loader.coding_trace:CodingTraceLoader
     description: |

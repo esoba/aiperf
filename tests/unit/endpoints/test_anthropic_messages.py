@@ -172,6 +172,76 @@ class TestAnthropicMessagesFormatPayload:
         assert payload["messages"][0]["content"] == "Context info"
         assert payload["messages"][0]["role"] == "user"
 
+    def test_raw_content_string(self, endpoint, model_endpoint):
+        """raw_content string is used directly as message content."""
+        turn = Turn(
+            raw_content="verbatim user text",
+            model="claude-sonnet-4-20250514",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"][0]["content"] == "verbatim user text"
+
+    def test_raw_content_blocks(self, endpoint, model_endpoint):
+        """raw_content list of content blocks is used directly."""
+        blocks = [
+            {"type": "tool_result", "tool_use_id": "tu-1", "content": "file data"},
+            {"type": "text", "text": "Here is the file"},
+        ]
+        turn = Turn(raw_content=blocks, model="claude-sonnet-4-20250514")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"][0]["content"] == blocks
+        assert payload["messages"][0]["content"][0]["type"] == "tool_result"
+
+    def test_raw_content_with_assistant_turn(self, endpoint, model_endpoint):
+        """Multi-turn with raw_content on both user and assistant turns."""
+        turns = [
+            Turn(
+                role="user",
+                raw_content="Hello",
+                model="claude-sonnet-4-20250514",
+            ),
+            Turn(
+                role="assistant",
+                raw_content=[{"type": "text", "text": "Hi!"}],
+                model="claude-sonnet-4-20250514",
+            ),
+            Turn(
+                role="user",
+                raw_content=[
+                    {"type": "tool_result", "tool_use_id": "tu-1", "content": "OK"}
+                ],
+                model="claude-sonnet-4-20250514",
+            ),
+        ]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 3
+        assert payload["messages"][0]["content"] == "Hello"
+        assert payload["messages"][1]["role"] == "assistant"
+        assert payload["messages"][1]["content"] == [{"type": "text", "text": "Hi!"}]
+        assert payload["messages"][2]["content"][0]["type"] == "tool_result"
+
+    def test_raw_content_takes_precedence_over_texts(self, endpoint, model_endpoint):
+        """When raw_content is set, texts are ignored."""
+        turn = Turn(
+            raw_content="raw wins",
+            texts=[Text(contents=["should be ignored"])],
+            model="claude-sonnet-4-20250514",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"][0]["content"] == "raw wins"
+
 
 class TestAnthropicMessagesHeaders:
     """Tests for AnthropicMessagesEndpoint get_endpoint_headers."""
