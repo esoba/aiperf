@@ -486,6 +486,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
             session.advance_turn(credit_context.credit.turn_index)
 
+            payload_bytes = None
+            if self._dataset_client is not None:
+                payload_bytes = await self._dataset_client.get_payload_bytes(
+                    credit_context.credit.conversation_id,
+                    credit_context.credit.turn_index,
+                )
+
             self.task_stats.total += 1
             system_message = session.conversation.system_message
             suffix = credit_context.credit.system_prompt_suffix
@@ -498,6 +505,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 x_request_id=x_request_id,
                 system_message=system_message,
                 user_context_message=session.conversation.user_context_message,
+                payload_bytes=payload_bytes,
             )
             record: RequestRecord = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
@@ -593,6 +601,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         credit_context: CreditContext,
         system_message: str | None = None,
         user_context_message: str | None = None,
+        payload_bytes: bytes | None = None,
     ) -> RequestInfo:
         """Create RequestInfo for inference request with session state and credit metadata.
 
@@ -629,8 +638,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             user_context_message=user_context_message,
             is_final_turn=credit.is_final_turn,
             tools=session.conversation.tools,
-            # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
+            payload_bytes=payload_bytes,
         )
 
     async def _retrieve_conversation(

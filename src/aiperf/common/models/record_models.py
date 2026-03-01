@@ -537,6 +537,11 @@ class RequestInfo(AIPerfBaseModel):
         description="Index of the URL to use when multiple --url values are configured. "
         "None means use the default (first) URL. Used for round-robin load balancing.",
     )
+    payload_bytes: bytes | None = Field(
+        default=None,
+        exclude=True,
+        description="Pre-encoded payload bytes from payload mmap. Bypasses all serialization.",
+    )
 
 
 class RequestRecord(AIPerfBaseModel):

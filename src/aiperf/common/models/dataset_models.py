@@ -66,6 +66,23 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
         default=0,
         description="Total size of the compressed data file in bytes.",
     )
+    # Payload mmap paths (optional, only present when raw_payload data exists)
+    payload_data_file_path: Path | None = Field(
+        default=None,
+        description="Path to payload data file containing pre-encoded JSON bytes.",
+    )
+    payload_index_file_path: Path | None = Field(
+        default=None,
+        description="Path to payload index file for O(1) payload lookups.",
+    )
+    compressed_payload_data_file_path: Path | None = Field(
+        default=None,
+        description="Path to zstd-compressed payload data file (K8s only).",
+    )
+    compressed_payload_index_file_path: Path | None = Field(
+        default=None,
+        description="Path to zstd-compressed payload index file (K8s only).",
+    )
 
 
 class Media(AIPerfBaseModel):
@@ -292,7 +309,7 @@ class Turn(AIPerfBaseModel):
             raw_messages=self.raw_messages,
             assistant_prefill=self.assistant_prefill,
             replaces_history=self.replaces_history,
-            raw_payload=self.raw_payload,
+            raw_payload=None,
         )
 
 

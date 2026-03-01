@@ -27,7 +27,8 @@ class AgenticTrajectoryLoader(BaseFileLoader):
 
     Expects a JSONL file where each line has conversation_id, conversation_idx,
     messages (cumulative), and optionally tools. Groups by conversation_id and
-    converts each trajectory turn into a Turn with raw_messages + replaces_history.
+    converts to delta-based Turns. Consecutive cumulative turns produce small
+    deltas; context breaks (compaction, thinking strip) emit replaces_history.
     """
 
     def __init__(
@@ -114,9 +115,11 @@ class AgenticTrajectoryLoader(BaseFileLoader):
         For each conversation group:
         - system_message from messages[0] of first turn (role=system)
         - tools from first record with non-empty tools
-        - each trajectory turn -> Turn(raw_messages=messages[1:], replaces_history=True)
+        - delta decomposition: consecutive cumulative turns produce small deltas,
+          context breaks (compaction, thinking strip) emit replaces_history=True
         """
         conversations: list[Conversation] = []
+        context_breaks = 0
 
         for _conv_id, records in data.items():
             if not records:
@@ -124,21 +127,8 @@ class AgenticTrajectoryLoader(BaseFileLoader):
 
             first_record = records[0]
 
-            # Extract system message from first message of first turn
-            system_message: str | None = None
-            if (
-                first_record.messages
-                and first_record.messages[0].get("role") == "system"
-            ):
-                content = first_record.messages[0].get("content", "")
-                if isinstance(content, str):
-                    system_message = content
-                elif isinstance(content, list):
-                    system_message = "\n".join(
-                        b.get("text", "")
-                        for b in content
-                        if isinstance(b, dict) and b.get("type") == "text"
-                    )
+            # Extract system message from leading system messages of first turn
+            system_message = _extract_system_message(first_record.messages)
 
             # Extract tools from first record with non-empty tools
             tools: list[dict[str, Any]] | None = None
@@ -148,24 +138,34 @@ class AgenticTrajectoryLoader(BaseFileLoader):
                     break
 
             session_id = self.session_id_generator.next()
-
             turns: list[Turn] = []
-            for record in records:
-                # Skip system message (messages[0]) -- it's in Conversation.system_message
-                non_system_messages = record.messages
-                if (
-                    non_system_messages
-                    and non_system_messages[0].get("role") == "system"
-                ):
-                    non_system_messages = non_system_messages[1:]
 
-                turns.append(
-                    Turn(
-                        role="user",
-                        raw_messages=non_system_messages,
-                        replaces_history=True,
+            # baseline_messages tracks the cumulative messages from the most
+            # recent replaces_history turn (or the first turn). Used to compute
+            # deltas for subsequent cumulative turns.
+            baseline_messages: list[dict[str, Any]] | None = None
+
+            for record in records:
+                non_system = _strip_system(record.messages)
+
+                if baseline_messages is not None and _is_prefix(
+                    baseline_messages, non_system
+                ):
+                    delta = non_system[len(baseline_messages) :]
+                    turns.append(Turn(role="user", raw_messages=delta))
+                else:
+                    # First turn or context break
+                    if baseline_messages is not None:
+                        context_breaks += 1
+                    turns.append(
+                        Turn(
+                            role="user",
+                            raw_messages=non_system,
+                            replaces_history=True,
+                        )
                     )
-                )
+
+                baseline_messages = non_system
 
             conversations.append(
                 Conversation(
@@ -176,8 +176,46 @@ class AgenticTrajectoryLoader(BaseFileLoader):
                 )
             )
 
-        self.info(
-            f"Converted {len(conversations)} conversations "
-            f"({sum(len(c.turns) for c in conversations)} total turns)"
+        total_turns = sum(len(c.turns) for c in conversations)
+        msg = (
+            f"Converted {len(conversations)} conversations ({total_turns} total turns)"
         )
+        if context_breaks:
+            msg += f", {context_breaks} context breaks detected"
+        self.info(msg)
         return conversations
+
+
+def _strip_system(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove all leading system messages from a message list."""
+    idx = 0
+    while idx < len(messages) and messages[idx].get("role") == "system":
+        idx += 1
+    return messages[idx:] if idx > 0 else messages
+
+
+def _extract_system_message(messages: list[dict[str, Any]]) -> str | None:
+    """Extract and join text content from all leading system messages."""
+    parts: list[str] = []
+    for msg in messages:
+        if msg.get("role") != "system":
+            break
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.append(
+                "\n".join(
+                    b.get("text", "")
+                    for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            )
+    return "\n".join(parts) if parts else None
+
+
+def _is_prefix(baseline: list[dict[str, Any]], current: list[dict[str, Any]]) -> bool:
+    """Check if baseline messages are a prefix of current messages."""
+    if len(baseline) > len(current):
+        return False
+    return current[: len(baseline)] == baseline

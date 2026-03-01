@@ -13,7 +13,12 @@ from aiperf.common.config import (
     UserConfig,
 )
 from aiperf.common.models.dataset_models import Conversation, Turn
-from aiperf.dataset.loader.agentic_trajectory import AgenticTrajectoryLoader
+from aiperf.dataset.loader.agentic_trajectory import (
+    AgenticTrajectoryLoader,
+    _extract_system_message,
+    _is_prefix,
+    _strip_system,
+)
 from aiperf.dataset.loader.models import AgenticTrajectoryRecord
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.workers.session_manager import UserSession
@@ -23,6 +28,7 @@ from aiperf.workers.session_manager import UserSession
 # =========================================================================
 
 SYSTEM_MSG = {"role": "system", "content": "You are a helpful assistant."}
+SYSTEM_MSG_2 = {"role": "system", "content": "Follow these rules carefully."}
 USER_MSG = {"role": "user", "content": "Hello"}
 ASSISTANT_MSG = {
     "role": "assistant",
@@ -267,7 +273,8 @@ class TestConvertToConversations:
 
         assert conversations[0].tools == TOOLS
 
-    def test_raw_messages_and_replaces_history(self, user_config):
+    def test_cumulative_turns_produce_deltas(self, user_config):
+        """Consecutive cumulative turns produce small deltas without replaces_history."""
         messages_t0 = [SYSTEM_MSG, USER_MSG]
         messages_t1 = [SYSTEM_MSG, USER_MSG, ASSISTANT_MSG, TOOL_RESULT_MSG]
 
@@ -293,13 +300,82 @@ class TestConvertToConversations:
         conv = conversations[0]
         assert len(conv.turns) == 2
 
-        # Turn 0: raw_messages should exclude system message
+        # Turn 0: first turn always gets replaces_history, full non-system messages
         assert conv.turns[0].replaces_history is True
         assert conv.turns[0].raw_messages == [USER_MSG]
 
-        # Turn 1: raw_messages should exclude system message
-        assert conv.turns[1].replaces_history is True
-        assert conv.turns[1].raw_messages == [USER_MSG, ASSISTANT_MSG, TOOL_RESULT_MSG]
+        # Turn 1: cumulative, so delta only (new messages since turn 0)
+        assert conv.turns[1].replaces_history is False
+        assert conv.turns[1].raw_messages == [ASSISTANT_MSG, TOOL_RESULT_MSG]
+
+    def test_context_break_triggers_replaces_history(self, user_config):
+        """Non-cumulative turn (context break) sets replaces_history=True."""
+        compacted_user = {"role": "user", "content": "Compacted context"}
+        messages_t0 = [SYSTEM_MSG, USER_MSG]
+        messages_t1 = [SYSTEM_MSG, USER_MSG, ASSISTANT_MSG, TOOL_RESULT_MSG]
+        # Turn 2 breaks cumulative invariant (compacted history)
+        messages_t2 = [SYSTEM_MSG, compacted_user]
+
+        data = {
+            "c1": [
+                AgenticTrajectoryRecord(
+                    conversation_id="c1", conversation_idx=0, messages=messages_t0
+                ),
+                AgenticTrajectoryRecord(
+                    conversation_id="c1", conversation_idx=1, messages=messages_t1
+                ),
+                AgenticTrajectoryRecord(
+                    conversation_id="c1", conversation_idx=2, messages=messages_t2
+                ),
+            ]
+        }
+        loader = AgenticTrajectoryLoader(
+            filename="dummy.jsonl", user_config=user_config
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conv = conversations[0]
+        assert len(conv.turns) == 3
+
+        assert conv.turns[0].replaces_history is True
+        assert conv.turns[1].replaces_history is False
+        # Context break: full history replacement
+        assert conv.turns[2].replaces_history is True
+        assert conv.turns[2].raw_messages == [compacted_user]
+
+    def test_delta_resumes_after_context_break(self, user_config):
+        """After a context break, subsequent cumulative turns resume delta mode."""
+        compacted_user = {"role": "user", "content": "Compacted"}
+        new_assistant = {"role": "assistant", "content": "Response"}
+        messages_t0 = [SYSTEM_MSG, USER_MSG]
+        # Context break
+        messages_t1 = [SYSTEM_MSG, compacted_user]
+        # Cumulative from t1
+        messages_t2 = [SYSTEM_MSG, compacted_user, new_assistant]
+
+        data = {
+            "c1": [
+                AgenticTrajectoryRecord(
+                    conversation_id="c1", conversation_idx=0, messages=messages_t0
+                ),
+                AgenticTrajectoryRecord(
+                    conversation_id="c1", conversation_idx=1, messages=messages_t1
+                ),
+                AgenticTrajectoryRecord(
+                    conversation_id="c1", conversation_idx=2, messages=messages_t2
+                ),
+            ]
+        }
+        loader = AgenticTrajectoryLoader(
+            filename="dummy.jsonl", user_config=user_config
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        conv = conversations[0]
+        assert conv.turns[0].replaces_history is True  # first turn
+        assert conv.turns[1].replaces_history is True  # context break
+        assert conv.turns[2].replaces_history is False  # delta from new baseline
+        assert conv.turns[2].raw_messages == [new_assistant]
 
     def test_single_turn_conversation(self, user_config):
         data = {
@@ -335,6 +411,27 @@ class TestConvertToConversations:
         )
         conversations = loader.convert_to_conversations(data)
         assert conversations[0].tools is None
+
+    def test_multiple_leading_system_messages(self, user_config):
+        """Multiple leading system messages are joined into Conversation.system_message."""
+        data = {
+            "c1": [
+                AgenticTrajectoryRecord(
+                    conversation_id="c1",
+                    conversation_idx=0,
+                    messages=[SYSTEM_MSG, SYSTEM_MSG_2, USER_MSG],
+                ),
+            ]
+        }
+        loader = AgenticTrajectoryLoader(
+            filename="dummy.jsonl", user_config=user_config
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert conversations[0].system_message == (
+            "You are a helpful assistant.\nFollow these rules carefully."
+        )
+        assert conversations[0].turns[0].raw_messages == [USER_MSG]
 
     def test_no_system_message(self, user_config):
         data = {
@@ -424,6 +521,27 @@ class TestAdvanceTurnRawMessages:
         # replaces_history clears, then expands 3 messages
         assert len(session.turn_list) == 3
 
+    def test_delta_raw_messages_append_without_clearing(self):
+        """Delta turns (no replaces_history) append raw_messages to existing turn_list."""
+        conversation = Conversation(
+            session_id="test",
+            turns=[
+                Turn(role="user", raw_messages=[USER_MSG], replaces_history=True),
+                Turn(role="user", raw_messages=[ASSISTANT_MSG, TOOL_RESULT_MSG]),
+            ],
+        )
+        session = self._make_session(conversation)
+
+        session.advance_turn(0)
+        assert len(session.turn_list) == 1
+
+        session.advance_turn(1)
+        # Delta appends without clearing: 1 from turn 0 + 2 from turn 1
+        assert len(session.turn_list) == 3
+        assert session.turn_list[0].raw_message == USER_MSG
+        assert session.turn_list[1].raw_message == ASSISTANT_MSG
+        assert session.turn_list[2].raw_message == TOOL_RESULT_MSG
+
     def test_without_raw_messages_appends_normally(self):
         """Turns without raw_messages should append as before."""
         conversation = Conversation(
@@ -440,3 +558,61 @@ class TestAdvanceTurnRawMessages:
 
         assert len(session.turn_list) == 2
         assert all(t.raw_messages is None for t in session.turn_list)
+
+
+# =========================================================================
+# TestHelpers
+# =========================================================================
+
+
+class TestHelpers:
+    def test_strip_system_removes_leading_system(self):
+        assert _strip_system([SYSTEM_MSG, USER_MSG]) == [USER_MSG]
+
+    def test_strip_system_removes_multiple_leading(self):
+        assert _strip_system([SYSTEM_MSG, SYSTEM_MSG_2, USER_MSG]) == [USER_MSG]
+
+    def test_strip_system_no_system(self):
+        assert _strip_system([USER_MSG]) == [USER_MSG]
+
+    def test_strip_system_empty(self):
+        assert _strip_system([]) == []
+
+    def test_extract_system_message_single(self):
+        assert _extract_system_message([SYSTEM_MSG, USER_MSG]) == (
+            "You are a helpful assistant."
+        )
+
+    def test_extract_system_message_multiple(self):
+        assert _extract_system_message([SYSTEM_MSG, SYSTEM_MSG_2, USER_MSG]) == (
+            "You are a helpful assistant.\nFollow these rules carefully."
+        )
+
+    def test_extract_system_message_content_blocks(self):
+        msg = {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "Block one."},
+                {"type": "text", "text": "Block two."},
+            ],
+        }
+        assert _extract_system_message([msg]) == "Block one.\nBlock two."
+
+    def test_extract_system_message_none_when_absent(self):
+        assert _extract_system_message([USER_MSG]) is None
+
+    def test_is_prefix_true(self):
+        assert _is_prefix([USER_MSG], [USER_MSG, ASSISTANT_MSG]) is True
+
+    def test_is_prefix_exact_match(self):
+        assert _is_prefix([USER_MSG], [USER_MSG]) is True
+
+    def test_is_prefix_empty_baseline(self):
+        assert _is_prefix([], [USER_MSG]) is True
+
+    def test_is_prefix_false_different_content(self):
+        other = {"role": "user", "content": "Different"}
+        assert _is_prefix([USER_MSG], [other, ASSISTANT_MSG]) is False
+
+    def test_is_prefix_false_baseline_longer(self):
+        assert _is_prefix([USER_MSG, ASSISTANT_MSG], [USER_MSG]) is False

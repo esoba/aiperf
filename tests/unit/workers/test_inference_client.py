@@ -260,3 +260,48 @@ class TestInferenceClient:
         await inference_client.send_request(sample_request_info)
 
         inference_client.endpoint.format_payload.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_payload_bytes_bypasses_all_formatting(
+        self,
+        inference_client,
+        sample_request_info,
+        sample_request_record,
+    ):
+        """Test that payload_bytes on RequestInfo bypasses both raw_payload and format_payload."""
+        pre_encoded = b'{"model":"test","messages":[{"role":"user","content":"hi"}]}'
+        sample_request_info.payload_bytes = pre_encoded
+        # Also set raw_payload to verify payload_bytes takes priority
+        sample_request_info.turns[-1].raw_payload = {"should": "not be used"}
+
+        inference_client.transport.send_request = AsyncMock(
+            return_value=sample_request_record
+        )
+
+        await inference_client.send_request(sample_request_info)
+
+        inference_client.endpoint.format_payload.assert_not_called()
+        call_args = inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] is pre_encoded
+
+    @pytest.mark.asyncio
+    async def test_payload_bytes_none_falls_through_to_raw_payload(
+        self,
+        inference_client,
+        sample_request_info,
+        sample_request_record,
+    ):
+        """Test that None payload_bytes falls through to raw_payload."""
+        raw = {"model": "test", "messages": [{"role": "user", "content": "hi"}]}
+        sample_request_info.payload_bytes = None
+        sample_request_info.turns[-1].raw_payload = raw
+
+        inference_client.transport.send_request = AsyncMock(
+            return_value=sample_request_record
+        )
+
+        await inference_client.send_request(sample_request_info)
+
+        inference_client.endpoint.format_payload.assert_not_called()
+        call_args = inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] is raw
