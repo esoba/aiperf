@@ -564,6 +564,21 @@ class AgenticTrajectoryRecord(AIPerfBaseModel):
     )
 
 
+class RawPayload(AIPerfBaseModel):
+    """A single raw API request payload for verbatim replay."""
+
+    payload: dict[str, Any] = Field(description="Complete API request payload.")
+
+
+class InputsJsonSession(AIPerfBaseModel):
+    """A session from the InputsFile format with pre-formatted payloads."""
+
+    session_id: str = Field(description="Session ID of the conversation.")
+    payloads: list[dict[str, Any]] = Field(
+        description="Ordered list of per-turn payloads."
+    )
+
+
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
     bound=SingleTurn
@@ -573,6 +588,8 @@ CustomDatasetT = TypeVar(
     | CodingTrace
     | ClaudeCodeTrace
     | ApiCaptureTrace
-    | AgenticTrajectoryRecord,
+    | AgenticTrajectoryRecord
+    | RawPayload
+    | InputsJsonSession,
 )
 """A union type of all custom data types."""

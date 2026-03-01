@@ -456,6 +456,27 @@ custom_dataset_loader:
       from predefined pools of system/user/assistant messages with configurable
       distributions.
 
+  inputs_json:
+    class: aiperf.dataset.loader.inputs_json:InputsJsonPayloadLoader
+    description: |
+      Loads AIPerf inputs.json files as raw payloads for verbatim replay.
+      Preserves multi-turn session structure. Each payload is sent directly
+      to the transport with zero endpoint formatting.
+    metadata:
+      supports_multi_turn: true
+      supports_timing: false
+
+  raw_payload:
+    class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
+    description: |
+      Raw payload JSONL loader for verbatim API replay. Accepts a single JSONL
+      file (each line = one single-turn conversation) or a directory of JSONL
+      files (each file = one multi-turn conversation, lines = turns). Produces
+      raw_payload on every turn for payload mmap bypass.
+    metadata:
+      supports_multi_turn: true
+      supports_timing: false
+
   single_turn:
     class: aiperf.dataset.loader.single_turn:SingleTurnDatasetLoader
     description: |
