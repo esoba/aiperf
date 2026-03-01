@@ -13,7 +13,7 @@ from aiperf.common.models import (
     SubagentSpawnInfo,
     TurnMetadata,
 )
-from aiperf.credit.structs import Credit
+from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.conversation_source import ConversationSource
@@ -780,3 +780,287 @@ class TestAdaptiveScaleChildGuard:
         assert scheduler.execute_async.call_count == 0
         # Should NOT decrement active users
         assert strategy._active_users == initial_active
+
+
+# =============================================================================
+# Gap coverage: child complete edge cases
+# =============================================================================
+
+
+class TestChildCompleteEdgeCases:
+    """Edge cases in _handle_subagent_child_complete."""
+
+    def test_join_suppressed_when_join_turn_index_gte_parent_num_turns(self) -> None:
+        """Lines 191-192: join_turn_index >= parent_num_turns suppresses dispatch."""
+        manager, inner, scheduler, _, child_ids = _make_manager()
+
+        # Manually set up spawn so join_turn_index == parent_num_turns (out of range)
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawns(credit, ["s0"])
+
+        # Override the pending join to have join_turn_index >= parent_num_turns
+        pending = manager._pending_subagent_joins["parent-1"]
+        pending.join_turn_index = 6  # == parent_num_turns
+        pending.parent_num_turns = 6
+
+        scheduler.execute_async.reset_mock()
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
+
+        # Complete all children
+        for i, child_corr_id in enumerate(child_corr_ids):
+            child_credit = _make_credit(
+                conv_id=child_ids[i],
+                corr_id=child_corr_id,
+                turn_index=2,
+                num_turns=3,
+                agent_depth=1,
+            )
+            manager._handle_subagent_child_complete(child_credit)
+
+        # Pending was removed but NO join dispatched
+        assert "parent-1" not in manager._pending_subagent_joins
+        scheduler.execute_async.assert_not_called()
+
+    def test_double_completion_of_same_child_returns_early(self) -> None:
+        """Lines 178-179: second completion of same child_corr_id finds parent_corr_id=None."""
+        manager, inner, scheduler, _, child_ids = _make_manager()
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawns(credit, ["s0"])
+        scheduler.execute_async.reset_mock()
+
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
+        first_child_corr = child_corr_ids[0]
+
+        child_credit = _make_credit(
+            conv_id=child_ids[0],
+            corr_id=first_child_corr,
+            turn_index=2,
+            num_turns=3,
+            agent_depth=1,
+        )
+
+        # First completion: pops from _subagent_child_to_parent, increments count
+        manager._handle_subagent_child_complete(child_credit)
+        pending = manager._pending_subagent_joins["parent-1"]
+        assert pending.completed_count == 1
+
+        # Second completion of same child: parent_corr_id is None, early return
+        manager._handle_subagent_child_complete(child_credit)
+        assert pending.completed_count == 1  # unchanged
+
+    def test_pending_none_early_return(self) -> None:
+        """Lines 181-182: child maps to parent but pending join was already removed."""
+        manager, inner, scheduler, _, child_ids = _make_manager()
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawns(credit, ["s0"])
+        scheduler.execute_async.reset_mock()
+
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
+
+        # Manually remove the pending join (simulates it was already consumed)
+        manager._pending_subagent_joins.pop("parent-1")
+
+        child_credit = _make_credit(
+            conv_id=child_ids[0],
+            corr_id=child_corr_ids[0],
+            turn_index=2,
+            num_turns=3,
+            agent_depth=1,
+        )
+        # Should not raise, should early return
+        manager._handle_subagent_child_complete(child_credit)
+        scheduler.execute_async.assert_not_called()
+
+    def test_partial_completion_does_not_dispatch_join(self) -> None:
+        """Only some children complete -- join is NOT dispatched."""
+        manager, inner, scheduler, _, child_ids = _make_manager()
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawns(credit, ["s0"])
+        scheduler.execute_async.reset_mock()
+
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
+        assert len(child_corr_ids) == 2
+
+        # Complete only the first child
+        child_credit = _make_credit(
+            conv_id=child_ids[0],
+            corr_id=child_corr_ids[0],
+            turn_index=2,
+            num_turns=3,
+            agent_depth=1,
+        )
+        manager._handle_subagent_child_complete(child_credit)
+
+        # Pending still exists, join NOT dispatched
+        assert "parent-1" in manager._pending_subagent_joins
+        pending = manager._pending_subagent_joins["parent-1"]
+        assert pending.completed_count == 1
+        assert pending.expected_count == 2
+        scheduler.execute_async.assert_not_called()
+
+
+# =============================================================================
+# Gap coverage: spawn dispatch edge cases
+# =============================================================================
+
+
+class TestSpawnDispatchEdgeCases:
+    """Edge cases in _dispatch_subagent_spawns."""
+
+    def test_all_spawn_ids_resolve_to_none_uses_fallback(self) -> None:
+        """Lines 146-151: all spawn_ids not found -> fallback issues next turn."""
+        manager, inner, scheduler, issuer, _ = _make_manager()
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+
+        # Pass spawn_ids that don't exist in the dataset
+        manager._dispatch_subagent_spawns(credit, ["nonexistent_s1", "nonexistent_s2"])
+
+        # Fallback: issues TurnToSend.from_previous_credit via scheduler
+        scheduler.execute_async.assert_called_once()
+        # No pending join created
+        assert "parent-1" not in manager._pending_subagent_joins
+
+        # Verify fallback turn is from_previous_credit (turn_index + 1)
+        fallback_turn = issuer.issue_credit.call_args[0][0]
+        assert isinstance(fallback_turn, TurnToSend)
+        assert fallback_turn.conversation_id == "conv_0"
+        assert fallback_turn.x_correlation_id == "parent-1"
+        assert fallback_turn.turn_index == 3  # credit.turn_index(2) + 1
+
+    def test_single_spawn_id_not_found_continues(self) -> None:
+        """Lines 111-115: one spawn_id missing, others found -- missing skipped."""
+        manager, inner, scheduler, _, child_ids = _make_manager()
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+
+        # "s0" exists in dataset, "bogus" does not
+        manager._dispatch_subagent_spawns(credit, ["bogus", "s0"])
+
+        # s0 has 2 children, bogus was skipped
+        assert "parent-1" in manager._pending_subagent_joins
+        pending = manager._pending_subagent_joins["parent-1"]
+        assert pending.expected_count == 2
+        # 2 children dispatched (from s0 only)
+        assert scheduler.execute_async.call_count == 2
+
+
+# =============================================================================
+# Gap coverage: end-to-end through handle_credit_return
+# =============================================================================
+
+
+class TestBackgroundSpawnEndToEnd:
+    """Background spawns tested end-to-end through handle_credit_return."""
+
+    @pytest.mark.asyncio
+    async def test_background_spawn_via_handle_credit_return(self) -> None:
+        """Background children issued and join dispatched via public API."""
+        manager, inner, scheduler, _, child_ids = _make_manager(is_background=True)
+
+        # Turn 2 -> next turn (3) has subagent_spawn_ids
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        await manager.handle_credit_return(credit)
+
+        # Inner NOT called (spawn intercept, Path B)
+        inner.handle_credit_return.assert_not_awaited()
+        # 2 children + 1 join = 3 dispatches
+        assert scheduler.execute_async.call_count == 3
+        # No pending join (background)
+        assert "parent-1" not in manager._pending_subagent_joins
+        # No children tracked for join accounting
+        assert len(manager._subagent_child_to_parent) == 0
+
+
+# =============================================================================
+# Gap coverage: join turn content verification
+# =============================================================================
+
+
+class TestJoinTurnContentVerification:
+    """Verify TurnToSend fields on dispatched join turns."""
+
+    def test_join_turn_fields_after_all_children_complete(self) -> None:
+        """Dispatched join TurnToSend has correct fields from PendingSubagentJoin."""
+        manager, inner, scheduler, issuer, child_ids = _make_manager()
+
+        credit = _make_credit(
+            conv_id="conv_0",
+            corr_id="parent-1",
+            turn_index=2,
+            num_turns=6,
+            agent_depth=0,
+        )
+        manager._dispatch_subagent_spawns(credit, ["s0"])
+        scheduler.execute_async.reset_mock()
+        issuer.issue_credit.reset_mock()
+
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
+
+        # Complete all children
+        for i, child_corr_id in enumerate(child_corr_ids):
+            child_credit = _make_credit(
+                conv_id=child_ids[i],
+                corr_id=child_corr_id,
+                turn_index=2,
+                num_turns=3,
+                agent_depth=1,
+            )
+            manager._handle_subagent_child_complete(child_credit)
+
+        # Verify join was dispatched via scheduler
+        assert scheduler.execute_async.call_count == 1
+
+        # issue_credit was called with the join TurnToSend
+        assert issuer.issue_credit.call_count == 1
+        join_turn = issuer.issue_credit.call_args[0][0]
+
+        assert isinstance(join_turn, TurnToSend)
+        assert join_turn.conversation_id == "conv_0"
+        assert join_turn.x_correlation_id == "parent-1"
+        assert join_turn.turn_index == 3  # spawn_at(2) + 1
+        assert join_turn.num_turns == 6
+        assert join_turn.agent_depth == 0
+
+    def test_background_join_turn_fields(self) -> None:
+        """Background spawn dispatches join with correct parent fields."""
+        manager, inner, scheduler, issuer, child_ids = _make_manager(is_background=True)
+
+        credit = _make_credit(
+            conv_id="conv_0",
+            corr_id="parent-1",
+            turn_index=2,
+            num_turns=6,
+            agent_depth=0,
+        )
+        manager._dispatch_subagent_spawns(credit, ["s0"])
+
+        # 2 child dispatches + 1 join dispatch = 3 calls
+        assert scheduler.execute_async.call_count == 3
+        # The join is the last issue_credit call
+        assert issuer.issue_credit.call_count == 3
+        join_turn = issuer.issue_credit.call_args_list[2][0][0]
+
+        assert isinstance(join_turn, TurnToSend)
+        assert join_turn.conversation_id == "conv_0"
+        assert join_turn.x_correlation_id == "parent-1"
+        assert join_turn.turn_index == 3
+        assert join_turn.num_turns == 6
+        assert join_turn.agent_depth == 0

@@ -11,6 +11,7 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
+from aiperf.common.random_generator import RandomGenerator
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
@@ -154,33 +155,58 @@ def _make_credit(
 class TestAssignConversations:
     def test_basic_assignment(self):
         ids = ["a", "b", "c", "d", "e", "f"]
-        result = _assign_conversations(ids, num_users=2, per_user=3, seed=None)
+        result = _assign_conversations(ids, num_users=2, per_user=3, rng_instance=None)
         assert len(result) == 2
         assert len(result[0]) == 3
         assert len(result[1]) == 3
 
     def test_deterministic_with_seed(self):
         ids = [f"conv_{i}" for i in range(10)]
-        r1 = _assign_conversations(ids, num_users=3, per_user=3, seed=42)
-        r2 = _assign_conversations(ids, num_users=3, per_user=3, seed=42)
+        r1 = _assign_conversations(
+            ids,
+            num_users=3,
+            per_user=3,
+            rng_instance=RandomGenerator(42, _internal=True),
+        )
+        r2 = _assign_conversations(
+            ids,
+            num_users=3,
+            per_user=3,
+            rng_instance=RandomGenerator(42, _internal=True),
+        )
         assert r1 == r2
 
     def test_different_seed_different_assignment(self):
         ids = [f"conv_{i}" for i in range(10)]
-        r1 = _assign_conversations(ids, num_users=3, per_user=3, seed=42)
-        r2 = _assign_conversations(ids, num_users=3, per_user=3, seed=99)
+        r1 = _assign_conversations(
+            ids,
+            num_users=3,
+            per_user=3,
+            rng_instance=RandomGenerator(42, _internal=True),
+        )
+        r2 = _assign_conversations(
+            ids,
+            num_users=3,
+            per_user=3,
+            rng_instance=RandomGenerator(99, _internal=True),
+        )
         assert r1 != r2
 
     def test_no_seed_preserves_order(self):
         ids = ["a", "b", "c", "d", "e", "f"]
-        result = _assign_conversations(ids, num_users=2, per_user=3, seed=None)
+        result = _assign_conversations(ids, num_users=2, per_user=3, rng_instance=None)
         # Without seed, no shuffle: user 0 gets [a, b, c], user 1 gets [d, e, f]
         assert result[0] == ["a", "b", "c"]
         assert result[1] == ["d", "e", "f"]
 
     def test_non_overlapping_when_enough_conversations(self):
         ids = [f"conv_{i}" for i in range(20)]
-        result = _assign_conversations(ids, num_users=4, per_user=5, seed=42)
+        result = _assign_conversations(
+            ids,
+            num_users=4,
+            per_user=5,
+            rng_instance=RandomGenerator(42, _internal=True),
+        )
         for u1 in range(4):
             for u2 in range(u1 + 1, 4):
                 overlap = set(result[u1]) & set(result[u2])
@@ -188,7 +214,7 @@ class TestAssignConversations:
 
     def test_wraps_when_not_enough_conversations(self):
         ids = ["a", "b", "c"]
-        result = _assign_conversations(ids, num_users=2, per_user=3, seed=None)
+        result = _assign_conversations(ids, num_users=2, per_user=3, rng_instance=None)
         # User 0 starts at 0: [a, b, c]
         # User 1 starts at 3 % 3 = 0: wraps around
         assert result[0] == ["a", "b", "c"]
@@ -196,23 +222,28 @@ class TestAssignConversations:
 
     def test_single_user(self):
         ids = ["a", "b", "c"]
-        result = _assign_conversations(ids, num_users=1, per_user=2, seed=None)
+        result = _assign_conversations(ids, num_users=1, per_user=2, rng_instance=None)
         assert result[0] == ["a", "b"]
 
     def test_single_conversation(self):
         ids = ["only"]
-        result = _assign_conversations(ids, num_users=3, per_user=2, seed=None)
+        result = _assign_conversations(ids, num_users=3, per_user=2, rng_instance=None)
         for uid in range(3):
             assert result[uid] == ["only", "only"]
 
     def test_per_user_larger_than_pool(self):
         ids = ["a", "b"]
-        result = _assign_conversations(ids, num_users=1, per_user=5, seed=None)
+        result = _assign_conversations(ids, num_users=1, per_user=5, rng_instance=None)
         assert result[0] == ["a", "b", "a", "b", "a"]
 
     def test_all_users_get_assignments(self):
         ids = [f"conv_{i}" for i in range(5)]
-        result = _assign_conversations(ids, num_users=10, per_user=2, seed=42)
+        result = _assign_conversations(
+            ids,
+            num_users=10,
+            per_user=2,
+            rng_instance=RandomGenerator(42, _internal=True),
+        )
         assert len(result) == 10
         for uid in range(10):
             assert len(result[uid]) == 2
@@ -276,7 +307,6 @@ class TestAgenticLoadInit:
         assert strategy._settling_time == 5.0
         assert strategy._trajectories_per_user == 3
         assert strategy._max_isl_offset == 0
-        assert strategy._seed == 42
         assert strategy._benchmark_id == BENCHMARK_ID
 
     def test_num_users_none_raises(self):
@@ -339,7 +369,6 @@ class TestAgenticLoadInit:
         assert strategy._settling_time == 0.0
         assert strategy._trajectories_per_user == 20
         assert strategy._max_isl_offset == 0
-        assert strategy._seed is None
         assert strategy._benchmark_id == "unknown"
 
 
@@ -1023,3 +1052,405 @@ class TestEdgeCases:
         assert user.pass_count == 0
         assert user.isl_offset == 0
         assert user.isl_offset_applied is False
+
+
+# ===========================================================================
+# Subagent credit return tests
+# ===========================================================================
+
+
+class TestSubagentCreditReturn:
+    """Verify handle_credit_return behavior for subagent credits (agent_depth > 0)."""
+
+    @pytest.mark.asyncio
+    async def test_subagent_non_final_turn_issues_continuation(self) -> None:
+        """Subagent mid-conversation: issue next turn via from_previous_credit."""
+        strategy, _, issuer, _, _ = _make_strategy()
+        await strategy.setup_phase()
+
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="child_conv",
+            x_correlation_id="sub-corr-1",
+            turn_index=0,
+            num_turns=3,
+            issued_at_ns=0,
+            agent_depth=1,
+            system_prompt_suffix="[sub]",
+        )
+        await strategy.handle_credit_return(credit)
+
+        assert issuer.issue_credit.call_count == 1
+        next_turn: TurnToSend = issuer.issue_credit.call_args[0][0]
+        assert next_turn.turn_index == 1
+        assert next_turn.num_turns == 3
+        assert next_turn.conversation_id == "child_conv"
+        assert next_turn.x_correlation_id == "sub-corr-1"
+        assert next_turn.agent_depth == 1
+        assert next_turn.system_prompt_suffix == "[sub]"
+
+    @pytest.mark.asyncio
+    async def test_subagent_final_turn_silently_discarded(self) -> None:
+        """Subagent final turn: no credit issued, no session lookup."""
+        strategy, _, issuer, _, _ = _make_strategy()
+        await strategy.setup_phase()
+
+        credit = Credit(
+            id=2,
+            phase=CreditPhase.PROFILING,
+            conversation_id="child_conv",
+            x_correlation_id="sub-corr-2",
+            turn_index=2,
+            num_turns=3,
+            issued_at_ns=0,
+            agent_depth=1,
+        )
+        await strategy.handle_credit_return(credit)
+
+        assert issuer.issue_credit.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_subagent_does_not_affect_active_sessions(self) -> None:
+        """Subagent returns should not pop or look up _active_sessions."""
+        strategy, _, issuer, _, _ = _make_strategy()
+        await strategy.setup_phase()
+        user = strategy._users[0]
+        turn = strategy._build_first_turn_for_user(user)
+
+        sessions_before = dict(strategy._active_sessions)
+
+        # Return a subagent credit with the same correlation ID as a real session
+        credit = Credit(
+            id=3,
+            phase=CreditPhase.PROFILING,
+            conversation_id=turn.conversation_id,
+            x_correlation_id=turn.x_correlation_id,
+            turn_index=4,
+            num_turns=5,
+            issued_at_ns=0,
+            agent_depth=2,
+        )
+        await strategy.handle_credit_return(credit)
+
+        # Session should still be present (subagent path returns early)
+        assert strategy._active_sessions == sessions_before
+        assert issuer.issue_credit.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_subagent_depth_two_non_final_continues(self) -> None:
+        """Nested subagent (depth=2) non-final turn still gets continuation."""
+        strategy, _, issuer, _, _ = _make_strategy()
+        await strategy.setup_phase()
+
+        credit = Credit(
+            id=4,
+            phase=CreditPhase.PROFILING,
+            conversation_id="nested_child",
+            x_correlation_id="nested-corr",
+            turn_index=1,
+            num_turns=4,
+            issued_at_ns=0,
+            agent_depth=2,
+        )
+        await strategy.handle_credit_return(credit)
+
+        assert issuer.issue_credit.call_count == 1
+        next_turn: TurnToSend = issuer.issue_credit.call_args[0][0]
+        assert next_turn.turn_index == 2
+        assert next_turn.agent_depth == 2
+
+
+# ===========================================================================
+# _build_first_turn_for_user returns None after trajectory advancement
+# ===========================================================================
+
+
+class TestBuildFirstTurnReturnsNone:
+    """Verify handle_credit_return handles None from _build_first_turn_for_user."""
+
+    @pytest.mark.asyncio
+    async def test_trajectory_advance_with_empty_assignments_no_credit(self) -> None:
+        """After final turn, if user has no assignments, no credit is issued."""
+        strategy, _, issuer, _, _ = _make_strategy(
+            num_users=1, turns_per_conv=2, trajectories_per_user=1
+        )
+        await strategy.setup_phase()
+        user = strategy._users[0]
+
+        turn = strategy._build_first_turn_for_user(user)
+        corr_id = turn.x_correlation_id
+
+        # Clear the user's assignments to force _build_first_turn_for_user -> None
+        user.assigned_conversation_ids = []
+
+        credit = _make_credit(
+            conv_id=turn.conversation_id,
+            corr_id=corr_id,
+            turn_index=1,
+            num_turns=2,
+        )
+        await strategy.handle_credit_return(credit)
+
+        # No credit issued after trajectory advancement since build returned None
+        assert issuer.issue_credit.call_count == 0
+        # Session still cleaned up
+        assert corr_id not in strategy._active_sessions
+
+
+# ===========================================================================
+# ISL offset edge: offset exactly equals num_turns - 1
+# ===========================================================================
+
+
+class TestISLOffsetExactlyFinal:
+    """Verify ISL offset equal to num_turns - 1 produces a single-turn first credit."""
+
+    @pytest.mark.asyncio
+    async def test_isl_offset_equals_num_turns_minus_one(self) -> None:
+        """When ISL offset == num_turns - 1, first turn is the final turn."""
+        strategy, _, issuer, _, _ = _make_strategy(
+            turns_per_conv=4, max_isl_offset=3, seed=42, trajectories_per_user=2
+        )
+        await strategy.setup_phase()
+        user = strategy._users[0]
+        user.isl_offset = 3  # == num_turns(4) - 1
+        user.isl_offset_applied = False
+
+        turn = strategy._build_first_turn_for_user(user)
+        assert turn is not None
+        assert turn.turn_index == 3
+        assert turn.num_turns == 4
+        assert turn.is_final_turn is True
+        assert user.isl_offset_applied is True
+
+    @pytest.mark.asyncio
+    async def test_isl_offset_final_turn_triggers_trajectory_advance(self) -> None:
+        """First credit at offset == num_turns-1 is final; returning it advances trajectory."""
+        strategy, _, issuer, _, _ = _make_strategy(
+            num_users=1,
+            turns_per_conv=4,
+            max_isl_offset=3,
+            seed=42,
+            trajectories_per_user=2,
+        )
+        await strategy.setup_phase()
+        user = strategy._users[0]
+        user.isl_offset = 3
+        user.isl_offset_applied = False
+
+        # Build the first (and final) turn
+        turn = strategy._build_first_turn_for_user(user)
+        assert turn.turn_index == 3
+
+        # Return it as final
+        credit = _make_credit(
+            conv_id=turn.conversation_id,
+            corr_id=turn.x_correlation_id,
+            turn_index=3,
+            num_turns=4,
+            suffix=turn.system_prompt_suffix,
+        )
+        await strategy.handle_credit_return(credit)
+
+        # Should advance trajectory and issue a new first turn at index 0
+        assert user.current_trajectory_index == 1
+        assert issuer.issue_credit.call_count == 1
+        next_turn: TurnToSend = issuer.issue_credit.call_args[0][0]
+        assert next_turn.turn_index == 0  # ISL offset not re-applied
+
+
+# ===========================================================================
+# Full lifecycle with ISL offset
+# ===========================================================================
+
+
+class TestISLOffsetFullLifecycle:
+    """Verify spawn -> partial conversation -> trajectory advance -> next starts at turn 0."""
+
+    @pytest.mark.asyncio
+    async def test_isl_offset_lifecycle(self) -> None:
+        """ISL offset skips turns in first trajectory, second trajectory starts at 0."""
+        strategy, _, issuer, _, _ = _make_strategy(
+            num_users=1,
+            turns_per_conv=5,
+            max_isl_offset=2,
+            seed=42,
+            trajectories_per_user=2,
+        )
+        await strategy.setup_phase()
+        user = strategy._users[0]
+        user.isl_offset = 2
+        user.isl_offset_applied = False
+
+        # Spawn: first turn starts at offset 2
+        await strategy._spawn_user(user)
+        assert issuer.issue_credit.call_count == 1
+        t0: TurnToSend = issuer.issue_credit.call_args[0][0]
+        assert t0.turn_index == 2
+        conv_id_0 = t0.conversation_id
+        corr_id_0 = t0.x_correlation_id
+        suffix_0 = t0.system_prompt_suffix
+
+        # Play through turns 2 -> 3 -> 4 (final)
+        for turn_idx in range(2, 4):
+            credit = _make_credit(
+                conv_id=conv_id_0,
+                corr_id=corr_id_0,
+                turn_index=turn_idx,
+                num_turns=5,
+                suffix=suffix_0,
+            )
+            await strategy.handle_credit_return(credit)
+
+        # After turns 2 and 3, we have issued turns 3 and 4
+        assert issuer.issue_credit.call_count == 3
+        t_final: TurnToSend = issuer.issue_credit.call_args[0][0]
+        assert t_final.turn_index == 4
+
+        # Return final turn -> advances trajectory
+        credit = _make_credit(
+            conv_id=conv_id_0,
+            corr_id=corr_id_0,
+            turn_index=4,
+            num_turns=5,
+            suffix=suffix_0,
+        )
+        await strategy.handle_credit_return(credit)
+
+        # Second trajectory starts at turn 0 (no ISL offset)
+        assert user.current_trajectory_index == 1
+        assert issuer.issue_credit.call_count == 4
+        t_new: TurnToSend = issuer.issue_credit.call_args[0][0]
+        assert t_new.turn_index == 0
+        assert t_new.x_correlation_id != corr_id_0
+        assert t_new.system_prompt_suffix != suffix_0
+
+
+# ===========================================================================
+# execute_phase ramp duration for single user
+# ===========================================================================
+
+
+class TestExecutePhaseRampDuration:
+    """Verify ramp_duration calculation edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_single_user_ramp_duration_zero(self) -> None:
+        """With num_users=1, ramp_duration should be 0.0 (no staggering needed)."""
+        strategy, scheduler, _, stop_checker, lifecycle = _make_strategy(
+            num_users=1, user_spawn_rate=2.0
+        )
+        stop_checker.can_send_any_turn = MagicMock(return_value=False)
+        await strategy.setup_phase()
+        await strategy.execute_phase()
+
+        # Single user spawned at exactly phase_start (no ramp delay)
+        calls = scheduler.schedule_at_perf_sec.call_args_list
+        assert len(calls) == 1
+        spawn_time = calls[0][0][0]
+        # spawn_delay = 0 / spawn_rate = 0.0, so spawn_time == phase_start
+        assert spawn_time == pytest.approx(lifecycle.started_at_perf_sec)
+
+
+# ===========================================================================
+# Mid-trajectory advancement
+# ===========================================================================
+
+
+class TestMidTrajectoryAdvancement:
+    """Verify trajectory advancement from middle indices (not just 0->1 or last->0)."""
+
+    @pytest.mark.asyncio
+    async def test_mid_trajectory_advance_index_2_to_3(self) -> None:
+        """Advance from trajectory index 2 to 3 in a 5-trajectory assignment."""
+        strategy, _, issuer, _, _ = _make_strategy(
+            num_users=1, turns_per_conv=2, trajectories_per_user=5
+        )
+        await strategy.setup_phase()
+        user = strategy._users[0]
+        user.current_trajectory_index = 2
+
+        # Build first turn at trajectory 2
+        turn = strategy._build_first_turn_for_user(user)
+        conv_at_2 = turn.conversation_id
+        suffix_at_2 = turn.system_prompt_suffix
+
+        # Complete the conversation (2 turns, return the final one)
+        credit = _make_credit(
+            conv_id=conv_at_2,
+            corr_id=turn.x_correlation_id,
+            turn_index=1,
+            num_turns=2,
+            suffix=suffix_at_2,
+        )
+        await strategy.handle_credit_return(credit)
+
+        assert user.current_trajectory_index == 3
+        assert issuer.issue_credit.call_count == 1
+        next_turn: TurnToSend = issuer.issue_credit.call_args[0][0]
+        assert next_turn.turn_index == 0
+        # Suffix changes because trajectory index changed
+        assert next_turn.system_prompt_suffix != suffix_at_2
+
+    @pytest.mark.asyncio
+    async def test_multi_step_advancement_through_middle(self) -> None:
+        """Walk through trajectories 1 -> 2 -> 3, verifying state at each step."""
+        strategy, _, issuer, _, _ = _make_strategy(
+            num_users=1, turns_per_conv=1, trajectories_per_user=5
+        )
+        await strategy.setup_phase()
+        user = strategy._users[0]
+        user.current_trajectory_index = 1
+
+        suffixes = []
+        for expected_next_idx in [2, 3, 4]:
+            turn = strategy._build_first_turn_for_user(user)
+            suffixes.append(turn.system_prompt_suffix)
+
+            credit = _make_credit(
+                conv_id=turn.conversation_id,
+                corr_id=turn.x_correlation_id,
+                turn_index=0,
+                num_turns=1,
+                suffix=turn.system_prompt_suffix,
+            )
+            await strategy.handle_credit_return(credit)
+            assert user.current_trajectory_index == expected_next_idx
+
+        # All suffixes should be distinct (different trajectory indices)
+        assert len(set(suffixes)) == 3
+
+    @pytest.mark.asyncio
+    async def test_advance_from_penultimate_to_last_then_wrap(self) -> None:
+        """Advance from second-to-last trajectory to last, then wrap to 0."""
+        strategy, _, issuer, _, _ = _make_strategy(
+            num_users=1, turns_per_conv=1, trajectories_per_user=4
+        )
+        await strategy.setup_phase()
+        user = strategy._users[0]
+        user.current_trajectory_index = 2  # Penultimate (0-indexed, 4 total)
+
+        # Complete trajectory at index 2 -> advance to 3
+        turn = strategy._build_first_turn_for_user(user)
+        credit = _make_credit(
+            conv_id=turn.conversation_id,
+            corr_id=turn.x_correlation_id,
+            turn_index=0,
+            num_turns=1,
+        )
+        await strategy.handle_credit_return(credit)
+        assert user.current_trajectory_index == 3
+        assert user.pass_count == 0
+
+        # Complete trajectory at index 3 (last) -> wrap to 0, increment pass
+        turn2 = strategy._build_first_turn_for_user(user)
+        credit2 = _make_credit(
+            conv_id=turn2.conversation_id,
+            corr_id=turn2.x_correlation_id,
+            turn_index=0,
+            num_turns=1,
+        )
+        await strategy.handle_credit_return(credit2)
+        assert user.current_trajectory_index == 0
+        assert user.pass_count == 1

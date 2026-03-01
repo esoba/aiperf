@@ -17,12 +17,13 @@ Phase Timeline:
 from __future__ import annotations
 
 import hashlib
-import random
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from aiperf.common import random_generator as rng
 from aiperf.common.mixins import AIPerfLoggerMixin
+from aiperf.common.random_generator import RandomGenerator
 from aiperf.credit.structs import Credit, TurnToSend
 
 if TYPE_CHECKING:
@@ -62,7 +63,7 @@ def _assign_conversations(
     conversation_ids: list[str],
     num_users: int,
     per_user: int,
-    seed: int | None,
+    rng_instance: RandomGenerator | None,
 ) -> dict[int, list[str]]:
     """Assign conversations to users with non-overlapping indices where possible.
 
@@ -70,8 +71,8 @@ def _assign_conversations(
     conversations to each user in round-robin fashion.
     """
     ids = list(conversation_ids)
-    if seed is not None:
-        random.Random(seed).shuffle(ids)
+    if rng_instance is not None:
+        rng_instance.shuffle(ids)
 
     assignments: dict[int, list[str]] = {}
     for user_id in range(num_users):
@@ -125,8 +126,8 @@ class AgenticLoadStrategy(AIPerfLoggerMixin):
         self._settling_time = config.settling_time_sec or 0.0
         self._trajectories_per_user = config.trajectories_per_user or 20
         self._max_isl_offset = config.max_isl_offset or 0
-        self._seed = config.agentic_seed
         self._benchmark_id = config.benchmark_id or "unknown"
+        self._rng = rng.derive("timing.agentic_load")
 
         if self._num_users is None or self._num_users <= 0:
             raise ValueError("num_users must be set and positive for agentic load mode")
@@ -148,18 +149,13 @@ class AgenticLoadStrategy(AIPerfLoggerMixin):
             conversation_ids,
             self._num_users,
             self._trajectories_per_user,
-            self._seed,
+            self._rng,
         )
 
         for user_id, conv_ids in assignments.items():
-            if self._max_isl_offset > 0 and self._seed is not None:
-                # Per-user deterministic seed: user N always gets the same offset
-                # regardless of num_users (matches reference implementation)
-                isl_offset = random.Random(self._seed + user_id).randint(
-                    0, self._max_isl_offset
-                )
-            elif self._max_isl_offset > 0:
-                isl_offset = random.Random().randint(0, self._max_isl_offset)
+            if self._max_isl_offset > 0:
+                user_rng = rng.derive(f"timing.agentic_load.user.{user_id}")
+                isl_offset = user_rng.randint(0, self._max_isl_offset)
             else:
                 isl_offset = 0
             user = AgenticUser(

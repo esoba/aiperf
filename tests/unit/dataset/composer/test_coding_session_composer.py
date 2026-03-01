@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import param
 
 from aiperf.common.config import (
     CodingSessionConfig,
@@ -11,7 +12,8 @@ from aiperf.common.config import (
     PromptConfig,
     UserConfig,
 )
-from aiperf.common.models.dataset_models import CacheLayerSizes
+from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.models.dataset_models import CacheLayerSizes, SubagentSpawnInfo
 from aiperf.dataset.composer.coding_session import CodingSessionComposer
 from aiperf.dataset.loader.models import CodingTrace
 
@@ -1532,3 +1534,442 @@ class TestReplacesHistory:
                 if turn.replaces_history:
                     assert turn.texts
                     assert len(turn.texts[0].contents[0]) > 0
+
+
+# ============================================================================
+# Recursive Subagent Nesting (depth > 1) Tests
+# ============================================================================
+
+
+class TestRecursiveSubagentNesting:
+    """Verify grandchild L1 offset multiplication and depth decay when nesting > 1."""
+
+    @pytest.fixture
+    def deep_nesting_config(self) -> UserConfig:
+        """Config with max_subagent_depth=3 and guaranteed spawns."""
+        return _make_cache_config(
+            num_sessions=5,
+            l1_tokens=640,
+            l2_tokens=128,
+            block_size=64,
+            max_prompt_tokens=20000,
+            subagent_probability=0.0,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
+            subagent_count_mean=1.2,
+            subagent_count_max=2,
+            subagent_turns_mean=6,
+            subagent_turns_median=5,
+            subagent_system_tokens=200,
+            subagent_new_tokens_mean=300,
+            subagent_new_tokens_median=200,
+            subagent_max_prompt_tokens=5000,
+            max_subagent_depth=3,
+            subagent_depth_spawn_decay=1.0,
+        )
+
+    def test_grandchild_l1_offset_is_double_child_offset(
+        self, deep_nesting_config: UserConfig, mock_tokenizer
+    ) -> None:
+        """Depth-2 grandchild L1 starts at 2 * _SUBAGENT_L1_OFFSET."""
+        composer = CodingSessionComposer(deep_nesting_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        grandchildren = [c for c in conversations if c.agent_depth == 2]
+        if not grandchildren:
+            pytest.skip("No grandchildren generated (RNG dependent)")
+
+        offset_per_depth = CodingSessionComposer._SUBAGENT_L1_OFFSET
+        expected_offset = offset_per_depth * 2
+        for gc in grandchildren:
+            l1_count = gc.turns[0].cache_layer_sizes.l1
+            if l1_count == 0:
+                continue
+            l1_ids = gc.turns[0].hash_ids[:l1_count]
+            assert l1_ids[0] == expected_offset, (
+                f"Grandchild L1 should start at {expected_offset}, got {l1_ids[0]}"
+            )
+            assert l1_ids == list(range(expected_offset, expected_offset + l1_count))
+
+    def test_grandchild_l1_no_overlap_with_child_or_parent(
+        self, deep_nesting_config: UserConfig, mock_tokenizer
+    ) -> None:
+        """Parent, child, and grandchild L1 ranges never overlap."""
+        composer = CodingSessionComposer(deep_nesting_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        l1_sets_by_depth: dict[int, set[int]] = {}
+        for conv in conversations:
+            l1_count = conv.turns[0].cache_layer_sizes.l1
+            ids = set(conv.turns[0].hash_ids[:l1_count])
+            l1_sets_by_depth.setdefault(conv.agent_depth, set()).update(ids)
+
+        depths = sorted(l1_sets_by_depth.keys())
+        for i in range(len(depths)):
+            for j in range(i + 1, len(depths)):
+                overlap = l1_sets_by_depth[depths[i]] & l1_sets_by_depth[depths[j]]
+                assert len(overlap) == 0, (
+                    f"Depth {depths[i]} and {depths[j]} L1 overlap: {len(overlap)} IDs"
+                )
+
+    def test_grandchild_agent_depth_is_two(
+        self, deep_nesting_config: UserConfig, mock_tokenizer
+    ) -> None:
+        """Grandchildren created at depth=2 should have agent_depth=2."""
+        composer = CodingSessionComposer(deep_nesting_config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        grandchildren = [c for c in conversations if c.agent_depth == 2]
+        if not grandchildren:
+            pytest.skip("No grandchildren generated (RNG dependent)")
+
+        for gc in grandchildren:
+            assert gc.agent_depth == 2
+
+    def test_depth_decay_zero_prevents_recursive_spawns(self, mock_tokenizer) -> None:
+        """With subagent_depth_spawn_decay=0.0, effective prob at depth 1 is 0, so no grandchildren."""
+        config = _make_cache_config(
+            num_sessions=10,
+            max_prompt_tokens=20000,
+            subagent_probability=0.0,
+            subagent_session_probability=1.0,
+            subagent_turn_probability=1.0,
+            subagent_count_mean=1.2,
+            subagent_count_max=2,
+            subagent_turns_mean=6,
+            subagent_turns_median=5,
+            subagent_system_tokens=200,
+            subagent_new_tokens_mean=300,
+            subagent_new_tokens_median=200,
+            subagent_max_prompt_tokens=5000,
+            max_subagent_depth=3,
+            subagent_depth_spawn_decay=0.0,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        grandchildren = [c for c in conversations if c.agent_depth >= 2]
+        assert len(grandchildren) == 0
+
+
+# ============================================================================
+# Thinking Strip 3-Way Cache Invalidation Tests
+# ============================================================================
+
+
+class TestThinkingStripCacheInvalidation:
+    """Verify thinking strip regenerates L2, L3, and clears thinking_ids."""
+
+    def test_thinking_strip_regenerates_l2_and_l3(self, mock_tokenizer) -> None:
+        """After a thinking strip event, L2 and L3 IDs should differ from previous turn."""
+        config = _make_cache_config(
+            num_sessions=1,
+            l1_tokens=640,
+            l2_tokens=128,
+            block_size=64,
+            thinking_tokens_mean=500,
+            thinking_tokens_median=300,
+            tool_result_ratio=0.5,
+            thinking_strip_probability=1.0,
+            restart_probability=0.0,
+            max_compressions=0,
+            max_prompt_tokens=20000,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        conv = conversations[0]
+        l1_count = conv.turns[0].cache_layer_sizes.l1
+
+        # Find a turn with replaces_history that had thinking blocks stripped
+        # (thinking strip sets context_loss=True, which sets replaces_history=True)
+        found_strip = False
+        for i in range(2, len(conv.turns)):
+            prev_turn = conv.turns[i - 1]
+            curr_turn = conv.turns[i]
+
+            prev_sizes = prev_turn.cache_layer_sizes
+            prev_had_thinking = len(prev_turn.hash_ids) > (
+                prev_sizes.l1 + prev_sizes.l2 + prev_sizes.l3
+            )
+
+            if curr_turn.replaces_history and prev_had_thinking:
+                # L2 should have been regenerated
+                prev_l2 = prev_turn.hash_ids[l1_count : l1_count + prev_sizes.l2]
+                curr_l2_count = curr_turn.cache_layer_sizes.l2
+                curr_l2 = curr_turn.hash_ids[l1_count : l1_count + curr_l2_count]
+                assert prev_l2 != curr_l2, (
+                    "L2 should be regenerated after thinking strip"
+                )
+
+                # Thinking blocks should be gone
+                curr_sizes = curr_turn.cache_layer_sizes
+                curr_layer_total = curr_sizes.l1 + curr_sizes.l2 + curr_sizes.l3
+                assert len(curr_turn.hash_ids) == curr_layer_total, (
+                    "Thinking IDs should be cleared after strip"
+                )
+                found_strip = True
+                break
+
+        if not found_strip:
+            pytest.skip("No thinking strip event observed (RNG dependent)")
+
+    def test_thinking_strip_preserves_l1(self, mock_tokenizer) -> None:
+        """After thinking strip, L1 IDs remain unchanged."""
+        config = _make_cache_config(
+            num_sessions=1,
+            l1_tokens=640,
+            block_size=64,
+            thinking_tokens_mean=500,
+            thinking_tokens_median=300,
+            tool_result_ratio=0.5,
+            thinking_strip_probability=1.0,
+            restart_probability=0.0,
+            max_compressions=0,
+            max_prompt_tokens=20000,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        conv = conversations[0]
+        l1_count = conv.turns[0].cache_layer_sizes.l1
+        expected_l1 = list(range(l1_count))
+
+        for turn in conv.turns:
+            assert turn.hash_ids[:l1_count] == expected_l1
+
+
+# ============================================================================
+# Poisson Subagent Count Clamping Tests
+# ============================================================================
+
+
+class TestSampleSubagentCount:
+    """Verify _sample_subagent_count clamps to [1, subagent_count_max]."""
+
+    def test_count_always_at_least_one(self, mock_tokenizer) -> None:
+        """Even with very low mean, result is clamped to min(1)."""
+        config = _make_cache_config(
+            subagent_count_mean=1.0,
+            subagent_count_max=10,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        cfg = composer._coding_config
+        for _ in range(200):
+            count = composer._sample_subagent_count(cfg)
+            assert count >= 1
+
+    def test_count_never_exceeds_max(self, mock_tokenizer) -> None:
+        """With high mean, result is clamped to subagent_count_max."""
+        config = _make_cache_config(
+            subagent_count_mean=50.0,
+            subagent_count_max=3,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        cfg = composer._coding_config
+        for _ in range(200):
+            count = composer._sample_subagent_count(cfg)
+            assert count <= 3
+
+    @pytest.mark.parametrize(
+        "mean,max_count",
+        [
+            param(1.0, 5, id="low-mean"),
+            param(100.0, 2, id="very-high-mean-low-max"),
+            param(1.2, 1, id="max-equals-one"),
+        ],
+    )  # fmt: skip
+    def test_count_within_bounds(
+        self, mock_tokenizer, mean: float, max_count: int
+    ) -> None:
+        """Sampled count is always in [1, max_count] regardless of mean."""
+        config = _make_cache_config(
+            subagent_count_mean=mean,
+            subagent_count_max=max_count,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        cfg = composer._coding_config
+        for _ in range(100):
+            count = composer._sample_subagent_count(cfg)
+            assert 1 <= count <= max_count
+
+
+# ============================================================================
+# Turn-to-Request Type Classification Tests
+# ============================================================================
+
+
+class TestTurnToRequestTypeClassification:
+    """Verify _turn_to_request type heuristic with keyword detection."""
+
+    @pytest.mark.parametrize(
+        "content,expected_type",
+        [
+            param("def hello_world():\n    pass", "s", id="python-def-keyword"),
+            param("func main() {}", "s", id="go-func-keyword"),
+            param("fn process(x: i32) -> i32 {}", "s", id="rust-fn-keyword"),
+            param("function setup() { return; }", "s", id="js-function-keyword"),
+            param("This is a plain text message with no code.", "n", id="plain-text"),
+            param("Please review the pull request.", "n", id="no-code-keywords"),
+            param("The result is 42.", "n", id="short-text"),
+        ],
+    )  # fmt: skip
+    def test_type_classification_based_on_content(
+        self, content: str, expected_type: str
+    ) -> None:
+        turn = Turn(
+            max_tokens=100,
+            input_tokens=500,
+            texts=[Text(name="text", contents=[content])],
+        )
+        req = CodingSessionComposer._turn_to_request(turn, t=0.0, is_last=False)
+        assert req.type == expected_type
+
+    def test_empty_texts_defaults_to_s(self) -> None:
+        """Turn with no texts defaults to type 's'."""
+        turn = Turn(max_tokens=100, input_tokens=500, texts=[])
+        req = CodingSessionComposer._turn_to_request(turn, t=0.0, is_last=False)
+        assert req.type == "s"
+
+    def test_empty_contents_defaults_to_s(self) -> None:
+        """Turn with empty contents list defaults to type 's'."""
+        turn = Turn(
+            max_tokens=100,
+            input_tokens=500,
+            texts=[Text(name="text", contents=[])],
+        )
+        req = CodingSessionComposer._turn_to_request(turn, t=0.0, is_last=False)
+        assert req.type == "s"
+
+    def test_is_last_sets_end_turn_stop(self) -> None:
+        turn = Turn(
+            max_tokens=100,
+            input_tokens=500,
+            texts=[Text(name="text", contents=["no code here"])],
+        )
+        req = CodingSessionComposer._turn_to_request(turn, t=1.5, is_last=True)
+        assert req.stop == "end_turn"
+        assert req.t == 1.5
+
+    def test_not_last_sets_tool_use_stop(self) -> None:
+        turn = Turn(
+            max_tokens=100,
+            input_tokens=500,
+            texts=[Text(name="text", contents=["def foo(): pass"])],
+        )
+        req = CodingSessionComposer._turn_to_request(turn, t=0.0, is_last=False)
+        assert req.stop == "tool_use"
+
+    def test_tokens_and_hash_ids_propagated(self) -> None:
+        turn = Turn(
+            max_tokens=200,
+            input_tokens=1000,
+            texts=[Text(name="text", contents=["text"])],
+            hash_ids=[1, 2, 3],
+        )
+        req = CodingSessionComposer._turn_to_request(turn, t=0.0, is_last=False)
+        assert req.input_tokens == 1000
+        assert req.output_tokens == 200
+        assert req.hash_ids == [1, 2, 3]
+
+
+# ============================================================================
+# child_by_id.get(child_id) Returns None - Silent Skip Tests
+# ============================================================================
+
+
+class TestConversationToRequestsMissingChild:
+    """Verify _conversation_to_requests silently skips missing child_by_id entries."""
+
+    def test_missing_child_id_silently_skipped(self, mock_tokenizer) -> None:
+        """When child_by_id lacks an entry for a spawn's child_id, no error is raised."""
+        config = _make_cache_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        cfg = composer._coding_config
+
+        # Build a parent conversation with a spawn pointing to a nonexistent child
+        conv = Conversation(
+            session_id="test_parent",
+            turns=[
+                Turn(
+                    max_tokens=100,
+                    input_tokens=500,
+                    texts=[Text(name="text", contents=["def foo(): pass"])],
+                    hash_ids=[0, 1, 2],
+                    subagent_spawn_ids=["s0"],
+                ),
+                Turn(
+                    max_tokens=100,
+                    input_tokens=800,
+                    texts=[Text(name="text", contents=["done"])],
+                    hash_ids=[0, 1, 2, 3],
+                ),
+            ],
+            subagent_spawns=[
+                SubagentSpawnInfo(
+                    spawn_id="s0",
+                    child_conversation_ids=["nonexistent_child_id"],
+                    join_turn_index=0,
+                    is_background=False,
+                ),
+            ],
+        )
+
+        # Empty child_by_id -- the child_id won't be found
+        child_by_id: dict[str, Conversation] = {}
+        requests = composer._conversation_to_requests(conv, child_by_id, cfg)
+
+        # Should produce requests for both turns without error
+        assert len(requests) == 2
+        # The spawn turn should have no nested requests (child was missing)
+        assert len(requests[0].requests) == 0
+
+    def test_partial_missing_children_only_found_ones_nested(
+        self, mock_tokenizer
+    ) -> None:
+        """When some child_ids exist and some don't, only found ones produce nested requests."""
+        config = _make_cache_config(num_sessions=1)
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        cfg = composer._coding_config
+
+        # Build a real child conversation
+        real_child = Conversation(
+            session_id="real_child",
+            turns=[
+                Turn(
+                    max_tokens=50,
+                    input_tokens=300,
+                    texts=[Text(name="text", contents=["def bar(): pass"])],
+                    hash_ids=[100, 101],
+                ),
+            ],
+        )
+
+        conv = Conversation(
+            session_id="test_parent",
+            turns=[
+                Turn(
+                    max_tokens=100,
+                    input_tokens=500,
+                    texts=[Text(name="text", contents=["def foo(): pass"])],
+                    hash_ids=[0, 1, 2],
+                    subagent_spawn_ids=["s0"],
+                ),
+            ],
+            subagent_spawns=[
+                SubagentSpawnInfo(
+                    spawn_id="s0",
+                    child_conversation_ids=["real_child", "ghost_child"],
+                    join_turn_index=0,
+                    is_background=False,
+                ),
+            ],
+        )
+
+        child_by_id = {"real_child": real_child}
+        requests = composer._conversation_to_requests(conv, child_by_id, cfg)
+
+        assert len(requests) == 1
+        # Only the real child should produce a nested subagent request
+        assert len(requests[0].requests) == 1
+        assert requests[0].requests[0].type == "subagent"

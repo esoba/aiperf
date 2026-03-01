@@ -3,7 +3,10 @@
 
 """Unit tests for CodingContentGenerator."""
 
+from unittest.mock import patch
+
 import pytest
+from pytest import param
 
 from aiperf.common.config import PrefixPromptConfig, PromptConfig
 from aiperf.common.exceptions import ConfigurationError, NotInitializedError
@@ -75,8 +78,6 @@ class TestCodingContentGenerator:
         pool = generator._tool_pool
         pool_size = len(pool)
         # Force start near end to trigger wrap
-        from unittest.mock import patch
-
         with patch.object(
             generator._corpus_rng, "randrange", return_value=pool_size - 3
         ):
@@ -532,3 +533,85 @@ class TestCodingContentGenerator:
         tools2 = generator.generate_tool_definitions()
         assert tools1 is not tools2
         assert tools1[0] is not tools2[0]
+
+    # -- Decoded cache hit path --
+
+    def test_decoded_cache_hit_returns_same_string(self, generator):
+        result1 = generator._generate_cached_prompt(10, [1, 2], 5)
+        result2 = generator._generate_cached_prompt(10, [1, 2], 5)
+        assert result1 == result2
+        assert len(generator._decoded_cache) == 1
+
+    def test_decoded_cache_hit_skips_build_token_sequence(self, generator):
+        generator._generate_cached_prompt(10, [1, 2], 5)
+        with patch.object(
+            generator,
+            "_build_token_sequence",
+            side_effect=RuntimeError("should not be called"),
+        ):
+            result = generator._generate_cached_prompt(10, [1, 2], 5)
+        assert isinstance(result, str)
+
+    # -- _build_token_sequence: block_size < final_block_size error --
+
+    @pytest.mark.parametrize(
+        "num_tokens,hash_ids,block_size",
+        [
+            param(20, [1], 5, id="single-hash-num-tokens-exceeds-block-size"),
+            param(15, [1, 2], 5, id="final-block-larger-than-block-size"),
+        ],
+    )  # fmt: skip
+    def test_build_token_sequence_block_size_lt_final_block_raises(
+        self, generator, num_tokens, hash_ids, block_size
+    ):
+        with pytest.raises(ConfigurationError, match="are not compatible"):
+            generator._build_token_sequence(num_tokens, hash_ids, block_size)
+
+    # -- build_language_pool with unsupported language --
+
+    def test_build_language_pool_unsupported_language_returns_agnostic_only(
+        self, generator
+    ):
+        pool = generator.build_language_pool("cobol")
+        assert len(pool) > 0
+        # Unsupported language should still be cached
+        assert "cobol" in generator._language_pools
+        assert generator.build_language_pool("cobol") is pool
+
+    def test_build_language_pool_unsupported_has_no_language_code_blocks(
+        self, generator
+    ):
+        supported_pool = generator.build_language_pool("python")
+        unsupported_pool = generator.build_language_pool("cobol")
+        # The unsupported pool should be smaller since it has no language-specific code blocks
+        assert len(unsupported_pool) < len(supported_pool)
+
+    # -- Individual language sub-variant generators --
+
+    @pytest.mark.parametrize(
+        "method_name",
+        [
+            "_gen_python_class",
+            "_gen_python_functions",
+            "_gen_python_test",
+            "_gen_python_http_handler",
+            "_gen_python_data_model",
+            "_gen_go_struct",
+            "_gen_go_http_handler",
+            "_gen_go_errors",
+            "_gen_go_test",
+            "_gen_rust_struct",
+            "_gen_rust_http_handler",
+            "_gen_rust_errors",
+            "_gen_rust_test",
+            "_gen_typescript_class",
+            "_gen_typescript_http_handler",
+            "_gen_typescript_types",
+            "_gen_typescript_test",
+        ],
+    )  # fmt: skip
+    def test_language_sub_variant_returns_nonempty_string(self, generator, method_name):
+        gen_fn = getattr(generator, method_name)
+        result = gen_fn()
+        assert isinstance(result, str)
+        assert len(result) > 0

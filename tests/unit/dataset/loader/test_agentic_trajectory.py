@@ -100,6 +100,18 @@ class TestCanLoad:
         )
         assert AgenticTrajectoryLoader.can_load(filename=str(jsonl)) is True
 
+    def test_file_probe_corrupt_non_json_returns_false(self, tmp_path):
+        """Corrupt non-JSON content in a .jsonl triggers the except-Exception catch-all."""
+        jsonl = tmp_path / "corrupt.jsonl"
+        jsonl.write_bytes(b"\x80\x81\x82 not valid json\n")
+        assert AgenticTrajectoryLoader.can_load(filename=str(jsonl)) is False
+
+    def test_file_probe_only_blank_lines_returns_false(self, tmp_path):
+        """A .jsonl file with only blank lines has no parseable record."""
+        jsonl = tmp_path / "blanks.jsonl"
+        jsonl.write_text("\n\n   \n\n")
+        assert AgenticTrajectoryLoader.can_load(filename=str(jsonl)) is False
+
     def test_file_probe_non_jsonl(self, tmp_path):
         txt = tmp_path / "data.txt"
         txt.write_text("hello")
@@ -214,6 +226,23 @@ class TestLoadDataset:
         loader = AgenticTrajectoryLoader(filename=str(jsonl), user_config=user_config)
         result = loader.load_dataset()
         assert result["c1"][0].tools == TOOLS
+
+    def test_missing_tools_key_defaults_to_empty_list(self, tmp_path, user_config):
+        """When a JSONL record omits the 'tools' key, tools defaults to []."""
+        jsonl = tmp_path / "data.jsonl"
+        # Write raw dict without tools key (not using _make_trajectory_record
+        # which conditionally includes it)
+        raw = {
+            "conversation_id": "c1",
+            "conversation_idx": 0,
+            "messages": [SYSTEM_MSG, USER_MSG],
+        }
+        with open(jsonl, "wb") as f:
+            f.write(orjson.dumps(raw) + b"\n")
+
+        loader = AgenticTrajectoryLoader(filename=str(jsonl), user_config=user_config)
+        result = loader.load_dataset()
+        assert result["c1"][0].tools == []
 
 
 # =========================================================================
@@ -458,6 +487,40 @@ class TestConvertToConversations:
         conversations = loader.convert_to_conversations(data)
         assert len(conversations) == 0
 
+    def test_multi_conversation_data_dict(self, user_config):
+        """Multiple conversation groups produce independent Conversation objects."""
+        user2 = {"role": "user", "content": "Goodbye"}
+        data = {
+            "c1": [
+                AgenticTrajectoryRecord(
+                    conversation_id="c1",
+                    conversation_idx=0,
+                    messages=[SYSTEM_MSG, USER_MSG],
+                ),
+            ],
+            "c2": [
+                AgenticTrajectoryRecord(
+                    conversation_id="c2",
+                    conversation_idx=0,
+                    messages=[SYSTEM_MSG_2, user2],
+                ),
+            ],
+        }
+        loader = AgenticTrajectoryLoader(
+            filename="dummy.jsonl", user_config=user_config
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 2
+        sys_messages = {c.system_message for c in conversations}
+        assert "You are a helpful assistant." in sys_messages
+        assert "Follow these rules carefully." in sys_messages
+
+        # Each conversation has its own turn content
+        all_raw = [c.turns[0].raw_messages for c in conversations]
+        assert [USER_MSG] in all_raw
+        assert [user2] in all_raw
+
 
 # =========================================================================
 # TestAdvanceTurnRawMessages
@@ -613,6 +676,28 @@ class TestHelpers:
     def test_is_prefix_false_different_content(self):
         other = {"role": "user", "content": "Different"}
         assert _is_prefix([USER_MSG], [other, ASSISTANT_MSG]) is False
+
+    def test_extract_system_message_mixed_content_types(self):
+        """Non-text blocks (e.g. image_url) are ignored; only text blocks contribute."""
+        msg = {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "Rule one."},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "http://example.com/img.png"},
+                },
+                {"type": "text", "text": "Rule two."},
+                {"type": "tool_use", "id": "t1"},
+            ],
+        }
+        result = _extract_system_message([msg, USER_MSG])
+        assert result == "Rule one.\nRule two."
+
+    def test_strip_system_all_system_messages_returns_empty(self):
+        """When every message is a system message, result is empty."""
+        messages = [SYSTEM_MSG, SYSTEM_MSG_2]
+        assert _strip_system(messages) == []
 
     def test_is_prefix_false_baseline_longer(self):
         assert _is_prefix([USER_MSG, ASSISTANT_MSG], [USER_MSG]) is False
