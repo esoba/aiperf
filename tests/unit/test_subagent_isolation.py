@@ -38,10 +38,8 @@ from aiperf.dataset.composer.coding_session import CodingSessionComposer
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.conversation_source import ConversationSource
-from aiperf.timing.strategies.adaptive_scale import (
-    AdaptiveScaleStrategy,
-    PendingSubagentJoin,
-)
+from aiperf.timing.strategies.adaptive_scale import AdaptiveScaleStrategy
+from aiperf.timing.subagent_manager import PendingSubagentJoin, SubagentSessionManager
 from tests.unit.timing.conftest import make_sampler
 
 # =============================================================================
@@ -180,7 +178,13 @@ def _make_adaptive_strategy(
     turns_per_conv: int = 6,
     is_background: bool = False,
 ) -> tuple[
-    AdaptiveScaleStrategy, MagicMock, MagicMock, MagicMock, DatasetMetadata, list[str]
+    SubagentSessionManager,
+    AdaptiveScaleStrategy,
+    MagicMock,
+    MagicMock,
+    MagicMock,
+    DatasetMetadata,
+    list[str],
 ]:
     scheduler = MagicMock()
     scheduler.schedule_later = MagicMock()
@@ -218,7 +222,13 @@ def _make_adaptive_strategy(
         credit_issuer=issuer,
         lifecycle=lifecycle,
     )
-    return strategy, scheduler, issuer, stop_checker, ds, child_ids
+    manager = SubagentSessionManager(
+        inner=strategy,
+        conversation_source=src,
+        credit_issuer=issuer,
+        scheduler=scheduler,
+    )
+    return manager, strategy, scheduler, issuer, stop_checker, ds, child_ids
 
 
 # =============================================================================
@@ -656,77 +666,87 @@ class TestAdaptiveScaleSubagentDispatch:
 
     @pytest.mark.asyncio
     async def test_dispatch_subagent_spawn_creates_pending_join(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy()
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy()
+        )
 
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        strategy._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawn(credit, "s0")
 
-        assert "parent-1" in strategy._pending_subagent_joins
-        pending = strategy._pending_subagent_joins["parent-1"]
+        assert "parent-1" in manager._pending_subagent_joins
+        pending = manager._pending_subagent_joins["parent-1"]
         assert pending.expected_count == 2
         assert pending.completed_count == 0
         assert pending.parent_conversation_id == "conv_0"
 
     @pytest.mark.asyncio
     async def test_dispatch_subagent_spawn_issues_child_credits(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy()
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy()
+        )
 
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        strategy._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawn(credit, "s0")
 
         # Should issue credits for each child
         assert scheduler.execute_async.call_count == 2
 
     @pytest.mark.asyncio
     async def test_dispatch_subagent_spawn_registers_child_to_parent_mapping(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy()
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy()
+        )
 
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        strategy._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawn(credit, "s0")
 
-        assert len(strategy._subagent_child_to_parent) == 2
+        assert len(manager._subagent_child_to_parent) == 2
         for (
             _child_corr_id,
             parent_corr_id,
-        ) in strategy._subagent_child_to_parent.items():
+        ) in manager._subagent_child_to_parent.items():
             assert parent_corr_id == "parent-1"
 
     @pytest.mark.asyncio
     async def test_dispatch_subagent_spawn_fallback_on_unknown_spawn(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy()
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy()
+        )
 
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        strategy._dispatch_subagent_spawn(credit, "unknown_spawn")
+        manager._dispatch_subagent_spawn(credit, "unknown_spawn")
 
         # Should fallback to issuing the next sequential turn
         assert scheduler.execute_async.call_count == 1
-        assert "parent-1" not in strategy._pending_subagent_joins
+        assert "parent-1" not in manager._pending_subagent_joins
 
     @pytest.mark.asyncio
     async def test_handle_subagent_child_complete_partial(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy()
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy()
+        )
 
         # Set up spawn
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        strategy._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawn(credit, "s0")
         scheduler.execute_async.reset_mock()
 
         # Get a child correlation ID
-        child_corr_ids = list(strategy._subagent_child_to_parent.keys())
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
         assert len(child_corr_ids) == 2
 
         # First child completes
@@ -736,25 +756,27 @@ class TestAdaptiveScaleSubagentDispatch:
             turn_index=2,
             num_turns=3,
         )
-        strategy._handle_subagent_child_complete(child_credit)
+        manager._handle_subagent_child_complete(child_credit)
 
         # Should NOT dispatch join yet
-        pending = strategy._pending_subagent_joins.get("parent-1")
+        pending = manager._pending_subagent_joins.get("parent-1")
         assert pending is not None
         assert pending.completed_count == 1
 
     @pytest.mark.asyncio
     async def test_handle_subagent_child_complete_all_done(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy()
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy()
+        )
 
         # Set up spawn
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        strategy._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawn(credit, "s0")
         scheduler.execute_async.reset_mock()
 
-        child_corr_ids = list(strategy._subagent_child_to_parent.keys())
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
 
         # Both children complete
         for i, child_corr_id in enumerate(child_corr_ids):
@@ -764,39 +786,43 @@ class TestAdaptiveScaleSubagentDispatch:
                 turn_index=2,
                 num_turns=3,
             )
-            strategy._handle_subagent_child_complete(child_credit)
+            manager._handle_subagent_child_complete(child_credit)
 
         # Join should be dispatched
-        assert "parent-1" not in strategy._pending_subagent_joins
+        assert "parent-1" not in manager._pending_subagent_joins
         # At least one execute_async call for the join
         assert scheduler.execute_async.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_handle_credit_return_detects_subagent_spawn(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy()
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy()
+        )
 
         # Turn 2 is sequential, turn 3 has subagent_spawn_id="s0"
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        await strategy.handle_credit_return(credit)
+        await manager.handle_credit_return(credit)
 
         # Should have detected the spawn and dispatched children
-        assert "parent-1" in strategy._pending_subagent_joins
+        assert "parent-1" in manager._pending_subagent_joins
 
     @pytest.mark.asyncio
     async def test_handle_credit_return_subagent_child_final_turn(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy()
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy()
+        )
 
         # Set up spawn manually
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        strategy._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawn(credit, "s0")
         scheduler.execute_async.reset_mock()
 
-        child_corr_ids = list(strategy._subagent_child_to_parent.keys())
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
 
         # Child's final turn triggers subagent completion path
         child_credit = _make_sequential_credit(
@@ -807,30 +833,29 @@ class TestAdaptiveScaleSubagentDispatch:
         )
         assert child_credit.is_final_turn
 
-        await strategy.handle_credit_return(child_credit)
+        await manager.handle_credit_return(child_credit)
 
         # Should have processed as subagent child, not regular final turn
-        pending = strategy._pending_subagent_joins.get("parent-1")
+        pending = manager._pending_subagent_joins.get("parent-1")
         assert pending is not None
         assert pending.completed_count == 1
 
     @pytest.mark.asyncio
-    async def test_cleanup_session_removes_subagent_state(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy()
-
-        # Set up spawn
-        credit = _make_sequential_credit(
-            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+    async def test_cleanup_session_removes_strategy_state(self):
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy()
         )
-        strategy._dispatch_subagent_spawn(credit, "s0")
 
-        # Cleanup parent session
+        # Add some strategy-level state
+        strategy._rate_limit_counts["parent-1"] = 3
+        strategy._session_backoffs["parent-1"] = 1.5
+        strategy._session_last_active_ns["parent-1"] = 100
+
         strategy._cleanup_session("parent-1")
 
-        assert "parent-1" not in strategy._pending_subagent_joins
-        # Orphaned child mappings should also be cleaned
-        for v in strategy._subagent_child_to_parent.values():
-            assert v != "parent-1"
+        assert "parent-1" not in strategy._rate_limit_counts
+        assert "parent-1" not in strategy._session_backoffs
+        assert "parent-1" not in strategy._session_last_active_ns
 
 
 class TestPendingSubagentJoin:
@@ -875,18 +900,18 @@ class TestBackgroundSubagentDispatch:
 
     @pytest.mark.asyncio
     async def test_background_spawn_dispatches_join_immediately(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy(
-            is_background=True
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy(is_background=True)
         )
 
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        strategy._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawn(credit, "s0")
 
         # Should NOT register a pending join (parent doesn't wait)
-        assert "parent-1" not in strategy._pending_subagent_joins
+        assert "parent-1" not in manager._pending_subagent_joins
 
         # Should issue credits for children + the join turn
         # 2 children + 1 join = 3 execute_async calls
@@ -894,17 +919,17 @@ class TestBackgroundSubagentDispatch:
 
     @pytest.mark.asyncio
     async def test_background_child_complete_no_pending_join(self):
-        strategy, scheduler, issuer, _, ds, child_ids = _make_adaptive_strategy(
-            is_background=True
+        manager, strategy, scheduler, issuer, _, ds, child_ids = (
+            _make_adaptive_strategy(is_background=True)
         )
 
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        strategy._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawn(credit, "s0")
         scheduler.execute_async.reset_mock()
 
-        child_corr_ids = list(strategy._subagent_child_to_parent.keys())
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
         assert len(child_corr_ids) == 2
 
         # Child completes -- should clean up without error
@@ -914,10 +939,10 @@ class TestBackgroundSubagentDispatch:
             turn_index=2,
             num_turns=3,
         )
-        strategy._handle_subagent_child_complete(child_credit)
+        manager._handle_subagent_child_complete(child_credit)
 
         # No pending join to dispatch (already dispatched immediately)
-        assert "parent-1" not in strategy._pending_subagent_joins
+        assert "parent-1" not in manager._pending_subagent_joins
 
     def test_subagent_spawn_info_is_background_default(self):
         info = SubagentSpawnInfo(

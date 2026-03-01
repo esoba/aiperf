@@ -1,0 +1,584 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for SubagentSessionManager and per-strategy agent_depth guards."""
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from aiperf.common.enums import CreditPhase
+from aiperf.common.models import (
+    ConversationMetadata,
+    DatasetMetadata,
+    SubagentSpawnInfo,
+    TurnMetadata,
+)
+from aiperf.credit.structs import Credit
+from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
+from aiperf.timing.config import CreditPhaseConfig
+from aiperf.timing.conversation_source import ConversationSource
+from aiperf.timing.subagent_manager import SubagentSessionManager
+from tests.unit.timing.conftest import make_sampler
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _make_credit(
+    *,
+    conv_id: str = "conv_0",
+    corr_id: str = "xcorr-1",
+    turn_index: int = 0,
+    num_turns: int = 5,
+    agent_depth: int = 0,
+) -> Credit:
+    return Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id=conv_id,
+        x_correlation_id=corr_id,
+        turn_index=turn_index,
+        num_turns=num_turns,
+        issued_at_ns=0,
+        agent_depth=agent_depth,
+    )
+
+
+def _make_dataset_and_source(
+    *,
+    spawn_at: int = 2,
+    num_children: int = 2,
+    child_turns: int = 3,
+    is_background: bool = False,
+) -> tuple[ConversationSource, list[str]]:
+    """Create a dataset with one parent conversation that has a subagent spawn."""
+    parent_turns = []
+    for i in range(6):
+        spawn_id = "s0" if i == spawn_at + 1 else None
+        parent_turns.append(
+            TurnMetadata(
+                delay_ms=200.0 if i > 0 else None,
+                input_tokens=500 + i * 100,
+                subagent_spawn_id=spawn_id,
+            )
+        )
+
+    child_conv_ids = [f"conv_0_s0_c{ci}" for ci in range(num_children)]
+    spawn = SubagentSpawnInfo(
+        spawn_id="s0",
+        child_conversation_ids=child_conv_ids,
+        join_turn_index=spawn_at + 1,
+        is_background=is_background,
+    )
+
+    convs = [
+        ConversationMetadata(
+            conversation_id="conv_0",
+            turns=parent_turns,
+            subagent_spawns=[spawn],
+        )
+    ]
+    for child_id in child_conv_ids:
+        convs.append(
+            ConversationMetadata(
+                conversation_id=child_id,
+                turns=[
+                    TurnMetadata(input_tokens=300 + j * 50) for j in range(child_turns)
+                ],
+                agent_depth=1,
+            )
+        )
+
+    ds = DatasetMetadata(
+        conversations=convs,
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    sampler = make_sampler(["conv_0"], ds.sampling_strategy)
+    src = ConversationSource(ds, sampler)
+    return src, child_conv_ids
+
+
+def _make_manager(
+    *,
+    spawn_at: int = 2,
+    num_children: int = 2,
+    is_background: bool = False,
+    inner_has_child_hook: bool = False,
+) -> tuple[SubagentSessionManager, MagicMock, MagicMock, MagicMock, list[str]]:
+    """Create a SubagentSessionManager with a mocked inner strategy."""
+    src, child_conv_ids = _make_dataset_and_source(
+        spawn_at=spawn_at,
+        num_children=num_children,
+        is_background=is_background,
+    )
+
+    inner = MagicMock()
+    inner.setup_phase = AsyncMock()
+    inner.execute_phase = AsyncMock()
+    inner.handle_credit_return = AsyncMock()
+    inner.on_ttft_sample = MagicMock()
+    inner.set_request_rate = MagicMock()
+    if inner_has_child_hook:
+        inner.on_child_session_started = MagicMock()
+    else:
+        del inner.on_child_session_started
+
+    scheduler = MagicMock()
+    scheduler.execute_async = MagicMock()
+
+    issuer = MagicMock()
+    issuer.issue_credit = AsyncMock(return_value=True)
+
+    manager = SubagentSessionManager(
+        inner=inner,
+        conversation_source=src,
+        credit_issuer=issuer,
+        scheduler=scheduler,
+    )
+    return manager, inner, scheduler, issuer, child_conv_ids
+
+
+# =============================================================================
+# SubagentSessionManager unit tests
+# =============================================================================
+
+
+class TestSubagentSessionManagerDelegation:
+    """Test that normal operations delegate to inner strategy."""
+
+    @pytest.mark.asyncio
+    async def test_setup_phase_delegates(self):
+        manager, inner, _, _, _ = _make_manager()
+        await manager.setup_phase()
+        inner.setup_phase.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_phase_delegates(self):
+        manager, inner, _, _, _ = _make_manager()
+        await manager.execute_phase()
+        inner.execute_phase.assert_awaited_once()
+
+    def test_getattr_proxies_to_inner(self):
+        manager, inner, _, _, _ = _make_manager()
+        manager.on_ttft_sample(100)
+        inner.on_ttft_sample.assert_called_once_with(100)
+
+    def test_getattr_proxies_set_request_rate(self):
+        manager, inner, _, _, _ = _make_manager()
+        manager.set_request_rate(5.0)
+        inner.set_request_rate.assert_called_once_with(5.0)
+
+    @pytest.mark.asyncio
+    async def test_normal_non_final_turn_delegates(self):
+        """Path C: normal turn with no subagent spawn delegates to inner."""
+        manager, inner, _, _, _ = _make_manager()
+
+        # Turn 0 -> next turn (1) has no subagent_spawn_id
+        credit = _make_credit(turn_index=0, num_turns=6)
+        await manager.handle_credit_return(credit)
+
+        inner.handle_credit_return.assert_awaited_once_with(credit)
+
+    @pytest.mark.asyncio
+    async def test_normal_final_turn_delegates(self):
+        """Path C: final turn with unknown corr_id delegates to inner."""
+        manager, inner, _, _, _ = _make_manager()
+
+        credit = _make_credit(turn_index=4, num_turns=5)
+        await manager.handle_credit_return(credit)
+
+        inner.handle_credit_return.assert_awaited_once_with(credit)
+
+
+class TestSubagentSessionManagerSpawnInterception:
+    """Test Path B: spawn interception."""
+
+    @pytest.mark.asyncio
+    async def test_spawn_intercepts_and_does_not_delegate(self):
+        """When next turn has subagent_spawn_id, inner is NOT called."""
+        manager, inner, scheduler, _, child_ids = _make_manager()
+
+        # Turn 2 complete -> next turn (3) has subagent_spawn_id="s0"
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        await manager.handle_credit_return(credit)
+
+        inner.handle_credit_return.assert_not_awaited()
+        assert "parent-1" in manager._pending_subagent_joins
+        # 2 children issued
+        assert scheduler.execute_async.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_spawn_calls_child_hook_when_available(self):
+        """on_child_session_started hook is called when inner has it."""
+        manager, inner, _, _, _ = _make_manager(inner_has_child_hook=True)
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        await manager.handle_credit_return(credit)
+
+        assert inner.on_child_session_started.call_count == 2
+        for call in inner.on_child_session_started.call_args_list:
+            assert call.args[1] == 1  # child_depth
+
+    @pytest.mark.asyncio
+    async def test_spawn_does_not_call_hook_when_missing(self):
+        """No error when inner lacks on_child_session_started."""
+        manager, inner, _, _, _ = _make_manager(inner_has_child_hook=False)
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        await manager.handle_credit_return(credit)
+
+        # Should succeed without error
+        assert "parent-1" in manager._pending_subagent_joins
+
+
+class TestSubagentSessionManagerChildComplete:
+    """Test Path A: child final turn with join accounting."""
+
+    @pytest.mark.asyncio
+    async def test_child_final_delegates_to_inner(self):
+        """Path A: child final turn does join accounting AND delegates to inner."""
+        manager, inner, scheduler, _, child_ids = _make_manager()
+
+        # Set up spawn
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawn(credit, "s0")
+        scheduler.execute_async.reset_mock()
+
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
+
+        # Child's final turn
+        child_credit = _make_credit(
+            conv_id=child_ids[0],
+            corr_id=child_corr_ids[0],
+            turn_index=2,
+            num_turns=3,
+            agent_depth=1,
+        )
+        await manager.handle_credit_return(child_credit)
+
+        # Join accounting happened
+        pending = manager._pending_subagent_joins.get("parent-1")
+        assert pending is not None
+        assert pending.completed_count == 1
+
+        # Inner was also called for cleanup
+        inner.handle_credit_return.assert_awaited_once_with(child_credit)
+
+    @pytest.mark.asyncio
+    async def test_all_children_complete_dispatches_join(self):
+        manager, inner, scheduler, _, child_ids = _make_manager()
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawn(credit, "s0")
+        scheduler.execute_async.reset_mock()
+
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
+
+        for i, child_corr_id in enumerate(child_corr_ids):
+            child_credit = _make_credit(
+                conv_id=child_ids[i],
+                corr_id=child_corr_id,
+                turn_index=2,
+                num_turns=3,
+                agent_depth=1,
+            )
+            manager._handle_subagent_child_complete(child_credit)
+
+        assert "parent-1" not in manager._pending_subagent_joins
+        assert scheduler.execute_async.call_count >= 1
+
+
+class TestSubagentSessionManagerBackground:
+    """Test background spawn behavior."""
+
+    @pytest.mark.asyncio
+    async def test_background_spawn_dispatches_join_immediately(self):
+        manager, inner, scheduler, _, child_ids = _make_manager(is_background=True)
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawn(credit, "s0")
+
+        assert "parent-1" not in manager._pending_subagent_joins
+        # 2 children + 1 join = 3
+        assert scheduler.execute_async.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_background_child_complete_is_noop(self):
+        manager, inner, scheduler, _, child_ids = _make_manager(is_background=True)
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawn(credit, "s0")
+        scheduler.execute_async.reset_mock()
+
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
+        child_credit = _make_credit(
+            conv_id=child_ids[0],
+            corr_id=child_corr_ids[0],
+            turn_index=2,
+            num_turns=3,
+            agent_depth=1,
+        )
+        manager._handle_subagent_child_complete(child_credit)
+
+        # No join dispatched (already done immediately)
+        assert scheduler.execute_async.call_count == 0
+
+
+# =============================================================================
+# Per-strategy guard tests
+# =============================================================================
+
+
+class TestUserCentricRateChildGuard:
+    """UserCentricStrategy dispatches child non-final immediately, final is safe."""
+
+    @pytest.mark.asyncio
+    async def test_child_non_final_dispatches_immediately(self):
+        from aiperf.timing.strategies.user_centric_rate import UserCentricStrategy
+
+        scheduler = MagicMock()
+        scheduler.execute_async = MagicMock()
+        issuer = MagicMock()
+        issuer.issue_credit = AsyncMock(return_value=True)
+
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="c1",
+                    turns=[TurnMetadata() for _ in range(5)],
+                )
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["c1"], ds.sampling_strategy)
+        src = ConversationSource(ds, sampler)
+
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.USER_CENTRIC_RATE,
+            num_users=5,
+            request_rate=1.0,
+        )
+        strategy = UserCentricStrategy(
+            config=cfg,
+            conversation_source=src,
+            scheduler=scheduler,
+            stop_checker=MagicMock(),
+            credit_issuer=issuer,
+            lifecycle=MagicMock(started_at_perf_ns=1_000_000_000),
+        )
+
+        child_credit = _make_credit(
+            turn_index=1, num_turns=5, agent_depth=1, corr_id="child-1"
+        )
+        await strategy.handle_credit_return(child_credit)
+
+        # Should dispatch immediately via scheduler
+        scheduler.execute_async.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_child_final_is_safe_noop(self):
+        from aiperf.timing.strategies.user_centric_rate import UserCentricStrategy
+
+        scheduler = MagicMock()
+        issuer = MagicMock()
+
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="c1",
+                    turns=[TurnMetadata() for _ in range(5)],
+                )
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["c1"], ds.sampling_strategy)
+        src = ConversationSource(ds, sampler)
+
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.USER_CENTRIC_RATE,
+            num_users=5,
+            request_rate=1.0,
+        )
+        strategy = UserCentricStrategy(
+            config=cfg,
+            conversation_source=src,
+            scheduler=scheduler,
+            stop_checker=MagicMock(),
+            credit_issuer=issuer,
+            lifecycle=MagicMock(started_at_perf_ns=1_000_000_000),
+        )
+
+        child_credit = _make_credit(
+            turn_index=4, num_turns=5, agent_depth=1, corr_id="child-1"
+        )
+        # Should not raise (pop on unknown key is safe)
+        await strategy.handle_credit_return(child_credit)
+
+
+class TestAgenticLoadChildGuard:
+    """AgenticLoadStrategy dispatches child non-final immediately, skips trajectory on final."""
+
+    @pytest.mark.asyncio
+    async def test_child_non_final_dispatches_immediately(self):
+        from aiperf.timing.strategies.agentic_load import AgenticLoadStrategy
+
+        issuer = MagicMock()
+        issuer.issue_credit = AsyncMock(return_value=True)
+
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="c1",
+                    turns=[TurnMetadata() for _ in range(5)],
+                )
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["c1"], ds.sampling_strategy)
+        src = ConversationSource(ds, sampler)
+
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.AGENTIC_LOAD,
+            num_users=2,
+            expected_duration_sec=60.0,
+        )
+        strategy = AgenticLoadStrategy(
+            config=cfg,
+            conversation_source=src,
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=issuer,
+            lifecycle=MagicMock(started_at_perf_ns=1_000_000_000),
+        )
+
+        child_credit = _make_credit(
+            turn_index=1, num_turns=5, agent_depth=1, corr_id="child-1"
+        )
+        await strategy.handle_credit_return(child_credit)
+
+        issuer.issue_credit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_child_final_skips_trajectory_advance(self):
+        from aiperf.timing.strategies.agentic_load import AgenticLoadStrategy
+
+        issuer = MagicMock()
+        issuer.issue_credit = AsyncMock(return_value=True)
+
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="c1",
+                    turns=[TurnMetadata() for _ in range(5)],
+                )
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["c1"], ds.sampling_strategy)
+        src = ConversationSource(ds, sampler)
+
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.AGENTIC_LOAD,
+            num_users=2,
+            expected_duration_sec=60.0,
+        )
+        strategy = AgenticLoadStrategy(
+            config=cfg,
+            conversation_source=src,
+            scheduler=MagicMock(),
+            stop_checker=MagicMock(),
+            credit_issuer=issuer,
+            lifecycle=MagicMock(started_at_perf_ns=1_000_000_000),
+        )
+
+        child_credit = _make_credit(
+            turn_index=4, num_turns=5, agent_depth=1, corr_id="child-1"
+        )
+        await strategy.handle_credit_return(child_credit)
+
+        # Should NOT issue any credit (no trajectory advance for child)
+        issuer.issue_credit.assert_not_awaited()
+
+
+class TestAdaptiveScaleChildGuard:
+    """AdaptiveScaleStrategy cleans up child final without recycle/decrement."""
+
+    @pytest.mark.asyncio
+    async def test_child_final_does_cleanup_without_recycle(self):
+        from aiperf.timing.strategies.adaptive_scale import AdaptiveScaleStrategy
+
+        scheduler = MagicMock()
+        scheduler.execute_async = MagicMock()
+        issuer = MagicMock()
+        issuer.issue_credit = AsyncMock(return_value=True)
+        stop_checker = MagicMock()
+        stop_checker.can_send_any_turn = MagicMock(return_value=True)
+
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="child_conv",
+                    turns=[TurnMetadata() for _ in range(3)],
+                    agent_depth=1,
+                ),
+                ConversationMetadata(
+                    conversation_id="c1",
+                    turns=[TurnMetadata() for _ in range(5)],
+                ),
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["c1"], ds.sampling_strategy)
+        src = ConversationSource(ds, sampler)
+
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.ADAPTIVE_SCALE,
+            expected_duration_sec=120.0,
+            start_users=2,
+            max_users=10,
+            recycle_sessions=True,
+        )
+        strategy = AdaptiveScaleStrategy(
+            config=cfg,
+            conversation_source=src,
+            scheduler=scheduler,
+            stop_checker=stop_checker,
+            credit_issuer=issuer,
+            lifecycle=MagicMock(started_at_perf_ns=1_000_000_000),
+        )
+
+        initial_active = strategy._active_users
+
+        child_credit = _make_credit(
+            conv_id="child_conv",
+            corr_id="child-1",
+            turn_index=2,
+            num_turns=3,
+            agent_depth=1,
+        )
+        await strategy.handle_credit_return(child_credit)
+
+        # Should NOT recycle (child is not a user)
+        assert scheduler.execute_async.call_count == 0
+        # Should NOT decrement active users
+        assert strategy._active_users == initial_active

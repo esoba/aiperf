@@ -330,8 +330,14 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         response is late, the max() re-aligns to current time (sends immediately).
         """
         if credit.is_final_turn:
-            # User finished all their turns. New users continue spawning in execute_phase.
             self._session_to_user.pop(credit.x_correlation_id, None)
+            return
+
+        if credit.agent_depth > 0:
+            turn = TurnToSend.from_previous_credit(credit)
+            self._scheduler.execute_async(
+                self._credit_issuer.issue_credit(turn),
+            )
             return
 
         current_sec = time.perf_counter()

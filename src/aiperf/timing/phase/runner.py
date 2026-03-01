@@ -23,7 +23,6 @@ from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import RampConfig, Ramper, RampType
-from aiperf.timing.strategies.core import RateSettableProtocol
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
@@ -214,6 +213,19 @@ class PhaseRunner(TaskManagerMixin):
             lifecycle=self._lifecycle,
         )
 
+        if any(
+            c.subagent_spawns
+            for c in self._conversation_source.dataset_metadata.conversations
+        ):
+            from aiperf.timing.subagent_manager import SubagentSessionManager
+
+            strategy = SubagentSessionManager(
+                inner=strategy,
+                conversation_source=self._conversation_source,
+                credit_issuer=self._credit_issuer,
+                scheduler=self._scheduler,
+            )
+
         try:
             # Register phase with callback handler (BEFORE any credits are sent)
             self._callback_handler.register_phase(
@@ -396,7 +408,7 @@ class PhaseRunner(TaskManagerMixin):
                 duration_sec=config.request_rate_ramp_duration_sec,
                 update_interval=update_interval,
             )
-            if isinstance(strategy, RateSettableProtocol):
+            if hasattr(strategy, "set_request_rate"):
                 self._rampers.append(
                     Ramper(setter=strategy.set_request_rate, config=ramp_config)
                 )
