@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
+import orjson
 import pytest
 
 from aiperf.common.enums import SSEEventType, SSEFieldType
@@ -76,7 +77,7 @@ class TestAioHttpClient:
 
             record = await aiohttp_client.post_request(
                 "http://test.com/api",
-                '{"test": "data"}',
+                b'{"test": "data"}',
                 {"Content-Type": "application/json"},
             )
 
@@ -111,7 +112,7 @@ class TestAioHttpClient:
 
             record = await aiohttp_client.post_request(
                 "http://test.com/stream",
-                '{"stream": true}',
+                b'{"stream": true}',
                 {"Accept": "text/event-stream"},
             )
 
@@ -170,7 +171,7 @@ class TestAioHttpClient:
 
             record = await aiohttp_client.post_request(
                 "http://test.com/stream",
-                '{"stream": true}',
+                b'{"stream": true}',
                 {"Accept": "text/event-stream"},
             )
 
@@ -204,7 +205,7 @@ class TestAioHttpClient:
             mock_response = create_mock_error_response(status_code, reason, error_text)
             setup_mock_session(mock_session_class, mock_response, ["request"])
 
-            record = await aiohttp_client.post_request("http://test.com", "{}", {})
+            record = await aiohttp_client.post_request("http://test.com", b"{}", {})
 
             assert_error_request_record(
                 record,
@@ -232,7 +233,7 @@ class TestAioHttpClient:
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_session_class.side_effect = exception_class(exception_message)
 
-            record = await aiohttp_client.post_request("http://test.com", "{}", {})
+            record = await aiohttp_client.post_request("http://test.com", b"{}", {})
 
             assert_error_request_record(
                 record,
@@ -260,7 +261,7 @@ class TestAioHttpClient:
             exception = create_aiohttp_exception(exception_class, message)
             mock_session_class.side_effect = exception
 
-            record = await aiohttp_client.post_request("http://test.com", "{}", {})
+            record = await aiohttp_client.post_request("http://test.com", b"{}", {})
 
             assert_error_request_record(record, expected_error_type=expected_type)
 
@@ -277,7 +278,7 @@ class TestAioHttpClient:
             )
 
             record = await aiohttp_client.post_request(
-                "http://test.com", "{}", {}, **extra_kwargs
+                "http://test.com", b"{}", {}, **extra_kwargs
             )
 
             assert_successful_request_record(record)
@@ -296,7 +297,9 @@ class TestAioHttpClient:
         with patch("aiohttp.ClientSession") as mock_session_class:
             setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
 
-            record = await aiohttp_client.post_request("http://test.com", "{}", headers)
+            record = await aiohttp_client.post_request(
+                "http://test.com", b"{}", headers
+            )
 
             assert_successful_request_record(record)
             mock_session_class.assert_called_once()
@@ -327,7 +330,7 @@ class TestAioHttpClient:
         with patch("aiohttp.ClientSession") as mock_session_class:
             setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
 
-            record = await aiohttp_client.post_request("http://test.com", "{}", {})
+            record = await aiohttp_client.post_request("http://test.com", b"{}", {})
 
             assert_successful_request_record(record)
             mock_session_class.assert_called_once()
@@ -348,7 +351,7 @@ class TestAioHttpClient:
 
             record = await aiohttp_client.post_request(
                 "http://test.com/api",
-                json.dumps({"query": "test"}),
+                orjson.dumps({"query": "test"}),
                 {"Content-Type": "application/json"},
             )
 
@@ -371,7 +374,7 @@ class TestAioHttpClient:
             with patch("time.perf_counter_ns", side_effect=range(123456789, 123456799)):
                 record = await aiohttp_client.post_request(
                     "http://test.com/stream",
-                    json.dumps({"stream": True}),
+                    orjson.dumps({"stream": True}),
                     {"Accept": "text/event-stream"},
                 )
 
@@ -395,7 +398,7 @@ class TestAioHttpClient:
             for i in range(num_requests):
                 task = aiohttp_client.post_request(
                     f"http://test.com/api/{i}",
-                    f'{{"request": {i}}}',
+                    orjson.dumps({"request": i}),
                     {"Content-Type": "application/json"},
                 )
                 tasks.append(task)
@@ -413,14 +416,14 @@ class TestAioHttpClient:
             mock_response = create_mock_response(text_content="")
             setup_mock_session(mock_session_class, mock_response, ["request"])
 
-            record = await aiohttp_client.post_request("http://test.com", "{}", {})
+            record = await aiohttp_client.post_request("http://test.com", b"{}", {})
 
             assert_successful_request_record(record)
 
     @pytest.mark.asyncio
     async def test_very_large_payload(self, aiohttp_client: AioHttpClient) -> None:
         """Test handling of very large payloads."""
-        large_payload = "x" * (1024 * 1024)  # 1MB payload
+        large_payload = b"x" * (1024 * 1024)  # 1MB payload
 
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_response = create_mock_response(text_content='{"received": "ok"}')
@@ -503,7 +506,7 @@ class TestFirstTokenCallback:
         with setup_sse_stream_mock(mock_sse_response, mock_messages):
             await aiohttp_client.post_request(
                 "http://test.com/stream",
-                '{"stream": true}',
+                b'{"stream": true}',
                 {"Accept": "text/event-stream"},
                 first_token_callback=callback,
             )
@@ -557,7 +560,7 @@ class TestFirstTokenCallback:
         with setup_sse_stream_mock(mock_sse_response, mock_messages):
             await aiohttp_client.post_request(
                 "http://test.com/stream",
-                '{"stream": true}',
+                b'{"stream": true}',
                 {"Accept": "text/event-stream"},
                 first_token_callback=callback,
             )
@@ -576,7 +579,7 @@ class TestFirstTokenCallback:
         with setup_sse_stream_mock(mock_sse_response, mock_messages):
             record = await aiohttp_client.post_request(
                 "http://test.com/stream",
-                '{"stream": true}',
+                b'{"stream": true}',
                 {"Accept": "text/event-stream"},
                 # No callback - using fast path
             )

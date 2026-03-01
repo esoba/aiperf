@@ -61,9 +61,7 @@ class TestAioHttpClientVideo:
         with patch("aiohttp.ClientSession") as mock_session_class:
             setup_mock_session(mock_session_class, mock_response, ["request"])
 
-            payload = orjson.dumps(
-                {"prompt": "A cat playing piano", "model": "sora-2"}
-            ).decode()
+            payload = orjson.dumps({"prompt": "A cat playing piano", "model": "sora-2"})
 
             record = await aiohttp_client.post_request(
                 "http://localhost:8000/v1/videos",
@@ -125,7 +123,7 @@ class TestAioHttpClientVideo:
             mock_session.request.side_effect = aiohttp.ServerTimeoutError()
 
             record = await aiohttp_client.post_request(
-                "http://localhost:8000/v1/videos", "{}", {}
+                "http://localhost:8000/v1/videos", b"{}", {}
             )
 
             # Should return a record with error details rather than raising

@@ -179,3 +179,75 @@ class TestUserSessionManager:
         )
 
         assert session.url_index is None
+
+    def test_advance_turn_replaces_history_clears_turn_list(self, session_manager):
+        """When a turn has replaces_history=True, turn_list is cleared before appending."""
+        conversation = Conversation(
+            conversation_id="test-replace",
+            turns=[
+                Turn(messages=[{"role": "user", "content": "q1"}]),
+                Turn(messages=[{"role": "user", "content": "q2"}]),
+                Turn(
+                    messages=[{"role": "user", "content": "q3"}],
+                    replaces_history=True,
+                ),
+                Turn(messages=[{"role": "user", "content": "q4"}]),
+            ],
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="replace-test",
+            conversation=conversation,
+            num_turns=4,
+        )
+
+        session.advance_turn(0)
+        session.store_response(Turn(messages=[{"role": "assistant", "content": "a1"}]))
+        session.advance_turn(1)
+        session.store_response(Turn(messages=[{"role": "assistant", "content": "a2"}]))
+        assert len(session.turn_list) == 4
+
+        session.advance_turn(2)
+        assert len(session.turn_list) == 1
+        assert session.turn_list[0].messages[0]["content"] == "q3"
+
+    def test_advance_turn_without_replaces_history_appends(
+        self, session_manager, sample_conversation
+    ):
+        """Normal turns append without clearing."""
+        session = session_manager.create_and_store(
+            x_correlation_id="normal-append",
+            conversation=sample_conversation,
+            num_turns=3,
+        )
+
+        session.advance_turn(0)
+        session.store_response(Turn(messages=[{"role": "assistant", "content": "a1"}]))
+        session.advance_turn(1)
+
+        assert len(session.turn_list) == 3
+
+    def test_store_response_after_replaces_history_appends(self, session_manager):
+        """Assistant response after a replaces_history turn appends normally."""
+        conversation = Conversation(
+            conversation_id="test-post-replace",
+            turns=[
+                Turn(messages=[{"role": "user", "content": "q1"}]),
+                Turn(
+                    messages=[{"role": "user", "content": "q2"}],
+                    replaces_history=True,
+                ),
+            ],
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="post-replace",
+            conversation=conversation,
+            num_turns=2,
+        )
+
+        session.advance_turn(0)
+        session.store_response(Turn(messages=[{"role": "assistant", "content": "a1"}]))
+        session.advance_turn(1)
+        assert len(session.turn_list) == 1
+
+        session.store_response(Turn(messages=[{"role": "assistant", "content": "a2"}]))
+        assert len(session.turn_list) == 2

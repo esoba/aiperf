@@ -1456,3 +1456,79 @@ def _make_subagent_config(
             prompt=PromptConfig(),
         ),
     )
+
+
+# ============================================================================
+# Context Loss / replaces_history Tests
+# ============================================================================
+
+
+class TestReplacesHistory:
+    """Tests for replaces_history flag on context-loss turns."""
+
+    def test_restart_sets_replaces_history(self, mock_tokenizer):
+        """With restart_probability=1.0, all turns after turn 0 have replaces_history."""
+        config = _make_cache_config(
+            num_sessions=3,
+            restart_probability=1.0,
+            max_prompt_tokens=10000,
+            thinking_tokens_mean=0,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conv in conversations:
+            assert not conv.turns[0].replaces_history
+            for turn in conv.turns[1:]:
+                assert turn.replaces_history
+
+    def test_compression_sets_replaces_history(self, mock_tokenizer):
+        """With compression enabled, at least one turn has replaces_history."""
+        config = _make_cache_config(
+            num_sessions=5,
+            max_prompt_tokens=5000,
+            max_compressions=3,
+            compression_threshold=0.3,
+            compression_ratio=0.5,
+            restart_probability=0.0,
+            thinking_tokens_mean=0,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        any_replaces = any(
+            turn.replaces_history for conv in conversations for turn in conv.turns
+        )
+        assert any_replaces
+
+    def test_no_context_loss_no_replaces_history(self, mock_tokenizer):
+        """With all context-loss events disabled, no turns have replaces_history."""
+        config = _make_cache_config(
+            num_sessions=5,
+            restart_probability=0.0,
+            max_compressions=0,
+            thinking_tokens_mean=0,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conv in conversations:
+            for turn in conv.turns:
+                assert not turn.replaces_history
+
+    def test_replaces_history_turn_has_full_context_delta(self, mock_tokenizer):
+        """A replaces_history turn's prompt text covers cumulative_tokens, not incremental."""
+        config = _make_cache_config(
+            num_sessions=3,
+            restart_probability=1.0,
+            max_prompt_tokens=10000,
+            thinking_tokens_mean=0,
+        )
+        composer = CodingSessionComposer(config, mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        for conv in conversations:
+            for turn in conv.turns:
+                if turn.replaces_history:
+                    assert turn.texts
+                    assert len(turn.texts[0].contents[0]) > 0
