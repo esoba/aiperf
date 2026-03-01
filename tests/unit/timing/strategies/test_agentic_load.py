@@ -48,14 +48,14 @@ def _make_conversations(
             ConversationMetadata(
                 conversation_id="child_0",
                 turns=[TurnMetadata() for _ in range(3)],
-                is_subagent_child=True,
+                agent_depth=1,
             )
         )
         convs.append(
             ConversationMetadata(
                 conversation_id="child_1",
                 turns=[TurnMetadata() for _ in range(2)],
-                is_subagent_child=True,
+                agent_depth=1,
             )
         )
     return DatasetMetadata(
@@ -378,7 +378,7 @@ class TestSetupPhase:
                 ConversationMetadata(
                     conversation_id="child_only",
                     turns=[TurnMetadata()],
-                    is_subagent_child=True,
+                    agent_depth=1,
                 )
             ],
             sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,

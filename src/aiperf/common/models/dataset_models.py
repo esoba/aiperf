@@ -351,9 +351,9 @@ class ConversationMetadata(AIPerfBaseModel):
         default_factory=list,
         description="Subagent spawn points linking to child conversations.",
     )
-    is_subagent_child: bool = Field(
-        default=False,
-        description="True if this conversation is a subagent child (excluded from sampling).",
+    agent_depth: int = Field(
+        default=0,
+        description="Nesting depth of this conversation. 0=root, 1=child, 2=grandchild, etc.",
     )
 
 
@@ -419,9 +419,9 @@ class Conversation(AIPerfBaseModel):
         default=None,
         description="Tool definitions to include in API requests for this conversation.",
     )
-    is_subagent_child: bool = Field(
-        default=False,
-        description="True if this conversation is a subagent child.",
+    agent_depth: int = Field(
+        default=0,
+        description="Nesting depth of this conversation. 0=root, 1=child, 2=grandchild, etc.",
     )
     subagent_spawns: list[SubagentSpawnInfo] = Field(
         default_factory=list,
@@ -435,7 +435,7 @@ class Conversation(AIPerfBaseModel):
             conversation_id=self.session_id,
             turns=turn_metas,
             subagent_spawns=self.subagent_spawns,
-            is_subagent_child=self.is_subagent_child,
+            agent_depth=self.agent_depth,
         )
 
 

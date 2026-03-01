@@ -138,7 +138,7 @@ class AgenticLoadStrategy(AIPerfLoggerMixin):
         """Pre-assign conversations to users deterministically."""
         conversations = self._conversation_source.dataset_metadata.conversations
         conversation_ids = [
-            c.conversation_id for c in conversations if not c.is_subagent_child
+            c.conversation_id for c in conversations if c.agent_depth == 0
         ]
 
         if not conversation_ids:

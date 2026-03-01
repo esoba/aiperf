@@ -117,7 +117,7 @@ class CreditIssuer:
             7. If final credit: freeze counts + set event
         """
         is_first_turn = turn.turn_index == 0
-        acquire_session_slot = is_first_turn and not turn.is_subagent_child
+        acquire_session_slot = is_first_turn and turn.agent_depth == 0
 
         # Select appropriate check function based on turn type
         # - First turns of parents need can_start_new_session (more restrictive - checks session quota)
@@ -174,7 +174,7 @@ class CreditIssuer:
             None: No slots available, credit NOT issued. Retry later.
         """
         is_first_turn = turn.turn_index == 0
-        acquire_session_slot = is_first_turn and not turn.is_subagent_child
+        acquire_session_slot = is_first_turn and turn.agent_depth == 0
 
         # Select appropriate check function based on turn type
         can_proceed_fn = (
@@ -247,7 +247,7 @@ class CreditIssuer:
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
-            is_subagent_child=turn.is_subagent_child,
+            agent_depth=turn.agent_depth,
             system_prompt_suffix=turn.system_prompt_suffix,
         )
 

@@ -82,11 +82,11 @@ class TestTTLEviction:
         now = time.perf_counter_ns()
         strategy._session_hash_ids["main"] = {1, 2, 3}
         strategy._session_last_active_ns["main"] = now
-        strategy._session_is_subagent["main"] = False
+        strategy._session_depth["main"] = 0
 
         strategy._session_hash_ids["child"] = {4, 5, 6}
         strategy._session_last_active_ns["child"] = now - 10_000_000_000  # 10s ago
-        strategy._session_is_subagent["child"] = True
+        strategy._session_depth["child"] = 1
 
         strategy._active_hash_ids = {1, 2, 3, 4, 5, 6}
 

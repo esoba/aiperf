@@ -170,7 +170,7 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             False,  # cancelled=False
-            is_subagent_child=credit.is_subagent_child,
+            agent_depth=credit.agent_depth,
         )
 
     async def test_on_credit_return_tracks_cancelled_status(
@@ -185,7 +185,7 @@ class TestCreditReturnBasicFlow:
         mock_progress.increment_returned.assert_called_once_with(
             credit.is_final_turn,
             True,  # cancelled=True
-            is_subagent_child=credit.is_subagent_child,
+            agent_depth=credit.agent_depth,
         )
 
     async def test_on_credit_return_releases_session_slot_on_final_turn(
@@ -394,7 +394,7 @@ class TestEdgeCases:
         await registered_handler.on_credit_return("worker-1", credit_return)
 
         mock_progress.increment_returned.assert_called_once_with(
-            credit.is_final_turn, cancelled, is_subagent_child=credit.is_subagent_child
+            credit.is_final_turn, cancelled, agent_depth=credit.agent_depth
         )
         if not first_token_sent:
             mock_concurrency.release_prefill_slot.assert_called_once()

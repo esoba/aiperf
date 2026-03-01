@@ -258,7 +258,7 @@ class ApiCaptureTraceLoader(BaseFileLoader):
             session_id=trace.id,
             system_message=trace.system_prompt_text,
             tools=first_call.tools or None,
-            is_subagent_child=is_child,
+            agent_depth=1 if is_child else 0,
         )
 
         prev_timestamp_ms: float | None = None

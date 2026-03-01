@@ -88,9 +88,9 @@ class CodingTraceLoader(BaseFileLoader):
         )
         self._skipped_max_isl = 0
         self._skipped_min_requests = 0
-        # Per-conversation subagent data: conv_id -> list of (spawn_id, child_flat_requests, join_request_index)
+        # Per-conversation subagent data: conv_id -> list of (spawn_id, child_flat_requests, join_request_index, grandchild_subtrees)
         self._subagent_extractions: dict[
-            str, list[tuple[str, list[CodingTraceRequest], int]]
+            str, list[tuple[str, list[CodingTraceRequest], int, list]]
         ] = {}
 
     @classmethod
@@ -168,15 +168,6 @@ class CodingTraceLoader(BaseFileLoader):
             # Split at context resets (pull-backs)
             segments = self._detect_pullbacks(flat_requests)
 
-            # Build subagent extraction data keyed by flat request identity
-            subtree_by_parent_req: dict[
-                int, list[tuple[list[CodingTraceRequest], int]]
-            ] = {}
-            for child_flat, parent_idx in subtrees:
-                subtree_by_parent_req.setdefault(parent_idx, []).append(
-                    (child_flat, parent_idx)
-                )
-
             for seg_idx, segment in enumerate(segments):
                 if len(segment) < self._min_requests:
                     self._skipped_min_requests += 1
@@ -192,8 +183,10 @@ class CodingTraceLoader(BaseFileLoader):
                 # (top-level list), so look up the parent by identity.
                 if subtrees:
                     spawn_counter = 0
-                    extractions: list[tuple[str, list[CodingTraceRequest], int]] = []
-                    for child_flat, parent_idx in subtrees:
+                    extractions: list[
+                        tuple[str, list[CodingTraceRequest], int, list]
+                    ] = []
+                    for child_flat, parent_idx, child_nested in subtrees:
                         if parent_idx >= len(trace.requests):
                             continue
                         parent_req = trace.requests[parent_idx]
@@ -206,7 +199,9 @@ class CodingTraceLoader(BaseFileLoader):
                         if parent_local is not None:
                             spawn_id = f"s{spawn_counter}"
                             spawn_counter += 1
-                            extractions.append((spawn_id, child_flat, parent_local))
+                            extractions.append(
+                                (spawn_id, child_flat, parent_local, child_nested)
+                            )
                     if extractions:
                         self._subagent_extractions[conv_id] = extractions
 
@@ -261,36 +256,62 @@ class CodingTraceLoader(BaseFileLoader):
     @staticmethod
     def _extract_subagent_subtrees(
         requests: list[CodingTraceRequest],
-    ) -> list[tuple[list[CodingTraceRequest], int]]:
+    ) -> list[
+        tuple[list[CodingTraceRequest], int, list[tuple[list[CodingTraceRequest], int]]]
+    ]:
         """Extract subagent subtrees from the request tree.
 
         A child request with its own nested requests (depth > 1) is a subagent.
-        Returns list of (child_flat_requests, parent_child_index) tuples.
+        Returns list of (child_leaf_requests, parent_index, grandchild_subtrees) tuples.
+        Grandchild subtrees use the same format recursively.
         """
-        subtrees: list[tuple[list[CodingTraceRequest], int]] = []
+        subtrees: list[
+            tuple[
+                list[CodingTraceRequest],
+                int,
+                list[tuple[list[CodingTraceRequest], int]],
+            ]
+        ] = []
 
-        def _flatten_subtree(
+        def _extract_recursive(
             reqs: list[CodingTraceRequest], base_time: float = 0.0
-        ) -> list[CodingTraceRequest]:
+        ) -> tuple[
+            list[CodingTraceRequest], list[tuple[list[CodingTraceRequest], int, list]]
+        ]:
+            """Extract leaf requests and nested subtrees from a request list."""
             flat: list[CodingTraceRequest] = []
-            for r in reqs:
+            nested: list[tuple[list[CodingTraceRequest], int, list]] = []
+            for i, r in enumerate(reqs):
                 abs_t = base_time + r.t
                 if r.input_tokens > 0:
                     r.t = abs_t
                     flat.append(r)
                 if r.requests:
-                    flat.extend(_flatten_subtree(r.requests, base_time=abs_t))
+                    for child in r.requests:
+                        if child.requests:
+                            child_flat, child_nested = _extract_recursive(
+                                [child], base_time=abs_t
+                            )
+                            if child_flat:
+                                nested.append((child_flat, i, child_nested))
+                        else:
+                            child_abs = abs_t + child.t
+                            if child.input_tokens > 0:
+                                child.t = child_abs
+                                flat.append(child)
             flat.sort(key=lambda x: x.t)
-            return flat
+            return flat, nested
 
         for parent_idx, req in enumerate(requests):
             if not req.requests:
                 continue
             for child in req.requests:
                 if child.requests:
-                    child_flat = _flatten_subtree([child], base_time=req.t)
+                    child_flat, child_nested = _extract_recursive(
+                        [child], base_time=req.t
+                    )
                     if child_flat:
-                        subtrees.append((child_flat, parent_idx))
+                        subtrees.append((child_flat, parent_idx, child_nested))
 
         return subtrees
 
@@ -467,7 +488,7 @@ class CodingTraceLoader(BaseFileLoader):
                 # Check for subagent spawn annotation
                 subagent_spawn_id = None
                 extractions = self._subagent_extractions.get(conv_id, [])
-                for spawn_id, _, join_idx in extractions:
+                for spawn_id, _, join_idx, _ in extractions:
                     if i == join_idx:
                         subagent_spawn_id = spawn_id
                         break
@@ -492,16 +513,18 @@ class CodingTraceLoader(BaseFileLoader):
                 ]
 
             # Build child conversations from subagent extractions
-            for spawn_id, child_flat, join_idx in extractions:
+            for spawn_id, child_flat, join_idx, child_nested in extractions:
                 child_conv_id = f"{conv_id}_{spawn_id}"
-                child_conv = self._build_child_conversation(
+                child_conv, descendants = self._build_child_conversation(
                     child_conv_id,
                     child_flat,
                     prompt_by_delta,
                     has_typed,
                     prefix_tokens,
+                    grandchild_subtrees=child_nested if child_nested else None,
                 )
                 child_conversations.append(child_conv)
+                child_conversations.extend(descendants)
 
                 conversation.subagent_spawns.append(
                     SubagentSpawnInfo(
@@ -563,9 +586,15 @@ class CodingTraceLoader(BaseFileLoader):
         prompt_by_delta: dict,
         has_typed: bool,
         prefix_tokens: int,
-    ) -> Conversation:
-        """Build a child Conversation from extracted subagent requests."""
-        child = Conversation(session_id=conv_id, is_subagent_child=True)
+        depth: int = 1,
+        grandchild_subtrees: list | None = None,
+    ) -> tuple[Conversation, list[Conversation]]:
+        """Build a child Conversation from extracted subagent requests.
+
+        Returns:
+            Tuple of (child_conversation, descendant_conversations).
+        """
+        child = Conversation(session_id=conv_id, agent_depth=depth)
 
         prev_t = None
         for i, req in enumerate(requests):
@@ -603,7 +632,41 @@ class CodingTraceLoader(BaseFileLoader):
             )
             child.turns.append(turn)
 
-        return child
+        # Build grandchild conversations from nested subtrees
+        descendant_conversations: list[Conversation] = []
+        if grandchild_subtrees:
+            for spawn_counter, (gc_flat, gc_parent_idx, gc_nested) in enumerate(
+                grandchild_subtrees
+            ):
+                gc_spawn_id = f"s{spawn_counter}"
+                gc_conv_id = f"{conv_id}_{gc_spawn_id}"
+
+                gc_conv, gc_descendants = self._build_child_conversation(
+                    gc_conv_id,
+                    gc_flat,
+                    prompt_by_delta,
+                    has_typed,
+                    prefix_tokens,
+                    depth=depth + 1,
+                    grandchild_subtrees=gc_nested if gc_nested else None,
+                )
+                descendant_conversations.append(gc_conv)
+                descendant_conversations.extend(gc_descendants)
+
+                # Find the join turn index in the child
+                join_idx = min(gc_parent_idx, len(child.turns) - 1)
+                if join_idx < len(child.turns):
+                    child.turns[join_idx].subagent_spawn_id = gc_spawn_id
+
+                child.subagent_spawns.append(
+                    SubagentSpawnInfo(
+                        spawn_id=gc_spawn_id,
+                        child_conversation_ids=[gc_conv_id],
+                        join_turn_index=join_idx,
+                    )
+                )
+
+        return child, descendant_conversations
 
     @staticmethod
     def _compute_trace_statistics(trace: CodingTrace) -> TraceStatistics:

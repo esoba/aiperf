@@ -314,7 +314,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
         In synthetic mode: Extracts token counts and generates synthetic content.
 
         When a manifest links parent/child sessions, produces SubagentSpawnInfo
-        on the parent and marks children as is_subagent_child.
+        on the parent and sets agent_depth on children.
         """
         conversations: list[Conversation] = []
         child_conversations: list[Conversation] = []
@@ -339,7 +339,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
             conversation = Conversation(
                 session_id=trace_id,
                 system_message=trace.system_prompt,
-                is_subagent_child=is_child,
+                agent_depth=1 if is_child else 0,
             )
 
             prev_timestamp_ms: float | None = None

@@ -541,7 +541,7 @@ class TestApiCaptureTraceLoader:
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
         parent = conversations[0]
-        assert not parent.is_subagent_child
+        assert parent.agent_depth == 0
         assert len(parent.turns) == 17
 
     def test_convert_children_marked(self, team_capture, default_user_config):
@@ -550,7 +550,7 @@ class TestApiCaptureTraceLoader:
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) == 2
 
     def test_convert_parent_has_system_message(self, team_capture, default_user_config):
@@ -700,6 +700,6 @@ class TestApiCaptureTraceLoader:
 
         conversations = loader.convert_to_conversations(data)
         assert len(conversations) == 1
-        assert not conversations[0].is_subagent_child
+        assert conversations[0].agent_depth == 0
         assert len(conversations[0].turns) == 3
         assert len(conversations[0].subagent_spawns) == 0

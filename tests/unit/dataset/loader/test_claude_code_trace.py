@@ -807,8 +807,8 @@ class TestClaudeCodeTraceLoader:
         assert len(conversations) == 2
 
         # Find parent and child
-        parent = next(c for c in conversations if not c.is_subagent_child)
-        child = next(c for c in conversations if c.is_subagent_child)
+        parent = next(c for c in conversations if c.agent_depth == 0)
+        child = next(c for c in conversations if c.agent_depth > 0)
 
         assert len(parent.turns) == 3
         assert len(child.turns) == 1
@@ -929,7 +929,7 @@ class TestClaudeCodeTraceLoader:
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
-        parent = next(c for c in conversations if not c.is_subagent_child)
+        parent = next(c for c in conversations if c.agent_depth == 0)
 
         assert len(parent.turns) == 4
         # Spawn after call 0 -> join at turn 1
@@ -1006,7 +1006,7 @@ class TestClaudeCodeTraceLoader:
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
-        parent = next(c for c in conversations if not c.is_subagent_child)
+        parent = next(c for c in conversations if c.agent_depth == 0)
 
         assert len(parent.turns) == 5
         assert len(parent.subagent_spawns) == 2
@@ -1092,7 +1092,7 @@ class TestClaudeCodeTraceLoader:
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
-        parent = next(c for c in conversations if not c.is_subagent_child)
+        parent = next(c for c in conversations if c.agent_depth == 0)
 
         assert len(parent.turns) == 2
         # join_turn_index clamps to last turn

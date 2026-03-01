@@ -43,6 +43,7 @@ class PendingSubagentJoin:
     completed_count: int = 0
     join_turn_index: int = 0
     parent_num_turns: int = 0
+    parent_agent_depth: int = 0
 
 
 class AdaptiveScaleStrategy(AIPerfLoggerMixin):
@@ -115,7 +116,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
 
         # TTL-aware working set eviction
         self._session_last_active_ns: dict[str, int] = {}
-        self._session_is_subagent: dict[str, bool] = {}
+        self._session_depth: dict[str, int] = {}
         self._cache_ttl_ns = int(config.cache_ttl_sec * NS_PER_SEC)
         self._subagent_cache_ttl_ns = int(config.subagent_cache_ttl_sec * NS_PER_SEC)
 
@@ -172,18 +173,15 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         now_ns = time.perf_counter_ns()
         expired: list[str] = []
         for corr_id, last_ns in self._session_last_active_ns.items():
-            ttl = (
-                self._subagent_cache_ttl_ns
-                if self._session_is_subagent.get(corr_id, False)
-                else self._cache_ttl_ns
-            )
+            depth = self._session_depth.get(corr_id, 0)
+            ttl = self._subagent_cache_ttl_ns if depth > 0 else self._cache_ttl_ns
             if now_ns - last_ns > ttl:
                 expired.append(corr_id)
 
         needs_recompute = False
         for corr_id in expired:
             self._session_last_active_ns.pop(corr_id, None)
-            self._session_is_subagent.pop(corr_id, None)
+            self._session_depth.pop(corr_id, None)
             if self._session_hash_ids.pop(corr_id, None) is not None:
                 needs_recompute = True
 
@@ -440,6 +438,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             return
 
         parent_corr_id = credit.x_correlation_id
+        child_depth = credit.agent_depth + 1
 
         # Fan out children (same for both background and blocking)
         for child_conv_id in spawn.child_conversation_ids:
@@ -447,8 +446,8 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             self._subagent_child_to_parent[child_session.x_correlation_id] = (
                 parent_corr_id
             )
-            self._session_is_subagent[child_session.x_correlation_id] = True
-            child_turn = child_session.build_first_turn(is_subagent_child=True)
+            self._session_depth[child_session.x_correlation_id] = child_depth
+            child_turn = child_session.build_first_turn(agent_depth=child_depth)
             self._scheduler.execute_async(
                 self._credit_issuer.issue_credit(child_turn),
             )
@@ -460,6 +459,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
                 x_correlation_id=parent_corr_id,
                 turn_index=spawn.join_turn_index,
                 num_turns=credit.num_turns,
+                agent_depth=credit.agent_depth,
             )
             self._scheduler.execute_async(
                 self._credit_issuer.issue_credit(join_turn),
@@ -472,6 +472,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
                 expected_count=len(spawn.child_conversation_ids),
                 join_turn_index=spawn.join_turn_index,
                 parent_num_turns=credit.num_turns,
+                parent_agent_depth=credit.agent_depth,
             )
 
     def _handle_subagent_child_complete(self, credit: Credit) -> None:
@@ -501,6 +502,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
             x_correlation_id=parent_corr_id,
             turn_index=pending.join_turn_index,
             num_turns=pending.parent_num_turns,
+            agent_depth=pending.parent_agent_depth,
         )
         self._scheduler.execute_async(
             self._credit_issuer.issue_credit(join_turn),
@@ -512,7 +514,7 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         self._session_backoffs.pop(corr_id, None)
         self._pending_subagent_joins.pop(corr_id, None)
         self._session_last_active_ns.pop(corr_id, None)
-        self._session_is_subagent.pop(corr_id, None)
+        self._session_depth.pop(corr_id, None)
         orphaned = [
             k for k, v in self._subagent_child_to_parent.items() if v == corr_id
         ]

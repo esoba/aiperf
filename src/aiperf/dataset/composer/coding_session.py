@@ -435,10 +435,11 @@ class CodingSessionComposer(BaseDatasetComposer):
                 child_conv_ids: list[str] = []
 
                 for child_idx in range(num_children):
-                    child_conv = self._generate_subagent_child(
+                    child_conv, descendants = self._generate_subagent_child(
                         session_id, spawn_id, child_idx, cfg, session_language, profile
                     )
                     child_conversations.append(child_conv)
+                    child_conversations.extend(descendants)
                     child_conv_ids.append(child_conv.session_id)
 
                 # Correlated join turn tokens from subagent result distribution
@@ -527,13 +528,20 @@ class CodingSessionComposer(BaseDatasetComposer):
         cfg: CodingSessionConfig,
         session_language: str,
         profile: SubagentTypeProfile,
-    ) -> Conversation:
-        """Generate a subagent child conversation using per-type profile parameters."""
+        depth: int = 1,
+    ) -> tuple[Conversation, list[Conversation]]:
+        """Generate a subagent child conversation using per-type profile parameters.
+
+        Returns:
+            Tuple of (child_conversation, descendant_conversations).
+            Descendants are grandchildren (and deeper) that should be added
+            to the flat child_conversations list.
+        """
         child_id = f"{parent_session_id}_{spawn_id}_c{child_idx}"
         child_tools = self._filter_tools_for_profile(profile)
         child = Conversation(
             session_id=child_id,
-            is_subagent_child=True,
+            agent_depth=depth,
             tools=child_tools,
         )
 
@@ -544,7 +552,7 @@ class CodingSessionComposer(BaseDatasetComposer):
         l1_count = min(
             min(profile.system_tokens, cfg.l1_tokens) // block_size, max_blocks
         )
-        offset = self._SUBAGENT_L1_OFFSET
+        offset = self._SUBAGENT_L1_OFFSET * depth
         child_l1_ids = list(range(offset, offset + l1_count))
 
         # L2: own random IDs (capped so L1+L2 don't exceed budget)
@@ -599,6 +607,9 @@ class CodingSessionComposer(BaseDatasetComposer):
         self._finalize_turn(turn)
         child.turns.append(turn)
 
+        descendant_conversations: list[Conversation] = []
+        subagent_spawn_counter = 0
+
         for _ in range(num_turns - 1):
             if cumulative_tokens >= profile.max_prompt_tokens:
                 break
@@ -646,7 +657,96 @@ class CodingSessionComposer(BaseDatasetComposer):
             self._finalize_turn(turn)
             child.turns.append(turn)
 
-        return child
+            if cumulative_tokens >= profile.max_prompt_tokens:
+                break
+
+            # Recursive subagent spawn (depth < max)
+            if depth < cfg.max_subagent_depth:
+                decay = cfg.subagent_depth_spawn_decay**depth
+                effective_prob = cfg.subagent_turn_probability * decay
+                if effective_prob > 0 and self._subagent_rng.random() < effective_prob:
+                    gc_spawn_id = f"s{subagent_spawn_counter}"
+                    subagent_spawn_counter += 1
+                    gc_profile = self._select_subagent_profile()
+                    gc_count = self._sample_subagent_count(cfg)
+                    gc_conv_ids: list[str] = []
+
+                    for gc_idx in range(gc_count):
+                        gc_conv, gc_descendants = self._generate_subagent_child(
+                            child_id,
+                            gc_spawn_id,
+                            gc_idx,
+                            cfg,
+                            session_language,
+                            gc_profile,
+                            depth=depth + 1,
+                        )
+                        descendant_conversations.append(gc_conv)
+                        descendant_conversations.extend(gc_descendants)
+                        gc_conv_ids.append(gc_conv.session_id)
+
+                    # Join turn for the child's subagent spawn
+                    gc_join_delta = self._subagent_rng.sample_lognormal_integer(
+                        cfg.subagent_result_tokens_mean,
+                        cfg.subagent_result_tokens_median,
+                    )
+                    cumulative_tokens += gc_join_delta
+                    if cumulative_tokens > profile.max_prompt_tokens:
+                        cumulative_tokens = profile.max_prompt_tokens
+
+                    total_blocks = max(1, cumulative_tokens // block_size)
+                    current_count = (
+                        len(child_l1_ids) + len(child_l2_ids) + len(child_l3_ids)
+                    )
+                    new_l3_count = total_blocks - current_count
+                    if new_l3_count > 0:
+                        child_l3_ids.extend(
+                            self._subagent_hash_rng.randint(0, 2**31 - 1)
+                            for _ in range(new_l3_count)
+                        )
+
+                    gc_join_gen = self._subagent_gen_rng.sample_lognormal_integer(
+                        cfg.generation_length_mean, cfg.generation_length_median
+                    )
+                    gc_join_ct = self._select_content_type(cfg)
+                    gc_join_prompt = self._content_generator.generate_language_prompt(
+                        max(1, gc_join_delta), gc_join_ct, session_language
+                    )
+                    gc_join_hash_ids = child_l1_ids + child_l2_ids + child_l3_ids
+                    gc_join_layers = CacheLayerSizes(
+                        l1=len(child_l1_ids),
+                        l2=len(child_l2_ids),
+                        l3=len(child_l3_ids),
+                    )
+                    gc_join_turn = Turn(
+                        model=profile.model_name,
+                        max_tokens=gc_join_gen,
+                        input_tokens=cumulative_tokens,
+                        texts=[Text(name="text", contents=[gc_join_prompt])],
+                        hash_ids=list(gc_join_hash_ids),
+                        cache_layer_sizes=gc_join_layers,
+                        subagent_spawn_id=gc_spawn_id,
+                        delay=self._sample_delay(cfg),
+                    )
+                    self._finalize_turn(gc_join_turn)
+                    child.turns.append(gc_join_turn)
+
+                    is_background = (
+                        cfg.subagent_background_probability > 0
+                        and self._subagent_rng.random()
+                        < cfg.subagent_background_probability
+                    )
+
+                    child.subagent_spawns.append(
+                        SubagentSpawnInfo(
+                            spawn_id=gc_spawn_id,
+                            child_conversation_ids=gc_conv_ids,
+                            join_turn_index=len(child.turns) - 1,
+                            is_background=is_background,
+                        )
+                    )
+
+        return child, descendant_conversations
 
     def _generate_hash_ids(self, count: int) -> list[int]:
         """Generate deterministic hash IDs for KV cache blocks."""
@@ -714,7 +814,9 @@ class CodingSessionComposer(BaseDatasetComposer):
                 for child_id in child_ids:
                     child_conv = child_by_id.get(child_id)
                     if child_conv:
-                        child_reqs = self._child_conversation_to_requests(child_conv)
+                        child_reqs = self._child_conversation_to_requests(
+                            child_conv, child_by_id
+                        )
                         if child_reqs:
                             subtree = CodingTraceRequest(
                                 t=0.0,
@@ -731,13 +833,39 @@ class CodingSessionComposer(BaseDatasetComposer):
         return requests
 
     def _child_conversation_to_requests(
-        self, conv: Conversation
+        self,
+        conv: Conversation,
+        child_by_id: dict[str, Conversation],
     ) -> list[CodingTraceRequest]:
-        """Convert a child subagent conversation to a flat request list."""
+        """Convert a child subagent conversation to a request list with nested spawns."""
+        spawn_children: dict[str, list[str]] = {}
+        for spawn in conv.subagent_spawns:
+            spawn_children[spawn.spawn_id] = spawn.child_conversation_ids
+
         requests: list[CodingTraceRequest] = []
         cumulative_t = 0.0
         for i, turn in enumerate(conv.turns):
             req = self._turn_to_request(turn, cumulative_t, i == len(conv.turns) - 1)
+
+            if turn.subagent_spawn_id is not None:
+                spawn_id = turn.subagent_spawn_id
+                gc_ids = spawn_children.get(spawn_id, [])
+                for gc_id in gc_ids:
+                    gc_conv = child_by_id.get(gc_id)
+                    if gc_conv:
+                        gc_reqs = self._child_conversation_to_requests(
+                            gc_conv, child_by_id
+                        )
+                        if gc_reqs:
+                            subtree = CodingTraceRequest(
+                                t=0.0,
+                                type="subagent",
+                                input_tokens=0,
+                                output_tokens=0,
+                                requests=gc_reqs,
+                            )
+                            req.requests.append(subtree)
+
             requests.append(req)
             cumulative_t += (turn.delay or 0.0) / 1000.0
         return requests

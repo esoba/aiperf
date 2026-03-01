@@ -183,7 +183,7 @@ Set a custom API endpoint path (e.g., `/v1/custom`, `/my-api/chat`). By default,
 #### `--endpoint-type` `<str>`
 
 The API endpoint type to benchmark. Determines request/response format and supported features. Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). See enum documentation for all supported endpoint types.
-<br>_Choices: [`anthropic_messages`, `chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br>_Choices: [`anthropic_messages`, `chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `raw`, `template`]_
 <br>_Default: `chat`_
 
 #### `--streaming`
@@ -513,6 +513,18 @@ Probability a turn uses tool_result content vs text content. Real trace data sho
 
 Programming language for session content. 'mixed' randomly assigns a language per session using weighted distribution. A specific language forces all sessions to use that language's tool pool.
 <br>_Default: `mixed`_
+
+#### `--coding-session-max-subagent-depth` `<int>`
+
+Maximum subagent nesting depth. 1=children only, 2=children can spawn grandchildren, etc.
+<br>_Constraints: ≥ 1, ≤ 5_
+<br>_Default: `1`_
+
+#### `--coding-session-subagent-depth-spawn-decay` `<float>`
+
+Spawn probability decay per depth level. At depth d, effective spawn prob = base * decay^d.
+<br>_Constraints: ≥ 0.0, ≤ 1.0_
+<br>_Default: `0.5`_
 
 #### `--coding-session-subagent-probability` `<float>`
 

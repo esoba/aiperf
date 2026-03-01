@@ -609,7 +609,7 @@ class TestSubagentL1Isolation:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) > 0
 
         offset = 2**30
@@ -629,7 +629,7 @@ class TestSubagentL1Isolation:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        parents = [c for c in conversations if not c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
         l1_count = subagent_config.input.coding_session.l1_tokens // 64
         for parent in parents:
             first_turn = parent.turns[0]
@@ -643,8 +643,8 @@ class TestSubagentL1Isolation:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        parents = [c for c in conversations if not c.is_subagent_child]
-        children = [c for c in conversations if c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) > 0
 
         parent_l1_set: set[int] = set()
@@ -669,7 +669,7 @@ class TestSubagentL1Isolation:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) >= 2
 
         # Collect all child L1 ranges
@@ -690,7 +690,7 @@ class TestSubagentL1Isolation:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) > 0
 
         for child in children:
@@ -706,8 +706,8 @@ class TestSubagentL1Isolation:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        parents = [c for c in conversations if not c.is_subagent_child]
-        children = [c for c in conversations if c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) > 0
 
         # Get parent L2 IDs from first parent
@@ -818,7 +818,7 @@ class TestToCodingTracesBasic:
         conversations = composer.create_dataset()
 
         traces = composer.to_coding_traces()
-        parent_convs = [c for c in conversations if not c.is_subagent_child]
+        parent_convs = [c for c in conversations if c.agent_depth == 0]
         assert len(traces[0].requests) == len(parent_convs[0].turns)
 
     def test_request_tokens_match_turns(self, mock_tokenizer):
@@ -827,7 +827,7 @@ class TestToCodingTracesBasic:
         conversations = composer.create_dataset()
 
         traces = composer.to_coding_traces()
-        parent = [c for c in conversations if not c.is_subagent_child][0]
+        parent = [c for c in conversations if c.agent_depth == 0][0]
         for req, turn in zip(traces[0].requests, parent.turns, strict=True):
             assert req.input_tokens == turn.input_tokens
             assert req.output_tokens == turn.max_tokens
@@ -1021,7 +1021,7 @@ class TestRoundTrip:
         CodingSessionComposer.write_traces(traces, tmp_path)
 
         # Verify each JSON file is a valid CodingTrace
-        parents = [c for c in conversations if not c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
         for parent in parents:
             json_file = tmp_path / f"{parent.session_id}.json"
             assert json_file.exists()
@@ -1047,7 +1047,7 @@ class TestRoundTrip:
         traces = composer.to_coding_traces()
         CodingSessionComposer.write_traces(traces, tmp_path)
 
-        parent = [c for c in conversations if not c.is_subagent_child][0]
+        parent = [c for c in conversations if c.agent_depth == 0][0]
         json_file = tmp_path / f"{parent.session_id}.json"
         data = orjson.loads(json_file.read_bytes())
         loaded = CodingTrace.model_validate(data)
@@ -1111,7 +1111,7 @@ class TestInterTurnDelay:
         composer = CodingSessionComposer(config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        child_convs = [c for c in conversations if c.is_subagent_child]
+        child_convs = [c for c in conversations if c.agent_depth > 0]
         assert len(child_convs) > 0
 
         for child in child_convs:
@@ -1183,7 +1183,7 @@ class TestToolDefinitions:
         composer = CodingSessionComposer(config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        parents = [c for c in conversations if not c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
         assert len(parents) > 0
         for conv in parents:
             assert conv.tools is not None
@@ -1209,8 +1209,8 @@ class TestToolDefinitions:
         composer = CodingSessionComposer(config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        parents = [c for c in conversations if not c.is_subagent_child]
-        children = [c for c in conversations if c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) > 0
 
         parent_tool_count = len(parents[0].tools)
@@ -1260,13 +1260,13 @@ class TestSubagentRealism:
         )
         composer = CodingSessionComposer(config, mock_tokenizer)
         conversations = composer.create_dataset()
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) == 0
 
     def test_subagent_bimodal_distribution(self, bimodal_config, mock_tokenizer):
         composer = CodingSessionComposer(bimodal_config, mock_tokenizer)
         conversations = composer.create_dataset()
-        parents = [c for c in conversations if not c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
         parents_with_spawns = [p for p in parents if p.subagent_spawns]
         parents_without_spawns = [p for p in parents if not p.subagent_spawns]
         # With 50 sessions at 0.5 session prob, expect both groups non-empty
@@ -1281,7 +1281,7 @@ class TestSubagentRealism:
         )
         composer = CodingSessionComposer(config, mock_tokenizer)
         conversations = composer.create_dataset()
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) > 0
         # Verify no child has edit_file or write_file (only Explore and Plan lack them)
         write_tools = {"edit_file", "write_file"}
@@ -1307,7 +1307,7 @@ class TestSubagentRealism:
         )
         composer = CodingSessionComposer(config, mock_tokenizer)
         conversations = composer.create_dataset()
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         # Some children should be General type with all 8 tools
         max_tool_count = max(len(c.tools or []) for c in children)
         assert max_tool_count == 8
@@ -1317,7 +1317,7 @@ class TestSubagentRealism:
     ):
         composer = CodingSessionComposer(explore_model_config, mock_tokenizer)
         conversations = composer.create_dataset()
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) > 0
         # Some children should have the Explore model set
         explore_children = [
@@ -1332,7 +1332,7 @@ class TestSubagentRealism:
     ):
         composer = CodingSessionComposer(explore_model_config, mock_tokenizer)
         conversations = composer.create_dataset()
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         # General/Plan children inherit the endpoint model, not the explore model
         non_explore_children = [
             c
@@ -1346,7 +1346,7 @@ class TestSubagentRealism:
     ):
         composer = CodingSessionComposer(background_config, mock_tokenizer)
         conversations = composer.create_dataset()
-        parents = [c for c in conversations if not c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
         bg_spawns = [s for p in parents for s in p.subagent_spawns if s.is_background]
         assert len(bg_spawns) > 0
 
@@ -1403,7 +1403,7 @@ class TestSubagentRealism:
         )
         composer = CodingSessionComposer(config, mock_tokenizer)
         conversations = composer.create_dataset()
-        parents = [c for c in conversations if not c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
         # Verify spawns were generated (sanity check)
         has_spawns = any(p.subagent_spawns for p in parents)
         assert has_spawns

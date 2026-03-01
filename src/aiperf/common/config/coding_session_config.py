@@ -267,6 +267,32 @@ class CodingSessionConfig(BaseConfig):
         CLIParameter(name=("--coding-session-language",), group=_CLI_GROUP),
     ] = "mixed"
 
+    max_subagent_depth: Annotated[
+        int,
+        Field(
+            default=1,
+            ge=1,
+            le=5,
+            description="Maximum subagent nesting depth. 1=children only, "
+            "2=children can spawn grandchildren, etc.",
+        ),
+        CLIParameter(name=("--coding-session-max-subagent-depth",), group=_CLI_GROUP),
+    ] = 1
+
+    subagent_depth_spawn_decay: Annotated[
+        float,
+        Field(
+            default=0.5,
+            ge=0.0,
+            le=1.0,
+            description="Spawn probability decay per depth level. "
+            "At depth d, effective spawn prob = base * decay^d.",
+        ),
+        CLIParameter(
+            name=("--coding-session-subagent-depth-spawn-decay",), group=_CLI_GROUP
+        ),
+    ] = 0.5
+
     subagent_probability: Annotated[
         float,
         Field(

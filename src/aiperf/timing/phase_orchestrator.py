@@ -111,7 +111,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             conversation_ids=[
                 c.conversation_id
                 for c in self._dataset_metadata.conversations
-                if not c.is_subagent_child
+                if c.agent_depth == 0
             ],
         )
 

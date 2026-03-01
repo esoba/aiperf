@@ -4,7 +4,7 @@
 
 Tests cover all phases of the subagent pipeline:
 - Phase 1: Data model (SubagentSpawnInfo, Turn/TurnMetadata subagent_spawn_id,
-  Conversation/ConversationMetadata is_subagent_child, subagent_spawns)
+  Conversation/ConversationMetadata agent_depth, subagent_spawns)
 - Phase 2: Config (CodingSessionConfig subagent parameters)
 - Phase 3: Dataset generation (CodingSessionComposer generates child conversations)
 - Phase 4: ConversationSource (start_child_session, get_subagent_spawn, sampler filtering)
@@ -150,7 +150,7 @@ def _make_dataset_with_subagent(
             ConversationMetadata(
                 conversation_id=child_id,
                 turns=child_turns_list,
-                is_subagent_child=True,
+                agent_depth=1,
             )
         )
 
@@ -163,7 +163,7 @@ def _make_dataset_with_subagent(
 
 def _make_conversation_source(ds: DatasetMetadata) -> ConversationSource:
     sampler = make_sampler(
-        [c.conversation_id for c in ds.conversations if not c.is_subagent_child],
+        [c.conversation_id for c in ds.conversations if c.agent_depth == 0],
         ds.sampling_strategy,
     )
     return ConversationSource(ds, sampler)
@@ -290,12 +290,12 @@ class TestConversationSubagentFields:
 
     def test_conversation_defaults(self):
         conv = Conversation(session_id="test")
-        assert conv.is_subagent_child is False
+        assert conv.agent_depth == 0
         assert conv.subagent_spawns == []
 
     def test_conversation_subagent_child(self):
-        conv = Conversation(session_id="child_0", is_subagent_child=True)
-        assert conv.is_subagent_child is True
+        conv = Conversation(session_id="child_0", agent_depth=1)
+        assert conv.agent_depth == 1
 
     def test_conversation_with_spawns(self):
         spawn = SubagentSpawnInfo(
@@ -317,12 +317,12 @@ class TestConversationSubagentFields:
         )
         conv = Conversation(
             session_id="parent",
-            is_subagent_child=False,
+            agent_depth=0,
             subagent_spawns=[spawn],
             turns=[Turn(max_tokens=10, input_tokens=100) for _ in range(5)],
         )
         meta = conv.metadata()
-        assert meta.is_subagent_child is False
+        assert meta.agent_depth == 0
         assert len(meta.subagent_spawns) == 1
         assert meta.subagent_spawns[0].spawn_id == "s0"
         assert meta.subagent_spawns[0].child_conversation_ids == ["c0", "c1"]
@@ -330,17 +330,17 @@ class TestConversationSubagentFields:
     def test_child_metadata_passthrough(self):
         conv = Conversation(
             session_id="child",
-            is_subagent_child=True,
+            agent_depth=1,
             turns=[Turn(max_tokens=10, input_tokens=100)],
         )
         meta = conv.metadata()
-        assert meta.is_subagent_child is True
+        assert meta.agent_depth == 1
         assert meta.subagent_spawns == []
 
     def test_conversation_metadata_defaults(self):
         meta = ConversationMetadata(conversation_id="c1")
         assert meta.subagent_spawns == []
-        assert meta.is_subagent_child is False
+        assert meta.agent_depth == 0
 
     def test_backward_compatible_without_subagent(self):
         meta = ConversationMetadata(
@@ -348,7 +348,7 @@ class TestConversationSubagentFields:
             turns=[TurnMetadata(delay_ms=100) for _ in range(3)],
         )
         assert meta.subagent_spawns == []
-        assert meta.is_subagent_child is False
+        assert meta.agent_depth == 0
 
 
 # =============================================================================
@@ -472,8 +472,8 @@ class TestCodingSessionSubagentGeneration:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        children = [c for c in conversations if c.is_subagent_child]
-        parents = [c for c in conversations if not c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
+        parents = [c for c in conversations if c.agent_depth == 0]
         assert len(children) > 0
         assert len(parents) == 10
 
@@ -483,7 +483,7 @@ class TestCodingSessionSubagentGeneration:
         composer = CodingSessionComposer(no_subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         assert len(children) == 0
 
     def test_child_conversations_have_independent_hash_ids(
@@ -492,8 +492,8 @@ class TestCodingSessionSubagentGeneration:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        parents = [c for c in conversations if not c.is_subagent_child]
-        children = [c for c in conversations if c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
+        children = [c for c in conversations if c.agent_depth > 0]
 
         if not children:
             pytest.skip("No children generated")
@@ -512,7 +512,7 @@ class TestCodingSessionSubagentGeneration:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        parents = [c for c in conversations if not c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
         has_spawns = any(len(p.subagent_spawns) > 0 for p in parents)
         assert has_spawns
 
@@ -522,8 +522,8 @@ class TestCodingSessionSubagentGeneration:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        child_ids = {c.session_id for c in conversations if c.is_subagent_child}
-        parents = [c for c in conversations if not c.is_subagent_child]
+        child_ids = {c.session_id for c in conversations if c.agent_depth > 0}
+        parents = [c for c in conversations if c.agent_depth == 0]
 
         for parent in parents:
             for spawn in parent.subagent_spawns:
@@ -536,7 +536,7 @@ class TestCodingSessionSubagentGeneration:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        parents = [c for c in conversations if not c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
         found_spawn_id = False
         for parent in parents:
             for turn in parent.turns:
@@ -549,7 +549,7 @@ class TestCodingSessionSubagentGeneration:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        parents = [c for c in conversations if not c.is_subagent_child]
+        parents = [c for c in conversations if c.agent_depth == 0]
         has_meta_spawns = False
         for parent in parents:
             meta = parent.metadata()
@@ -566,7 +566,7 @@ class TestCodingSessionSubagentGeneration:
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        children = [c for c in conversations if c.is_subagent_child]
+        children = [c for c in conversations if c.agent_depth > 0]
         for child in children:
             for turn in child.turns:
                 assert turn.input_tokens <= max_tokens
@@ -635,7 +635,7 @@ class TestConversationSourceSubagent:
         # Children should be accessible via get_metadata even though not sampled
         for child_id in child_ids:
             meta = src.get_metadata(child_id)
-            assert meta.is_subagent_child is True
+            assert meta.agent_depth > 0
 
     def test_child_session_builds_first_turn(self, src_with_subagent):
         src, ds, child_ids = src_with_subagent
