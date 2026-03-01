@@ -7,7 +7,7 @@ spawn and join events. Everything else delegates to the inner strategy.
 
 Three paths in handle_credit_return:
   A) Child final turn with known parent -> join accounting, then delegate to inner
-  B) Next turn has subagent_spawn_id -> fan out children, suspend/continue parent
+  B) Next turn has subagent_spawn_ids -> fan out children, suspend/continue parent
   C) Everything else -> delegate to inner strategy
 """
 
@@ -75,7 +75,7 @@ class SubagentSessionManager(AIPerfLoggerMixin):
         """Intercept subagent spawn/join events, delegate the rest.
 
         Path A: child final turn with known parent -> join accounting, then delegate
-        Path B: next turn has subagent_spawn_id -> fan out children
+        Path B: next turn has subagent_spawn_ids -> fan out children
         Path C: everything else -> delegate to inner
         """
         # Path A: Subagent child's final turn -- signal parent join
@@ -87,64 +87,85 @@ class SubagentSessionManager(AIPerfLoggerMixin):
             await self._inner.handle_credit_return(credit)
             return
 
-        # Path B: Next turn is blocked by subagent spawn
+        # Path B: Next turn is blocked by subagent spawn(s)
         if not credit.is_final_turn:
             next_meta = self._conversation_source.get_next_turn_metadata(credit)
-            if next_meta.subagent_spawn_id is not None:
-                self._dispatch_subagent_spawn(credit, next_meta.subagent_spawn_id)
+            if next_meta.subagent_spawn_ids:
+                self._dispatch_subagent_spawns(credit, next_meta.subagent_spawn_ids)
                 return
 
         # Path C: Normal turn -- delegate to inner
         await self._inner.handle_credit_return(credit)
 
-    def _dispatch_subagent_spawn(self, credit: Credit, spawn_id: str) -> None:
-        """Fan out subagent child sessions and register a pending join."""
-        spawn = self._conversation_source.get_subagent_spawn(
-            credit.conversation_id, spawn_id
-        )
-        if spawn is None:
+    def _dispatch_subagent_spawns(self, credit: Credit, spawn_ids: list[str]) -> None:
+        """Fan out subagent child sessions for all spawn_ids and register a pending join."""
+        parent_corr_id = credit.x_correlation_id
+        child_depth = credit.agent_depth + 1
+
+        total_blocking_children = 0
+        any_blocking = False
+        all_background = True
+        join_turn_index: int | None = None
+
+        for spawn_id in spawn_ids:
+            spawn = self._conversation_source.get_subagent_spawn(
+                credit.conversation_id, spawn_id
+            )
+            if spawn is None:
+                continue
+
+            if join_turn_index is None:
+                join_turn_index = spawn.join_turn_index
+
+            for child_conv_id in spawn.child_conversation_ids:
+                child_session = self._conversation_source.start_child_session(
+                    child_conv_id
+                )
+                self._subagent_child_to_parent[child_session.x_correlation_id] = (
+                    parent_corr_id
+                )
+                if hasattr(self._inner, "on_child_session_started"):
+                    self._inner.on_child_session_started(
+                        child_session.x_correlation_id, child_depth
+                    )
+                child_turn = child_session.build_first_turn(agent_depth=child_depth)
+                self._scheduler.execute_async(
+                    self._credit_issuer.issue_credit(child_turn),
+                )
+
+            if not spawn.is_background:
+                any_blocking = True
+                all_background = False
+                total_blocking_children += len(spawn.child_conversation_ids)
+            else:
+                pass  # background children don't count toward pending join
+
+        if join_turn_index is None:
             turn = TurnToSend.from_previous_credit(credit)
             self._scheduler.execute_async(
                 self._credit_issuer.issue_credit(turn),
             )
             return
 
-        parent_corr_id = credit.x_correlation_id
-        child_depth = credit.agent_depth + 1
-
-        for child_conv_id in spawn.child_conversation_ids:
-            child_session = self._conversation_source.start_child_session(child_conv_id)
-            self._subagent_child_to_parent[child_session.x_correlation_id] = (
-                parent_corr_id
+        if any_blocking:
+            self._pending_subagent_joins[parent_corr_id] = PendingSubagentJoin(
+                parent_conversation_id=credit.conversation_id,
+                parent_correlation_id=parent_corr_id,
+                expected_count=total_blocking_children,
+                join_turn_index=join_turn_index,
+                parent_num_turns=credit.num_turns,
+                parent_agent_depth=credit.agent_depth,
             )
-            if hasattr(self._inner, "on_child_session_started"):
-                self._inner.on_child_session_started(
-                    child_session.x_correlation_id, child_depth
-                )
-            child_turn = child_session.build_first_turn(agent_depth=child_depth)
-            self._scheduler.execute_async(
-                self._credit_issuer.issue_credit(child_turn),
-            )
-
-        if spawn.is_background:
+        elif all_background:
             join_turn = TurnToSend(
                 conversation_id=credit.conversation_id,
                 x_correlation_id=parent_corr_id,
-                turn_index=spawn.join_turn_index,
+                turn_index=join_turn_index,
                 num_turns=credit.num_turns,
                 agent_depth=credit.agent_depth,
             )
             self._scheduler.execute_async(
                 self._credit_issuer.issue_credit(join_turn),
-            )
-        else:
-            self._pending_subagent_joins[parent_corr_id] = PendingSubagentJoin(
-                parent_conversation_id=credit.conversation_id,
-                parent_correlation_id=parent_corr_id,
-                expected_count=len(spawn.child_conversation_ids),
-                join_turn_index=spawn.join_turn_index,
-                parent_num_turns=credit.num_turns,
-                parent_agent_depth=credit.agent_depth,
             )
 
     def _handle_subagent_child_complete(self, credit: Credit) -> None:

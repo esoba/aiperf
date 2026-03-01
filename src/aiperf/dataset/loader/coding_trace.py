@@ -485,13 +485,12 @@ class CodingTraceLoader(BaseFileLoader):
                 else:
                     prompt = prompt_by_delta.get(delta, "")
 
-                # Check for subagent spawn annotation
-                subagent_spawn_id = None
+                # Check for subagent spawn annotations
+                subagent_spawn_ids = []
                 extractions = self._subagent_extractions.get(conv_id, [])
                 for spawn_id, _, join_idx, _ in extractions:
                     if i == join_idx:
-                        subagent_spawn_id = spawn_id
-                        break
+                        subagent_spawn_ids.append(spawn_id)
 
                 turn = Turn(
                     delay=delay_ms,
@@ -499,7 +498,7 @@ class CodingTraceLoader(BaseFileLoader):
                     input_tokens=req.input_tokens,
                     texts=[Text(name="text", contents=[prompt])],
                     hash_ids=req.hash_ids,
-                    subagent_spawn_id=subagent_spawn_id,
+                    subagent_spawn_ids=subagent_spawn_ids,
                 )
                 conversation.turns.append(turn)
 
@@ -656,7 +655,7 @@ class CodingTraceLoader(BaseFileLoader):
                 # Find the join turn index in the child
                 join_idx = min(gc_parent_idx, len(child.turns) - 1)
                 if join_idx < len(child.turns):
-                    child.turns[join_idx].subagent_spawn_id = gc_spawn_id
+                    child.turns[join_idx].subagent_spawn_ids.append(gc_spawn_id)
 
                 child.subagent_spawns.append(
                     SubagentSpawnInfo(

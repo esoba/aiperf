@@ -55,12 +55,12 @@ def _make_dataset_and_source(
     """Create a dataset with one parent conversation that has a subagent spawn."""
     parent_turns = []
     for i in range(6):
-        spawn_id = "s0" if i == spawn_at + 1 else None
+        spawn_ids = ["s0"] if i == spawn_at + 1 else []
         parent_turns.append(
             TurnMetadata(
                 delay_ms=200.0 if i > 0 else None,
                 input_tokens=500 + i * 100,
-                subagent_spawn_id=spawn_id,
+                subagent_spawn_ids=spawn_ids,
             )
         )
 
@@ -174,7 +174,7 @@ class TestSubagentSessionManagerDelegation:
         """Path C: normal turn with no subagent spawn delegates to inner."""
         manager, inner, _, _, _ = _make_manager()
 
-        # Turn 0 -> next turn (1) has no subagent_spawn_id
+        # Turn 0 -> next turn (1) has no subagent_spawn_ids
         credit = _make_credit(turn_index=0, num_turns=6)
         await manager.handle_credit_return(credit)
 
@@ -196,10 +196,10 @@ class TestSubagentSessionManagerSpawnInterception:
 
     @pytest.mark.asyncio
     async def test_spawn_intercepts_and_does_not_delegate(self):
-        """When next turn has subagent_spawn_id, inner is NOT called."""
+        """When next turn has subagent_spawn_ids, inner is NOT called."""
         manager, inner, scheduler, _, child_ids = _make_manager()
 
-        # Turn 2 complete -> next turn (3) has subagent_spawn_id="s0"
+        # Turn 2 complete -> next turn (3) has subagent_spawn_ids="s0"
         credit = _make_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
@@ -250,7 +250,7 @@ class TestSubagentSessionManagerChildComplete:
         credit = _make_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
         scheduler.execute_async.reset_mock()
 
         child_corr_ids = list(manager._subagent_child_to_parent.keys())
@@ -280,7 +280,7 @@ class TestSubagentSessionManagerChildComplete:
         credit = _make_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
         scheduler.execute_async.reset_mock()
 
         child_corr_ids = list(manager._subagent_child_to_parent.keys())
@@ -288,6 +288,113 @@ class TestSubagentSessionManagerChildComplete:
         for i, child_corr_id in enumerate(child_corr_ids):
             child_credit = _make_credit(
                 conv_id=child_ids[i],
+                corr_id=child_corr_id,
+                turn_index=2,
+                num_turns=3,
+                agent_depth=1,
+            )
+            manager._handle_subagent_child_complete(child_credit)
+
+        assert "parent-1" not in manager._pending_subagent_joins
+        assert scheduler.execute_async.call_count >= 1
+
+
+class TestSubagentSessionManagerMultiSpawn:
+    """Test multiple spawn_ids on a single join turn."""
+
+    @pytest.mark.asyncio
+    async def test_multi_spawn_blocking_aggregates_expected_count(self):
+        """Two blocking spawns on one turn: expected_count = sum of all children."""
+        # Build dataset with 2 spawns both joining at turn 3
+        parent_turns = []
+        for i in range(6):
+            spawn_ids = ["s0", "s1"] if i == 3 else []
+            parent_turns.append(
+                TurnMetadata(
+                    delay_ms=200.0 if i > 0 else None,
+                    input_tokens=500 + i * 100,
+                    subagent_spawn_ids=spawn_ids,
+                )
+            )
+
+        # 2 children per spawn = 4 total
+        s0_children = ["conv_0_s0_c0", "conv_0_s0_c1"]
+        s1_children = ["conv_0_s1_c0", "conv_0_s1_c1"]
+        all_child_ids = s0_children + s1_children
+
+        convs = [
+            ConversationMetadata(
+                conversation_id="conv_0",
+                turns=parent_turns,
+                subagent_spawns=[
+                    SubagentSpawnInfo(
+                        spawn_id="s0",
+                        child_conversation_ids=s0_children,
+                        join_turn_index=3,
+                    ),
+                    SubagentSpawnInfo(
+                        spawn_id="s1",
+                        child_conversation_ids=s1_children,
+                        join_turn_index=3,
+                    ),
+                ],
+            )
+        ]
+        for cid in all_child_ids:
+            convs.append(
+                ConversationMetadata(
+                    conversation_id=cid,
+                    turns=[TurnMetadata(input_tokens=300 + j * 50) for j in range(3)],
+                    agent_depth=1,
+                )
+            )
+
+        ds = DatasetMetadata(
+            conversations=convs,
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["conv_0"], ds.sampling_strategy)
+        src = ConversationSource(ds, sampler)
+
+        inner = MagicMock()
+        inner.setup_phase = AsyncMock()
+        inner.execute_phase = AsyncMock()
+        inner.handle_credit_return = AsyncMock()
+        del inner.on_child_session_started
+
+        scheduler = MagicMock()
+        scheduler.execute_async = MagicMock()
+        issuer = MagicMock()
+        issuer.issue_credit = AsyncMock(return_value=True)
+
+        manager = SubagentSessionManager(
+            inner=inner,
+            conversation_source=src,
+            credit_issuer=issuer,
+            scheduler=scheduler,
+        )
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawns(credit, ["s0", "s1"])
+
+        # Should have one pending join with expected_count = 4
+        assert "parent-1" in manager._pending_subagent_joins
+        pending = manager._pending_subagent_joins["parent-1"]
+        assert pending.expected_count == 4
+        assert pending.completed_count == 0
+
+        # 4 children issued
+        assert scheduler.execute_async.call_count == 4
+        assert len(manager._subagent_child_to_parent) == 4
+
+        # Complete all 4 children -> join dispatches
+        scheduler.execute_async.reset_mock()
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
+        for i, child_corr_id in enumerate(child_corr_ids):
+            child_credit = _make_credit(
+                conv_id=all_child_ids[i],
                 corr_id=child_corr_id,
                 turn_index=2,
                 num_turns=3,
@@ -309,7 +416,7 @@ class TestSubagentSessionManagerBackground:
         credit = _make_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
 
         assert "parent-1" not in manager._pending_subagent_joins
         # 2 children + 1 join = 3
@@ -322,7 +429,7 @@ class TestSubagentSessionManagerBackground:
         credit = _make_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
         scheduler.execute_async.reset_mock()
 
         child_corr_ids = list(manager._subagent_child_to_parent.keys())

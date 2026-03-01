@@ -344,7 +344,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
 
             prev_timestamp_ms: float | None = None
             # Collect spawn_id assignments for join turns (applied after loop)
-            join_turn_spawn_ids: dict[int, str] = {}
+            join_turn_spawn_ids: dict[int, list[str]] = {}
 
             for call_idx, api_call in enumerate(trace.api_calls):
                 delay_ms: float | None = None
@@ -362,7 +362,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
                 spawns_at_turn = spawn_map.get(trace_id, {}).get(call_idx, [])
                 for spawn_id, child_id, is_bg in spawns_at_turn:
                     join_idx = min(call_idx + 1, len(trace.api_calls) - 1)
-                    join_turn_spawn_ids[join_idx] = spawn_id
+                    join_turn_spawn_ids.setdefault(join_idx, []).append(spawn_id)
                     conversation.subagent_spawns.append(
                         SubagentSpawnInfo(
                             spawn_id=spawn_id,
@@ -372,10 +372,10 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
                         )
                     )
 
-            # Apply spawn_id to join turns (adaptive_scale checks next_meta.subagent_spawn_id)
-            for join_idx, spawn_id in join_turn_spawn_ids.items():
+            # Apply spawn_ids to join turns (adaptive_scale checks next_meta.subagent_spawn_ids)
+            for join_idx, spawn_ids in join_turn_spawn_ids.items():
                 if join_idx < len(conversation.turns):
-                    conversation.turns[join_idx].subagent_spawn_id = spawn_id
+                    conversation.turns[join_idx].subagent_spawn_ids = spawn_ids
 
             if not conversation.turns:
                 continue

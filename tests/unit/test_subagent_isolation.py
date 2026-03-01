@@ -3,7 +3,7 @@
 """Tests for subagent isolation: separate conversations with independent KV caches.
 
 Tests cover all phases of the subagent pipeline:
-- Phase 1: Data model (SubagentSpawnInfo, Turn/TurnMetadata subagent_spawn_id,
+- Phase 1: Data model (SubagentSpawnInfo, Turn/TurnMetadata subagent_spawn_ids,
   Conversation/ConversationMetadata agent_depth, subagent_spawns)
 - Phase 2: Config (CodingSessionConfig subagent parameters)
 - Phase 3: Dataset generation (CodingSessionComposer generates child conversations)
@@ -99,15 +99,13 @@ def _make_dataset_with_subagent(
         spawns: list[SubagentSpawnInfo] = []
 
         for i in range(turns_per_conv):
-            spawn_id = None
-            if spawn_at is not None and i == spawn_at + 1:
-                spawn_id = "s0"
+            spawn_ids = ["s0"] if spawn_at is not None and i == spawn_at + 1 else []
 
             turns.append(
                 TurnMetadata(
                     delay_ms=200.0 if i > 0 else None,
                     input_tokens=500 + i * 100,
-                    subagent_spawn_id=spawn_id,
+                    subagent_spawn_ids=spawn_ids,
                 )
             )
 
@@ -259,40 +257,40 @@ class TestSubagentSpawnInfo:
 
 
 class TestTurnSubagentFields:
-    """Turn and TurnMetadata subagent_spawn_id fields."""
+    """Turn and TurnMetadata subagent_spawn_ids fields."""
 
-    def test_turn_defaults_none(self):
+    def test_turn_defaults_empty(self):
         turn = Turn(max_tokens=100, input_tokens=500)
-        assert turn.subagent_spawn_id is None
+        assert turn.subagent_spawn_ids == []
 
-    def test_turn_with_subagent_spawn_id(self):
+    def test_turn_with_subagent_spawn_ids(self):
         turn = Turn(
             max_tokens=100,
             input_tokens=500,
-            subagent_spawn_id="s0",
+            subagent_spawn_ids=["s0"],
         )
-        assert turn.subagent_spawn_id == "s0"
+        assert turn.subagent_spawn_ids == ["s0"]
 
     def test_turn_metadata_passthrough(self):
         turn = Turn(
             max_tokens=100,
             input_tokens=500,
-            subagent_spawn_id="s2",
+            subagent_spawn_ids=["s2"],
         )
         meta = turn.metadata()
-        assert meta.subagent_spawn_id == "s2"
+        assert meta.subagent_spawn_ids == ["s2"]
 
-    def test_turn_metadata_defaults_none(self):
+    def test_turn_metadata_defaults_empty(self):
         turn = Turn(max_tokens=100, input_tokens=500)
         meta = turn.metadata()
-        assert meta.subagent_spawn_id is None
+        assert meta.subagent_spawn_ids == []
 
     def test_turn_metadata_direct_construction(self):
         meta = TurnMetadata(
             input_tokens=1000,
-            subagent_spawn_id="s3",
+            subagent_spawn_ids=["s3"],
         )
-        assert meta.subagent_spawn_id == "s3"
+        assert meta.subagent_spawn_ids == ["s3"]
 
 
 class TestConversationSubagentFields:
@@ -542,18 +540,18 @@ class TestCodingSessionSubagentGeneration:
                         f"Spawn {spawn.spawn_id} references unknown child {child_id}"
                     )
 
-    def test_join_turn_has_subagent_spawn_id(self, subagent_config, mock_tokenizer):
+    def test_join_turn_has_subagent_spawn_ids(self, subagent_config, mock_tokenizer):
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
         parents = [c for c in conversations if c.agent_depth == 0]
-        found_spawn_id = False
+        found_spawn_ids = False
         for parent in parents:
             for turn in parent.turns:
-                if turn.subagent_spawn_id is not None:
-                    found_spawn_id = True
+                if turn.subagent_spawn_ids:
+                    found_spawn_ids = True
                     break
-        assert found_spawn_id
+        assert found_spawn_ids
 
     def test_metadata_includes_subagent_spawns(self, subagent_config, mock_tokenizer):
         composer = CodingSessionComposer(subagent_config, mock_tokenizer)
@@ -665,7 +663,7 @@ class TestAdaptiveScaleSubagentDispatch:
     """AdaptiveScaleStrategy subagent spawn dispatch and join."""
 
     @pytest.mark.asyncio
-    async def test_dispatch_subagent_spawn_creates_pending_join(self):
+    async def test_dispatch_subagent_spawns_creates_pending_join(self):
         manager, strategy, scheduler, issuer, _, ds, child_ids = (
             _make_adaptive_strategy()
         )
@@ -674,7 +672,7 @@ class TestAdaptiveScaleSubagentDispatch:
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
 
         assert "parent-1" in manager._pending_subagent_joins
         pending = manager._pending_subagent_joins["parent-1"]
@@ -683,7 +681,7 @@ class TestAdaptiveScaleSubagentDispatch:
         assert pending.parent_conversation_id == "conv_0"
 
     @pytest.mark.asyncio
-    async def test_dispatch_subagent_spawn_issues_child_credits(self):
+    async def test_dispatch_subagent_spawns_issues_child_credits(self):
         manager, strategy, scheduler, issuer, _, ds, child_ids = (
             _make_adaptive_strategy()
         )
@@ -692,13 +690,13 @@ class TestAdaptiveScaleSubagentDispatch:
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
 
         # Should issue credits for each child
         assert scheduler.execute_async.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_dispatch_subagent_spawn_registers_child_to_parent_mapping(self):
+    async def test_dispatch_subagent_spawns_registers_child_to_parent_mapping(self):
         manager, strategy, scheduler, issuer, _, ds, child_ids = (
             _make_adaptive_strategy()
         )
@@ -707,7 +705,7 @@ class TestAdaptiveScaleSubagentDispatch:
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
 
         assert len(manager._subagent_child_to_parent) == 2
         for (
@@ -717,7 +715,7 @@ class TestAdaptiveScaleSubagentDispatch:
             assert parent_corr_id == "parent-1"
 
     @pytest.mark.asyncio
-    async def test_dispatch_subagent_spawn_fallback_on_unknown_spawn(self):
+    async def test_dispatch_subagent_spawns_fallback_on_unknown_spawn(self):
         manager, strategy, scheduler, issuer, _, ds, child_ids = (
             _make_adaptive_strategy()
         )
@@ -726,7 +724,7 @@ class TestAdaptiveScaleSubagentDispatch:
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        manager._dispatch_subagent_spawn(credit, "unknown_spawn")
+        manager._dispatch_subagent_spawns(credit, ["unknown_spawn"])
 
         # Should fallback to issuing the next sequential turn
         assert scheduler.execute_async.call_count == 1
@@ -742,7 +740,7 @@ class TestAdaptiveScaleSubagentDispatch:
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
         scheduler.execute_async.reset_mock()
 
         # Get a child correlation ID
@@ -773,7 +771,7 @@ class TestAdaptiveScaleSubagentDispatch:
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
         scheduler.execute_async.reset_mock()
 
         child_corr_ids = list(manager._subagent_child_to_parent.keys())
@@ -799,7 +797,7 @@ class TestAdaptiveScaleSubagentDispatch:
             _make_adaptive_strategy()
         )
 
-        # Turn 2 is sequential, turn 3 has subagent_spawn_id="s0"
+        # Turn 2 is sequential, turn 3 has subagent_spawn_ids="s0"
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
@@ -819,7 +817,7 @@ class TestAdaptiveScaleSubagentDispatch:
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
         scheduler.execute_async.reset_mock()
 
         child_corr_ids = list(manager._subagent_child_to_parent.keys())
@@ -908,7 +906,7 @@ class TestBackgroundSubagentDispatch:
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
 
         # Should NOT register a pending join (parent doesn't wait)
         assert "parent-1" not in manager._pending_subagent_joins
@@ -926,7 +924,7 @@ class TestBackgroundSubagentDispatch:
         credit = _make_sequential_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        manager._dispatch_subagent_spawn(credit, "s0")
+        manager._dispatch_subagent_spawns(credit, ["s0"])
         scheduler.execute_async.reset_mock()
 
         child_corr_ids = list(manager._subagent_child_to_parent.keys())

@@ -161,9 +161,9 @@ class TurnMetadata(AIPerfBaseModel):
         default=None,
         description="Cache layer decomposition of hash_ids into L1/L2/L3 blocks.",
     )
-    subagent_spawn_id: str | None = Field(
-        default=None,
-        description="Spawn ID if this turn is blocked by a subagent spawn.",
+    subagent_spawn_ids: list[str] = Field(
+        default_factory=list,
+        description="Spawn IDs if this turn is blocked by subagent spawns.",
     )
 
 
@@ -212,9 +212,9 @@ class Turn(AIPerfBaseModel):
         default=None,
         description="Cache layer decomposition of hash_ids into L1/L2/L3 blocks.",
     )
-    subagent_spawn_id: str | None = Field(
-        default=None,
-        description="Spawn ID if this turn is blocked by a subagent spawn.",
+    subagent_spawn_ids: list[str] = Field(
+        default_factory=list,
+        description="Spawn IDs if this turn is blocked by subagent spawns.",
     )
     raw_content: str | list[dict[str, Any]] | None = Field(
         default=None,
@@ -259,7 +259,7 @@ class Turn(AIPerfBaseModel):
             input_tokens=self.input_tokens,
             hash_ids=self.hash_ids,
             cache_layer_sizes=self.cache_layer_sizes,
-            subagent_spawn_id=self.subagent_spawn_id,
+            subagent_spawn_ids=list(self.subagent_spawn_ids),
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -303,7 +303,7 @@ class Turn(AIPerfBaseModel):
             input_tokens=self.input_tokens,
             hash_ids=list(self.hash_ids),
             cache_layer_sizes=self.cache_layer_sizes,
-            subagent_spawn_id=self.subagent_spawn_id,
+            subagent_spawn_ids=list(self.subagent_spawn_ids),
             raw_content=None,
             raw_message=self.raw_message,
             raw_messages=self.raw_messages,

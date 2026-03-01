@@ -817,14 +817,14 @@ class TestClaudeCodeTraceLoader:
         assert parent.subagent_spawns[0].child_conversation_ids == [child.session_id]
         assert parent.subagent_spawns[0].join_turn_index == 2
 
-        # The join turn (not spawn turn) gets subagent_spawn_id
-        assert parent.turns[1].subagent_spawn_id is None
-        assert parent.turns[2].subagent_spawn_id == "s0"
+        # The join turn (not spawn turn) gets subagent_spawn_ids
+        assert parent.turns[1].subagent_spawn_ids == []
+        assert parent.turns[2].subagent_spawn_ids == ["s0"]
 
     def test_spawn_id_on_join_turn_not_spawn_turn(self, tmp_path, default_user_config):
-        """Verify subagent_spawn_id is placed on the join turn, not the spawning turn.
+        """Verify subagent_spawn_ids is placed on the join turn, not the spawning turn.
 
-        adaptive_scale checks next_meta.subagent_spawn_id to decide when to
+        adaptive_scale checks next_meta.subagent_spawn_ids to decide when to
         dispatch children. The spawn_id must be on the join turn so that:
         1. The spawn turn (turn N) is sent normally
         2. After turn N completes, adaptive_scale sees spawn_id on turn N+1
@@ -934,13 +934,13 @@ class TestClaudeCodeTraceLoader:
         assert len(parent.turns) == 4
         # Spawn after call 0 -> join at turn 1
         assert parent.subagent_spawns[0].join_turn_index == 1
-        # Turn 0 (spawn turn) must NOT have spawn_id
-        assert parent.turns[0].subagent_spawn_id is None
-        # Turn 1 (join turn) MUST have spawn_id
-        assert parent.turns[1].subagent_spawn_id == "s0"
+        # Turn 0 (spawn turn) must NOT have spawn_ids
+        assert parent.turns[0].subagent_spawn_ids == []
+        # Turn 1 (join turn) MUST have spawn_ids
+        assert parent.turns[1].subagent_spawn_ids == ["s0"]
         # Remaining turns are normal
-        assert parent.turns[2].subagent_spawn_id is None
-        assert parent.turns[3].subagent_spawn_id is None
+        assert parent.turns[2].subagent_spawn_ids == []
+        assert parent.turns[3].subagent_spawn_ids == []
 
     def test_spawn_id_placement_with_multiple_subagents(
         self, tmp_path, default_user_config
@@ -1016,12 +1016,12 @@ class TestClaudeCodeTraceLoader:
         # Second spawn: after call 3 -> join at turn 4
         assert parent.subagent_spawns[1].join_turn_index == 4
 
-        # Only join turns have spawn_id, all others are None
-        expected_spawn_ids = [None, None, "s0", None, "s1"]
+        # Only join turns have spawn_ids, all others are empty
+        expected_spawn_ids = [[], [], ["s0"], [], ["s1"]]
         for i, expected in enumerate(expected_spawn_ids):
-            assert parent.turns[i].subagent_spawn_id == expected, (
-                f"Turn {i}: expected spawn_id={expected!r}, "
-                f"got {parent.turns[i].subagent_spawn_id!r}"
+            assert parent.turns[i].subagent_spawn_ids == expected, (
+                f"Turn {i}: expected spawn_ids={expected!r}, "
+                f"got {parent.turns[i].subagent_spawn_ids!r}"
             )
 
     def test_spawn_at_last_turn_join_clamps_to_last(
@@ -1097,9 +1097,9 @@ class TestClaudeCodeTraceLoader:
         assert len(parent.turns) == 2
         # join_turn_index clamps to last turn
         assert parent.subagent_spawns[0].join_turn_index == 1
-        # spawn_id goes on the clamped join turn (turn 1), not turn 0
-        assert parent.turns[0].subagent_spawn_id is None
-        assert parent.turns[1].subagent_spawn_id == "s0"
+        # spawn_ids goes on the clamped join turn (turn 1), not turn 0
+        assert parent.turns[0].subagent_spawn_ids == []
+        assert parent.turns[1].subagent_spawn_ids == ["s0"]
 
     def test_session_id_fallback_to_filename(self, tmp_path, default_user_config):
         records = [

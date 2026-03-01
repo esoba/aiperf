@@ -234,7 +234,7 @@ class ApiCaptureTraceLoader(BaseFileLoader):
 
             # Mark the join turn with spawn_id
             if join_turn_index < len(parent_conv.turns):
-                parent_conv.turns[join_turn_index].subagent_spawn_id = spawn_id
+                parent_conv.turns[join_turn_index].subagent_spawn_ids.append(spawn_id)
 
             child_conversations.append(child_conv)
 

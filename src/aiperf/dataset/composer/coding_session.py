@@ -487,7 +487,7 @@ class CodingSessionComposer(BaseDatasetComposer):
                     texts=[Text(name="text", contents=[join_prompt])],
                     hash_ids=list(join_hash_ids),
                     cache_layer_sizes=join_layer_sizes,
-                    subagent_spawn_id=spawn_id,
+                    subagent_spawn_ids=[spawn_id],
                     delay=self._sample_delay(cfg),
                 )
                 self._finalize_turn(join_turn)
@@ -725,7 +725,7 @@ class CodingSessionComposer(BaseDatasetComposer):
                         texts=[Text(name="text", contents=[gc_join_prompt])],
                         hash_ids=list(gc_join_hash_ids),
                         cache_layer_sizes=gc_join_layers,
-                        subagent_spawn_id=gc_spawn_id,
+                        subagent_spawn_ids=[gc_spawn_id],
                         delay=self._sample_delay(cfg),
                     )
                     self._finalize_turn(gc_join_turn)
@@ -808,8 +808,7 @@ class CodingSessionComposer(BaseDatasetComposer):
             req = self._turn_to_request(turn, cumulative_t, i == len(conv.turns) - 1)
 
             # Check if this turn is a subagent spawn point
-            if turn.subagent_spawn_id is not None:
-                spawn_id = turn.subagent_spawn_id
+            for spawn_id in turn.subagent_spawn_ids:
                 child_ids = spawn_children.get(spawn_id, [])
                 for child_id in child_ids:
                     child_conv = child_by_id.get(child_id)
@@ -847,8 +846,7 @@ class CodingSessionComposer(BaseDatasetComposer):
         for i, turn in enumerate(conv.turns):
             req = self._turn_to_request(turn, cumulative_t, i == len(conv.turns) - 1)
 
-            if turn.subagent_spawn_id is not None:
-                spawn_id = turn.subagent_spawn_id
+            for spawn_id in turn.subagent_spawn_ids:
                 gc_ids = spawn_children.get(spawn_id, [])
                 for gc_id in gc_ids:
                     gc_conv = child_by_id.get(gc_id)
