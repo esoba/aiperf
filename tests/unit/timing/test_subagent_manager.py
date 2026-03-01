@@ -405,6 +405,107 @@ class TestSubagentSessionManagerMultiSpawn:
         assert "parent-1" not in manager._pending_subagent_joins
         assert scheduler.execute_async.call_count >= 1
 
+    @pytest.mark.asyncio
+    async def test_mixed_blocking_and_background_spawns(self):
+        """Blocking + background spawns: only blocking children count toward join."""
+        parent_turns = []
+        for i in range(6):
+            spawn_ids = ["s0", "s1"] if i == 3 else []
+            parent_turns.append(
+                TurnMetadata(
+                    delay_ms=200.0 if i > 0 else None,
+                    input_tokens=500 + i * 100,
+                    subagent_spawn_ids=spawn_ids,
+                )
+            )
+
+        # s0 = blocking (2 children), s1 = background (2 children)
+        s0_children = ["conv_0_s0_c0", "conv_0_s0_c1"]
+        s1_children = ["conv_0_s1_c0", "conv_0_s1_c1"]
+        all_child_ids = s0_children + s1_children
+
+        convs = [
+            ConversationMetadata(
+                conversation_id="conv_0",
+                turns=parent_turns,
+                subagent_spawns=[
+                    SubagentSpawnInfo(
+                        spawn_id="s0",
+                        child_conversation_ids=s0_children,
+                        join_turn_index=3,
+                        is_background=False,
+                    ),
+                    SubagentSpawnInfo(
+                        spawn_id="s1",
+                        child_conversation_ids=s1_children,
+                        join_turn_index=3,
+                        is_background=True,
+                    ),
+                ],
+            )
+        ]
+        for cid in all_child_ids:
+            convs.append(
+                ConversationMetadata(
+                    conversation_id=cid,
+                    turns=[TurnMetadata(input_tokens=300 + j * 50) for j in range(3)],
+                    agent_depth=1,
+                )
+            )
+
+        ds = DatasetMetadata(
+            conversations=convs,
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["conv_0"], ds.sampling_strategy)
+        src = ConversationSource(ds, sampler)
+
+        inner = MagicMock()
+        inner.setup_phase = AsyncMock()
+        inner.execute_phase = AsyncMock()
+        inner.handle_credit_return = AsyncMock()
+        del inner.on_child_session_started
+
+        scheduler = MagicMock()
+        scheduler.execute_async = MagicMock()
+        issuer = MagicMock()
+        issuer.issue_credit = AsyncMock(return_value=True)
+
+        manager = SubagentSessionManager(
+            inner=inner,
+            conversation_source=src,
+            credit_issuer=issuer,
+            scheduler=scheduler,
+        )
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawns(credit, ["s0", "s1"])
+
+        # 4 children fanned out
+        assert scheduler.execute_async.call_count == 4
+        # Only blocking children (s0's 2) tracked for join
+        assert len(manager._subagent_child_to_parent) == 2
+        pending = manager._pending_subagent_joins["parent-1"]
+        assert pending.expected_count == 2
+
+        # Complete both blocking children -> join dispatches
+        scheduler.execute_async.reset_mock()
+        child_corr_ids = list(manager._subagent_child_to_parent.keys())
+        for i, child_corr_id in enumerate(child_corr_ids):
+            child_credit = _make_credit(
+                conv_id=s0_children[i],
+                corr_id=child_corr_id,
+                turn_index=2,
+                num_turns=3,
+                agent_depth=1,
+            )
+            manager._handle_subagent_child_complete(child_credit)
+
+        assert "parent-1" not in manager._pending_subagent_joins
+        assert scheduler.execute_async.call_count >= 1
+
 
 class TestSubagentSessionManagerBackground:
     """Test background spawn behavior."""
@@ -423,27 +524,17 @@ class TestSubagentSessionManagerBackground:
         assert scheduler.execute_async.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_background_child_complete_is_noop(self):
+    async def test_background_children_not_tracked(self):
         manager, inner, scheduler, _, child_ids = _make_manager(is_background=True)
 
         credit = _make_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
         manager._dispatch_subagent_spawns(credit, ["s0"])
-        scheduler.execute_async.reset_mock()
 
-        child_corr_ids = list(manager._subagent_child_to_parent.keys())
-        child_credit = _make_credit(
-            conv_id=child_ids[0],
-            corr_id=child_corr_ids[0],
-            turn_index=2,
-            num_turns=3,
-            agent_depth=1,
-        )
-        manager._handle_subagent_child_complete(child_credit)
-
-        # No join dispatched (already done immediately)
-        assert scheduler.execute_async.call_count == 0
+        # Background children are NOT registered for join accounting
+        assert len(manager._subagent_child_to_parent) == 0
+        assert "parent-1" not in manager._pending_subagent_joins
 
 
 # =============================================================================

@@ -1275,6 +1275,145 @@ class TestCodingTraceLoader:
 
 
 # ============================================================================
+# Grandchild Subagent Spawn Tests
+# ============================================================================
+
+
+class TestGrandchildSubagentSpawns:
+    """Verify _build_child_conversation propagates grandchild spawns to turn annotations."""
+
+    @pytest.fixture
+    def mock_prompt_generator(self):
+        gen = MagicMock()
+        gen.tokenizer.resolved_name = "test-tokenizer"
+        gen.generate = MagicMock(return_value="synthetic text prompt")
+        gen.generate_prompt = MagicMock(return_value="x" * 400)
+        return gen
+
+    @pytest.fixture
+    def default_user_config(self):
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                warm_prefix_pct=0.0,
+                output_token_budget_ratio=1.0,
+            ),
+        )
+
+    def test_grandchild_spawn_ids_appended_to_child_turn(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Grandchild spawn_ids are appended to the child's join turn."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        loader = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=default_user_config,
+        )
+
+        # Child has 3 requests
+        child_requests = [
+            CodingTraceRequest.model_validate(
+                {"t": 10.0, "type": "s", "in": 500, "out": 200}
+            ),
+            CodingTraceRequest.model_validate(
+                {"t": 15.0, "type": "n", "in": 800, "out": 300}
+            ),
+            CodingTraceRequest.model_validate(
+                {"t": 20.0, "type": "n", "in": 1200, "out": 400}
+            ),
+        ]
+
+        # One grandchild subtree: 2 leaf requests, joins at parent_idx=1 (child turn 1)
+        gc_requests = [
+            CodingTraceRequest.model_validate(
+                {"t": 16.0, "type": "s", "in": 300, "out": 100}
+            ),
+            CodingTraceRequest.model_validate(
+                {"t": 18.0, "type": "n", "in": 400, "out": 150}
+            ),
+        ]
+        grandchild_subtrees = [(gc_requests, 1, [])]
+
+        prompt_by_delta = {i: "x" * i for i in range(1, 10000)}
+        child_conv, descendants = loader._build_child_conversation(
+            "parent_s0",
+            child_requests,
+            prompt_by_delta,
+            has_typed=False,
+            prefix_tokens=0,
+            grandchild_subtrees=grandchild_subtrees,
+        )
+
+        assert len(child_conv.turns) == 3
+        assert child_conv.turns[0].subagent_spawn_ids == []
+        assert child_conv.turns[1].subagent_spawn_ids == ["s0"]
+        assert child_conv.turns[2].subagent_spawn_ids == []
+
+        assert len(child_conv.subagent_spawns) == 1
+        assert child_conv.subagent_spawns[0].spawn_id == "s0"
+        assert child_conv.subagent_spawns[0].child_conversation_ids == ["parent_s0_s0"]
+        assert child_conv.subagent_spawns[0].join_turn_index == 1
+
+        assert len(descendants) == 1
+        assert descendants[0].session_id == "parent_s0_s0"
+        assert descendants[0].agent_depth == 2
+        assert len(descendants[0].turns) == 2
+
+    def test_multiple_grandchild_spawns_same_join_turn(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Multiple grandchild spawns joining at the same turn accumulate in subagent_spawn_ids."""
+        from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+
+        loader = CodingTraceLoader(
+            filename="/tmp/fake",
+            prompt_generator=mock_prompt_generator,
+            user_config=default_user_config,
+        )
+
+        child_requests = [
+            CodingTraceRequest.model_validate(
+                {"t": 10.0, "type": "s", "in": 500, "out": 200}
+            ),
+            CodingTraceRequest.model_validate(
+                {"t": 15.0, "type": "n", "in": 800, "out": 300}
+            ),
+        ]
+
+        # Two grandchild subtrees, both join at parent_idx=1
+        gc_a = [
+            CodingTraceRequest.model_validate(
+                {"t": 16.0, "type": "s", "in": 300, "out": 100}
+            ),
+        ]
+        gc_b = [
+            CodingTraceRequest.model_validate(
+                {"t": 17.0, "type": "s", "in": 250, "out": 80}
+            ),
+        ]
+        grandchild_subtrees = [(gc_a, 1, []), (gc_b, 1, [])]
+
+        prompt_by_delta = {i: "x" * i for i in range(1, 10000)}
+        child_conv, descendants = loader._build_child_conversation(
+            "parent_s0",
+            child_requests,
+            prompt_by_delta,
+            has_typed=False,
+            prefix_tokens=0,
+            grandchild_subtrees=grandchild_subtrees,
+        )
+
+        assert child_conv.turns[0].subagent_spawn_ids == []
+        assert child_conv.turns[1].subagent_spawn_ids == ["s0", "s1"]
+
+        assert len(child_conv.subagent_spawns) == 2
+        assert len(descendants) == 2
+
+
+# ============================================================================
 # Trace Loader L2 Block Estimate (Config-Driven)
 # ============================================================================
 

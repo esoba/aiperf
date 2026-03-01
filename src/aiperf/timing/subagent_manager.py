@@ -117,13 +117,18 @@ class SubagentSessionManager(AIPerfLoggerMixin):
             if join_turn_index is None:
                 join_turn_index = spawn.join_turn_index
 
+            is_blocking = not spawn.is_background
+
             for child_conv_id in spawn.child_conversation_ids:
                 child_session = self._conversation_source.start_child_session(
                     child_conv_id
                 )
-                self._subagent_child_to_parent[child_session.x_correlation_id] = (
-                    parent_corr_id
-                )
+                # Only track blocking children for join accounting.
+                # Background children complete via Path C (delegate to inner).
+                if is_blocking:
+                    self._subagent_child_to_parent[child_session.x_correlation_id] = (
+                        parent_corr_id
+                    )
                 if hasattr(self._inner, "on_child_session_started"):
                     self._inner.on_child_session_started(
                         child_session.x_correlation_id, child_depth
@@ -133,12 +138,10 @@ class SubagentSessionManager(AIPerfLoggerMixin):
                     self._credit_issuer.issue_credit(child_turn),
                 )
 
-            if not spawn.is_background:
+            if is_blocking:
                 any_blocking = True
                 all_background = False
                 total_blocking_children += len(spawn.child_conversation_ids)
-            else:
-                pass  # background children don't count toward pending join
 
         if join_turn_index is None:
             turn = TurnToSend.from_previous_credit(credit)

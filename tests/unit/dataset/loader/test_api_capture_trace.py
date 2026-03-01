@@ -648,6 +648,41 @@ class TestApiCaptureTraceLoader:
         parent = conversations[0]
         assert len(parent.subagent_spawns) == 2
 
+    def test_convert_subagent_spawn_ids_on_join_turns(
+        self, team_capture, default_user_config
+    ):
+        """Each child's spawn_id is appended to the parent join turn's subagent_spawn_ids."""
+        loader = ApiCaptureTraceLoader(
+            filename=str(team_capture), user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        parent = conversations[0]
+
+        annotated_turns = [
+            (i, t.subagent_spawn_ids)
+            for i, t in enumerate(parent.turns)
+            if t.subagent_spawn_ids
+        ]
+        assert len(annotated_turns) == 2
+        for _, spawn_ids in annotated_turns:
+            assert len(spawn_ids) == 1
+            assert spawn_ids[0].startswith("s")
+
+    def test_convert_non_spawn_turns_have_empty_spawn_ids(
+        self, team_capture, default_user_config
+    ):
+        """Turns without subagent spawns have empty subagent_spawn_ids."""
+        loader = ApiCaptureTraceLoader(
+            filename=str(team_capture), user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        parent = conversations[0]
+
+        non_spawn_turns = [t for t in parent.turns if not t.subagent_spawn_ids]
+        assert len(non_spawn_turns) == 15
+
     def test_convert_growing_message_counts(self, team_capture, default_user_config):
         loader = ApiCaptureTraceLoader(
             filename=str(team_capture), user_config=default_user_config

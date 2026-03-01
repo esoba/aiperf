@@ -916,7 +916,7 @@ class TestBackgroundSubagentDispatch:
         assert scheduler.execute_async.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_background_child_complete_no_pending_join(self):
+    async def test_background_children_not_tracked(self):
         manager, strategy, scheduler, issuer, _, ds, child_ids = (
             _make_adaptive_strategy(is_background=True)
         )
@@ -925,21 +925,9 @@ class TestBackgroundSubagentDispatch:
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
         manager._dispatch_subagent_spawns(credit, ["s0"])
-        scheduler.execute_async.reset_mock()
 
-        child_corr_ids = list(manager._subagent_child_to_parent.keys())
-        assert len(child_corr_ids) == 2
-
-        # Child completes -- should clean up without error
-        child_credit = _make_sequential_credit(
-            conv_id=child_ids[0],
-            corr_id=child_corr_ids[0],
-            turn_index=2,
-            num_turns=3,
-        )
-        manager._handle_subagent_child_complete(child_credit)
-
-        # No pending join to dispatch (already dispatched immediately)
+        # Background children are NOT registered for join accounting
+        assert len(manager._subagent_child_to_parent) == 0
         assert "parent-1" not in manager._pending_subagent_joins
 
     def test_subagent_spawn_info_is_background_default(self):
