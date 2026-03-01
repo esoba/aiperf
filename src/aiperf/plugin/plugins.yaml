@@ -399,6 +399,16 @@ dataset_composer:
 # Auto-detection: the custom composer tries loaders in priority order based on can_load().
 # =============================================================================
 custom_dataset_loader:
+  agentic_trajectory:
+    class: aiperf.dataset.loader.agentic_trajectory:AgenticTrajectoryLoader
+    description: |
+      Agentic trajectory JSONL loader for verbatim replay of multi-turn
+      tool-calling conversations. Each JSONL line contains cumulative messages
+      for one API call. Designed for agentic_load timing mode.
+    metadata:
+      supports_multi_turn: true
+      supports_timing: false
+
   api_capture_trace:
     class: aiperf.dataset.loader.api_capture_trace:ApiCaptureTraceLoader
     description: |

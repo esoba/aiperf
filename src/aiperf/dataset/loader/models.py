@@ -545,6 +545,25 @@ class ClaudeCodeManifest(AIPerfBaseModel):
     )
 
 
+class AgenticTrajectoryRecord(AIPerfBaseModel):
+    """A single record from an agentic trajectory JSONL file.
+
+    Each line contains one API call with cumulative messages -- turn N has
+    the full message history from turns 0..N. Records are grouped by
+    conversation_id and sorted by conversation_idx for replay.
+    """
+
+    type: Literal[CustomDatasetType.AGENTIC_TRAJECTORY] = (
+        CustomDatasetType.AGENTIC_TRAJECTORY
+    )
+    conversation_id: str = Field(description="Conversation this turn belongs to.")
+    conversation_idx: int = Field(description="0-based turn index within conversation.")
+    messages: list[dict[str, Any]] = Field(description="Cumulative message list.")
+    tools: list[dict[str, Any]] = Field(
+        default_factory=list, description="Tool definitions."
+    )
+
+
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
     bound=SingleTurn
@@ -553,6 +572,7 @@ CustomDatasetT = TypeVar(
     | MooncakeTrace
     | CodingTrace
     | ClaudeCodeTrace
-    | ApiCaptureTrace,
+    | ApiCaptureTrace
+    | AgenticTrajectoryRecord,
 )
 """A union type of all custom data types."""

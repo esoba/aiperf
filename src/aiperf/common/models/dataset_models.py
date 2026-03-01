@@ -210,6 +210,12 @@ class Turn(AIPerfBaseModel):
         "uses this as the entire message instead of building from role/content/media. "
         "Must match the target endpoint's API format.",
     )
+    raw_messages: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="List of complete message dicts for cumulative history replay. "
+        "When set with replaces_history=True, advance_turn expands each dict "
+        "into a Turn(raw_message=msg) in the turn_list.",
+    )
     assistant_prefill: str | list[dict[str, Any]] | None = Field(
         default=None,
         description="Trace assistant response to use as context for subsequent turns. "
@@ -283,6 +289,7 @@ class Turn(AIPerfBaseModel):
             subagent_spawn_id=self.subagent_spawn_id,
             raw_content=None,
             raw_message=self.raw_message,
+            raw_messages=self.raw_messages,
             assistant_prefill=self.assistant_prefill,
             replaces_history=self.replaces_history,
             raw_payload=self.raw_payload,
