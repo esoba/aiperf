@@ -399,6 +399,16 @@ dataset_composer:
 # Auto-detection: the custom composer tries loaders in priority order based on can_load().
 # =============================================================================
 custom_dataset_loader:
+  api_capture_trace:
+    class: aiperf.dataset.loader.api_capture_trace:ApiCaptureTraceLoader
+    description: |
+      Full-fidelity API capture trace loader for verbatim replay. Loads
+      captured API request bodies with complete messages, system prompts,
+      tools, and cache_control markers from mitmproxy-style capture directories.
+    metadata:
+      supports_multi_turn: true
+      supports_timing: true
+
   claude_code_trace:
     class: aiperf.dataset.loader.claude_code_trace:ClaudeCodeTraceLoader
     description: |
@@ -531,6 +541,13 @@ timing_strategy:
       A mode where each session acts as a separate user with gap = num_users / request_rate between turns.
       Users block on their previous turn (no interleaving within a user).
       Matches LMBenchmark behavior for KV cache benchmarking.
+
+  agentic_load:
+    class: aiperf.timing.strategies.agentic_load:AgenticLoadStrategy
+    description: |
+      Closed-loop agentic load strategy with deterministic trajectory assignment.
+      Pre-assigns conversations to users, spawns users at a configurable rate,
+      and runs each user in a closed loop through their assigned conversations.
 
 # =============================================================================
 # Arrival Pattern (Interval Generators)

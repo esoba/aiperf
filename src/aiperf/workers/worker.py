@@ -487,11 +487,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             session.advance_turn(credit_context.credit.turn_index)
 
             self.task_stats.total += 1
+            system_message = session.conversation.system_message
+            suffix = credit_context.credit.system_prompt_suffix
+            if suffix and system_message is not None:
+                system_message = system_message + suffix
+
             request_info: RequestInfo = self._create_request_info(
                 session=session,
                 credit_context=credit_context,
                 x_request_id=x_request_id,
-                system_message=session.conversation.system_message,
+                system_message=system_message,
                 user_context_message=session.conversation.user_context_message,
             )
             record: RequestRecord = await self.inference_client.send_request(

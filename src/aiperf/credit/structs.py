@@ -47,6 +47,7 @@ class Credit(
     cancel_after_ns: int | None = None
     url_index: int | None = None
     is_subagent_child: bool = False
+    system_prompt_suffix: str | None = None
 
     @property
     def is_final_turn(self) -> bool:
@@ -97,6 +98,7 @@ class TurnToSend(Struct, frozen=True):
     turn_index: int
     num_turns: int
     is_subagent_child: bool = False
+    system_prompt_suffix: str | None = None
 
     @property
     def is_final_turn(self) -> bool:
@@ -111,4 +113,5 @@ class TurnToSend(Struct, frozen=True):
             turn_index=credit.turn_index + 1,
             num_turns=credit.num_turns,
             is_subagent_child=credit.is_subagent_child,
+            system_prompt_suffix=credit.system_prompt_suffix,
         )

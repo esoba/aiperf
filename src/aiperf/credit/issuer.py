@@ -248,6 +248,7 @@ class CreditIssuer:
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
             is_subagent_child=turn.is_subagent_child,
+            system_prompt_suffix=turn.system_prompt_suffix,
         )
 
         await self._credit_router.send_credit(credit=credit)

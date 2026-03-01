@@ -293,7 +293,7 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br>_Choices: [`claude_code_trace`, `coding_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
+<br>_Choices: [`api_capture_trace`, `claude_code_trace`, `coding_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -307,6 +307,23 @@ Random seed for deterministic data generation. When set, makes synthetic prompts
 #### `--goodput` `<str>`
 
 Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric's display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
+
+#### `--agentic-load`
+
+Enable closed-loop agentic load mode. Pre-assigns multi-turn conversations to users, spawns users at a configurable rate, and runs each user in a closed loop through their assigned conversations until the phase ends. Requires --num-users and --benchmark-duration.
+<br>_Flag (no value required)_
+
+#### `--agentic-trajectories-per-user` `<int>`
+
+Number of conversations (trajectories) assigned to each user in agentic load mode. Users loop through their assigned conversations until the phase ends.
+<br>_Constraints: ≥ 1_
+<br>_Default: `20`_
+
+#### `--agentic-max-isl-offset` `<int>`
+
+Maximum initial starting line offset for the first trajectory in agentic load mode. Each user skips a random number of turns (0 to this value) in their first conversation to prevent all users from starting at the same point.
+<br>_Constraints: ≥ 0_
+<br>_Default: `10`_
 
 #### `--adaptive-scale`
 
@@ -1199,8 +1216,20 @@ Enable user-centric rate limiting mode with the specified request rate (QPS). Ea
 
 #### `--num-users` `<int>`
 
-The number of initial users to use for --user-centric-rate mode.
+The number of initial users to use for --user-centric-rate or --agentic-load mode.
 <br>_Constraints: ≥ 1_
+
+#### `--agentic-user-spawn-rate` `<float>`
+
+Users to spawn per second during ramp-up in agentic load mode. Controls how quickly users are introduced to the system.
+<br>_Constraints: > 0_
+<br>_Default: `1.0`_
+
+#### `--agentic-settling-time` `<float>`
+
+Wait time in seconds after all users are spawned before the measurement window starts in agentic load mode.
+<br>_Constraints: ≥ 0_
+<br>_Default: `5.0`_
 
 #### `--concurrency-ramp-duration` `<float>`
 

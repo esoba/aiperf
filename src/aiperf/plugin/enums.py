@@ -27,7 +27,7 @@ else:
 
 TimingModeStr: TypeAlias = str
 TimingMode = plugins.create_enum(PluginType.TIMING_STRATEGY, "TimingMode", module=__name__)
-"""Dynamic enum for timing strategy. Example: TimingMode.ADAPTIVE_SCALE, TimingMode.FIXED_SCHEDULE, TimingMode.REQUEST_RATE"""
+"""Dynamic enum for timing strategy. Example: TimingMode.ADAPTIVE_SCALE, TimingMode.AGENTIC_LOAD, TimingMode.FIXED_SCHEDULE"""
 
 ArrivalPatternStr: TypeAlias = str
 ArrivalPattern = plugins.create_enum(PluginType.ARRIVAL_PATTERN, "ArrivalPattern", module=__name__)
@@ -55,7 +55,7 @@ ComposerType = plugins.create_enum(PluginType.DATASET_COMPOSER, "ComposerType", 
 
 CustomDatasetTypeStr: TypeAlias = str
 CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "CustomDatasetType", module=__name__)
-"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.CLAUDE_CODE_TRACE, CustomDatasetType.CODING_TRACE, CustomDatasetType.MOONCAKE_TRACE"""
+"""Dynamic enum for custom dataset loader. Example: CustomDatasetType.API_CAPTURE_TRACE, CustomDatasetType.CLAUDE_CODE_TRACE, CustomDatasetType.CODING_TRACE"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)

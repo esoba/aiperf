@@ -450,6 +450,74 @@ class ClaudeCodeTrace(AIPerfBaseModel):
         return self
 
 
+class ApiCaptureApiCall(AIPerfBaseModel):
+    """A single real API call from an mitmproxy-style capture directory.
+
+    Correlates a req_XXXX.json request body with its corresponding
+    capture.jsonl response metadata (token counts, stop reason).
+    """
+
+    messages: list[dict] = Field(description="Full messages array from request.")
+    system: list[dict] = Field(
+        default_factory=list, description="System prompt blocks."
+    )
+    tools: list[dict] = Field(default_factory=list, description="Tool definitions.")
+    model: str | None = Field(default=None, description="Model name from request.")
+    max_tokens: int | None = Field(default=None, description="Max tokens from request.")
+    stream: bool | None = Field(default=None, description="Stream flag from request.")
+    thinking: dict | None = Field(
+        default=None, description="Thinking config (e.g. {'type': 'adaptive'})."
+    )
+    input_tokens: int = Field(
+        default=0, description="Input token count from response metadata."
+    )
+    output_tokens: int = Field(
+        default=0, description="Output token count from response metadata."
+    )
+    cache_creation_input_tokens: int = Field(
+        default=0, description="Cache creation input tokens from response metadata."
+    )
+    cache_read_input_tokens: int = Field(
+        default=0, description="Cache read input tokens from response metadata."
+    )
+    timestamp_ms: float | None = Field(
+        default=None, description="Timestamp in milliseconds from capture.jsonl."
+    )
+    stop_reason: str | None = Field(
+        default=None, description="Stop reason from response metadata."
+    )
+
+
+class ApiCaptureTrace(AIPerfBaseModel):
+    """One conversation thread extracted from an API capture directory.
+
+    Groups related API calls by system prompt hash into threads.
+    The parent thread has the most calls; others are subagent children.
+    """
+
+    type: Literal[CustomDatasetType.API_CAPTURE_TRACE] = (
+        CustomDatasetType.API_CAPTURE_TRACE
+    )
+    id: str = Field(description="Unique identifier for this trace.")
+    api_calls: list[ApiCaptureApiCall] = Field(
+        description="Ordered API calls in this thread."
+    )
+    system_prompt_text: str | None = Field(
+        default=None,
+        description="Extracted text from system blocks for convenience.",
+    )
+    thread_key: str = Field(
+        description="Hash-based grouping key identifying this thread."
+    )
+
+    @model_validator(mode="after")
+    def validate_has_api_calls(self) -> "ApiCaptureTrace":
+        """Ensure the trace has at least one API call."""
+        if not self.api_calls:
+            raise ValueError("An API capture trace must have at least one API call")
+        return self
+
+
 class ClaudeCodeSubagentLink(AIPerfBaseModel):
     """Links a subagent JSONL file to a parent session spawn point."""
 
@@ -484,6 +552,7 @@ CustomDatasetT = TypeVar(
     | RandomPool
     | MooncakeTrace
     | CodingTrace
-    | ClaudeCodeTrace,
+    | ClaudeCodeTrace
+    | ApiCaptureTrace,
 )
 """A union type of all custom data types."""

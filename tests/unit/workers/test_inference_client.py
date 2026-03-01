@@ -221,3 +221,42 @@ class TestInferenceClient:
         call_args = inference_client.transport.send_request.call_args
         assert call_args[0][0] == request_info
         assert record == expected_record
+
+    @pytest.mark.asyncio
+    async def test_raw_payload_bypasses_format_payload(
+        self,
+        inference_client,
+        sample_request_info,
+        sample_request_record,
+    ):
+        """Test that raw_payload on turn bypasses endpoint.format_payload()."""
+        raw = {"model": "test", "messages": [{"role": "user", "content": "hi"}]}
+        sample_request_info.turns[-1].raw_payload = raw
+
+        inference_client.transport.send_request = AsyncMock(
+            return_value=sample_request_record
+        )
+
+        await inference_client.send_request(sample_request_info)
+
+        inference_client.endpoint.format_payload.assert_not_called()
+        call_args = inference_client.transport.send_request.call_args
+        assert call_args.kwargs["payload"] is raw
+
+    @pytest.mark.asyncio
+    async def test_no_raw_payload_calls_format_payload(
+        self,
+        inference_client,
+        sample_request_info,
+        sample_request_record,
+    ):
+        """Test that format_payload is called when raw_payload is not set."""
+        assert sample_request_info.turns[-1].raw_payload is None
+
+        inference_client.transport.send_request = AsyncMock(
+            return_value=sample_request_record
+        )
+
+        await inference_client.send_request(sample_request_info)
+
+        inference_client.endpoint.format_payload.assert_called_once()

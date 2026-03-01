@@ -279,6 +279,35 @@ class CreditPhaseConfig(AIPerfBaseModel):
         gt=0,
         description="Subagent KV cache TTL in seconds for working set eviction.",
     )
+    # Agentic load config
+    user_spawn_rate: float | None = Field(
+        default=None,
+        gt=0,
+        description="Users to spawn per second during ramp-up for agentic load mode.",
+    )
+    settling_time_sec: float | None = Field(
+        default=None,
+        ge=0,
+        description="Wait time in seconds after all users spawned before measurement starts.",
+    )
+    trajectories_per_user: int | None = Field(
+        default=None,
+        ge=1,
+        description="Number of conversations assigned to each user in agentic load mode.",
+    )
+    max_isl_offset: int | None = Field(
+        default=None,
+        ge=0,
+        description="Maximum initial starting line offset for first trajectory to prevent bias.",
+    )
+    agentic_seed: int | None = Field(
+        default=None,
+        description="Random seed for deterministic trajectory assignment in agentic load mode.",
+    )
+    benchmark_id: str | None = Field(
+        default=None,
+        description="Unique benchmark run ID for cache bust uniqueness across runs.",
+    )
 
 
 def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
@@ -389,4 +418,11 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
         min_goodput_ratio=input.adaptive_scale_min_goodput_ratio if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else 0.95,
         cache_ttl_sec=input.coding_session.cache_ttl_sec if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else 3600.0,
         subagent_cache_ttl_sec=input.coding_session.subagent_cache_ttl_sec if user_config.timing_mode == TimingMode.ADAPTIVE_SCALE else 300.0,
+        # Agentic load config
+        user_spawn_rate=loadgen.agentic_user_spawn_rate if user_config.timing_mode == TimingMode.AGENTIC_LOAD else None,
+        settling_time_sec=loadgen.agentic_settling_time if user_config.timing_mode == TimingMode.AGENTIC_LOAD else None,
+        trajectories_per_user=input.agentic_trajectories_per_user if user_config.timing_mode == TimingMode.AGENTIC_LOAD else None,
+        max_isl_offset=input.agentic_max_isl_offset if user_config.timing_mode == TimingMode.AGENTIC_LOAD else None,
+        agentic_seed=input.random_seed if user_config.timing_mode == TimingMode.AGENTIC_LOAD else None,
+        benchmark_id=user_config.benchmark_id if user_config.timing_mode == TimingMode.AGENTIC_LOAD else None,
     )  # fmt: skip

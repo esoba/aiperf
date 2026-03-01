@@ -361,6 +361,46 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.GOODPUT
 
+    agentic_load: Annotated[
+        bool,
+        Field(
+            description="Enable closed-loop agentic load mode. Pre-assigns multi-turn conversations to users, "
+            "spawns users at a configurable rate, and runs each user in a closed loop through their "
+            "assigned conversations until the phase ends. Requires --num-users and --benchmark-duration.",
+        ),
+        CLIParameter(
+            name=("--agentic-load",),
+            group=_CLI_GROUP,
+        ),
+    ] = False
+
+    agentic_trajectories_per_user: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Number of conversations (trajectories) assigned to each user in agentic load mode. "
+            "Users loop through their assigned conversations until the phase ends.",
+        ),
+        CLIParameter(
+            name=("--agentic-trajectories-per-user",),
+            group=_CLI_GROUP,
+        ),
+    ] = 20
+
+    agentic_max_isl_offset: Annotated[
+        int,
+        Field(
+            ge=0,
+            description="Maximum initial starting line offset for the first trajectory in agentic load mode. "
+            "Each user skips a random number of turns (0 to this value) in their first conversation "
+            "to prevent all users from starting at the same point.",
+        ),
+        CLIParameter(
+            name=("--agentic-max-isl-offset",),
+            group=_CLI_GROUP,
+        ),
+    ] = 10
+
     adaptive_scale: Annotated[
         bool,
         Field(

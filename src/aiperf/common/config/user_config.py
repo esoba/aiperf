@@ -150,6 +150,39 @@ class UserConfig(BaseConfig):
                 _logger.info(
                     f"No request count value provided for mooncake trace dataset, setting to dataset entry count: {self.loadgen.request_count}"
                 )
+        elif self.input.agentic_load:
+            self._timing_mode = TimingMode.AGENTIC_LOAD
+            if self.loadgen.benchmark_duration is None:
+                raise ValueError(
+                    "--agentic-load requires --benchmark-duration to be set"
+                )
+            if self.loadgen.num_users is None:
+                raise ValueError("--agentic-load requires --num-users to be set")
+
+            # Validate phase duration is long enough for ramp-up + settling
+            num_users = self.loadgen.num_users
+            spawn_rate = self.loadgen.agentic_user_spawn_rate
+            settling = self.loadgen.agentic_settling_time
+            ramp_up = (num_users - 1) / spawn_rate if num_users > 1 else 0.0
+            min_measurement_window_sec = 60.0
+            min_duration = ramp_up + settling + min_measurement_window_sec
+            if self.loadgen.benchmark_duration < min_duration:
+                measurement_window = (
+                    self.loadgen.benchmark_duration - ramp_up - settling
+                )
+                raise ValueError(
+                    f"--benchmark-duration ({self.loadgen.benchmark_duration}s) too short: "
+                    f"ramp-up ({ramp_up:.1f}s) + settling ({settling:.1f}s) leaves only "
+                    f"{measurement_window:.1f}s for measurement (minimum {min_measurement_window_sec:.0f}s)"
+                )
+
+            if "concurrency" not in self.loadgen.model_fields_set:
+                self.loadgen.concurrency = self.loadgen.num_users
+                _logger.info(
+                    f"Agentic load mode: defaulting --concurrency to --num-users ({self.loadgen.num_users})"
+                )
+            if "benchmark_grace_period" not in self.loadgen.model_fields_set:
+                self.loadgen.benchmark_grace_period = float("inf")
         elif self.loadgen.user_centric_rate is not None:
             # User-centric rate mode: per-user rate limiting (LMBenchmark parity)
             # --user-centric-rate takes the QPS value directly
@@ -317,14 +350,15 @@ class UserConfig(BaseConfig):
         These options are only meaningful with specific configurations.
         Rather than silently ignoring them, we raise an error.
         """
-        # --num-users without --user-centric-rate
+        # --num-users without --user-centric-rate or --agentic-load
         if (
             "num_users" in self.loadgen.model_fields_set
             and self.loadgen.user_centric_rate is None
+            and not self.input.agentic_load
         ):
             raise ValueError(
-                "--num-users can only be used with --user-centric-rate. "
-                "Either add --user-centric-rate or remove --num-users."
+                "--num-users can only be used with --user-centric-rate or --agentic-load. "
+                "Either add --user-centric-rate / --agentic-load or remove --num-users."
             )
 
         # --request-cancellation-delay without --request-cancellation-rate
@@ -786,6 +820,11 @@ class UserConfig(BaseConfig):
                 if self.loadgen.user_centric_rate is not None:
                     stimulus.append(f"qps{self.loadgen.user_centric_rate}")
                 return "-".join(stimulus)
+            case TimingMode.AGENTIC_LOAD:
+                stimulus = ["agentic_load"]
+                if self.loadgen.num_users is not None:
+                    stimulus.append(f"users{self.loadgen.num_users}")
+                return "-".join(stimulus)
             case _:
                 raise ValueError(f"Unknown timing mode '{self._timing_mode}'.")
 
@@ -925,7 +964,12 @@ class UserConfig(BaseConfig):
     def validate_dataset_sampling_strategy(self) -> Self:
         """Validate that the dataset sampling strategy is compatible with the timing mode."""
         if (
-            self.timing_mode in (TimingMode.FIXED_SCHEDULE, TimingMode.ADAPTIVE_SCALE)
+            self.timing_mode
+            in (
+                TimingMode.FIXED_SCHEDULE,
+                TimingMode.ADAPTIVE_SCALE,
+                TimingMode.AGENTIC_LOAD,
+            )
             and self.input.dataset_sampling_strategy is not None
         ):
             raise ValueError(

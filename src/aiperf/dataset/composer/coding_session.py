@@ -309,6 +309,7 @@ class CodingSessionComposer(BaseDatasetComposer):
         subagent_spawn_counter = 0
         compressions_used = 0
         turn_count = 1
+        context_loss = False
 
         while cumulative_tokens < cfg.max_prompt_tokens:
             turn_count += 1
@@ -324,6 +325,7 @@ class CodingSessionComposer(BaseDatasetComposer):
                     self._hash_id_rng.randint(0, 2**31 - 1) for _ in range(len(l3_ids))
                 ]
                 thinking_ids = []
+                context_loss = True
 
             new_tokens = self._new_tokens_rng.sample_lognormal_integer(
                 cfg.new_tokens_mean, cfg.new_tokens_median
@@ -358,6 +360,7 @@ class CodingSessionComposer(BaseDatasetComposer):
                     cfg.max_prompt_tokens,
                 )
                 compressions_used += 1
+                context_loss = True
             else:
                 # Normal L3 growth
                 total_blocks = max(1, cumulative_tokens // block_size)
@@ -391,11 +394,18 @@ class CodingSessionComposer(BaseDatasetComposer):
                             for _ in range(len(l3_ids))
                         ]
                         thinking_ids = []
+                        context_loss = True
 
             hash_ids = l1_ids + l2_ids + l3_ids + thinking_ids
             layer_sizes = CacheLayerSizes(
                 l1=len(l1_ids), l2=len(l2_ids), l3=len(l3_ids)
             )
+
+            replaces_history = False
+            if context_loss:
+                delta = cumulative_tokens
+                replaces_history = True
+                context_loss = False
 
             prompt_text = self._content_generator.generate_language_prompt(
                 delta, content_type, session_language
@@ -407,6 +417,7 @@ class CodingSessionComposer(BaseDatasetComposer):
                 hash_ids=list(hash_ids),
                 cache_layer_sizes=layer_sizes,
                 delay=self._sample_delay(cfg),
+                replaces_history=replaces_history,
             )
             self._finalize_turn(turn)
             conversation.turns.append(turn)

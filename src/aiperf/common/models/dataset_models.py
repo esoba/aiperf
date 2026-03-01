@@ -215,6 +215,18 @@ class Turn(AIPerfBaseModel):
         description="Trace assistant response to use as context for subsequent turns. "
         "When set, worker uses this instead of server response for turn history.",
     )
+    replaces_history: bool = Field(
+        default=False,
+        description="When true, this turn replaces all prior conversation history. "
+        "Used after context-loss events (restart, compression, thinking strip) "
+        "so the worker clears its accumulated turn_list before appending this turn.",
+    )
+    raw_payload: dict[str, Any] | None = Field(
+        default=None,
+        description="Complete pre-built API request payload for verbatim replay. "
+        "When set, bypasses all endpoint payload construction (format_payload) "
+        "and sends this dict directly to the transport.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -272,6 +284,8 @@ class Turn(AIPerfBaseModel):
             raw_content=None,
             raw_message=self.raw_message,
             assistant_prefill=self.assistant_prefill,
+            replaces_history=self.replaces_history,
+            raw_payload=self.raw_payload,
         )
 
 

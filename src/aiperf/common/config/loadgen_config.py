@@ -321,13 +321,39 @@ class LoadGeneratorConfig(BaseConfig):
         int | None,
         Field(
             ge=1,
-            description="The number of initial users to use for --user-centric-rate mode.",
+            description="The number of initial users to use for --user-centric-rate or --agentic-load mode.",
         ),
         CLIParameter(
             name=("--num-users",),
             group=_CLI_GROUP,
         ),
     ] = None
+
+    agentic_user_spawn_rate: Annotated[
+        float,
+        Field(
+            gt=0,
+            description="Users to spawn per second during ramp-up in agentic load mode. "
+            "Controls how quickly users are introduced to the system.",
+        ),
+        CLIParameter(
+            name=("--agentic-user-spawn-rate",),
+            group=_CLI_GROUP,
+        ),
+    ] = 1.0
+
+    agentic_settling_time: Annotated[
+        float,
+        Field(
+            ge=0,
+            description="Wait time in seconds after all users are spawned before "
+            "the measurement window starts in agentic load mode.",
+        ),
+        CLIParameter(
+            name=("--agentic-settling-time",),
+            group=_CLI_GROUP,
+        ),
+    ] = 5.0
 
     concurrency_ramp_duration: Annotated[
         float | None,

@@ -54,7 +54,10 @@ class UserSession(AIPerfBaseModel):
                 f"Turn index {turn_index} is out of range for conversation with {self.num_turns} turns"
             )
 
-        self.turn_list.append(self.conversation.turns[turn_index])
+        turn = self.conversation.turns[turn_index]
+        if turn.replaces_history:
+            self.turn_list.clear()
+        self.turn_list.append(turn)
         self.turn_index = turn_index
         return self.turn_list[-1]
 
