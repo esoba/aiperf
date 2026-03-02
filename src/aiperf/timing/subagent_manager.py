@@ -7,7 +7,9 @@ spawn and join events. Everything else delegates to the inner strategy.
 
 Three paths in handle_credit_return:
   A) Child final turn with known parent -> join accounting, then delegate to inner
-  B) Next turn has subagent_spawn_ids -> fan out children, suspend/continue parent
+  B) Next turn has subagent_spawn_ids -> fan out children, then:
+     - Blocking spawns: suspend parent until all children complete
+     - Background spawns: fall through to inner strategy (parent continues with delay)
   C) Everything else -> delegate to inner strategy
 """
 
@@ -87,24 +89,31 @@ class SubagentSessionManager(AIPerfLoggerMixin):
             await self._inner.handle_credit_return(credit)
             return
 
-        # Path B: Next turn is blocked by subagent spawn(s)
+        # Path B: Next turn has subagent spawn(s) -> fan out children
         if not credit.is_final_turn:
             next_meta = self._conversation_source.get_next_turn_metadata(credit)
             if next_meta.subagent_spawn_ids:
-                self._dispatch_subagent_spawns(credit, next_meta.subagent_spawn_ids)
-                return
+                parent_suspended = self._dispatch_subagent_spawns(
+                    credit, next_meta.subagent_spawn_ids
+                )
+                if parent_suspended:
+                    return
 
-        # Path C: Normal turn -- delegate to inner
+        # Path C: Normal turn (or all-background spawn) -- delegate to inner
         await self._inner.handle_credit_return(credit)
 
-    def _dispatch_subagent_spawns(self, credit: Credit, spawn_ids: list[str]) -> None:
-        """Fan out subagent child sessions for all spawn_ids and register a pending join."""
+    def _dispatch_subagent_spawns(self, credit: Credit, spawn_ids: list[str]) -> bool:
+        """Fan out subagent child sessions and optionally suspend the parent.
+
+        Returns True if the parent is suspended (blocking children registered),
+        False if all children are background and the parent should continue
+        via the inner strategy's normal delay handling.
+        """
         parent_corr_id = credit.x_correlation_id
         child_depth = credit.agent_depth + 1
 
         total_blocking_children = 0
         any_blocking = False
-        all_background = True
         join_turn_index: int | None = None
 
         for spawn_id in spawn_ids:
@@ -123,8 +132,6 @@ class SubagentSessionManager(AIPerfLoggerMixin):
                 child_session = self._conversation_source.start_child_session(
                     child_conv_id
                 )
-                # Only track blocking children for join accounting.
-                # Background children complete via Path C (delegate to inner).
                 if is_blocking:
                     self._subagent_child_to_parent[child_session.x_correlation_id] = (
                         parent_corr_id
@@ -140,36 +147,23 @@ class SubagentSessionManager(AIPerfLoggerMixin):
 
             if is_blocking:
                 any_blocking = True
-                all_background = False
                 total_blocking_children += len(spawn.child_conversation_ids)
 
-        if join_turn_index is None:
-            turn = TurnToSend.from_previous_credit(credit)
-            self._scheduler.execute_async(
-                self._credit_issuer.issue_credit(turn),
-            )
-            return
+        if not any_blocking:
+            return False
 
-        if any_blocking:
-            self._pending_subagent_joins[parent_corr_id] = PendingSubagentJoin(
-                parent_conversation_id=credit.conversation_id,
-                parent_correlation_id=parent_corr_id,
-                expected_count=total_blocking_children,
-                join_turn_index=join_turn_index,
-                parent_num_turns=credit.num_turns,
-                parent_agent_depth=credit.agent_depth,
-            )
-        elif all_background:
-            join_turn = TurnToSend(
-                conversation_id=credit.conversation_id,
-                x_correlation_id=parent_corr_id,
-                turn_index=join_turn_index,
-                num_turns=credit.num_turns,
-                agent_depth=credit.agent_depth,
-            )
-            self._scheduler.execute_async(
-                self._credit_issuer.issue_credit(join_turn),
-            )
+        if join_turn_index is None:
+            return False
+
+        self._pending_subagent_joins[parent_corr_id] = PendingSubagentJoin(
+            parent_conversation_id=credit.conversation_id,
+            parent_correlation_id=parent_corr_id,
+            expected_count=total_blocking_children,
+            join_turn_index=join_turn_index,
+            parent_num_turns=credit.num_turns,
+            parent_agent_depth=credit.agent_depth,
+        )
+        return True
 
     def _handle_subagent_child_complete(self, credit: Credit) -> None:
         """Handle a subagent child's final turn. Dispatch parent join when all children complete."""

@@ -215,7 +215,8 @@ class ApiCaptureTraceLoader(BaseFileLoader):
         Threads are classified into three categories:
         - Independent: single-turn threads without system prompts (standalone requests)
         - Parent: the multi-turn thread with the most API calls among system-prompt threads
-        - Children: remaining system-prompt threads, linked to the parent via SubagentSpawnInfo
+        - Children: remaining system-prompt threads, spawned as background (non-blocking)
+          since captured subagents communicate via messaging, not context injection
         """
         traces = [t[0] for t in data.values()]
         if not traces:
@@ -236,29 +237,30 @@ class ApiCaptureTraceLoader(BaseFileLoader):
             conversations.append(self._build_conversation(trace, is_child=False))
 
         # Build parent/child hierarchy from conversational threads
+        child_conversations: list[Conversation] = []
         if conversational_traces:
             parent_trace = max(conversational_traces, key=lambda t: len(t.api_calls))
             child_traces = [t for t in conversational_traces if t.id != parent_trace.id]
 
             parent_conv = self._build_conversation(parent_trace, is_child=False)
 
-            child_conversations: list[Conversation] = []
             for spawn_counter, child_trace in enumerate(child_traces):
                 child_conv = self._build_conversation(child_trace, is_child=True)
 
-                join_turn_index = self._find_spawn_point(parent_trace, child_trace)
+                spawn_turn_index = self._find_spawn_point(parent_trace, child_trace)
                 spawn_id = f"s{spawn_counter}"
 
                 parent_conv.subagent_spawns.append(
                     SubagentSpawnInfo(
                         spawn_id=spawn_id,
                         child_conversation_ids=[child_conv.session_id],
-                        join_turn_index=join_turn_index,
+                        join_turn_index=spawn_turn_index,
+                        is_background=True,
                     )
                 )
 
-                if join_turn_index < len(parent_conv.turns):
-                    parent_conv.turns[join_turn_index].subagent_spawn_ids.append(
+                if spawn_turn_index < len(parent_conv.turns):
+                    parent_conv.turns[spawn_turn_index].subagent_spawn_ids.append(
                         spawn_id
                     )
 
