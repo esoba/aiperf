@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for AnthropicMessagesEndpoint."""
 
+import orjson
 import pytest
 
-from aiperf.common.enums import SSEFieldType
 from aiperf.common.models import Text, Turn
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
@@ -422,16 +422,12 @@ class TestAnthropicMessagesParseResponseNonStreaming:
         assert parsed is None
 
 
-def _make_sse_response(event_type: str, json_data: dict, perf_ns: int = 123456789):
-    """Helper to create an SSEMessage with event type and data."""
+def _make_sse_response(json_data: dict, perf_ns: int = 123456789):
+    """Helper to create an SSEMessage from a JSON payload."""
     return SSEMessage(
         perf_ns=perf_ns,
         packets=[
-            SSEField(name=SSEFieldType.EVENT, value=event_type),
-            SSEField(
-                name=SSEFieldType.DATA,
-                value=__import__("orjson").dumps(json_data).decode(),
-            ),
+            SSEField(name="data", value=orjson.dumps(json_data).decode()),
         ],
     )
 
@@ -448,7 +444,6 @@ class TestAnthropicMessagesParseResponseStreaming:
 
     def test_message_start_returns_usage(self, endpoint):
         response = _make_sse_response(
-            "message_start",
             {
                 "type": "message_start",
                 "message": {
@@ -458,7 +453,7 @@ class TestAnthropicMessagesParseResponseStreaming:
                     "content": [],
                     "usage": {"input_tokens": 25, "output_tokens": 0},
                 },
-            },
+            }
         )
 
         parsed = endpoint.parse_response(response)
@@ -470,12 +465,11 @@ class TestAnthropicMessagesParseResponseStreaming:
 
     def test_text_delta(self, endpoint):
         response = _make_sse_response(
-            "content_block_delta",
             {
                 "type": "content_block_delta",
                 "index": 0,
                 "delta": {"type": "text_delta", "text": "Hello"},
-            },
+            }
         )
 
         parsed = endpoint.parse_response(response)
@@ -486,12 +480,11 @@ class TestAnthropicMessagesParseResponseStreaming:
 
     def test_thinking_delta(self, endpoint):
         response = _make_sse_response(
-            "content_block_delta",
             {
                 "type": "content_block_delta",
                 "index": 0,
                 "delta": {"type": "thinking_delta", "thinking": "Analyzing..."},
-            },
+            }
         )
 
         parsed = endpoint.parse_response(response)
@@ -502,12 +495,27 @@ class TestAnthropicMessagesParseResponseStreaming:
 
     def test_signature_delta_returns_none(self, endpoint):
         response = _make_sse_response(
-            "content_block_delta",
             {
                 "type": "content_block_delta",
                 "index": 0,
                 "delta": {"type": "signature_delta", "signature": "abc123"},
-            },
+            }
+        )
+
+        parsed = endpoint.parse_response(response)
+
+        assert parsed is None
+
+    def test_input_json_delta_returns_none(self, endpoint):
+        response = _make_sse_response(
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": '{"location": "San Fra',
+                },
+            }
         )
 
         parsed = endpoint.parse_response(response)
@@ -516,12 +524,11 @@ class TestAnthropicMessagesParseResponseStreaming:
 
     def test_message_delta_returns_usage(self, endpoint):
         response = _make_sse_response(
-            "message_delta",
             {
                 "type": "message_delta",
                 "delta": {"stop_reason": "end_turn", "stop_sequence": None},
                 "usage": {"output_tokens": 42},
-            },
+            }
         )
 
         parsed = endpoint.parse_response(response)
@@ -536,7 +543,22 @@ class TestAnthropicMessagesParseResponseStreaming:
         ["ping", "content_block_start", "content_block_stop", "message_stop"],
     )
     def test_non_content_events_return_none(self, endpoint, event_type):
-        response = _make_sse_response(event_type, {"type": event_type})
+        response = _make_sse_response({"type": event_type})
+
+        parsed = endpoint.parse_response(response)
+
+        assert parsed is None
+
+    def test_error_event_returns_none(self, endpoint):
+        response = _make_sse_response(
+            {
+                "type": "error",
+                "error": {
+                    "type": "overloaded_error",
+                    "message": "Overloaded",
+                },
+            }
+        )
 
         parsed = endpoint.parse_response(response)
 
@@ -545,59 +567,40 @@ class TestAnthropicMessagesParseResponseStreaming:
     def test_streaming_sequence(self, endpoint):
         """Test parsing a full streaming sequence returns correct data types."""
         events = [
-            (
-                "message_start",
-                {
-                    "type": "message_start",
-                    "message": {
-                        "usage": {"input_tokens": 10, "output_tokens": 0},
-                    },
+            {
+                "type": "message_start",
+                "message": {
+                    "usage": {"input_tokens": 10, "output_tokens": 0},
                 },
-            ),
-            ("ping", {"type": "ping"}),
-            (
-                "content_block_start",
-                {
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": {"type": "text", "text": ""},
-                },
-            ),
-            (
-                "content_block_delta",
-                {
-                    "type": "content_block_delta",
-                    "index": 0,
-                    "delta": {"type": "text_delta", "text": "Hello"},
-                },
-            ),
-            (
-                "content_block_delta",
-                {
-                    "type": "content_block_delta",
-                    "index": 0,
-                    "delta": {"type": "text_delta", "text": " world"},
-                },
-            ),
-            (
-                "content_block_stop",
-                {"type": "content_block_stop", "index": 0},
-            ),
-            (
-                "message_delta",
-                {
-                    "type": "message_delta",
-                    "delta": {"stop_reason": "end_turn"},
-                    "usage": {"output_tokens": 5},
-                },
-            ),
-            ("message_stop", {"type": "message_stop"}),
+            },
+            {"type": "ping"},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "Hello"},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": " world"},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 5},
+            },
+            {"type": "message_stop"},
         ]
 
         results = []
-        for event_type, data in events:
-            response = _make_sse_response(event_type, data, perf_ns=123456789)
-            parsed = endpoint.parse_response(response)
+        for data in events:
+            parsed = endpoint.parse_response(_make_sse_response(data))
             if parsed:
                 results.append(parsed)
 

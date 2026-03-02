@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.enums import SSEFieldType
+from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.models import (
     BaseResponseData,
     InferenceServerResponse,
@@ -20,6 +20,37 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 _DEFAULT_ROLE: str = "user"
 _ANTHROPIC_VERSION: str = "2023-06-01"
+
+
+class ContentBlockType(CaseInsensitiveStrEnum):
+    """Content block types in Anthropic Messages API responses."""
+
+    TEXT = "text"
+    THINKING = "thinking"
+    TOOL_USE = "tool_use"
+
+
+class DeltaType(CaseInsensitiveStrEnum):
+    """Delta types within content_block_delta SSE events."""
+
+    TEXT_DELTA = "text_delta"
+    THINKING_DELTA = "thinking_delta"
+    INPUT_JSON_DELTA = "input_json_delta"
+    SIGNATURE_DELTA = "signature_delta"
+
+
+class EventType(CaseInsensitiveStrEnum):
+    """Payload type values in Anthropic Messages API responses."""
+
+    MESSAGE = "message"
+    MESSAGE_START = "message_start"
+    CONTENT_BLOCK_START = "content_block_start"
+    CONTENT_BLOCK_DELTA = "content_block_delta"
+    CONTENT_BLOCK_STOP = "content_block_stop"
+    MESSAGE_DELTA = "message_delta"
+    MESSAGE_STOP = "message_stop"
+    PING = "ping"
+    ERROR = "error"
 
 
 class AnthropicMessagesEndpoint(BaseEndpoint):
@@ -116,13 +147,29 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
         Returns a plain string for simple single-text turns,
         or a list of content blocks for complex turns.
         """
-        if (
+        has_images = len(turn.images) > 0
+        has_audios = len(turn.audios) > 0
+        has_videos = len(turn.videos) > 0
+
+        if has_audios:
+            self.warning(
+                lambda: "Anthropic Messages API does not support audio content blocks; "
+                "audio inputs will be dropped"
+            )
+        if has_videos:
+            self.warning(
+                lambda: "Anthropic Messages API does not support video content blocks; "
+                "video inputs will be dropped"
+            )
+
+        is_simple = (
             len(turn.texts) == 1
             and len(turn.texts[0].contents) == 1
-            and len(turn.images) == 0
-            and len(turn.audios) == 0
-            and len(turn.videos) == 0
-        ):
+            and not has_images
+            and not has_audios
+            and not has_videos
+        )
+        if is_simple:
             return turn.texts[0].contents[0] if turn.texts[0].contents else ""
 
         content_blocks: list[dict[str, Any]] = []
@@ -130,7 +177,7 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
             for item in text.contents:
                 if not item:
                     continue
-                content_blocks.append({"type": "text", "text": item})
+                content_blocks.append({"type": ContentBlockType.TEXT, "text": item})
 
         for image in turn.images:
             for item in image.contents:
@@ -151,6 +198,8 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
         """Parse Anthropic Messages response.
 
         Handles both streaming SSE events and non-streaming JSON responses.
+        Uses the ``type`` field present in all Anthropic payloads to dispatch:
+        ``"message"`` for non-streaming, streaming event types otherwise.
 
         Args:
             response: Raw response from inference server
@@ -158,31 +207,23 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
         Returns:
             Parsed response with extracted text/reasoning content and usage data
         """
-        event_type = self._extract_event_type(response)
-        if event_type is not None:
-            return self._parse_streaming_event(response, event_type)
-        return self._parse_non_streaming(response)
-
-    def _extract_event_type(self, response: InferenceServerResponse) -> str | None:
-        """Extract SSE event type from response packets if present."""
-        raw = response.get_raw()
-        if not isinstance(raw, list):
-            return None
-        for packet in raw:
-            if hasattr(packet, "name") and packet.name == SSEFieldType.EVENT:
-                return packet.value
-        return None
-
-    def _parse_non_streaming(
-        self, response: InferenceServerResponse
-    ) -> ParsedResponse | None:
-        """Parse non-streaming Anthropic Messages response."""
         json_obj = response.get_json()
         if not json_obj:
             return None
 
+        event_type = json_obj.get("type")
+        if event_type == EventType.MESSAGE:
+            return self._parse_non_streaming(response, json_obj)
+        if event_type is not None:
+            return self._parse_streaming_event(response, json_obj, event_type)
+        return None
+
+    def _parse_non_streaming(
+        self, response: InferenceServerResponse, json_obj: JsonObject
+    ) -> ParsedResponse | None:
+        """Parse non-streaming Anthropic Messages response."""
         data = self._extract_content_data(json_obj)
-        usage = self._map_usage(json_obj.get("usage"))
+        usage = json_obj.get("usage")
 
         if data or usage:
             return ParsedResponse(perf_ns=response.perf_ns, data=data, usage=usage)
@@ -201,11 +242,11 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
             if not isinstance(block, dict):
                 continue
             block_type = block.get("type")
-            if block_type == "text":
+            if block_type == ContentBlockType.TEXT:
                 text_val = block.get("text")
                 if text_val:
                     text_parts.append(text_val)
-            elif block_type == "thinking":
+            elif block_type == ContentBlockType.THINKING:
                 thinking_val = block.get("thinking")
                 if thinking_val:
                     thinking_parts.append(thinking_val)
@@ -218,28 +259,25 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
         return self.make_text_response_data(text)
 
     def _parse_streaming_event(
-        self, response: InferenceServerResponse, event_type: str
+        self,
+        response: InferenceServerResponse,
+        json_obj: JsonObject,
+        event_type: str,
     ) -> ParsedResponse | None:
         """Parse a streaming SSE event from the Anthropic Messages API."""
-        json_obj = response.get_json()
-
         match event_type:
-            case "message_start":
-                if not json_obj:
-                    return None
+            case EventType.MESSAGE_START:
                 message = json_obj.get("message", {})
-                usage = self._map_usage(message.get("usage"))
+                usage = message.get("usage")
                 if usage:
                     return ParsedResponse(perf_ns=response.perf_ns, usage=usage)
                 return None
 
-            case "content_block_delta":
-                if not json_obj:
-                    return None
+            case EventType.CONTENT_BLOCK_DELTA:
                 delta = json_obj.get("delta", {})
                 delta_type = delta.get("type")
 
-                if delta_type == "text_delta":
+                if delta_type == DeltaType.TEXT_DELTA:
                     text = delta.get("text")
                     if text:
                         return ParsedResponse(
@@ -247,7 +285,7 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
                             data=TextResponseData(text=text),
                         )
 
-                elif delta_type == "thinking_delta":
+                elif delta_type == DeltaType.THINKING_DELTA:
                     thinking = delta.get("thinking")
                     if thinking:
                         return ParsedResponse(
@@ -255,33 +293,37 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
                             data=ReasoningResponseData(reasoning=thinking),
                         )
 
-                elif delta_type == "signature_delta":
+                elif delta_type in (
+                    DeltaType.INPUT_JSON_DELTA,
+                    DeltaType.SIGNATURE_DELTA,
+                ):
                     return None
 
                 return None
 
-            case "message_delta":
-                if not json_obj:
-                    return None
-                usage = self._map_usage(json_obj.get("usage"))
+            case EventType.MESSAGE_DELTA:
+                usage = json_obj.get("usage")
                 if usage:
                     return ParsedResponse(perf_ns=response.perf_ns, usage=usage)
                 return None
 
-            case "ping" | "content_block_start" | "content_block_stop" | "message_stop":
+            case (
+                EventType.PING
+                | EventType.CONTENT_BLOCK_START
+                | EventType.CONTENT_BLOCK_STOP
+                | EventType.MESSAGE_STOP
+            ):
+                return None
+
+            case EventType.ERROR:
+                error_detail = json_obj.get("error", {})
+                self.warning(
+                    lambda: f"Anthropic streaming error: "
+                    f"type={error_detail.get('type')}, "
+                    f"message={error_detail.get('message')}"
+                )
                 return None
 
             case _:
                 self.debug(lambda: f"Unknown Anthropic SSE event type: {event_type!r}")
                 return None
-
-    @staticmethod
-    def _map_usage(usage: dict[str, Any] | None) -> dict[str, Any] | None:
-        """Map Anthropic usage fields to normalized format.
-
-        Anthropic uses input_tokens/output_tokens; we pass through as-is
-        since Usage model handles both naming conventions via properties.
-        """
-        if not usage:
-            return None
-        return usage
