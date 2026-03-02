@@ -221,7 +221,7 @@ class AnthropicMessagesRequest(BaseCompletionRequest):
 
     messages: list[AnthropicMessage]
     max_tokens: int | None = 1024
-    system: str | None = None
+    system: str | list[dict[str, Any]] | None = None
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None

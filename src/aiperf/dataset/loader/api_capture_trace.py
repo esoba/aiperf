@@ -24,33 +24,48 @@ from aiperf.dataset.loader.models import ApiCaptureApiCall, ApiCaptureTrace
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
+def _is_billing_header(block: dict) -> bool:
+    """Return True if a system block is a volatile billing/telemetry header."""
+    return isinstance(block, dict) and block.get("text", "").startswith(
+        "x-anthropic-billing-header"
+    )
+
+
 def _extract_system_text(system_blocks: list[dict]) -> str | None:
     """Join text from system blocks into a single string."""
     texts = [
         b.get("text", "")
         for b in system_blocks
-        if isinstance(b, dict) and b.get("type") == "text"
+        if isinstance(b, dict) and b.get("type") == "text" and not _is_billing_header(b)
     ]
     joined = "\n".join(t for t in texts if t)
     return joined or None
 
 
-def _thread_key(system_blocks: list[dict]) -> str:
-    """Compute a grouping key from system block content."""
+def _thread_key(system_blocks: list[dict], call_index: int) -> str:
+    """Compute a grouping key from system block content.
+
+    Requests without system blocks are independent (one thread per request).
+    Billing header blocks are excluded from hashing since they contain volatile
+    per-request hashes that would split a single conversation into multiple threads.
+    """
+    stable_blocks = [b for b in system_blocks if not _is_billing_header(b)]
+    if not stable_blocks:
+        return f"independent_{call_index:04d}"
     return hashlib.md5(
-        orjson.dumps(system_blocks, option=orjson.OPT_SORT_KEYS)
+        orjson.dumps(stable_blocks, option=orjson.OPT_SORT_KEYS)
     ).hexdigest()[:12]
 
 
 def _is_prefetch(req: dict) -> bool:
-    """Return True if a request is a prefetch (not a real API call)."""
-    if req.get("stream") is None:
-        return True
-    if req.get("max_tokens") is None:
-        return True
-    if req.get("max_tokens", 0) <= 1:
-        return True
-    return not req.get("system")
+    """Return True if a request is a prefetch (not a real API call).
+
+    Only filters out ping/health-check requests (max_tokens <= 1 with a single
+    tiny message). Cache-warming prefetches (stream=None, max_tokens=None) are
+    kept so they can be replayed verbatim.
+    """
+    max_tokens = req.get("max_tokens")
+    return bool(max_tokens is not None and max_tokens <= 1)
 
 
 class ApiCaptureTraceLoader(BaseFileLoader):
@@ -163,7 +178,7 @@ class ApiCaptureTraceLoader(BaseFileLoader):
                 stop_reason=resp.get("stop_reason"),
             )
 
-            key = _thread_key(req_body.get("system", []))
+            key = _thread_key(req_body.get("system", []), ci)
             api_calls_by_thread.setdefault(key, []).append(api_call)
             if key not in system_blocks_by_thread:
                 system_blocks_by_thread[key] = req_body.get("system", [])
@@ -197,49 +212,60 @@ class ApiCaptureTraceLoader(BaseFileLoader):
     ) -> list[Conversation]:
         """Convert API capture traces to AIPerf conversation objects.
 
-        - Identifies parent (most API calls) vs subagent children
-        - Extracts system_message and tools from the first call in each thread
-        - Builds turns with raw_messages and raw_payload
-        - Links children to parent via SubagentSpawnInfo
+        Threads are classified into three categories:
+        - Independent: single-turn threads without system prompts (standalone requests)
+        - Parent: the multi-turn thread with the most API calls among system-prompt threads
+        - Children: remaining system-prompt threads, linked to the parent via SubagentSpawnInfo
         """
         traces = [t[0] for t in data.values()]
         if not traces:
             return []
 
-        # Identify parent thread (most API calls)
-        parent_trace = max(traces, key=lambda t: len(t.api_calls))
-        child_traces = [t for t in traces if t.id != parent_trace.id]
+        # Separate independent (no system prompt) from conversational threads
+        independent_traces = [
+            t for t in traces if t.thread_key.startswith("independent_")
+        ]
+        conversational_traces = [
+            t for t in traces if not t.thread_key.startswith("independent_")
+        ]
 
         conversations: list[Conversation] = []
 
-        # Build parent conversation
-        parent_conv = self._build_conversation(parent_trace, is_child=False)
+        # Build independent conversations (standalone single-turn requests)
+        for trace in independent_traces:
+            conversations.append(self._build_conversation(trace, is_child=False))
 
-        # Build child conversations and link to parent
-        child_conversations: list[Conversation] = []
-        for spawn_counter, child_trace in enumerate(child_traces):
-            child_conv = self._build_conversation(child_trace, is_child=True)
+        # Build parent/child hierarchy from conversational threads
+        if conversational_traces:
+            parent_trace = max(conversational_traces, key=lambda t: len(t.api_calls))
+            child_traces = [t for t in conversational_traces if t.id != parent_trace.id]
 
-            # Find parent turn closest to child's first request
-            join_turn_index = self._find_spawn_point(parent_trace, child_trace)
-            spawn_id = f"s{spawn_counter}"
+            parent_conv = self._build_conversation(parent_trace, is_child=False)
 
-            parent_conv.subagent_spawns.append(
-                SubagentSpawnInfo(
-                    spawn_id=spawn_id,
-                    child_conversation_ids=[child_conv.session_id],
-                    join_turn_index=join_turn_index,
+            child_conversations: list[Conversation] = []
+            for spawn_counter, child_trace in enumerate(child_traces):
+                child_conv = self._build_conversation(child_trace, is_child=True)
+
+                join_turn_index = self._find_spawn_point(parent_trace, child_trace)
+                spawn_id = f"s{spawn_counter}"
+
+                parent_conv.subagent_spawns.append(
+                    SubagentSpawnInfo(
+                        spawn_id=spawn_id,
+                        child_conversation_ids=[child_conv.session_id],
+                        join_turn_index=join_turn_index,
+                    )
                 )
-            )
 
-            # Mark the join turn with spawn_id
-            if join_turn_index < len(parent_conv.turns):
-                parent_conv.turns[join_turn_index].subagent_spawn_ids.append(spawn_id)
+                if join_turn_index < len(parent_conv.turns):
+                    parent_conv.turns[join_turn_index].subagent_spawn_ids.append(
+                        spawn_id
+                    )
 
-            child_conversations.append(child_conv)
+                child_conversations.append(child_conv)
 
-        conversations.append(parent_conv)
-        conversations.extend(child_conversations)
+            conversations.append(parent_conv)
+            conversations.extend(child_conversations)
 
         total_turns = sum(len(c.turns) for c in conversations)
         self.info(
@@ -282,9 +308,11 @@ class ApiCaptureTraceLoader(BaseFileLoader):
             raw_payload: dict[str, Any] = {
                 "model": api_call.model,
                 "messages": api_call.messages,
-                "max_tokens": api_call.max_tokens,
-                "stream": api_call.stream,
             }
+            if api_call.max_tokens is not None:
+                raw_payload["max_tokens"] = api_call.max_tokens
+            if api_call.stream is not None:
+                raw_payload["stream"] = api_call.stream
             if api_call.system:
                 raw_payload["system"] = api_call.system
             if api_call.tools:
