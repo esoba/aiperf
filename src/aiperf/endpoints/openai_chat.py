@@ -116,8 +116,8 @@ class ChatEndpoint(BaseEndpoint):
             )
 
         for turn in turns:
-            if turn.raw_message is not None:
-                messages.append(turn.raw_message)
+            if turn.raw_messages is not None:
+                messages.extend(turn.raw_messages)
                 continue
             message = {
                 "role": turn.role or _DEFAULT_ROLE,
@@ -128,10 +128,6 @@ class ChatEndpoint(BaseEndpoint):
 
     def _set_message_content(self, message: dict[str, Any], turn: Turn) -> None:
         """Create message content from turn for OpenAI Chat Completions."""
-        if turn.raw_content is not None:
-            message["content"] = turn.raw_content
-            return
-
         if (
             len(turn.texts) == 1
             and len(turn.texts[0].contents) == 1

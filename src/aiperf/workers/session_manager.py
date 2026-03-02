@@ -57,13 +57,9 @@ class UserSession(AIPerfBaseModel):
         turn = self.conversation.turns[turn_index]
         if turn.replaces_history:
             self.turn_list = []
-        if turn.raw_messages is not None:
-            for msg in turn.raw_messages:
-                self.turn_list.append(Turn(raw_message=msg, role=msg.get("role")))
-        else:
-            self.turn_list.append(turn)
+        self.turn_list.append(turn)
         self.turn_index = turn_index
-        return self.turn_list[-1]
+        return turn
 
     def store_response(self, response_turn: Turn) -> None:
         """

@@ -236,8 +236,8 @@ class TestUserSessionManager:
             conversation_id="test-discard",
             discard_responses=True,
             turns=[
-                Turn(raw_content="user turn 0"),
-                Turn(raw_content="user turn 1"),
+                Turn(raw_messages=[{"role": "user", "content": "user turn 0"}]),
+                Turn(raw_messages=[{"role": "user", "content": "user turn 1"}]),
             ],
         )
         session = session_manager.create_and_store(
@@ -252,7 +252,12 @@ class TestUserSessionManager:
 
         # Final turn: worker stores the response
         session.advance_turn(1)
-        session.store_response(Turn(role="assistant", raw_content="server reply"))
+        session.store_response(
+            Turn(
+                role="assistant",
+                raw_messages=[{"role": "assistant", "content": "server reply"}],
+            )
+        )
         assert len(session.turn_list) == 3  # turn0 + turn1 + response
 
     def test_discard_responses_with_replaces_history(self, session_manager):
@@ -261,9 +266,12 @@ class TestUserSessionManager:
             conversation_id="test-both",
             discard_responses=True,
             turns=[
-                Turn(raw_content="q1"),
-                Turn(raw_content="q2", replaces_history=True),
-                Turn(raw_content="q3"),
+                Turn(raw_messages=[{"role": "user", "content": "q1"}]),
+                Turn(
+                    raw_messages=[{"role": "user", "content": "q2"}],
+                    replaces_history=True,
+                ),
+                Turn(raw_messages=[{"role": "user", "content": "q3"}]),
             ],
         )
         session = session_manager.create_and_store(
@@ -281,7 +289,12 @@ class TestUserSessionManager:
 
         # Turn 2 (final): appends normally, response stored
         session.advance_turn(2)
-        session.store_response(Turn(role="assistant", raw_content="final reply"))
+        session.store_response(
+            Turn(
+                role="assistant",
+                raw_messages=[{"role": "assistant", "content": "final reply"}],
+            )
+        )
         assert len(session.turn_list) == 3  # turn1 + turn2 + response
 
     def test_discard_responses_default_false(self, session_manager):
@@ -295,8 +308,8 @@ class TestUserSessionManager:
             conversation_id="test-no-discard",
             discard_responses=False,
             turns=[
-                Turn(raw_content="q1"),
-                Turn(raw_content="q2"),
+                Turn(raw_messages=[{"role": "user", "content": "q1"}]),
+                Turn(raw_messages=[{"role": "user", "content": "q2"}]),
             ],
         )
         session = session_manager.create_and_store(
@@ -306,9 +319,17 @@ class TestUserSessionManager:
         )
 
         session.advance_turn(0)
-        session.store_response(Turn(role="assistant", raw_content="a1"))
+        session.store_response(
+            Turn(
+                role="assistant", raw_messages=[{"role": "assistant", "content": "a1"}]
+            )
+        )
         session.advance_turn(1)
-        session.store_response(Turn(role="assistant", raw_content="a2"))
+        session.store_response(
+            Turn(
+                role="assistant", raw_messages=[{"role": "assistant", "content": "a2"}]
+            )
+        )
         assert len(session.turn_list) == 4  # 2 user + 2 assistant
 
     def test_store_response_after_replaces_history_appends(self, session_manager):
@@ -336,3 +357,120 @@ class TestUserSessionManager:
 
         session.store_response(Turn(messages=[{"role": "assistant", "content": "a2"}]))
         assert len(session.turn_list) == 2
+
+
+class TestAdvanceTurnRawMessages:
+    """Tests for advance_turn behavior with raw_messages turns."""
+
+    def test_advance_turn_multi_message_raw_messages_stays_single_turn(
+        self, session_manager
+    ):
+        """A turn with multiple raw_messages is appended as ONE turn, not expanded."""
+        conversation = Conversation(
+            conversation_id="test-no-expand",
+            turns=[
+                Turn(
+                    raw_messages=[
+                        {"role": "user", "content": "hello"},
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "hi"}],
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "tu-1",
+                                    "content": "OK",
+                                }
+                            ],
+                        },
+                    ],
+                ),
+            ],
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="no-expand",
+            conversation=conversation,
+            num_turns=1,
+        )
+
+        session.advance_turn(0)
+
+        assert len(session.turn_list) == 1
+        assert len(session.turn_list[0].raw_messages) == 3
+
+    def test_advance_turn_returns_turn_with_raw_messages(self, session_manager):
+        """advance_turn returns the Turn from conversation.turns with raw_messages intact."""
+        raw_msgs = [{"role": "user", "content": "verbatim"}]
+        conversation = Conversation(
+            conversation_id="test-identity",
+            turns=[Turn(raw_messages=raw_msgs)],
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="identity-test",
+            conversation=conversation,
+            num_turns=1,
+        )
+
+        turn = session.advance_turn(0)
+
+        assert turn.raw_messages == raw_msgs
+
+    def test_advance_turn_raw_messages_with_replaces_history(self, session_manager):
+        """replaces_history clears turn_list before appending raw_messages turn."""
+        conversation = Conversation(
+            conversation_id="test-replace-raw",
+            turns=[
+                Turn(raw_messages=[{"role": "user", "content": "q1"}]),
+                Turn(
+                    raw_messages=[
+                        {"role": "user", "content": "full context"},
+                        {"role": "assistant", "content": "prev response"},
+                        {"role": "user", "content": "new question"},
+                    ],
+                    replaces_history=True,
+                ),
+            ],
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="replace-raw",
+            conversation=conversation,
+            num_turns=2,
+        )
+
+        session.advance_turn(0)
+        assert len(session.turn_list) == 1
+
+        session.advance_turn(1)
+        # Cleared, then appended the single turn (with 3 raw_messages inside it)
+        assert len(session.turn_list) == 1
+        assert len(session.turn_list[0].raw_messages) == 3
+
+    def test_advance_turn_interleaved_raw_and_normal_turns(self, session_manager):
+        """Mixing raw_messages turns with normal turns appends one entry each."""
+        conversation = Conversation(
+            conversation_id="test-interleave",
+            turns=[
+                Turn(raw_messages=[{"role": "user", "content": "raw turn 0"}]),
+                Turn(messages=[{"role": "assistant", "content": "normal response"}]),
+                Turn(
+                    raw_messages=[
+                        {"role": "user", "content": "msg1"},
+                        {"role": "user", "content": "msg2"},
+                    ],
+                ),
+            ],
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="interleave",
+            conversation=conversation,
+            num_turns=3,
+        )
+
+        session.advance_turn(0)
+        session.advance_turn(1)
+        session.advance_turn(2)
+
+        assert len(session.turn_list) == 3

@@ -172,10 +172,10 @@ class TestAnthropicMessagesFormatPayload:
         assert payload["messages"][0]["content"] == "Context info"
         assert payload["messages"][0]["role"] == "user"
 
-    def test_raw_content_string(self, endpoint, model_endpoint):
-        """raw_content string is used directly as message content."""
+    def test_raw_messages_string_content(self, endpoint, model_endpoint):
+        """raw_messages with string content is expanded into messages list."""
         turn = Turn(
-            raw_content="verbatim user text",
+            raw_messages=[{"role": "user", "content": "verbatim user text"}],
             model="claude-sonnet-4-20250514",
         )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
@@ -184,13 +184,16 @@ class TestAnthropicMessagesFormatPayload:
 
         assert payload["messages"][0]["content"] == "verbatim user text"
 
-    def test_raw_content_blocks(self, endpoint, model_endpoint):
-        """raw_content list of content blocks is used directly."""
+    def test_raw_messages_content_blocks(self, endpoint, model_endpoint):
+        """raw_messages with content blocks are expanded directly."""
         blocks = [
             {"type": "tool_result", "tool_use_id": "tu-1", "content": "file data"},
             {"type": "text", "text": "Here is the file"},
         ]
-        turn = Turn(raw_content=blocks, model="claude-sonnet-4-20250514")
+        turn = Turn(
+            raw_messages=[{"role": "user", "content": blocks}],
+            model="claude-sonnet-4-20250514",
+        )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
@@ -198,28 +201,22 @@ class TestAnthropicMessagesFormatPayload:
         assert payload["messages"][0]["content"] == blocks
         assert payload["messages"][0]["content"][0]["type"] == "tool_result"
 
-    def test_raw_content_with_assistant_turn(self, endpoint, model_endpoint):
-        """Multi-turn with raw_content on both user and assistant turns."""
-        turns = [
-            Turn(
-                role="user",
-                raw_content="Hello",
-                model="claude-sonnet-4-20250514",
-            ),
-            Turn(
-                role="assistant",
-                raw_content=[{"type": "text", "text": "Hi!"}],
-                model="claude-sonnet-4-20250514",
-            ),
-            Turn(
-                role="user",
-                raw_content=[
-                    {"type": "tool_result", "tool_use_id": "tu-1", "content": "OK"}
-                ],
-                model="claude-sonnet-4-20250514",
-            ),
-        ]
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+    def test_raw_messages_multi_message_turn(self, endpoint, model_endpoint):
+        """Multi-message raw_messages on a single turn expand into multiple messages."""
+        turn = Turn(
+            raw_messages=[
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": [{"type": "text", "text": "Hi!"}]},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tu-1", "content": "OK"}
+                    ],
+                },
+            ],
+            model="claude-sonnet-4-20250514",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
@@ -229,10 +226,10 @@ class TestAnthropicMessagesFormatPayload:
         assert payload["messages"][1]["content"] == [{"type": "text", "text": "Hi!"}]
         assert payload["messages"][2]["content"][0]["type"] == "tool_result"
 
-    def test_raw_content_takes_precedence_over_texts(self, endpoint, model_endpoint):
-        """When raw_content is set, texts are ignored."""
+    def test_raw_messages_takes_precedence_over_texts(self, endpoint, model_endpoint):
+        """When raw_messages is set, texts are ignored."""
         turn = Turn(
-            raw_content="raw wins",
+            raw_messages=[{"role": "user", "content": "raw wins"}],
             texts=[Text(contents=["should be ignored"])],
             model="claude-sonnet-4-20250514",
         )
@@ -614,8 +611,8 @@ class TestAnthropicMessagesParseResponseStreaming:
         assert results[3].usage is not None  # message_delta
 
 
-class TestAnthropicMessagesRawMessage:
-    """Tests for raw_message verbatim replay in AnthropicMessagesEndpoint."""
+class TestAnthropicMessagesRawMessages:
+    """Tests for raw_messages verbatim replay in AnthropicMessagesEndpoint."""
 
     @pytest.fixture
     def model_endpoint(self):
@@ -627,8 +624,8 @@ class TestAnthropicMessagesRawMessage:
             AnthropicMessagesEndpoint, model_endpoint
         )
 
-    def test_raw_message_replaces_entire_message(self, endpoint, model_endpoint):
-        """Turn with raw_message produces that exact dict in the messages list."""
+    def test_raw_messages_replaces_entire_message(self, endpoint, model_endpoint):
+        """Turn with raw_messages produces those exact dicts in the messages list."""
         raw = {
             "role": "assistant",
             "content": [
@@ -641,31 +638,15 @@ class TestAnthropicMessagesRawMessage:
                 },
             ],
         }
-        turn = Turn(raw_message=raw, model="claude-sonnet-4-20250514")
+        turn = Turn(raw_messages=[raw], model="claude-sonnet-4-20250514")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
         assert payload["messages"] == [raw]
 
-    def test_raw_message_takes_precedence_over_raw_content(
-        self, endpoint, model_endpoint
-    ):
-        """raw_message beats raw_content when both are set."""
-        raw = {"role": "user", "content": "from raw_message"}
-        turn = Turn(
-            raw_message=raw,
-            raw_content="should be ignored",
-            model="claude-sonnet-4-20250514",
-        )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
-
-        payload = endpoint.format_payload(request_info)
-
-        assert payload["messages"] == [raw]
-
-    def test_raw_message_mixed_with_normal_turns(self, endpoint, model_endpoint):
-        """raw_message turns can be mixed with normal turns."""
+    def test_raw_messages_mixed_with_normal_turns(self, endpoint, model_endpoint):
+        """raw_messages turns can be mixed with normal turns."""
         raw = {
             "role": "assistant",
             "content": [{"type": "text", "text": "I'll help."}],
@@ -676,7 +657,7 @@ class TestAnthropicMessagesRawMessage:
                 role="user",
                 model="claude-sonnet-4-20250514",
             ),
-            Turn(raw_message=raw, model="claude-sonnet-4-20250514"),
+            Turn(raw_messages=[raw], model="claude-sonnet-4-20250514"),
             Turn(
                 texts=[Text(contents=["Thanks"])],
                 role="user",
@@ -724,3 +705,111 @@ class TestAnthropicMessagesRawMessage:
         payload = endpoint.format_payload(request_info)
 
         assert "tools" not in payload
+
+    def test_raw_messages_empty_list_adds_nothing(self, endpoint, model_endpoint):
+        """Turn with raw_messages=[] contributes zero messages."""
+        turns = [
+            Turn(
+                texts=[Text(contents=["Before"])],
+                role="user",
+                model="claude-sonnet-4-20250514",
+            ),
+            Turn(raw_messages=[], model="claude-sonnet-4-20250514"),
+            Turn(
+                texts=[Text(contents=["After"])],
+                role="user",
+                model="claude-sonnet-4-20250514",
+            ),
+        ]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 2
+        assert payload["messages"][0]["content"] == "Before"
+        assert payload["messages"][1]["content"] == "After"
+
+    def test_raw_messages_with_system_and_user_context(self, endpoint, model_endpoint):
+        """raw_messages are appended after user_context; system goes to top-level."""
+        turn = Turn(
+            raw_messages=[
+                {"role": "user", "content": "verbatim user"},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "verbatim reply"}],
+                },
+            ],
+            model="claude-sonnet-4-20250514",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            system_message="System prompt",
+            user_context_message="User context",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        # System goes to top-level, not in messages
+        assert payload["system"] == "System prompt"
+        # user_context prepended, then raw_messages extended
+        assert len(payload["messages"]) == 3
+        assert payload["messages"][0] == {"role": "user", "content": "User context"}
+        assert payload["messages"][1] == {
+            "role": "user",
+            "content": "verbatim user",
+        }
+        assert payload["messages"][2] == {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "verbatim reply"}],
+        }
+
+    def test_raw_messages_all_turns_raw_multi_turn(self, endpoint, model_endpoint):
+        """Full conversation where every turn uses raw_messages."""
+        turns = [
+            Turn(
+                raw_messages=[{"role": "user", "content": "First question"}],
+                model="claude-sonnet-4-20250514",
+            ),
+            Turn(
+                raw_messages=[
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "Answer"},
+                            {
+                                "type": "tool_use",
+                                "id": "tu-1",
+                                "name": "read",
+                                "input": {},
+                            },
+                        ],
+                    }
+                ],
+                model="claude-sonnet-4-20250514",
+            ),
+            Turn(
+                raw_messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tu-1",
+                                "content": "file data",
+                            }
+                        ],
+                    }
+                ],
+                model="claude-sonnet-4-20250514",
+            ),
+        ]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 3
+        assert payload["messages"][0]["role"] == "user"
+        assert payload["messages"][1]["role"] == "assistant"
+        assert payload["messages"][2]["role"] == "user"
+        assert payload["messages"][2]["content"][0]["type"] == "tool_result"

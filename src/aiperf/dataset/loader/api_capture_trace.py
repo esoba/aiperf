@@ -199,7 +199,7 @@ class ApiCaptureTraceLoader(BaseFileLoader):
 
         - Identifies parent (most API calls) vs subagent children
         - Extracts system_message and tools from the first call in each thread
-        - Builds turns with raw_content and raw_payload
+        - Builds turns with raw_messages and raw_payload
         - Links children to parent via SubagentSpawnInfo
         """
         traces = [t[0] for t in data.values()]
@@ -273,8 +273,10 @@ class ApiCaptureTraceLoader(BaseFileLoader):
             if api_call.timestamp_ms is not None:
                 prev_timestamp_ms = api_call.timestamp_ms
 
-            # Extract user content: last user-role message
-            raw_content = self._extract_user_content(api_call.messages)
+            user_content = self._extract_user_content(api_call.messages)
+            raw_messages: list[dict[str, Any]] | None = None
+            if user_content is not None:
+                raw_messages = [{"role": "user", "content": user_content}]
 
             # Build raw_payload (complete API request for verbatim replay)
             raw_payload: dict[str, Any] = {
@@ -296,7 +298,7 @@ class ApiCaptureTraceLoader(BaseFileLoader):
                 delay=delay_ms,
                 max_tokens=api_call.max_tokens or 4096,
                 input_tokens=api_call.input_tokens,
-                raw_content=raw_content,
+                raw_messages=raw_messages,
                 raw_payload=raw_payload,
             )
             conversation.turns.append(turn)

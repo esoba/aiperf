@@ -536,8 +536,8 @@ class TestAdvanceTurnRawMessages:
             turn_list=[],
         )
 
-    def test_expand_raw_messages_into_individual_turns(self):
-        """raw_messages should be expanded into Turn(raw_message=msg) entries."""
+    def test_raw_messages_appended_as_single_turn(self):
+        """raw_messages stay as a single turn, not expanded into individual turns."""
         conversation = Conversation(
             session_id="test",
             turns=[
@@ -551,16 +551,15 @@ class TestAdvanceTurnRawMessages:
         session = self._make_session(conversation)
         session.advance_turn(0)
 
-        assert len(session.turn_list) == 3
-        assert session.turn_list[0].raw_message == USER_MSG
-        assert session.turn_list[0].role == "user"
-        assert session.turn_list[1].raw_message == ASSISTANT_MSG
-        assert session.turn_list[1].role == "assistant"
-        assert session.turn_list[2].raw_message == TOOL_RESULT_MSG
-        assert session.turn_list[2].role == "tool"
+        assert len(session.turn_list) == 1
+        assert session.turn_list[0].raw_messages == [
+            USER_MSG,
+            ASSISTANT_MSG,
+            TOOL_RESULT_MSG,
+        ]
 
-    def test_replaces_history_clears_prior_then_expands(self):
-        """replaces_history=True clears turn_list before expanding raw_messages."""
+    def test_replaces_history_clears_prior(self):
+        """replaces_history=True clears turn_list before appending."""
         conversation = Conversation(
             session_id="test",
             turns=[
@@ -577,15 +576,18 @@ class TestAdvanceTurnRawMessages:
         session.advance_turn(0)
         assert len(session.turn_list) == 1
 
-        # Store a response to have something to clear
         session.store_response(Turn(role="assistant"))
 
         session.advance_turn(1)
-        # replaces_history clears, then expands 3 messages
-        assert len(session.turn_list) == 3
+        assert len(session.turn_list) == 1
+        assert session.turn_list[0].raw_messages == [
+            USER_MSG,
+            ASSISTANT_MSG,
+            TOOL_RESULT_MSG,
+        ]
 
     def test_delta_raw_messages_append_without_clearing(self):
-        """Delta turns (no replaces_history) append raw_messages to existing turn_list."""
+        """Delta turns (no replaces_history) append to existing turn_list."""
         conversation = Conversation(
             session_id="test",
             turns=[
@@ -599,11 +601,9 @@ class TestAdvanceTurnRawMessages:
         assert len(session.turn_list) == 1
 
         session.advance_turn(1)
-        # Delta appends without clearing: 1 from turn 0 + 2 from turn 1
-        assert len(session.turn_list) == 3
-        assert session.turn_list[0].raw_message == USER_MSG
-        assert session.turn_list[1].raw_message == ASSISTANT_MSG
-        assert session.turn_list[2].raw_message == TOOL_RESULT_MSG
+        assert len(session.turn_list) == 2
+        assert session.turn_list[0].raw_messages == [USER_MSG]
+        assert session.turn_list[1].raw_messages == [ASSISTANT_MSG, TOOL_RESULT_MSG]
 
     def test_without_raw_messages_appends_normally(self):
         """Turns without raw_messages should append as before."""

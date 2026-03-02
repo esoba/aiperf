@@ -523,17 +523,20 @@ class TestClaudeCodeTraceLoader:
         assert len(conv.turns) == 2
         assert conv.system_message == "You are a helpful assistant."
 
-        # First turn: verbatim user content
+        # First turn: verbatim user content wrapped in raw_messages
         t0 = conv.turns[0]
         assert t0.role == "user"
-        assert t0.raw_content == "Hello, help me with Python"
+        assert t0.raw_messages == [
+            {"role": "user", "content": "Hello, help me with Python"}
+        ]
         assert t0.input_tokens == 100
 
-        # Second turn: tool_result content
+        # Second turn: tool_result content wrapped in raw_messages
         t1 = conv.turns[1]
         assert t1.role == "user"
-        assert isinstance(t1.raw_content, list)
-        assert t1.raw_content[0]["type"] == "tool_result"
+        assert t1.raw_messages is not None
+        assert isinstance(t1.raw_messages[0]["content"], list)
+        assert t1.raw_messages[0]["content"][0]["type"] == "tool_result"
         assert t1.input_tokens == 200
 
         assert conv.discard_responses is True
@@ -553,7 +556,7 @@ class TestClaudeCodeTraceLoader:
         assert len(conversations) == 1
         conv = conversations[0]
         t0 = conv.turns[0]
-        assert t0.raw_content is None
+        assert t0.raw_messages is None
         assert conv.discard_responses is False
         assert len(t0.texts) == 1
         assert t0.texts[0].contents[0] == "x" * 100
@@ -1145,3 +1148,92 @@ class TestClaudeCodeTraceLoader:
         data = loader.load_dataset()
         trace = list(data.values())[0][0]
         assert trace.session_id == "my_session"
+
+
+# =========================================================================
+# _build_verbatim_turn raw_messages wrapping tests
+# =========================================================================
+
+
+class TestBuildVerbatimTurnRawMessages:
+    """Tests for _build_verbatim_turn wrapping user_content into raw_messages."""
+
+    def test_string_content_wrapped_in_raw_messages(self):
+        api_call = ClaudeCodeApiCall(
+            user_content="Hello, help me with Python",
+            assistant_content=[{"type": "text", "text": "Sure!"}],
+            model="claude-sonnet-4-20250514",
+            input_tokens=100,
+            output_tokens=20,
+        )
+        turn = ClaudeCodeTraceLoader._build_verbatim_turn(api_call, delay_ms=None)
+
+        assert turn.raw_messages == [
+            {"role": "user", "content": "Hello, help me with Python"}
+        ]
+
+    def test_list_content_wrapped_in_raw_messages(self):
+        content_blocks = [
+            {"type": "tool_result", "tool_use_id": "tu-1", "content": "file data"},
+            {"type": "text", "text": "Here is the result"},
+        ]
+        api_call = ClaudeCodeApiCall(
+            user_content=content_blocks,
+            assistant_content=[{"type": "text", "text": "Got it"}],
+            model="claude-sonnet-4-20250514",
+            input_tokens=200,
+            output_tokens=30,
+        )
+        turn = ClaudeCodeTraceLoader._build_verbatim_turn(api_call, delay_ms=None)
+
+        assert turn.raw_messages == [{"role": "user", "content": content_blocks}]
+
+    def test_empty_string_content_wrapped_in_raw_messages(self):
+        """Empty string user_content still wraps into raw_messages."""
+        api_call = ClaudeCodeApiCall(
+            user_content="",
+            assistant_content=[{"type": "text", "text": "reply"}],
+            model="claude-sonnet-4-20250514",
+            input_tokens=50,
+            output_tokens=10,
+        )
+        turn = ClaudeCodeTraceLoader._build_verbatim_turn(api_call, delay_ms=None)
+
+        assert turn.raw_messages == [{"role": "user", "content": ""}]
+
+    def test_verbatim_turn_preserves_delay(self):
+        api_call = ClaudeCodeApiCall(
+            user_content="test",
+            assistant_content=[{"type": "text", "text": "reply"}],
+            model="claude-sonnet-4-20250514",
+            input_tokens=100,
+            output_tokens=20,
+        )
+        turn = ClaudeCodeTraceLoader._build_verbatim_turn(api_call, delay_ms=5000.0)
+
+        assert turn.delay == 5000.0
+        assert turn.raw_messages is not None
+
+    def test_verbatim_turn_max_tokens_from_output_tokens(self):
+        api_call = ClaudeCodeApiCall(
+            user_content="test",
+            assistant_content=[{"type": "text", "text": "reply"}],
+            model="claude-sonnet-4-20250514",
+            input_tokens=100,
+            output_tokens=256,
+        )
+        turn = ClaudeCodeTraceLoader._build_verbatim_turn(api_call, delay_ms=None)
+
+        assert turn.max_tokens == 256
+
+    def test_verbatim_turn_max_tokens_default_when_zero_output(self):
+        api_call = ClaudeCodeApiCall(
+            user_content="test",
+            assistant_content=[{"type": "text", "text": ""}],
+            model="claude-sonnet-4-20250514",
+            input_tokens=100,
+            output_tokens=0,
+        )
+        turn = ClaudeCodeTraceLoader._build_verbatim_turn(api_call, delay_ms=None)
+
+        assert turn.max_tokens == 4096

@@ -101,8 +101,8 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
             messages.append({"role": "user", "content": user_context_message})
 
         for turn in turns:
-            if turn.raw_message is not None:
-                messages.append(turn.raw_message)
+            if turn.raw_messages is not None:
+                messages.extend(turn.raw_messages)
                 continue
             role = turn.role or _DEFAULT_ROLE
             content = self._build_turn_content(turn)
@@ -115,11 +115,7 @@ class AnthropicMessagesEndpoint(BaseEndpoint):
 
         Returns a plain string for simple single-text turns,
         or a list of content blocks for complex turns.
-        When raw_content is set (verbatim replay), it is used directly.
         """
-        if turn.raw_content is not None:
-            return turn.raw_content
-
         if (
             len(turn.texts) == 1
             and len(turn.texts[0].contents) == 1

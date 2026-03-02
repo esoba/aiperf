@@ -6,7 +6,7 @@ Loads Claude Code JSONL session transcripts (from ~/.claude/projects/.../session
 and converts them to AIPerf conversations. Supports two modes:
 
 - Verbatim mode (default): Sends exact content blocks (tool_use, tool_result, text,
-  thinking) to the server using raw_content on Turn, with discard_responses=True
+  thinking) to the server using raw_messages on Turn, with discard_responses=True
   on the Conversation.
 - Synthetic mode: Extracts timing/token metadata and generates synthetic content,
   reusing existing PromptGenerator infrastructure.
@@ -310,7 +310,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
     ) -> list[Conversation]:
         """Convert Claude Code traces to AIPerf conversation objects.
 
-        In verbatim mode: Creates Turns with raw_content (user content blocks)
+        In verbatim mode: Creates Turns with raw_messages (user content blocks)
         and sets discard_responses=True on the Conversation.
         In synthetic mode: Extracts token counts and generates synthetic content.
 
@@ -407,13 +407,16 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
         api_call: ClaudeCodeApiCall, delay_ms: float | None
     ) -> Turn:
         """Build a verbatim Turn that uses raw content blocks directly."""
+        raw_messages: list[dict[str, Any]] | None = None
+        if api_call.user_content is not None:
+            raw_messages = [{"role": "user", "content": api_call.user_content}]
         return Turn(
             role="user",
             model=api_call.model,
             delay=delay_ms,
             max_tokens=api_call.output_tokens or 4096,
             input_tokens=api_call.input_tokens,
-            raw_content=api_call.user_content,
+            raw_messages=raw_messages,
         )
 
     def _build_synthetic_turn(

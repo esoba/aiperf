@@ -216,22 +216,11 @@ class Turn(AIPerfBaseModel):
         default_factory=list,
         description="Spawn IDs if this turn is blocked by subagent spawns.",
     )
-    raw_content: str | list[dict[str, Any]] | None = Field(
-        default=None,
-        description="Raw content blocks for verbatim replay. When set, endpoint uses "
-        "this directly instead of building from media fields.",
-    )
-    raw_message: dict[str, Any] | None = Field(
-        default=None,
-        description="Complete message dict for verbatim replay. When set, endpoint "
-        "uses this as the entire message instead of building from role/content/media. "
-        "Must match the target endpoint's API format.",
-    )
     raw_messages: list[dict[str, Any]] | None = Field(
         default=None,
-        description="List of complete message dicts for cumulative history replay. "
-        "When set with replaces_history=True, advance_turn expands each dict "
-        "into a Turn(raw_message=msg) in the turn_list.",
+        description="List of complete message dicts for verbatim replay. "
+        "Can be a full history (with replaces_history=True) or a delta of new "
+        "messages to append. Endpoints expand these directly into the messages list.",
     )
     replaces_history: bool = Field(
         default=False,
@@ -299,8 +288,6 @@ class Turn(AIPerfBaseModel):
             hash_ids=list(self.hash_ids),
             cache_layer_sizes=self.cache_layer_sizes,
             subagent_spawn_ids=list(self.subagent_spawn_ids),
-            raw_content=None,
-            raw_message=self.raw_message,
             raw_messages=self.raw_messages,
             replaces_history=self.replaces_history,
             raw_payload=None,

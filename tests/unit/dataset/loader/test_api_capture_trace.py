@@ -573,7 +573,7 @@ class TestApiCaptureTraceLoader:
         assert parent.tools is not None
         assert len(parent.tools) == 35
 
-    def test_convert_turn_has_raw_content(self, team_capture, default_user_config):
+    def test_convert_turn_has_raw_messages(self, team_capture, default_user_config):
         loader = ApiCaptureTraceLoader(
             filename=str(team_capture), user_config=default_user_config
         )
@@ -581,7 +581,9 @@ class TestApiCaptureTraceLoader:
         conversations = loader.convert_to_conversations(data)
         parent = conversations[0]
         for turn in parent.turns:
-            assert turn.raw_content is not None
+            assert turn.raw_messages is not None
+            assert len(turn.raw_messages) == 1
+            assert turn.raw_messages[0]["role"] == "user"
 
     def test_convert_turn_has_model(self, team_capture, default_user_config):
         loader = ApiCaptureTraceLoader(
@@ -634,7 +636,7 @@ class TestApiCaptureTraceLoader:
             assert "model" in turn.raw_payload
             assert "max_tokens" in turn.raw_payload
             assert "stream" in turn.raw_payload
-            assert turn.raw_message is None
+            assert turn.raw_messages is not None
 
     def test_convert_subagent_spawns(self, team_capture, default_user_config):
         loader = ApiCaptureTraceLoader(
@@ -735,3 +737,158 @@ class TestApiCaptureTraceLoader:
         assert conversations[0].agent_depth == 0
         assert len(conversations[0].turns) == 3
         assert len(conversations[0].subagent_spawns) == 0
+
+
+# =========================================================================
+# _extract_user_content and raw_messages wrapping tests
+# =========================================================================
+
+
+class TestExtractUserContent:
+    """Tests for ApiCaptureTraceLoader._extract_user_content static method."""
+
+    def test_extracts_last_user_message_string_content(self):
+        messages = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": [{"type": "text", "text": "reply"}]},
+            {"role": "user", "content": "second question"},
+        ]
+        result = ApiCaptureTraceLoader._extract_user_content(messages)
+        assert result == "second question"
+
+    def test_extracts_last_user_message_list_content(self):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tu-1",
+                        "content": "file data",
+                    }
+                ],
+            }
+        ]
+        result = ApiCaptureTraceLoader._extract_user_content(messages)
+        assert isinstance(result, list)
+        assert result[0]["type"] == "tool_result"
+
+    def test_no_user_message_returns_none(self):
+        messages = [{"role": "assistant", "content": [{"type": "text", "text": "hi"}]}]
+        result = ApiCaptureTraceLoader._extract_user_content(messages)
+        assert result is None
+
+    def test_empty_messages_returns_none(self):
+        result = ApiCaptureTraceLoader._extract_user_content([])
+        assert result is None
+
+
+class TestRawMessagesWrapping:
+    """Tests for raw_messages format on turns produced by _build_conversation."""
+
+    @pytest.fixture
+    def default_user_config(self):
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+            ),
+        )
+
+    def test_string_user_content_wrapped_as_raw_messages(
+        self, tmp_path, default_user_config
+    ):
+        """When last user message has string content, raw_messages wraps it."""
+        d = tmp_path / "string_content"
+        d.mkdir()
+
+        capture_entries = [
+            _make_capture_entry(0, "request", 1000.0, stream=True, max_tokens=32000),
+            _make_capture_entry(0, "response", 1001.0, input_tokens=100),
+        ]
+        _make_req_file(
+            d,
+            0,
+            system=[{"type": "text", "text": "System"}],
+            tools=[],
+            messages=[{"role": "user", "content": "Hello world"}],
+            model="test-model",
+        )
+        (d / "capture.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in capture_entries) + "\n"
+        )
+
+        loader = ApiCaptureTraceLoader(filename=str(d), user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages == [{"role": "user", "content": "Hello world"}]
+
+    def test_list_user_content_wrapped_as_raw_messages(
+        self, tmp_path, default_user_config
+    ):
+        """When last user message has content blocks, raw_messages preserves the list."""
+        d = tmp_path / "list_content"
+        d.mkdir()
+
+        tool_result_content = [
+            {"type": "tool_result", "tool_use_id": "tu-1", "content": "file data"}
+        ]
+        capture_entries = [
+            _make_capture_entry(0, "request", 1000.0, stream=True, max_tokens=32000),
+            _make_capture_entry(0, "response", 1001.0, input_tokens=100),
+        ]
+        _make_req_file(
+            d,
+            0,
+            system=[{"type": "text", "text": "System"}],
+            tools=[],
+            messages=[{"role": "user", "content": tool_result_content}],
+            model="test-model",
+        )
+        (d / "capture.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in capture_entries) + "\n"
+        )
+
+        loader = ApiCaptureTraceLoader(filename=str(d), user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages == [{"role": "user", "content": tool_result_content}]
+
+    def test_no_user_message_produces_none_raw_messages(
+        self, tmp_path, default_user_config
+    ):
+        """When messages have no user role, raw_messages is None."""
+        d = tmp_path / "no_user"
+        d.mkdir()
+
+        capture_entries = [
+            _make_capture_entry(0, "request", 1000.0, stream=True, max_tokens=32000),
+            _make_capture_entry(0, "response", 1001.0, input_tokens=100),
+        ]
+        _make_req_file(
+            d,
+            0,
+            system=[{"type": "text", "text": "System"}],
+            tools=[],
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "only assistant"}],
+                }
+            ],
+            model="test-model",
+        )
+        (d / "capture.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in capture_entries) + "\n"
+        )
+
+        loader = ApiCaptureTraceLoader(filename=str(d), user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages is None

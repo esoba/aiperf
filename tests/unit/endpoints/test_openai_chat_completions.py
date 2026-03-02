@@ -345,8 +345,8 @@ class TestChatEndpoint:
         assert payload["messages"][2]["role"] == (turn.role or "user")
 
 
-class TestChatEndpointRawMessage:
-    """Tests for raw_message verbatim replay in ChatEndpoint."""
+class TestChatEndpointRawMessages:
+    """Tests for raw_messages verbatim replay in ChatEndpoint."""
 
     @pytest.fixture
     def model_endpoint(self):
@@ -356,8 +356,8 @@ class TestChatEndpointRawMessage:
     def endpoint(self, model_endpoint):
         return create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
 
-    def test_raw_message_replaces_entire_message(self, endpoint, model_endpoint):
-        """Turn with raw_message produces that exact dict in the messages list."""
+    def test_raw_messages_replaces_entire_message(self, endpoint, model_endpoint):
+        """Turn with raw_messages produces those exact dicts in the messages list."""
         raw = {
             "role": "assistant",
             "content": "hi",
@@ -369,17 +369,17 @@ class TestChatEndpointRawMessage:
                 }
             ],
         }
-        turn = Turn(raw_message=raw, model="test-model")
+        turn = Turn(raw_messages=[raw], model="test-model")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
         assert payload["messages"] == [raw]
 
-    def test_raw_message_with_tool_role(self, endpoint, model_endpoint):
-        """Turn with raw_message for a tool result message works."""
+    def test_raw_messages_with_tool_role(self, endpoint, model_endpoint):
+        """Turn with raw_messages for a tool result message works."""
         raw = {"role": "tool", "tool_call_id": "call_1", "content": "file contents"}
-        turn = Turn(raw_message=raw, model="test-model")
+        turn = Turn(raw_messages=[raw], model="test-model")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
@@ -388,11 +388,10 @@ class TestChatEndpointRawMessage:
         assert payload["messages"][0]["role"] == "tool"
         assert payload["messages"][0]["tool_call_id"] == "call_1"
 
-    def test_raw_content_still_works(self, endpoint, model_endpoint):
-        """Existing raw_content behavior is unchanged."""
+    def test_raw_messages_string_content(self, endpoint, model_endpoint):
+        """raw_messages with string content works."""
         turn = Turn(
-            raw_content="verbatim content",
-            role="user",
+            raw_messages=[{"role": "user", "content": "verbatim content"}],
             model="test-model",
         )
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
@@ -402,28 +401,12 @@ class TestChatEndpointRawMessage:
         assert payload["messages"][0]["role"] == "user"
         assert payload["messages"][0]["content"] == "verbatim content"
 
-    def test_raw_message_takes_precedence_over_raw_content(
-        self, endpoint, model_endpoint
-    ):
-        """raw_message beats raw_content when both are set."""
-        raw = {"role": "assistant", "content": "from raw_message"}
-        turn = Turn(
-            raw_message=raw,
-            raw_content="should be ignored",
-            model="test-model",
-        )
-        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
-
-        payload = endpoint.format_payload(request_info)
-
-        assert payload["messages"] == [raw]
-
-    def test_raw_message_mixed_with_normal_turns(self, endpoint, model_endpoint):
-        """raw_message turns can be mixed with normal turns."""
+    def test_raw_messages_mixed_with_normal_turns(self, endpoint, model_endpoint):
+        """raw_messages turns can be mixed with normal turns."""
         raw = {"role": "tool", "tool_call_id": "call_1", "content": "result"}
         turns = [
             Turn(texts=[Text(contents=["Hello"])], role="user", model="test-model"),
-            Turn(raw_message=raw, model="test-model"),
+            Turn(raw_messages=[raw], model="test-model"),
             Turn(texts=[Text(contents=["Thanks"])], role="user", model="test-model"),
         ]
         request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
@@ -472,3 +455,92 @@ class TestChatEndpointRawMessage:
         payload = endpoint.format_payload(request_info)
 
         assert "tools" not in payload
+
+    def test_raw_messages_multi_message_extends_into_messages_list(
+        self, endpoint, model_endpoint
+    ):
+        """A single turn with 3 raw_messages expands to 3 entries in messages list."""
+        turn = Turn(
+            raw_messages=[
+                {"role": "user", "content": "Hello"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": '{"path": "a.py"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "file data"},
+            ],
+            model="test-model",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 3
+        assert payload["messages"][0]["role"] == "user"
+        assert payload["messages"][1]["role"] == "assistant"
+        assert payload["messages"][2]["role"] == "tool"
+
+    def test_raw_messages_empty_list_adds_nothing(self, endpoint, model_endpoint):
+        """Turn with raw_messages=[] contributes zero messages."""
+        turns = [
+            Turn(texts=[Text(contents=["Before"])], role="user", model="test-model"),
+            Turn(raw_messages=[], model="test-model"),
+            Turn(texts=[Text(contents=["After"])], role="user", model="test-model"),
+        ]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 2
+        assert payload["messages"][0]["content"] == "Before"
+        assert payload["messages"][1]["content"] == "After"
+
+    def test_raw_messages_with_system_and_user_context(self, endpoint, model_endpoint):
+        """raw_messages are appended after system/user_context prefix messages."""
+        turn = Turn(
+            raw_messages=[
+                {"role": "user", "content": "verbatim user"},
+                {"role": "assistant", "content": "verbatim assistant"},
+            ],
+            model="test-model",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            system_message="System prompt",
+            user_context_message="User context",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 4
+        assert payload["messages"][0] == {"role": "system", "content": "System prompt"}
+        assert payload["messages"][1] == {"role": "user", "content": "User context"}
+        assert payload["messages"][2] == {"role": "user", "content": "verbatim user"}
+        assert payload["messages"][3] == {
+            "role": "assistant",
+            "content": "verbatim assistant",
+        }
+
+    def test_raw_messages_takes_precedence_over_texts(self, endpoint, model_endpoint):
+        """When raw_messages is set, texts are ignored."""
+        turn = Turn(
+            raw_messages=[{"role": "user", "content": "raw wins"}],
+            texts=[Text(contents=["should be ignored"])],
+            model="test-model",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"][0]["content"] == "raw wins"
