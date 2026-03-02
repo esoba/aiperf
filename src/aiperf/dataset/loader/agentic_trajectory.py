@@ -4,7 +4,8 @@
 
 Each JSONL line contains one API call with cumulative messages -- turn N has
 the full message history from turns 0..N. Records are grouped by conversation_id,
-sorted by conversation_idx, and converted to Conversations with raw_messages turns.
+sorted by conversation_idx, and converted to Conversations with cumulative
+raw_messages turns (replaces_history=True on every turn).
 """
 
 from __future__ import annotations
@@ -27,8 +28,8 @@ class AgenticTrajectoryLoader(BaseFileLoader):
 
     Expects a JSONL file where each line has conversation_id, conversation_idx,
     messages (cumulative), and optionally tools. Groups by conversation_id and
-    converts to delta-based Turns. Consecutive cumulative turns produce small
-    deltas; context breaks (compaction, thinking strip) emit replaces_history.
+    converts to Turns with cumulative raw_messages (replaces_history=True).
+    Post-processing in the composer pre-formats payloads via the endpoint.
     """
 
     def __init__(
@@ -115,11 +116,10 @@ class AgenticTrajectoryLoader(BaseFileLoader):
         For each conversation group:
         - system_message from messages[0] of first turn (role=system)
         - tools from first record with non-empty tools
-        - delta decomposition: consecutive cumulative turns produce small deltas,
-          context breaks (compaction, thinking strip) emit replaces_history=True
+        - Each turn gets cumulative raw_messages with replaces_history=True
+        - discard_responses=True since each turn carries its own full context
         """
         conversations: list[Conversation] = []
-        context_breaks = 0
 
         for _conv_id, records in data.items():
             if not records:
@@ -127,10 +127,8 @@ class AgenticTrajectoryLoader(BaseFileLoader):
 
             first_record = records[0]
 
-            # Extract system message from leading system messages of first turn
             system_message = _extract_system_message(first_record.messages)
 
-            # Extract tools from first record with non-empty tools
             tools: list[dict[str, Any]] | None = None
             for record in records:
                 if record.tools:
@@ -140,32 +138,15 @@ class AgenticTrajectoryLoader(BaseFileLoader):
             session_id = self.session_id_generator.next()
             turns: list[Turn] = []
 
-            # baseline_messages tracks the cumulative messages from the most
-            # recent replaces_history turn (or the first turn). Used to compute
-            # deltas for subsequent cumulative turns.
-            baseline_messages: list[dict[str, Any]] | None = None
-
             for record in records:
                 non_system = _strip_system(record.messages)
-
-                if baseline_messages is not None and _is_prefix(
-                    baseline_messages, non_system
-                ):
-                    delta = non_system[len(baseline_messages) :]
-                    turns.append(Turn(role="user", raw_messages=delta))
-                else:
-                    # First turn or context break
-                    if baseline_messages is not None:
-                        context_breaks += 1
-                    turns.append(
-                        Turn(
-                            role="user",
-                            raw_messages=non_system,
-                            replaces_history=True,
-                        )
+                turns.append(
+                    Turn(
+                        role="user",
+                        raw_messages=non_system,
+                        replaces_history=True,
                     )
-
-                baseline_messages = non_system
+                )
 
             conversations.append(
                 Conversation(
@@ -173,16 +154,14 @@ class AgenticTrajectoryLoader(BaseFileLoader):
                     turns=turns,
                     system_message=system_message,
                     tools=tools,
+                    discard_responses=True,
                 )
             )
 
         total_turns = sum(len(c.turns) for c in conversations)
-        msg = (
+        self.info(
             f"Converted {len(conversations)} conversations ({total_turns} total turns)"
         )
-        if context_breaks:
-            msg += f", {context_breaks} context breaks detected"
-        self.info(msg)
         return conversations
 
 
@@ -212,10 +191,3 @@ def _extract_system_message(messages: list[dict[str, Any]]) -> str | None:
                 )
             )
     return "\n".join(parts) if parts else None
-
-
-def _is_prefix(baseline: list[dict[str, Any]], current: list[dict[str, Any]]) -> bool:
-    """Check if baseline messages are a prefix of current messages."""
-    if len(baseline) > len(current):
-        return False
-    return current[: len(baseline)] == baseline

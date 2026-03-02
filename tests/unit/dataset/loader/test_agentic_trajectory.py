@@ -16,7 +16,6 @@ from aiperf.common.models.dataset_models import Conversation, Turn
 from aiperf.dataset.loader.agentic_trajectory import (
     AgenticTrajectoryLoader,
     _extract_system_message,
-    _is_prefix,
     _strip_system,
 )
 from aiperf.dataset.loader.models import AgenticTrajectoryRecord
@@ -302,8 +301,8 @@ class TestConvertToConversations:
 
         assert conversations[0].tools == TOOLS
 
-    def test_cumulative_turns_produce_deltas(self, user_config):
-        """Consecutive cumulative turns produce small deltas without replaces_history."""
+    def test_cumulative_turns_all_replace_history(self, user_config):
+        """All turns carry cumulative raw_messages with replaces_history=True."""
         messages_t0 = [SYSTEM_MSG, USER_MSG]
         messages_t1 = [SYSTEM_MSG, USER_MSG, ASSISTANT_MSG, TOOL_RESULT_MSG]
 
@@ -329,32 +328,20 @@ class TestConvertToConversations:
         conv = conversations[0]
         assert len(conv.turns) == 2
 
-        # Turn 0: first turn always gets replaces_history, full non-system messages
         assert conv.turns[0].replaces_history is True
         assert conv.turns[0].raw_messages == [USER_MSG]
 
-        # Turn 1: cumulative, so delta only (new messages since turn 0)
-        assert conv.turns[1].replaces_history is False
-        assert conv.turns[1].raw_messages == [ASSISTANT_MSG, TOOL_RESULT_MSG]
+        assert conv.turns[1].replaces_history is True
+        assert conv.turns[1].raw_messages == [USER_MSG, ASSISTANT_MSG, TOOL_RESULT_MSG]
 
-    def test_context_break_triggers_replaces_history(self, user_config):
-        """Non-cumulative turn (context break) sets replaces_history=True."""
-        compacted_user = {"role": "user", "content": "Compacted context"}
-        messages_t0 = [SYSTEM_MSG, USER_MSG]
-        messages_t1 = [SYSTEM_MSG, USER_MSG, ASSISTANT_MSG, TOOL_RESULT_MSG]
-        # Turn 2 breaks cumulative invariant (compacted history)
-        messages_t2 = [SYSTEM_MSG, compacted_user]
-
+    def test_discard_responses_set(self, user_config):
+        """Conversations have discard_responses=True since each turn carries full context."""
         data = {
             "c1": [
                 AgenticTrajectoryRecord(
-                    conversation_id="c1", conversation_idx=0, messages=messages_t0
-                ),
-                AgenticTrajectoryRecord(
-                    conversation_id="c1", conversation_idx=1, messages=messages_t1
-                ),
-                AgenticTrajectoryRecord(
-                    conversation_id="c1", conversation_idx=2, messages=messages_t2
+                    conversation_id="c1",
+                    conversation_idx=0,
+                    messages=[SYSTEM_MSG, USER_MSG],
                 ),
             ]
         }
@@ -362,49 +349,7 @@ class TestConvertToConversations:
             filename="dummy.jsonl", user_config=user_config
         )
         conversations = loader.convert_to_conversations(data)
-
-        conv = conversations[0]
-        assert len(conv.turns) == 3
-
-        assert conv.turns[0].replaces_history is True
-        assert conv.turns[1].replaces_history is False
-        # Context break: full history replacement
-        assert conv.turns[2].replaces_history is True
-        assert conv.turns[2].raw_messages == [compacted_user]
-
-    def test_delta_resumes_after_context_break(self, user_config):
-        """After a context break, subsequent cumulative turns resume delta mode."""
-        compacted_user = {"role": "user", "content": "Compacted"}
-        new_assistant = {"role": "assistant", "content": "Response"}
-        messages_t0 = [SYSTEM_MSG, USER_MSG]
-        # Context break
-        messages_t1 = [SYSTEM_MSG, compacted_user]
-        # Cumulative from t1
-        messages_t2 = [SYSTEM_MSG, compacted_user, new_assistant]
-
-        data = {
-            "c1": [
-                AgenticTrajectoryRecord(
-                    conversation_id="c1", conversation_idx=0, messages=messages_t0
-                ),
-                AgenticTrajectoryRecord(
-                    conversation_id="c1", conversation_idx=1, messages=messages_t1
-                ),
-                AgenticTrajectoryRecord(
-                    conversation_id="c1", conversation_idx=2, messages=messages_t2
-                ),
-            ]
-        }
-        loader = AgenticTrajectoryLoader(
-            filename="dummy.jsonl", user_config=user_config
-        )
-        conversations = loader.convert_to_conversations(data)
-
-        conv = conversations[0]
-        assert conv.turns[0].replaces_history is True  # first turn
-        assert conv.turns[1].replaces_history is True  # context break
-        assert conv.turns[2].replaces_history is False  # delta from new baseline
-        assert conv.turns[2].raw_messages == [new_assistant]
+        assert conversations[0].discard_responses is True
 
     def test_single_turn_conversation(self, user_config):
         data = {
@@ -586,24 +531,34 @@ class TestAdvanceTurnRawMessages:
             TOOL_RESULT_MSG,
         ]
 
-    def test_delta_raw_messages_append_without_clearing(self):
-        """Delta turns (no replaces_history) append to existing turn_list."""
+    def test_cumulative_replaces_history_clears_each_turn(self):
+        """Cumulative turns with replaces_history=True each replace the full history."""
         conversation = Conversation(
             session_id="test",
             turns=[
                 Turn(role="user", raw_messages=[USER_MSG], replaces_history=True),
-                Turn(role="user", raw_messages=[ASSISTANT_MSG, TOOL_RESULT_MSG]),
+                Turn(
+                    role="user",
+                    raw_messages=[USER_MSG, ASSISTANT_MSG, TOOL_RESULT_MSG],
+                    replaces_history=True,
+                ),
             ],
         )
         session = self._make_session(conversation)
 
         session.advance_turn(0)
         assert len(session.turn_list) == 1
+        assert session.turn_list[0].raw_messages == [USER_MSG]
+
+        session.store_response(Turn(role="assistant"))
 
         session.advance_turn(1)
-        assert len(session.turn_list) == 2
-        assert session.turn_list[0].raw_messages == [USER_MSG]
-        assert session.turn_list[1].raw_messages == [ASSISTANT_MSG, TOOL_RESULT_MSG]
+        assert len(session.turn_list) == 1
+        assert session.turn_list[0].raw_messages == [
+            USER_MSG,
+            ASSISTANT_MSG,
+            TOOL_RESULT_MSG,
+        ]
 
     def test_without_raw_messages_appends_normally(self):
         """Turns without raw_messages should append as before."""
@@ -664,19 +619,6 @@ class TestHelpers:
     def test_extract_system_message_none_when_absent(self):
         assert _extract_system_message([USER_MSG]) is None
 
-    def test_is_prefix_true(self):
-        assert _is_prefix([USER_MSG], [USER_MSG, ASSISTANT_MSG]) is True
-
-    def test_is_prefix_exact_match(self):
-        assert _is_prefix([USER_MSG], [USER_MSG]) is True
-
-    def test_is_prefix_empty_baseline(self):
-        assert _is_prefix([], [USER_MSG]) is True
-
-    def test_is_prefix_false_different_content(self):
-        other = {"role": "user", "content": "Different"}
-        assert _is_prefix([USER_MSG], [other, ASSISTANT_MSG]) is False
-
     def test_extract_system_message_mixed_content_types(self):
         """Non-text blocks (e.g. image_url) are ignored; only text blocks contribute."""
         msg = {
@@ -698,6 +640,3 @@ class TestHelpers:
         """When every message is a system message, result is empty."""
         messages = [SYSTEM_MSG, SYSTEM_MSG_2]
         assert _strip_system(messages) == []
-
-    def test_is_prefix_false_baseline_longer(self):
-        assert _is_prefix([USER_MSG, ASSISTANT_MSG], [USER_MSG]) is False

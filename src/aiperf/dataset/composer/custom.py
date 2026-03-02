@@ -7,9 +7,11 @@ from typing import Any
 
 from aiperf.common.config import UserConfig
 from aiperf.common.models import Conversation
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.dataset.composer.base import BaseDatasetComposer
+from aiperf.dataset.payload_formatting import format_conversation_payloads
 from aiperf.dataset.utils import check_file_exists
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import CustomDatasetType, PluginType
@@ -48,6 +50,11 @@ class CustomDatasetComposer(BaseDatasetComposer):
         for conversation in conversations:
             for turn in conversation.turns:
                 self._finalize_turn(turn)
+
+        # Pre-format payloads if the loader's metadata requests it
+        entry = plugins.get_entry(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
+        if entry.metadata.get("preformat_payload"):
+            self._preformat_payloads(conversations)
 
         # Finalize conversation-level context prompts
         self._finalize_conversations(conversations)
@@ -225,3 +232,35 @@ class CustomDatasetComposer(BaseDatasetComposer):
             user_config=self.config,
             **kwargs,
         )
+
+    def _preformat_payloads(self, conversations: list[Conversation]) -> None:
+        """Pre-format API request payloads and store them on each turn.
+
+        Uses the shared format_conversation_payloads generator to create
+        payloads via the endpoint, then stores each as turn.raw_payload.
+        The mmap backing store extracts these into payload_data.dat so
+        workers can bypass session deserialization entirely.
+        """
+        model_endpoint = ModelEndpointInfo.from_user_config(self.config)
+
+        # Build turn lookup: (session_id, turn_index) -> Turn
+        turn_lookup: dict[tuple[str, int], Any] = {}
+        for conversation in conversations:
+            for i, turn in enumerate(conversation.turns):
+                turn_lookup[(conversation.session_id, i)] = turn
+
+        try:
+            count = 0
+            for session_id, turn_idx, payload in format_conversation_payloads(
+                conversations, model_endpoint
+            ):
+                turn_lookup[(session_id, turn_idx)].raw_payload = payload
+                count += 1
+        except NotImplementedError:
+            self.info(
+                "Skipping payload pre-formatting "
+                "(endpoint does not support format_payload)"
+            )
+            return
+
+        self.info(f"Pre-formatted {count} payloads for payload mmap fast path")

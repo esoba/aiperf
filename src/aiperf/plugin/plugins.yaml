@@ -421,6 +421,7 @@ custom_dataset_loader:
     metadata:
       supports_multi_turn: true
       supports_timing: false
+      preformat_payload: true
 
   api_capture_trace:
     class: aiperf.dataset.loader.api_capture_trace:ApiCaptureTraceLoader
