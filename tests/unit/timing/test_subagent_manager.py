@@ -511,17 +511,18 @@ class TestSubagentSessionManagerBackground:
     """Test background spawn behavior."""
 
     @pytest.mark.asyncio
-    async def test_background_spawn_dispatches_join_immediately(self):
+    async def test_background_spawn_returns_false(self):
         manager, inner, scheduler, _, child_ids = _make_manager(is_background=True)
 
         credit = _make_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
-        manager._dispatch_subagent_spawns(credit, ["s0"])
+        result = manager._dispatch_subagent_spawns(credit, ["s0"])
 
+        assert result is False
         assert "parent-1" not in manager._pending_subagent_joins
-        # 2 children + 1 join = 3
-        assert scheduler.execute_async.call_count == 3
+        # Only children dispatched (parent falls through to inner strategy)
+        assert scheduler.execute_async.call_count == 2
 
     @pytest.mark.asyncio
     async def test_background_children_not_tracked(self):
@@ -918,28 +919,22 @@ class TestChildCompleteEdgeCases:
 class TestSpawnDispatchEdgeCases:
     """Edge cases in _dispatch_subagent_spawns."""
 
-    def test_all_spawn_ids_resolve_to_none_uses_fallback(self) -> None:
-        """Lines 146-151: all spawn_ids not found -> fallback issues next turn."""
+    def test_all_spawn_ids_resolve_to_none_returns_false(self) -> None:
+        """All spawn_ids not found -> returns False (parent not suspended)."""
         manager, inner, scheduler, issuer, _ = _make_manager()
 
         credit = _make_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        # Pass spawn_ids that don't exist in the dataset
-        manager._dispatch_subagent_spawns(credit, ["nonexistent_s1", "nonexistent_s2"])
+        result = manager._dispatch_subagent_spawns(
+            credit, ["nonexistent_s1", "nonexistent_s2"]
+        )
 
-        # Fallback: issues TurnToSend.from_previous_credit via scheduler
-        scheduler.execute_async.assert_called_once()
-        # No pending join created
+        # No children found, parent not suspended
+        assert result is False
+        scheduler.execute_async.assert_not_called()
         assert "parent-1" not in manager._pending_subagent_joins
-
-        # Verify fallback turn is from_previous_credit (turn_index + 1)
-        fallback_turn = issuer.issue_credit.call_args[0][0]
-        assert isinstance(fallback_turn, TurnToSend)
-        assert fallback_turn.conversation_id == "conv_0"
-        assert fallback_turn.x_correlation_id == "parent-1"
-        assert fallback_turn.turn_index == 3  # credit.turn_index(2) + 1
 
     def test_single_spawn_id_not_found_continues(self) -> None:
         """Lines 111-115: one spawn_id missing, others found -- missing skipped."""
@@ -970,7 +965,7 @@ class TestBackgroundSpawnEndToEnd:
 
     @pytest.mark.asyncio
     async def test_background_spawn_via_handle_credit_return(self) -> None:
-        """Background children issued and join dispatched via public API."""
+        """Background spawn: children issued, parent falls through to inner strategy."""
         manager, inner, scheduler, _, child_ids = _make_manager(is_background=True)
 
         # Turn 2 -> next turn (3) has subagent_spawn_ids
@@ -979,10 +974,10 @@ class TestBackgroundSpawnEndToEnd:
         )
         await manager.handle_credit_return(credit)
 
-        # Inner NOT called (spawn intercept, Path B)
-        inner.handle_credit_return.assert_not_awaited()
-        # 2 children + 1 join = 3 dispatches
-        assert scheduler.execute_async.call_count == 3
+        # Inner IS called (background spawns fall through to Path C)
+        inner.handle_credit_return.assert_awaited_once()
+        # 2 children dispatched
+        assert scheduler.execute_async.call_count == 2
         # No pending join (background)
         assert "parent-1" not in manager._pending_subagent_joins
         # No children tracked for join accounting
@@ -1039,8 +1034,8 @@ class TestJoinTurnContentVerification:
         assert join_turn.num_turns == 6
         assert join_turn.agent_depth == 0
 
-    def test_background_join_turn_fields(self) -> None:
-        """Background spawn dispatches join with correct parent fields."""
+    def test_background_spawn_only_dispatches_children(self) -> None:
+        """Background spawn dispatches only children, no join turn."""
         manager, inner, scheduler, issuer, child_ids = _make_manager(is_background=True)
 
         credit = _make_credit(
@@ -1050,17 +1045,9 @@ class TestJoinTurnContentVerification:
             num_turns=6,
             agent_depth=0,
         )
-        manager._dispatch_subagent_spawns(credit, ["s0"])
+        result = manager._dispatch_subagent_spawns(credit, ["s0"])
 
-        # 2 child dispatches + 1 join dispatch = 3 calls
-        assert scheduler.execute_async.call_count == 3
-        # The join is the last issue_credit call
-        assert issuer.issue_credit.call_count == 3
-        join_turn = issuer.issue_credit.call_args_list[2][0][0]
-
-        assert isinstance(join_turn, TurnToSend)
-        assert join_turn.conversation_id == "conv_0"
-        assert join_turn.x_correlation_id == "parent-1"
-        assert join_turn.turn_index == 3
-        assert join_turn.num_turns == 6
-        assert join_turn.agent_depth == 0
+        assert result is False
+        # Only 2 child dispatches (no join — parent falls through to inner)
+        assert scheduler.execute_async.call_count == 2
+        assert issuer.issue_credit.call_count == 2

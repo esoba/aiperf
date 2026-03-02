@@ -158,6 +158,7 @@ def _build_team_capture(tmp_path):
     session_start_ts = base_ts + 200
 
     # 16 prefetch requests (req_0000 through req_0015)
+    # All have max_tokens=1 so _is_prefetch filters them out
     for i in range(16):
         ts = session_start_ts + i
         capture_entries.append(
@@ -167,7 +168,7 @@ def _build_team_capture(tmp_path):
                 ts,
                 model="claude-haiku-4-5-20251001" if i == 0 else "claude-opus-4-6",
                 stream=None,
-                max_tokens=1 if i == 0 else None,
+                max_tokens=1,
             )
         )
         capture_entries.append(
@@ -179,7 +180,6 @@ def _build_team_capture(tmp_path):
                 output_tokens=5,
             )
         )
-        # Write prefetch req files (no system, stream=null)
         _make_req_file(
             capture_dir,
             i,
@@ -187,7 +187,7 @@ def _build_team_capture(tmp_path):
             tools=[],
             messages=[{"role": "user", "content": "quota"}],
             model="claude-haiku-4-5-20251001" if i == 0 else "claude-opus-4-6",
-            max_tokens=1 if i == 0 else None,
+            max_tokens=1,
             stream=None,
         )
 
@@ -377,32 +377,30 @@ class TestHelperFunctions:
 
     def test_thread_key_deterministic(self):
         blocks = [{"type": "text", "text": "Hello"}]
-        key1 = _thread_key(blocks)
-        key2 = _thread_key(blocks)
+        key1 = _thread_key(blocks, 0)
+        key2 = _thread_key(blocks, 0)
         assert key1 == key2
         assert len(key1) == 12
 
     def test_thread_key_different_for_different_system(self):
-        key1 = _thread_key([{"type": "text", "text": "System A"}])
-        key2 = _thread_key([{"type": "text", "text": "System B"}])
+        key1 = _thread_key([{"type": "text", "text": "System A"}], 0)
+        key2 = _thread_key([{"type": "text", "text": "System B"}], 0)
         assert key1 != key2
 
-    def test_is_prefetch_no_stream(self):
-        assert _is_prefetch({"stream": None, "max_tokens": 32000, "system": [{}]})
+    def test_is_prefetch_max_tokens_1(self):
+        assert _is_prefetch({"max_tokens": 1})
 
-    def test_is_prefetch_no_max_tokens(self):
-        assert _is_prefetch({"stream": True, "max_tokens": None, "system": [{}]})
+    def test_is_prefetch_max_tokens_0(self):
+        assert _is_prefetch({"max_tokens": 0})
 
-    def test_is_prefetch_low_max_tokens(self):
-        assert _is_prefetch({"stream": True, "max_tokens": 1, "system": [{}]})
+    def test_not_prefetch_no_max_tokens(self):
+        assert not _is_prefetch({"max_tokens": None})
 
-    def test_is_prefetch_no_system(self):
-        assert _is_prefetch({"stream": True, "max_tokens": 32000, "system": []})
+    def test_not_prefetch_normal_max_tokens(self):
+        assert not _is_prefetch({"max_tokens": 32000})
 
-    def test_not_prefetch(self):
-        assert not _is_prefetch(
-            {"stream": True, "max_tokens": 32000, "system": [{"type": "text"}]}
-        )
+    def test_not_prefetch_missing_max_tokens(self):
+        assert not _is_prefetch({})
 
 
 # =========================================================================

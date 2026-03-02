@@ -160,6 +160,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         # Computed in setup_phase
         self._turn_gap: float = 0.0
         self._session_to_user: dict[str, User] = {}
+        self._child_to_parent_corr: dict[str, str] = {}
         self._initial_users: list[User] = []
         self._next_user_id: int = 1
 
@@ -329,15 +330,32 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         This maintains ideal pacing when responses arrive on time, but if the
         response is late, the max() re-aligns to current time (sends immediately).
         """
-        if credit.is_final_turn:
-            self._session_to_user.pop(credit.x_correlation_id, None)
+        if credit.agent_depth > 0:
+            if credit.is_final_turn:
+                self._child_to_parent_corr.pop(credit.x_correlation_id, None)
+                return
+            turn = TurnToSend.from_previous_credit(credit)
+            parent_corr = self._child_to_parent_corr.get(credit.x_correlation_id)
+            parent_user = (
+                self._session_to_user.get(parent_corr) if parent_corr else None
+            )
+            if parent_user is not None:
+                current_sec = time.perf_counter()
+                parent_user.next_send_time = max(
+                    current_sec, parent_user.next_send_time + self._turn_gap
+                )
+                self._scheduler.schedule_at_perf_sec(
+                    parent_user.next_send_time,
+                    self._credit_issuer.issue_credit(turn),
+                )
+            else:
+                self._scheduler.execute_async(
+                    self._credit_issuer.issue_credit(turn),
+                )
             return
 
-        if credit.agent_depth > 0:
-            turn = TurnToSend.from_previous_credit(credit)
-            self._scheduler.execute_async(
-                self._credit_issuer.issue_credit(turn),
-            )
+        if credit.is_final_turn:
+            self._session_to_user.pop(credit.x_correlation_id, None)
             return
 
         current_sec = time.perf_counter()
@@ -355,3 +373,9 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             user.next_send_time,
             self._credit_issuer.issue_credit(turn),
         )
+
+    def on_child_session_started(
+        self, corr_id: str, depth: int, parent_corr_id: str
+    ) -> None:
+        """Map child session to parent user for rate-limited scheduling."""
+        self._child_to_parent_corr[corr_id] = parent_corr_id

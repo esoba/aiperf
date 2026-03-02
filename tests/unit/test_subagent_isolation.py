@@ -724,10 +724,11 @@ class TestAdaptiveScaleSubagentDispatch:
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        manager._dispatch_subagent_spawns(credit, ["unknown_spawn"])
+        result = manager._dispatch_subagent_spawns(credit, ["unknown_spawn"])
 
-        # Should fallback to issuing the next sequential turn
-        assert scheduler.execute_async.call_count == 1
+        # Unknown spawn: no children dispatched, parent not suspended
+        assert result is False
+        assert scheduler.execute_async.call_count == 0
         assert "parent-1" not in manager._pending_subagent_joins
 
     @pytest.mark.asyncio
@@ -897,7 +898,7 @@ class TestBackgroundSubagentDispatch:
     """Tests for background subagent spawns where parent continues immediately."""
 
     @pytest.mark.asyncio
-    async def test_background_spawn_dispatches_join_immediately(self):
+    async def test_background_spawn_returns_false(self):
         manager, strategy, scheduler, issuer, _, ds, child_ids = (
             _make_adaptive_strategy(is_background=True)
         )
@@ -906,14 +907,14 @@ class TestBackgroundSubagentDispatch:
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
 
-        manager._dispatch_subagent_spawns(credit, ["s0"])
+        result = manager._dispatch_subagent_spawns(credit, ["s0"])
 
-        # Should NOT register a pending join (parent doesn't wait)
+        # Should NOT suspend parent (returns False for all-background)
+        assert result is False
         assert "parent-1" not in manager._pending_subagent_joins
 
-        # Should issue credits for children + the join turn
-        # 2 children + 1 join = 3 execute_async calls
-        assert scheduler.execute_async.call_count == 3
+        # Should issue credits for children only (parent falls through to inner)
+        assert scheduler.execute_async.call_count == 2
 
     @pytest.mark.asyncio
     async def test_background_children_not_tracked(self):

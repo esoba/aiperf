@@ -138,7 +138,9 @@ class SubagentSessionManager(AIPerfLoggerMixin):
                     )
                 if hasattr(self._inner, "on_child_session_started"):
                     self._inner.on_child_session_started(
-                        child_session.x_correlation_id, child_depth
+                        child_session.x_correlation_id,
+                        child_depth,
+                        parent_corr_id,
                     )
                 child_turn = child_session.build_first_turn(agent_depth=child_depth)
                 self._scheduler.execute_async(

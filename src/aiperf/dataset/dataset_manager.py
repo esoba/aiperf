@@ -266,6 +266,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
             # NOTE: We don't raise an error here for OS related errors like writing to a file,
             # as this won't affect the benchmark execution.
+        except NotImplementedError:
+            self.info(
+                "Skipping inputs.json generation (endpoint does not support format_payload)"
+            )
         except Exception as e:
             # This is a fatal error, as later in the benchmark, errors will occur while trying to convert the payloads
             # on the worker side.

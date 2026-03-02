@@ -386,7 +386,9 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
                 self._credit_issuer.issue_credit(turn),
             )
 
-    def on_child_session_started(self, corr_id: str, depth: int) -> None:
+    def on_child_session_started(
+        self, corr_id: str, depth: int, parent_corr_id: str
+    ) -> None:
         """Hook called by SubagentSessionManager when a child session is created."""
         self._session_depth[corr_id] = depth
 
