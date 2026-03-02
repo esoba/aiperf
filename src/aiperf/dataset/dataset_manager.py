@@ -44,6 +44,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
     DatasetBackingStoreType,
+    DatasetSamplingStrategy,
     PluginType,
     ServiceRunType,
 )
@@ -371,9 +372,13 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 "from WorkerPodManager before accessing dataset"
             )
 
+        sampling_strategy = (
+            self.user_config.input.dataset_sampling_strategy
+            or DatasetSamplingStrategy.SHUFFLE
+        )
         self.dataset_metadata = DatasetMetadata(
             conversations=[conversation.metadata() for conversation in conversations],
-            sampling_strategy=self.user_config.input.dataset_sampling_strategy,
+            sampling_strategy=sampling_strategy,
         )
         self.info(
             f"sampling strategy: {self.dataset_metadata.sampling_strategy}, "

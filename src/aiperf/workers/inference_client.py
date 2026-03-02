@@ -182,10 +182,10 @@ class InferenceClient(AIPerfLifecycleMixin):
         request_info: RequestInfo,
     ) -> RequestRecord:
         """Enrich a RequestRecord with the original request info."""
-        record.model_name = (
-            request_info.turns[request_info.turn_index].model
-            or self.model_endpoint.primary_model_name
-        )
+        turn_model = None
+        if request_info.turn_index < len(request_info.turns):
+            turn_model = request_info.turns[request_info.turn_index].model
+        record.model_name = turn_model or self.model_endpoint.primary_model_name
         record.request_info = request_info
 
         # Copy turns with stripped multimodal data to avoid mutating original session
