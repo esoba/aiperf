@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import time
 import uuid
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -61,6 +64,9 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.session_manager import UserSession, UserSessionManager
+
+if TYPE_CHECKING:
+    from aiperf.transports.base_transports import FirstTokenCallback
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
@@ -468,6 +474,20 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     )
                 return True
 
+        # Check for raw payload before session retrieval to avoid Conversation
+        # deserialization and session creation entirely in the fast path.
+        payload_bytes = None
+        if self._dataset_client is not None:
+            payload_bytes = await self._dataset_client.get_payload_bytes(
+                credit_context.credit.conversation_id,
+                credit_context.credit.turn_index,
+            )
+
+        if payload_bytes is not None:
+            return await self._process_credit_raw_payload(
+                credit_context, x_request_id, payload_bytes, first_token_callback
+            )
+
         try:
             session = self.session_manager.get(x_correlation_id)
 
@@ -485,13 +505,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
 
             session.advance_turn(credit_context.credit.turn_index)
-
-            payload_bytes = None
-            if self._dataset_client is not None:
-                payload_bytes = await self._dataset_client.get_payload_bytes(
-                    credit_context.credit.conversation_id,
-                    credit_context.credit.turn_index,
-                )
 
             self.task_stats.total += 1
             system_message = session.conversation.system_message
@@ -540,6 +553,54 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         finally:
             if credit_context.credit.is_final_turn or credit_context.cancelled:
                 self.session_manager.evict(x_correlation_id)
+
+    async def _process_credit_raw_payload(
+        self,
+        credit_context: CreditContext,
+        x_request_id: str,
+        payload_bytes: bytes,
+        first_token_callback: FirstTokenCallback | None,
+    ) -> None:
+        """Fast path for raw payload mode — bypasses session and turn accumulation."""
+        credit = credit_context.credit
+        try:
+            self.task_stats.total += 1
+            request_info = RequestInfo(
+                model_endpoint=self.model_endpoint,
+                credit_num=credit.id,
+                credit_phase=credit.phase,
+                cancel_after_ns=credit.cancel_after_ns,
+                x_request_id=x_request_id,
+                x_correlation_id=credit.x_correlation_id,
+                conversation_id=credit.conversation_id,
+                turn_index=credit.turn_index,
+                is_final_turn=credit.is_final_turn,
+                url_index=credit.url_index,
+                payload_bytes=payload_bytes,
+                drop_perf_ns=credit_context.drop_perf_ns,
+                credit_issued_ns=credit.issued_at_ns,
+            )
+            record = await self.inference_client.send_request(
+                request_info, first_token_callback=first_token_callback
+            )
+            if record.end_perf_ns is not None:
+                credit_context.request_latency_ns = (
+                    record.end_perf_ns - record.start_perf_ns
+                )
+            await self._send_inference_result_message(record)
+
+            if record.error is not None:
+                credit_context.error = record.error
+                self._update_circuit_breaker(record.error)
+            else:
+                self._consecutive_connection_errors = 0
+        except asyncio.CancelledError:
+            credit_context.cancelled = True
+            raise
+        except Exception as e:
+            credit_context.error = ErrorDetails.from_exception(e)
+            self._update_circuit_breaker(credit_context.error)
+            self.exception(f"Error processing credit: {e!r}")
 
     _CONNECTION_ERROR_TYPES = frozenset(
         {
