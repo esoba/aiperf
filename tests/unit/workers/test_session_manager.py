@@ -226,6 +226,91 @@ class TestUserSessionManager:
 
         assert len(session.turn_list) == 3
 
+    def test_discard_responses_skips_store_for_non_final(self, session_manager):
+        """When conversation.discard_responses=True, non-final turns skip store_response.
+
+        Simulates the worker contract: responses are not appended to turn_list
+        for non-final turns because each turn already carries its own context.
+        """
+        conversation = Conversation(
+            conversation_id="test-discard",
+            discard_responses=True,
+            turns=[
+                Turn(raw_content="user turn 0"),
+                Turn(raw_content="user turn 1"),
+            ],
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="discard-test",
+            conversation=conversation,
+            num_turns=2,
+        )
+
+        # Non-final turn: worker skips store_response
+        session.advance_turn(0)
+        assert len(session.turn_list) == 1  # Only user turn
+
+        # Final turn: worker stores the response
+        session.advance_turn(1)
+        session.store_response(Turn(role="assistant", raw_content="server reply"))
+        assert len(session.turn_list) == 3  # turn0 + turn1 + response
+
+    def test_discard_responses_with_replaces_history(self, session_manager):
+        """discard_responses and replaces_history are independent."""
+        conversation = Conversation(
+            conversation_id="test-both",
+            discard_responses=True,
+            turns=[
+                Turn(raw_content="q1"),
+                Turn(raw_content="q2", replaces_history=True),
+                Turn(raw_content="q3"),
+            ],
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="both-flags",
+            conversation=conversation,
+            num_turns=3,
+        )
+
+        session.advance_turn(0)
+        assert len(session.turn_list) == 1
+
+        # Turn 1: replaces_history clears, then appends; discard means no store
+        session.advance_turn(1)
+        assert len(session.turn_list) == 1  # Cleared + appended turn 1
+
+        # Turn 2 (final): appends normally, response stored
+        session.advance_turn(2)
+        session.store_response(Turn(role="assistant", raw_content="final reply"))
+        assert len(session.turn_list) == 3  # turn1 + turn2 + response
+
+    def test_discard_responses_default_false(self, session_manager):
+        """Conversation.discard_responses defaults to False."""
+        conversation = Conversation(conversation_id="test-default", turns=[])
+        assert conversation.discard_responses is False
+
+    def test_discard_responses_false_stores_all(self, session_manager):
+        """When discard_responses=False, all responses are stored normally."""
+        conversation = Conversation(
+            conversation_id="test-no-discard",
+            discard_responses=False,
+            turns=[
+                Turn(raw_content="q1"),
+                Turn(raw_content="q2"),
+            ],
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="no-discard",
+            conversation=conversation,
+            num_turns=2,
+        )
+
+        session.advance_turn(0)
+        session.store_response(Turn(role="assistant", raw_content="a1"))
+        session.advance_turn(1)
+        session.store_response(Turn(role="assistant", raw_content="a2"))
+        assert len(session.turn_list) == 4  # 2 user + 2 assistant
+
     def test_store_response_after_replaces_history_appends(self, session_manager):
         """Assistant response after a replaces_history turn appends normally."""
         conversation = Conversation(

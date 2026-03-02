@@ -527,8 +527,6 @@ class TestClaudeCodeTraceLoader:
         t0 = conv.turns[0]
         assert t0.role == "user"
         assert t0.raw_content == "Hello, help me with Python"
-        assert t0.assistant_prefill is not None
-        assert t0.assistant_prefill[0]["type"] == "text"
         assert t0.input_tokens == 100
 
         # Second turn: tool_result content
@@ -536,8 +534,9 @@ class TestClaudeCodeTraceLoader:
         assert t1.role == "user"
         assert isinstance(t1.raw_content, list)
         assert t1.raw_content[0]["type"] == "tool_result"
-        assert t1.assistant_prefill[0]["type"] == "tool_use"
         assert t1.input_tokens == 200
+
+        assert conv.discard_responses is True
 
     def test_convert_synthetic_mode(self, session_file, default_user_config):
         mock_gen = MagicMock()
@@ -555,7 +554,7 @@ class TestClaudeCodeTraceLoader:
         conv = conversations[0]
         t0 = conv.turns[0]
         assert t0.raw_content is None
-        assert t0.assistant_prefill is None
+        assert conv.discard_responses is False
         assert len(t0.texts) == 1
         assert t0.texts[0].contents[0] == "x" * 100
 
@@ -619,6 +618,28 @@ class TestClaudeCodeTraceLoader:
 
         assert len(conversations) == 1
         assert len(conversations[0].turns) == 1
+        assert conversations[0].discard_responses is True
+
+    def test_discard_responses_verbatim_mode(self, session_file, default_user_config):
+        loader = ClaudeCodeTraceLoader(
+            filename=str(session_file), user_config=default_user_config
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        assert conversations[0].discard_responses is True
+
+    def test_discard_responses_synthetic_mode(self, session_file, default_user_config):
+        mock_gen = MagicMock()
+        mock_gen.generate_prompt.return_value = "x" * 100
+
+        loader = ClaudeCodeTraceLoader(
+            filename=str(session_file),
+            user_config=default_user_config,
+            prompt_generator=mock_gen,
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        assert conversations[0].discard_responses is False
 
     def test_thinking_blocks_preserved(self, tmp_path, default_user_config):
         records = [
@@ -644,12 +665,13 @@ class TestClaudeCodeTraceLoader:
             filename=str(filepath), user_config=default_user_config
         )
         data = loader.load_dataset()
-        conversations = loader.convert_to_conversations(data)
 
-        prefill = conversations[0].turns[0].assistant_prefill
-        assert len(prefill) == 2
-        assert prefill[0]["type"] == "thinking"
-        assert prefill[1]["type"] == "text"
+        trace = list(data.values())[0][0]
+        assert len(trace.api_calls) == 1
+        content = trace.api_calls[0].assistant_content
+        assert len(content) == 2
+        assert content[0]["type"] == "thinking"
+        assert content[1]["type"] == "text"
 
     def test_progress_records_filtered(self, tmp_path, default_user_config):
         records = [

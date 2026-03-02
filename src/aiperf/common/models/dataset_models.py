@@ -233,11 +233,6 @@ class Turn(AIPerfBaseModel):
         "When set with replaces_history=True, advance_turn expands each dict "
         "into a Turn(raw_message=msg) in the turn_list.",
     )
-    assistant_prefill: str | list[dict[str, Any]] | None = Field(
-        default=None,
-        description="Trace assistant response to use as context for subsequent turns. "
-        "When set, worker uses this instead of server response for turn history.",
-    )
     replaces_history: bool = Field(
         default=False,
         description="When true, this turn replaces all prior conversation history. "
@@ -307,7 +302,6 @@ class Turn(AIPerfBaseModel):
             raw_content=None,
             raw_message=self.raw_message,
             raw_messages=self.raw_messages,
-            assistant_prefill=self.assistant_prefill,
             replaces_history=self.replaces_history,
             raw_payload=None,
         )
@@ -426,6 +420,12 @@ class Conversation(AIPerfBaseModel):
     subagent_spawns: list[SubagentSpawnInfo] = Field(
         default_factory=list,
         description="Subagent spawn points linking to child conversations.",
+    )
+    discard_responses: bool = Field(
+        default=False,
+        description="When true, worker discards server responses instead of storing "
+        "them in turn history (except for the final turn). Used in verbatim trace "
+        "replay where each turn already carries its own context.",
     )
 
     def metadata(self) -> ConversationMetadata:

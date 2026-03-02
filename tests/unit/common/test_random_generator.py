@@ -7,7 +7,7 @@ import pytest
 
 from aiperf.common import random_generator as rng
 from aiperf.common.exceptions import InvalidStateError
-from aiperf.common.random_generator import RandomGenerator, _RNGManager
+from aiperf.common.random_generator import RandomGenerator, RNGManager
 
 
 class TestRandomGeneratorBasics:
@@ -52,14 +52,14 @@ class TestChildRNGIsolation:
 
     def test_child_rng_isolation_order_independence(self):
         """Test that child RNG creation order doesn't affect their sequences."""
-        manager1 = _RNGManager(root_seed=42)
+        manager1 = RNGManager(root_seed=42)
         rng_a1 = manager1.derive("component_a")
         rng_b1 = manager1.derive("component_b")
 
         a1_vals = [rng_a1.random() for _ in range(5)]
         b1_vals = [rng_b1.random() for _ in range(5)]
 
-        manager2 = _RNGManager(root_seed=42)
+        manager2 = RNGManager(root_seed=42)
         rng_b2 = manager2.derive("component_b")
         rng_a2 = manager2.derive("component_a")
 
@@ -71,7 +71,7 @@ class TestChildRNGIsolation:
 
     def test_child_rng_isolation_interleaved_operations(self):
         """Test that interleaved operations on children maintain independence."""
-        manager = _RNGManager(root_seed=42)
+        manager = RNGManager(root_seed=42)
         rng_a = manager.derive("component_a")
         rng_b = manager.derive("component_b")
 
@@ -80,7 +80,7 @@ class TestChildRNGIsolation:
         a2 = rng_a.random()
         b2 = rng_b.random()
 
-        manager = _RNGManager(root_seed=42)
+        manager = RNGManager(root_seed=42)
         rng_a = manager.derive("component_a")
         rng_b = manager.derive("component_b")
 
@@ -96,7 +96,7 @@ class TestChildRNGIsolation:
 
     def test_child_rng_same_identifier_produces_same_seed(self):
         """Test that same identifier produces children with the same seed."""
-        manager = _RNGManager(root_seed=42)
+        manager = RNGManager(root_seed=42)
 
         child1 = manager.derive("my_component")
         child2 = manager.derive("my_component")
@@ -108,11 +108,11 @@ class TestChildRNGIsolation:
 
     def test_child_seed_stability_across_runs(self):
         """Test that child seeds are stable (SHA-256 based, not Python hash)."""
-        manager1 = _RNGManager(root_seed=42)
+        manager1 = RNGManager(root_seed=42)
         child1 = manager1.derive("component_a")
         val1 = child1.random()
 
-        manager2 = _RNGManager(root_seed=42)
+        manager2 = RNGManager(root_seed=42)
         child2 = manager2.derive("component_a")
         val2 = child2.random()
 
@@ -120,7 +120,7 @@ class TestChildRNGIsolation:
 
     def test_child_with_none_seed_parent(self):
         """Test child generation when parent has None seed."""
-        manager = _RNGManager(root_seed=None)
+        manager = RNGManager(root_seed=None)
         child1 = manager.derive("component_a")
         child2 = manager.derive("component_b")
 

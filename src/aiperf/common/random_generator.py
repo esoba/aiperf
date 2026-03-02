@@ -409,7 +409,7 @@ class RandomGenerator:
         return self._numpy_rng.random(size)
 
 
-class _RNGManager:
+class RNGManager:
     """Internal manager for RNG seed derivation.
 
     Handles deterministic seed derivation from a root seed, allowing
@@ -450,7 +450,7 @@ class _RNGManager:
 
 
 # Global RNG manager instance
-_manager: _RNGManager | None = None
+_manager: RNGManager | None = None
 
 
 def init(seed: int | None) -> None:
@@ -483,7 +483,7 @@ def init(seed: int | None) -> None:
         np_seed = (seed ^ (seed >> 32)) & 0xFFFFFFFF
         np.random.seed(np_seed)
 
-    _manager = _RNGManager(seed)
+    _manager = RNGManager(seed)
 
 
 def derive(identifier: str) -> RandomGenerator:

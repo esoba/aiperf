@@ -199,7 +199,7 @@ class ApiCaptureTraceLoader(BaseFileLoader):
 
         - Identifies parent (most API calls) vs subagent children
         - Extracts system_message and tools from the first call in each thread
-        - Builds turns with raw_content, assistant_prefill, and raw_payload
+        - Builds turns with raw_content and raw_payload
         - Links children to parent via SubagentSpawnInfo
         """
         traces = [t[0] for t in data.values()]
@@ -259,11 +259,12 @@ class ApiCaptureTraceLoader(BaseFileLoader):
             system_message=trace.system_prompt_text,
             tools=first_call.tools or None,
             agent_depth=1 if is_child else 0,
+            discard_responses=True,
         )
 
         prev_timestamp_ms: float | None = None
 
-        for call_idx, api_call in enumerate(trace.api_calls):
+        for api_call in trace.api_calls:
             delay_ms: float | None = None
             if prev_timestamp_ms is not None and api_call.timestamp_ms is not None:
                 delay_ms = api_call.timestamp_ms - prev_timestamp_ms
@@ -274,14 +275,6 @@ class ApiCaptureTraceLoader(BaseFileLoader):
 
             # Extract user content: last user-role message
             raw_content = self._extract_user_content(api_call.messages)
-
-            # Extract assistant prefill from next request's messages
-            assistant_prefill = None
-            if call_idx + 1 < len(trace.api_calls):
-                next_call = trace.api_calls[call_idx + 1]
-                assistant_prefill = self._extract_assistant_prefill(
-                    api_call.messages, next_call.messages
-                )
 
             # Build raw_payload (complete API request for verbatim replay)
             raw_payload: dict[str, Any] = {
@@ -304,7 +297,6 @@ class ApiCaptureTraceLoader(BaseFileLoader):
                 max_tokens=api_call.max_tokens or 4096,
                 input_tokens=api_call.input_tokens,
                 raw_content=raw_content,
-                assistant_prefill=assistant_prefill,
                 raw_payload=raw_payload,
             )
             conversation.turns.append(turn)
@@ -320,36 +312,6 @@ class ApiCaptureTraceLoader(BaseFileLoader):
             if msg.get("role") == "user":
                 return msg.get("content")
         return None
-
-    @staticmethod
-    def _extract_assistant_prefill(
-        current_messages: list[dict],
-        next_messages: list[dict],
-    ) -> list[dict[str, Any]] | None:
-        """Extract assistant response that appears between current and next request.
-
-        The next request's messages contain the current request's messages plus
-        an assistant response and a new user message. The assistant response is
-        the content between the end of current_messages and the last user message
-        in next_messages.
-        """
-        current_len = len(current_messages)
-        if current_len >= len(next_messages):
-            return None
-
-        # Messages after the current request's messages, before the last user message
-        new_messages = next_messages[current_len:]
-        assistant_blocks: list[dict[str, Any]] = []
-
-        for msg in new_messages:
-            if msg.get("role") == "assistant":
-                content = msg.get("content", [])
-                if isinstance(content, list):
-                    assistant_blocks.extend(content)
-                elif isinstance(content, str):
-                    assistant_blocks.append({"type": "text", "text": content})
-
-        return assistant_blocks or None
 
     @staticmethod
     def _find_spawn_point(

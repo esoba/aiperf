@@ -6,7 +6,8 @@ Loads Claude Code JSONL session transcripts (from ~/.claude/projects/.../session
 and converts them to AIPerf conversations. Supports two modes:
 
 - Verbatim mode (default): Sends exact content blocks (tool_use, tool_result, text,
-  thinking) to the server using raw_content / assistant_prefill on Turn.
+  thinking) to the server using raw_content on Turn, with discard_responses=True
+  on the Conversation.
 - Synthetic mode: Extracts timing/token metadata and generates synthetic content,
   reusing existing PromptGenerator infrastructure.
 """
@@ -310,7 +311,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
         """Convert Claude Code traces to AIPerf conversation objects.
 
         In verbatim mode: Creates Turns with raw_content (user content blocks)
-        and assistant_prefill (assistant response blocks).
+        and sets discard_responses=True on the Conversation.
         In synthetic mode: Extracts token counts and generates synthetic content.
 
         When a manifest links parent/child sessions, produces SubagentSpawnInfo
@@ -340,6 +341,7 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
                 session_id=trace_id,
                 system_message=trace.system_prompt,
                 agent_depth=1 if is_child else 0,
+                discard_responses=not self._synthetic_mode,
             )
 
             prev_timestamp_ms: float | None = None
@@ -412,7 +414,6 @@ class ClaudeCodeTraceLoader(BaseFileLoader):
             max_tokens=api_call.output_tokens or 4096,
             input_tokens=api_call.input_tokens,
             raw_content=api_call.user_content,
-            assistant_prefill=api_call.assistant_content,
         )
 
     def _build_synthetic_turn(

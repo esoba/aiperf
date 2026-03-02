@@ -612,17 +612,14 @@ class TestApiCaptureTraceLoader:
         assert parent.turns[1].delay is not None
         assert parent.turns[1].delay > 0
 
-    def test_convert_assistant_prefill(self, team_capture, default_user_config):
+    def test_convert_discard_responses(self, team_capture, default_user_config):
         loader = ApiCaptureTraceLoader(
             filename=str(team_capture), user_config=default_user_config
         )
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
-        parent = conversations[0]
-        # All turns except last should have assistant_prefill
-        for turn in parent.turns[:-1]:
-            assert turn.assistant_prefill is not None
-        assert parent.turns[-1].assistant_prefill is None
+        for conv in conversations:
+            assert conv.discard_responses is True
 
     def test_convert_raw_payload_present(self, team_capture, default_user_config):
         loader = ApiCaptureTraceLoader(

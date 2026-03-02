@@ -523,13 +523,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             else:
                 self._consecutive_connection_errors = 0
 
-            if resp_turn := await self._process_response(record):
-                # Use trace's assistant content for context fidelity in verbatim replay
-                current_turn = session.conversation.turns[session.turn_index]
-                if current_turn.assistant_prefill is not None:
-                    resp_turn = Turn(
-                        role="assistant", raw_content=current_turn.assistant_prefill
-                    )
+            if (resp_turn := await self._process_response(record)) and (
+                not session.conversation.discard_responses
+                or credit_context.credit.is_final_turn
+            ):
                 session.store_response(resp_turn)
 
         except asyncio.CancelledError:
