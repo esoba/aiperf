@@ -160,7 +160,7 @@ The `raw` endpoint type (`--endpoint-type raw`) is designed to work with `raw_pa
 1. **No payload formatting**: The `format_payload` method is not called. Payloads from the dataset are sent directly to the transport layer.
 2. **No endpoint path**: The `endpoint_path` metadata is `null`, so the URL you provide via `--url` is used as-is. You must include the full API path in the URL (e.g., `--url localhost:8000/v1/chat/completions`).
 
-The raw endpoint supports streaming (`supports_streaming: true`) and produces token metrics (`produces_tokens: true`), but does not tokenize input on the client side (`tokenizes_input: false`).
+The raw endpoint supports streaming (`supports_streaming: true`), produces token metrics (`produces_tokens: true`), and tokenizes input (`tokenizes_input: true`).
 
 Response parsing uses auto-detection with optional JMESPath extraction via the `response_field` key in endpoint extra parameters.
 
@@ -221,7 +221,10 @@ raw:
     endpoint_path: null
     supports_streaming: true
     produces_tokens: true
-    tokenizes_input: false
+    tokenizes_input: true
+    supports_audio: true
+    supports_images: true
+    supports_videos: true
     metrics_title: LLM Metrics
 ```
 

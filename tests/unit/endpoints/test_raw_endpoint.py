@@ -135,5 +135,5 @@ def test_metadata():
     assert metadata.endpoint_path is None
     assert metadata.supports_streaming is True
     assert metadata.produces_tokens is True
-    assert metadata.tokenizes_input is False
+    assert metadata.tokenizes_input is True
     assert metadata.metrics_title == "LLM Metrics"
