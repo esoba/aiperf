@@ -47,6 +47,7 @@ class ConfluxLoader(BaseFileLoader):
     ) -> None:
         super().__init__(filename=filename, user_config=user_config, **kwargs)
         self._groups: dict[str, list[ConfluxRecord]] = {}
+        self._orphan_ids: set[str] = set()
 
     @classmethod
     def can_load(
@@ -63,12 +64,14 @@ class ConfluxLoader(BaseFileLoader):
                 raw = orjson.loads(f.read())
             if not isinstance(raw, list) or len(raw) == 0:
                 return False
-            first = raw[0]
-            return (
-                isinstance(first, dict)
-                and "agent_id" in first
-                and "is_subagent" in first
-                and "messages" in first
+            # Check any record for Conflux signature fields (the first record
+            # may be a standalone haiku call without agent_id/is_subagent)
+            return any(
+                isinstance(r, dict)
+                and "agent_id" in r
+                and "is_subagent" in r
+                and "messages" in r
+                for r in raw[:20]
             )
         except Exception:
             return False
@@ -80,22 +83,26 @@ class ConfluxLoader(BaseFileLoader):
     def load_dataset(self) -> dict[str, list[ConfluxRecord]]:
         """Load and group Conflux records by agent_id.
 
-        Filters out records with agent_id=None (e.g. haiku tool-use calls),
-        parses into ConfluxRecord models, and groups by agent_id sorted by
-        timestamp within each group.
+        Records with an agent_id are grouped into multi-turn agent threads.
+        Records without an agent_id (e.g. haiku tool-result processing calls)
+        become single-turn background subagent children of the parent agent,
+        each mapped to the closest parent turn by timestamp.
         """
         with open(self.filename, "rb") as f:
             raw_records: list[dict] = orjson.loads(f.read())
 
-        # Filter out records without agent_id
-        filtered = [r for r in raw_records if r.get("agent_id") is not None]
-
         groups: dict[str, list[ConfluxRecord]] = {}
-        for raw in filtered:
+        orphan_count = 0
+
+        for raw in raw_records:
             record = ConfluxRecord.model_validate(raw)
-            agent_id = record.agent_id
-            if agent_id is not None:
-                groups.setdefault(agent_id, []).append(record)
+            if record.agent_id is not None:
+                groups.setdefault(record.agent_id, []).append(record)
+            else:
+                orphan_id = f"_orphan_{orphan_count}"
+                orphan_count += 1
+                self._orphan_ids.add(orphan_id)
+                groups[orphan_id] = [record]
 
         # Sort each group by timestamp
         for records in groups.values():
@@ -103,9 +110,11 @@ class ConfluxLoader(BaseFileLoader):
 
         self._groups = groups
 
+        threaded = len(groups) - orphan_count
         total_records = sum(len(recs) for recs in groups.values())
         self.info(
-            f"Loaded {len(groups)} Conflux agent threads ({total_records} total records)"
+            f"Loaded {threaded} agent threads + {orphan_count} orphan "
+            f"requests ({total_records} total records)"
         )
 
         return groups
@@ -115,16 +124,28 @@ class ConfluxLoader(BaseFileLoader):
     ) -> list[Conversation]:
         """Convert grouped Conflux records to Conversation objects.
 
-        The group with is_subagent=False is the parent; groups with
-        is_subagent=True are children linked via SubagentSpawnInfo.
+        Three categories:
+        - The group with is_subagent=False is the parent agent thread.
+        - Groups with is_subagent=True are children linked via SubagentSpawnInfo.
+        - Orphan groups (no agent_id) become single-turn background subagent
+          children, each spawned at the closest parent turn by timestamp.
         """
         if not data:
             return []
 
+        # Separate orphans from threaded groups
+        threaded_data: dict[str, list[ConfluxRecord]] = {}
+        orphan_data: dict[str, list[ConfluxRecord]] = {}
+        for agent_id, records in data.items():
+            if agent_id in self._orphan_ids:
+                orphan_data[agent_id] = records
+            else:
+                threaded_data[agent_id] = records
+
         parent_id: str | None = None
         child_ids: list[str] = []
 
-        for agent_id, records in data.items():
+        for agent_id, records in threaded_data.items():
             if not records[0].is_subagent:
                 parent_id = agent_id
             else:
@@ -134,19 +155,50 @@ class ConfluxLoader(BaseFileLoader):
         child_conversations: list[Conversation] = []
 
         if parent_id is not None:
-            parent_records = data[parent_id]
+            parent_records = threaded_data[parent_id]
             parent_conv = self._build_conversation(
                 parent_id, parent_records, is_child=False
             )
 
-            for spawn_counter, child_agent_id in enumerate(child_ids):
-                child_records = data[child_agent_id]
+            # Attach explicit subagent threads
+            spawn_counter = 0
+            for child_agent_id in child_ids:
+                child_records = threaded_data[child_agent_id]
                 child_conv = self._build_conversation(
                     child_agent_id, child_records, is_child=True
                 )
 
                 spawn_turn_index = self._find_spawn_point(parent_records, child_records)
                 spawn_id = f"s{spawn_counter}"
+                spawn_counter += 1
+
+                parent_conv.subagent_spawns.append(
+                    SubagentSpawnInfo(
+                        spawn_id=spawn_id,
+                        child_conversation_ids=[child_conv.session_id],
+                        join_turn_index=spawn_turn_index,
+                        is_background=True,
+                    )
+                )
+
+                if spawn_turn_index < len(parent_conv.turns):
+                    parent_conv.turns[spawn_turn_index].subagent_spawn_ids.append(
+                        spawn_id
+                    )
+
+                child_conversations.append(child_conv)
+
+            # Attach orphan records as single-turn background subagent children
+            for orphan_id, orphan_records in orphan_data.items():
+                child_conv = self._build_conversation(
+                    orphan_id, orphan_records, is_child=True
+                )
+
+                spawn_turn_index = self._find_spawn_point(
+                    parent_records, orphan_records
+                )
+                spawn_id = f"s{spawn_counter}"
+                spawn_counter += 1
 
                 parent_conv.subagent_spawns.append(
                     SubagentSpawnInfo(
@@ -167,16 +219,17 @@ class ConfluxLoader(BaseFileLoader):
             conversations.append(parent_conv)
             conversations.extend(child_conversations)
         else:
-            # No parent found, treat all groups as independent
-            for agent_id, records in data.items():
+            for agent_id, records in threaded_data.items():
                 conversations.append(
                     self._build_conversation(agent_id, records, is_child=False)
                 )
 
         total_turns = sum(len(c.turns) for c in conversations)
         self.info(
-            f"Converted {len(conversations)} Conflux threads to conversations "
-            f"({total_turns} total turns, {len(child_conversations)} subagent children)"
+            f"Converted {len(conversations)} conversations "
+            f"({total_turns} total turns, "
+            f"{len(child_conversations)} subagent children incl. "
+            f"{len(orphan_data)} orphans)"
         )
         return conversations
 

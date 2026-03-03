@@ -273,13 +273,13 @@ class TestLoadDataset:
     def test_group_count(self, team_session, default_user_config):
         loader = ConfluxLoader(filename=team_session, user_config=default_user_config)
         data = loader.load_dataset()
-        assert len(data) == 3  # parent + 2 subagents
+        assert len(data) == 4  # parent + 2 subagents + 1 orphan
 
-    def test_filters_null_agent_id(self, team_session, default_user_config):
+    def test_orphan_as_separate_group(self, team_session, default_user_config):
         loader = ConfluxLoader(filename=team_session, user_config=default_user_config)
         data = loader.load_dataset()
         total = sum(len(recs) for recs in data.values())
-        assert total == 11  # 5 + 3 + 3, not 12
+        assert total == 12  # 5 + 3 + 3 + 1 orphan
 
     def test_parent_has_5_records(self, team_session, default_user_config):
         loader = ConfluxLoader(filename=team_session, user_config=default_user_config)
@@ -329,7 +329,7 @@ class TestConvertToConversations:
         loader = ConfluxLoader(filename=team_session, user_config=default_user_config)
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
-        assert len(conversations) == 3
+        assert len(conversations) == 4  # parent + 2 children + 1 orphan child
 
     def test_parent_turn_count(self, team_session, default_user_config):
         loader = ConfluxLoader(filename=team_session, user_config=default_user_config)
@@ -344,7 +344,7 @@ class TestConvertToConversations:
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
         children = [c for c in conversations if c.agent_depth > 0]
-        assert len(children) == 2
+        assert len(children) == 3  # 2 explicit subagents + 1 orphan
 
     def test_discard_responses(self, team_session, default_user_config):
         loader = ConfluxLoader(filename=team_session, user_config=default_user_config)
@@ -442,7 +442,7 @@ class TestConvertToConversations:
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
         parent = conversations[0]
-        assert len(parent.subagent_spawns) == 2
+        assert len(parent.subagent_spawns) == 3  # 2 explicit + 1 orphan
 
     def test_subagent_spawns_are_background(self, team_session, default_user_config):
         loader = ConfluxLoader(filename=team_session, user_config=default_user_config)
@@ -457,15 +457,10 @@ class TestConvertToConversations:
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
         parent = conversations[0]
-        annotated_turns = [
-            (i, t.subagent_spawn_ids)
-            for i, t in enumerate(parent.turns)
-            if t.subagent_spawn_ids
-        ]
-        assert len(annotated_turns) == 2
-        for _, spawn_ids in annotated_turns:
-            assert len(spawn_ids) == 1
-            assert spawn_ids[0].startswith("s")
+        all_spawn_ids = [sid for t in parent.turns for sid in t.subagent_spawn_ids]
+        assert len(all_spawn_ids) == 3  # 2 explicit + 1 orphan
+        for sid in all_spawn_ids:
+            assert sid.startswith("s")
 
     def test_empty_data(self, tmp_path, default_user_config):
         """Empty dict produces no conversations."""

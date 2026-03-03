@@ -76,6 +76,7 @@ aiperf profile \
 - [Multi-Turn Conversations](docs/tutorials/multi-turn.md) - Multi-turn conversation benchmarking
 - [Raw Payload Replay](docs/tutorials/raw-payload-replay.md) - Replay pre-built API request bodies verbatim
 - [Inputs JSON Replay](docs/tutorials/inputs-json-replay.md) - Replay multi-turn sessions from inputs.json format
+- [Conflux Proxy Trace Replay](docs/tutorials/conflux-trace-replay.md) - Replay Claude Code proxy captures with subagent hierarchies
 - [Local Tokenizer](docs/tutorials/local-tokenizer.md) - Use local tokenizers without HuggingFace
 
 ### Endpoint Types
