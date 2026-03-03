@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from aiperf.credit.messages import CreditReturn
     from aiperf.credit.structs import Credit, TurnToSend
     from aiperf.timing.config import CreditPhaseConfig
-    from aiperf.timing.conversation_source import ConversationSource
+    from aiperf.timing.conversation_source import ConversationSource, SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
 
@@ -140,6 +140,22 @@ class ChildTurnDispatchProtocol(Protocol):
         Args:
             credit: Completed credit from the child's previous turn.
             turn: Next turn to send for the child.
+        """
+        ...
+
+
+@runtime_checkable
+class ChildFirstTurnDispatchProtocol(Protocol):
+    """Protocol for strategies that schedule child first turns with trace timing."""
+
+    def dispatch_child_first_turn(
+        self, child_session: SampledSession, agent_depth: int
+    ) -> None:
+        """Dispatch a child session's first turn, using trace timestamps if available.
+
+        Args:
+            child_session: The sampled child session to dispatch.
+            agent_depth: Nesting depth of the child (1=direct child, 2=grandchild).
         """
         ...
 

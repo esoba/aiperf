@@ -22,6 +22,7 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.timing.strategies.core import (
     CancelledReturnObserverProtocol,
+    ChildFirstTurnDispatchProtocol,
     ChildSessionObserverProtocol,
     ChildTurnDispatchProtocol,
     CleanableProtocol,
@@ -82,6 +83,9 @@ class SubagentSessionManager(AIPerfLoggerMixin):
         # Cache protocol checks once
         self._inner_has_child_observer = isinstance(inner, ChildSessionObserverProtocol)
         self._inner_has_child_dispatch = isinstance(inner, ChildTurnDispatchProtocol)
+        self._inner_has_child_first_dispatch = isinstance(
+            inner, ChildFirstTurnDispatchProtocol
+        )
         self._inner_has_request_complete = isinstance(
             inner, RequestCompleteObserverProtocol
         )
@@ -313,11 +317,14 @@ class SubagentSessionManager(AIPerfLoggerMixin):
                     child_depth,
                     parent_corr_id,
                 )
-                child_turn = child_session.build_first_turn(agent_depth=child_depth)
                 self._stats.children_spawned += 1
-                self._scheduler.execute_async(
-                    self._credit_issuer.issue_credit(child_turn),
-                )
+                if self._inner_has_child_first_dispatch:
+                    self._inner.dispatch_child_first_turn(child_session, child_depth)
+                else:
+                    child_turn = child_session.build_first_turn(agent_depth=child_depth)
+                    self._scheduler.execute_async(
+                        self._credit_issuer.issue_credit(child_turn),
+                    )
 
         return total_blocking_children > 0 and join_turn_index is not None
 

@@ -81,6 +81,11 @@ dev = [
   "trustme>=1.0.0",
 ]
 
+[dependency-groups]
+dev = [
+    "plotly>=6.4.0",
+]
+
 [tool.ruff]
 # Base settings for ruff
 line-length = 88

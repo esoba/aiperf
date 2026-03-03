@@ -190,6 +190,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
         if self.config.input.synthesis.should_synthesize() and dataset_type not in (
             CustomDatasetType.MOONCAKE_TRACE,
             CustomDatasetType.CODING_TRACE,
+            CustomDatasetType.CONFLUX,
         ):
             raise ValueError(
                 f"Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "
@@ -205,15 +206,18 @@ class CustomDatasetComposer(BaseDatasetComposer):
             dataset_type: The type of custom dataset to create.
         """
         kwargs = {}
-        if dataset_type in (
-            CustomDatasetType.MOONCAKE_TRACE,
-            CustomDatasetType.CODING_TRACE,
+        if (
+            dataset_type
+            in (
+                CustomDatasetType.MOONCAKE_TRACE,
+                CustomDatasetType.CODING_TRACE,
+            )
+            and self.prompt_generator is None
         ):
-            if self.prompt_generator is None:
-                raise ValueError(
-                    f"{dataset_type} datasets require a tokenizer for prompt synthesis. "
-                    "Ensure the endpoint supports tokenization or provide a --tokenizer."
-                )
+            raise ValueError(
+                f"{dataset_type} datasets require a tokenizer for prompt synthesis. "
+                "Ensure the endpoint supports tokenization or provide a --tokenizer."
+            )
         if dataset_type == CustomDatasetType.CODING_TRACE:
             from aiperf.dataset.generator.coding_content import CodingContentGenerator
 

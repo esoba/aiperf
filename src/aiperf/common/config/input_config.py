@@ -120,7 +120,11 @@ class InputConfig(BaseConfig):
             )
             and self.custom_dataset_type is not None
             and self.custom_dataset_type
-            not in (CustomDatasetType.MOONCAKE_TRACE, CustomDatasetType.CODING_TRACE)
+            not in (
+                CustomDatasetType.MOONCAKE_TRACE,
+                CustomDatasetType.CODING_TRACE,
+                CustomDatasetType.CONFLUX,
+            )
         ):
             raise ValueError(
                 "Synthesis options (--synthesis-speedup-ratio, --synthesis-prefix-len-multiplier, "

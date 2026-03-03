@@ -545,6 +545,77 @@ class ClaudeCodeManifest(AIPerfBaseModel):
     )
 
 
+class ConfluxTokens(AIPerfBaseModel):
+    """Token counts from a Conflux proxy capture record."""
+
+    input: int = Field(description="Total input tokens.")
+    input_cached: int = Field(default=0, description="Input tokens served from cache.")
+    input_cache_write: int = Field(
+        default=0, description="Input tokens written to cache."
+    )
+    output: int = Field(description="Output tokens generated.")
+
+
+class ConfluxHyperparameters(AIPerfBaseModel):
+    """Hyperparameters from a Conflux proxy capture record."""
+
+    max_tokens: int | None = Field(default=None, description="Max tokens requested.")
+    temperature: float | None = Field(default=None, description="Temperature setting.")
+
+
+class ConfluxRecord(AIPerfBaseModel):
+    """A single record from a Conflux proxy capture JSON file.
+
+    Each record represents one API request/response cycle captured by the
+    Conflux proxy, with cumulative messages, explicit agent threading, and
+    full request metadata for verbatim replay.
+    """
+
+    type: Literal[CustomDatasetType.CONFLUX] = CustomDatasetType.CONFLUX
+
+    id: str = Field(description="Unique request identifier.")
+    session_id: str = Field(description="Session identifier.")
+    agent_id: str | None = Field(
+        default=None, description="Agent thread identifier for grouping."
+    )
+    is_subagent: bool = Field(
+        default=False, description="Whether this record is from a subagent thread."
+    )
+    timestamp: str = Field(description="ISO timestamp of the request.")
+    duration_ms: int | float = Field(
+        default=0, description="Request duration in milliseconds."
+    )
+    model: str | None = Field(default=None, description="Model name used.")
+    tokens: ConfluxTokens | None = Field(
+        default=None, description="Token counts for this request."
+    )
+    tools: list[dict[str, Any]] = Field(
+        default_factory=list, description="Tool definitions in the request."
+    )
+    messages: list[dict[str, Any]] = Field(
+        default_factory=list, description="Cumulative messages array."
+    )
+    output: list[dict[str, Any]] = Field(
+        default_factory=list, description="Assistant output content blocks."
+    )
+    hyperparameters: ConfluxHyperparameters | None = Field(
+        default=None, description="Request hyperparameters."
+    )
+    is_streaming: bool | None = Field(
+        default=None, description="Whether the request used streaming."
+    )
+    ttft_ms: int | float | None = Field(
+        default=None, description="Time to first token in milliseconds."
+    )
+    base64: dict[str, str] | None = Field(
+        default=None,
+        description="Base64-encoded request/response bodies from the proxy. "
+        "Keys: request_body, response_body, provider_usage.",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
 class AgenticTrajectoryRecord(AIPerfBaseModel):
     """A single record from an agentic trajectory JSONL file.
 
@@ -589,6 +660,7 @@ CustomDatasetT = TypeVar(
     | ClaudeCodeTrace
     | ApiCaptureTrace
     | AgenticTrajectoryRecord
+    | ConfluxRecord
     | RawPayload
     | InputsJsonSession,
 )

@@ -448,6 +448,16 @@ custom_dataset_loader:
       supports_multi_turn: true
       supports_timing: true
 
+  conflux:
+    class: aiperf.dataset.loader.conflux:ConfluxLoader
+    description: |
+      Conflux proxy capture loader for verbatim replay of Claude Code sessions.
+      Loads JSON arrays of API request records with explicit agent_id/is_subagent
+      fields for parent and subagent thread grouping with timestamp-based delays.
+    metadata:
+      supports_multi_turn: true
+      supports_timing: true
+
   coding_trace:
     class: aiperf.dataset.loader.coding_trace:CodingTraceLoader
     description: |

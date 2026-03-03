@@ -293,7 +293,7 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace` (timestamped trace files), `random_pool` (directory of reusable prompts). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br>_Choices: [`agentic_trajectory`, `api_capture_trace`, `claude_code_trace`, `coding_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `inputs_json`, `raw_payload`, `single_turn`]_
+<br>_Choices: [`agentic_trajectory`, `api_capture_trace`, `claude_code_trace`, `conflux`, `coding_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `inputs_json`, `raw_payload`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 

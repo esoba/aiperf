@@ -8,6 +8,7 @@ from aiperf.dataset.loader.base_loader import BaseFileLoader, BaseLoader
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.dataset.loader.claude_code_trace import ClaudeCodeTraceLoader
 from aiperf.dataset.loader.coding_trace import CodingTraceLoader
+from aiperf.dataset.loader.conflux import ConfluxLoader
 from aiperf.dataset.loader.inputs_json import InputsJsonPayloadLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import (
@@ -15,6 +16,7 @@ from aiperf.dataset.loader.models import (
     ApiCaptureTrace,
     ClaudeCodeTrace,
     CodingTrace,
+    ConfluxRecord,
     InputsJsonSession,
     MooncakeTrace,
     MultiTurn,
@@ -41,6 +43,8 @@ __all__ = [
     "ClaudeCodeTraceLoader",
     "CodingTrace",
     "CodingTraceLoader",
+    "ConfluxLoader",
+    "ConfluxRecord",
     "InputsJsonPayloadLoader",
     "InputsJsonSession",
     "MediaConversionMixin",

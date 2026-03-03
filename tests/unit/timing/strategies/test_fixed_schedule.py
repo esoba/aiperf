@@ -8,10 +8,10 @@ from pydantic import ValidationError
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
-from aiperf.credit.structs import Credit
+from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
-from aiperf.timing.conversation_source import ConversationSource
+from aiperf.timing.conversation_source import ConversationSource, SampledSession
 from aiperf.timing.strategies.fixed_schedule import FixedScheduleStrategy
 from tests.unit.timing.conftest import OrchestratorHarness, make_sampler
 
@@ -330,3 +330,184 @@ class TestFixedScheduleEdgeCases:
         await strategy.setup_phase()
         assert len(strategy._absolute_schedule) == 1
         assert strategy._absolute_schedule[0][0] == 0
+
+
+@pytest.mark.asyncio
+class TestFixedScheduleChildDispatch:
+    """Test dispatch_child_first_turn and dispatch_child_turn on FixedScheduleStrategy."""
+
+    async def test_dispatch_child_first_turn_with_timestamp(self) -> None:
+        """Child first turn with timestamp_ms schedules via schedule_at_perf_sec."""
+        strategy, scheduler, _ = make_strategy([(0, "c1")])
+        await strategy.setup_phase()
+
+        child_meta = ConversationMetadata(
+            conversation_id="child1",
+            turns=[
+                TurnMetadata(timestamp_ms=500),
+                TurnMetadata(timestamp_ms=600, delay_ms=100),
+            ],
+        )
+        child_session = SampledSession(
+            conversation_id="child1",
+            metadata=child_meta,
+            x_correlation_id="child-xcorr-1",
+        )
+
+        strategy.dispatch_child_first_turn(child_session, agent_depth=1)
+
+        scheduler.schedule_at_perf_sec.assert_called_once()
+        args = scheduler.schedule_at_perf_sec.call_args[0]
+        expected_perf_sec = strategy._timestamp_to_perf_sec(500)
+        assert args[0] == expected_perf_sec
+
+    async def test_dispatch_child_first_turn_without_timestamp(self) -> None:
+        """Child first turn without timestamp_ms falls back to execute_async."""
+        strategy, scheduler, _ = make_strategy([(0, "c1")])
+        await strategy.setup_phase()
+
+        child_meta = ConversationMetadata(
+            conversation_id="child2",
+            turns=[TurnMetadata(timestamp_ms=None)],
+        )
+        child_session = SampledSession(
+            conversation_id="child2",
+            metadata=child_meta,
+            x_correlation_id="child-xcorr-2",
+        )
+
+        strategy.dispatch_child_first_turn(child_session, agent_depth=1)
+
+        scheduler.execute_async.assert_called_once()
+        scheduler.schedule_at_perf_sec.assert_not_called()
+        scheduler.schedule_later.assert_not_called()
+
+    async def test_dispatch_child_turn_with_timestamp(self) -> None:
+        """Child subsequent turn with timestamp_ms schedules via schedule_at_perf_sec."""
+        strategy, scheduler, _ = make_strategy([(0, "child_conv"), (100, "child_conv")])
+        await strategy.setup_phase()
+
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="child_conv",
+            x_correlation_id="child-xcorr",
+            turn_index=0,
+            num_turns=2,
+            issued_at_ns=1000,
+            agent_depth=1,
+        )
+        turn = TurnToSend.from_previous_credit(credit)
+
+        strategy.dispatch_child_turn(credit, turn)
+
+        scheduler.schedule_at_perf_sec.assert_called_once()
+
+    async def test_dispatch_child_turn_with_delay(self) -> None:
+        """Child subsequent turn with delay_ms (no timestamp_ms) uses schedule_later."""
+        # Build a dataset where turn 1 has delay_ms but no timestamp_ms
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="child_d",
+                    turns=[
+                        TurnMetadata(timestamp_ms=0),
+                        TurnMetadata(timestamp_ms=None, delay_ms=200),
+                    ],
+                )
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["child_d"], DatasetSamplingStrategy.SEQUENTIAL)
+        src = ConversationSource(ds, sampler)
+        scheduler = MagicMock()
+        issuer = MagicMock()
+        issuer.issue_credit = lambda *a, **k: True
+        lifecycle = MagicMock()
+        lifecycle.started_at_perf_ns = 1_000_000_000
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.FIXED_SCHEDULE,
+            total_expected_requests=1,
+            auto_offset_timestamps=True,
+        )
+        strategy = FixedScheduleStrategy(
+            config=cfg,
+            conversation_source=src,
+            scheduler=scheduler,
+            stop_checker=MagicMock(),
+            credit_issuer=issuer,
+            lifecycle=lifecycle,
+        )
+        await strategy.setup_phase()
+
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="child_d",
+            x_correlation_id="child-xcorr",
+            turn_index=0,
+            num_turns=2,
+            issued_at_ns=1000,
+            agent_depth=1,
+        )
+        turn = TurnToSend.from_previous_credit(credit)
+        strategy.dispatch_child_turn(credit, turn)
+
+        scheduler.schedule_later.assert_called_once()
+        delay_sec = scheduler.schedule_later.call_args[0][0]
+        assert delay_sec == pytest.approx(200 / MILLIS_PER_SECOND)
+
+    async def test_dispatch_child_turn_no_timing(self) -> None:
+        """Child subsequent turn with neither timestamp nor delay uses execute_async."""
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="child_n",
+                    turns=[
+                        TurnMetadata(timestamp_ms=0),
+                        TurnMetadata(timestamp_ms=None, delay_ms=None),
+                    ],
+                )
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["child_n"], DatasetSamplingStrategy.SEQUENTIAL)
+        src = ConversationSource(ds, sampler)
+        scheduler = MagicMock()
+        issuer = MagicMock()
+        issuer.issue_credit = lambda *a, **k: True
+        lifecycle = MagicMock()
+        lifecycle.started_at_perf_ns = 1_000_000_000
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.FIXED_SCHEDULE,
+            total_expected_requests=1,
+            auto_offset_timestamps=True,
+        )
+        strategy = FixedScheduleStrategy(
+            config=cfg,
+            conversation_source=src,
+            scheduler=scheduler,
+            stop_checker=MagicMock(),
+            credit_issuer=issuer,
+            lifecycle=lifecycle,
+        )
+        await strategy.setup_phase()
+
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="child_n",
+            x_correlation_id="child-xcorr",
+            turn_index=0,
+            num_turns=2,
+            issued_at_ns=1000,
+            agent_depth=1,
+        )
+        turn = TurnToSend.from_previous_credit(credit)
+        strategy.dispatch_child_turn(credit, turn)
+
+        scheduler.execute_async.assert_called_once()
+        scheduler.schedule_at_perf_sec.assert_not_called()
+        scheduler.schedule_later.assert_not_called()

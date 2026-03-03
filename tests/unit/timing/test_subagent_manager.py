@@ -660,6 +660,60 @@ class TestSubagentSessionManagerMultiSpawn:
         assert scheduler.execute_async.call_count >= 1
 
 
+class TestSubagentSessionManagerChildFirstDispatch:
+    """Test child first turn dispatch delegation."""
+
+    def test_dispatch_child_first_turn_delegates_when_hook_present(self):
+        """Pass 2: uses inner.dispatch_child_first_turn when protocol is implemented."""
+        src, child_conv_ids = _make_dataset_and_source()
+
+        inner = MagicMock()
+        inner.setup_phase = AsyncMock()
+        inner.execute_phase = AsyncMock()
+        inner.handle_credit_return = AsyncMock()
+        inner.dispatch_child_first_turn = MagicMock()
+        del inner.on_child_session_started
+        del inner.dispatch_child_turn
+
+        scheduler = MagicMock()
+        scheduler.execute_async = MagicMock()
+        issuer = MagicMock()
+        issuer.issue_credit = AsyncMock(return_value=True)
+
+        manager = SubagentSessionManager(
+            inner=inner,
+            conversation_source=src,
+            credit_issuer=issuer,
+            scheduler=scheduler,
+        )
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawns(credit, ["s0"])
+
+        assert inner.dispatch_child_first_turn.call_count == 2
+        scheduler.execute_async.assert_not_called()
+
+        # Verify arguments: (child_session, child_depth)
+        for call in inner.dispatch_child_first_turn.call_args_list:
+            session, depth = call[0]
+            assert session.conversation_id in child_conv_ids
+            assert depth == 1
+
+    def test_dispatch_child_first_turn_falls_back_when_absent(self):
+        """Pass 2: falls back to execute_async when no dispatch_child_first_turn hook."""
+        manager, inner, scheduler, _, _ = _make_manager()
+        assert not manager._inner_has_child_first_dispatch
+
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+        manager._dispatch_subagent_spawns(credit, ["s0"])
+
+        assert scheduler.execute_async.call_count == 2
+
+
 class TestSubagentSessionManagerBackground:
     """Test background spawn behavior."""
 
