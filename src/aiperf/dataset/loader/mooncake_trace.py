@@ -9,8 +9,8 @@ from pydantic import ValidationError
 
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.dataset.generator.base import BaseGenerator
 from aiperf.dataset.generator.parallel_decode import parallel_decode
-from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.synthesis.models import SynthesisParams
@@ -44,7 +44,7 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
         self,
         *,
         filename: str,
-        prompt_generator: PromptGenerator,
+        prompt_generator: BaseGenerator,
         user_config: UserConfig,
         **kwargs,
     ):

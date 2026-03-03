@@ -880,6 +880,17 @@ Number of text inputs to include in each request for batch processing endpoints.
 <br>_Constraints: ≥ 0_
 <br>_Default: `1`_
 
+#### `--prompt-corpus` `<str>`
+
+Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare sonnets (default). 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs).
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `sonnet` | _default_ | Shakespeare sonnets (default). Classic prose for filler text. |
+| `coding` |  | Realistic coding content: code, bash output, JSON, error tracebacks, git diffs. |
+
 ### Input Sequence Length (ISL)
 
 #### `--prompt-input-tokens-mean`, `--synthetic-input-tokens-mean`, `--isl` `<int>`

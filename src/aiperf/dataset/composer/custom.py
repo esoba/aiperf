@@ -226,7 +226,19 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 tokenizer=self.prompt_generator.tokenizer,
             )
         elif dataset_type == CustomDatasetType.MOONCAKE_TRACE:
-            kwargs["prompt_generator"] = self.prompt_generator
+            from aiperf.common.enums import PromptCorpus
+
+            if self.config.input.prompt.prompt_corpus == PromptCorpus.CODING:
+                from aiperf.dataset.generator.coding_content import (
+                    CodingContentGenerator,
+                )
+
+                kwargs["prompt_generator"] = CodingContentGenerator(
+                    config=self.config.input.prompt,
+                    tokenizer=self.prompt_generator.tokenizer,
+                )
+            else:
+                kwargs["prompt_generator"] = self.prompt_generator
         elif dataset_type == CustomDatasetType.RANDOM_POOL:
             kwargs["num_conversations"] = self.config.input.conversation.num
 
