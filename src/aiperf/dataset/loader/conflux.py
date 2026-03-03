@@ -291,7 +291,14 @@ class ConfluxLoader(BaseFileLoader):
         parent_records: list[ConfluxRecord],
         child_records: list[ConfluxRecord],
     ) -> int:
-        """Find the parent turn index closest to the child's first request."""
+        """Find the parent turn whose in-flight period overlaps the child spawn.
+
+        Returns the index of the parent turn closest to the child's first
+        request.  Placing spawn_ids on this turn means the spawn fires when
+        the *previous* parent turn completes — i.e. at the same time the
+        matched turn is dispatched — so ``dispatch_child_first_turn`` can
+        schedule the child at its absolute timestamp.
+        """
         child_first_ts = _parse_timestamp_ms(child_records[0].timestamp)
 
         best_idx = 0
@@ -303,4 +310,4 @@ class ConfluxLoader(BaseFileLoader):
                 best_diff = diff
                 best_idx = i
 
-        return min(best_idx + 1, len(parent_records) - 1)
+        return best_idx
