@@ -50,6 +50,7 @@ class SampledSession:
         self,
         max_turns: int | None = None,
         agent_depth: int = 0,
+        parent_correlation_id: str | None = None,
     ) -> TurnToSend:
         """Build first turn (turn_index=0) from sampled conversation.
 
@@ -58,6 +59,7 @@ class SampledSession:
                 If None, the number of turns is determined by the conversation metadata.
             agent_depth: Nesting depth of this session. 0=root, 1=child, 2=grandchild.
                 Non-zero depth sessions skip session slot acquisition.
+            parent_correlation_id: Runtime x_correlation_id of the parent session. None for root sessions.
         """
         return TurnToSend(
             conversation_id=self.conversation_id,
@@ -65,6 +67,10 @@ class SampledSession:
             turn_index=0,
             num_turns=max_turns or len(self.metadata.turns),
             agent_depth=agent_depth,
+            subagent_type=self.metadata.subagent_type.value
+            if self.metadata.subagent_type
+            else None,
+            parent_correlation_id=parent_correlation_id,
         )
 
 

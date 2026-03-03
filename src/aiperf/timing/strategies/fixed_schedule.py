@@ -159,10 +159,15 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         self._dispatch_by_timing(turn, next_meta.timestamp_ms, next_meta.delay_ms)
 
     def dispatch_child_first_turn(
-        self, child_session: SampledSession, agent_depth: int
+        self,
+        child_session: SampledSession,
+        agent_depth: int,
+        parent_correlation_id: str | None = None,
     ) -> None:
         """Schedule child's first turn using trace timestamp, falling back to immediate."""
-        turn = child_session.build_first_turn(agent_depth=agent_depth)
+        turn = child_session.build_first_turn(
+            agent_depth=agent_depth, parent_correlation_id=parent_correlation_id
+        )
         timestamp_ms = (
             child_session.metadata.turns[0].timestamp_ms
             if child_session.metadata.turns

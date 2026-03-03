@@ -695,11 +695,12 @@ class TestSubagentSessionManagerChildFirstDispatch:
         assert inner.dispatch_child_first_turn.call_count == 2
         scheduler.execute_async.assert_not_called()
 
-        # Verify arguments: (child_session, child_depth)
+        # Verify arguments: (child_session, child_depth, parent_correlation_id)
         for call in inner.dispatch_child_first_turn.call_args_list:
-            session, depth = call[0]
+            session, depth, parent_corr = call[0]
             assert session.conversation_id in child_conv_ids
             assert depth == 1
+            assert parent_corr == "parent-1"
 
     def test_dispatch_child_first_turn_falls_back_when_absent(self):
         """Pass 2: falls back to execute_async when no dispatch_child_first_turn hook."""

@@ -149,13 +149,17 @@ class ChildFirstTurnDispatchProtocol(Protocol):
     """Protocol for strategies that schedule child first turns with trace timing."""
 
     def dispatch_child_first_turn(
-        self, child_session: SampledSession, agent_depth: int
+        self,
+        child_session: SampledSession,
+        agent_depth: int,
+        parent_correlation_id: str | None = None,
     ) -> None:
         """Dispatch a child session's first turn, using trace timestamps if available.
 
         Args:
             child_session: The sampled child session to dispatch.
             agent_depth: Nesting depth of the child (1=direct child, 2=grandchild).
+            parent_correlation_id: Runtime x_correlation_id of the parent session.
         """
         ...
 

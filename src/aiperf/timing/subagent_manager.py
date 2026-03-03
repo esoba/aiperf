@@ -50,6 +50,8 @@ class PendingSubagentJoin:
     join_turn_index: int = 0
     parent_num_turns: int = 0
     parent_agent_depth: int = 0
+    parent_subagent_type: str | None = None
+    parent_parent_correlation_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -302,6 +304,8 @@ class SubagentSessionManager(AIPerfLoggerMixin):
                 join_turn_index=join_turn_index,
                 parent_num_turns=credit.num_turns,
                 parent_agent_depth=credit.agent_depth,
+                parent_subagent_type=credit.subagent_type,
+                parent_parent_correlation_id=credit.parent_correlation_id,
             )
             self._stats.parents_suspended += 1
 
@@ -319,9 +323,14 @@ class SubagentSessionManager(AIPerfLoggerMixin):
                 )
                 self._stats.children_spawned += 1
                 if self._inner_has_child_first_dispatch:
-                    self._inner.dispatch_child_first_turn(child_session, child_depth)
+                    self._inner.dispatch_child_first_turn(
+                        child_session, child_depth, parent_corr_id
+                    )
                 else:
-                    child_turn = child_session.build_first_turn(agent_depth=child_depth)
+                    child_turn = child_session.build_first_turn(
+                        agent_depth=child_depth,
+                        parent_correlation_id=parent_corr_id,
+                    )
                     self._scheduler.execute_async(
                         self._credit_issuer.issue_credit(child_turn),
                     )
@@ -355,6 +364,8 @@ class SubagentSessionManager(AIPerfLoggerMixin):
             turn_index=pending.join_turn_index,
             num_turns=pending.parent_num_turns,
             agent_depth=pending.parent_agent_depth,
+            subagent_type=pending.parent_subagent_type,
+            parent_correlation_id=pending.parent_parent_correlation_id,
         )
         self._scheduler.execute_async(
             self._credit_issuer.issue_credit(join_turn),

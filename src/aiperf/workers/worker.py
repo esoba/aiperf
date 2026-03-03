@@ -579,6 +579,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 payload_bytes=payload_bytes,
                 drop_perf_ns=credit_context.drop_perf_ns,
                 credit_issued_ns=credit.issued_at_ns,
+                agent_depth=credit.agent_depth,
+                subagent_type=credit.subagent_type,
+                parent_correlation_id=credit.parent_correlation_id,
             )
             record = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
@@ -698,6 +701,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             tools=session.conversation.tools,
             url_index=session.url_index,
             payload_bytes=payload_bytes,
+            agent_depth=credit.agent_depth,
+            subagent_type=credit.subagent_type,
+            parent_correlation_id=credit.parent_correlation_id,
         )
 
     async def _retrieve_conversation(

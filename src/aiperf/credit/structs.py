@@ -48,6 +48,8 @@ class Credit(
     url_index: int | None = None
     agent_depth: int = 0
     system_prompt_suffix: str | None = None
+    subagent_type: str | None = None
+    parent_correlation_id: str | None = None
 
     @property
     def is_final_turn(self) -> bool:
@@ -99,6 +101,8 @@ class TurnToSend(Struct, frozen=True):
     num_turns: int
     agent_depth: int = 0
     system_prompt_suffix: str | None = None
+    subagent_type: str | None = None
+    parent_correlation_id: str | None = None
 
     @property
     def is_final_turn(self) -> bool:
@@ -114,4 +118,6 @@ class TurnToSend(Struct, frozen=True):
             num_turns=credit.num_turns,
             agent_depth=credit.agent_depth,
             system_prompt_suffix=credit.system_prompt_suffix,
+            subagent_type=credit.subagent_type,
+            parent_correlation_id=credit.parent_correlation_id,
         )

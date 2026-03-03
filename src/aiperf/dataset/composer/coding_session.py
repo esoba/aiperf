@@ -587,6 +587,8 @@ class CodingSessionComposer(BaseDatasetComposer):
         child = Conversation(
             session_id=child_id,
             agent_depth=depth,
+            subagent_type=profile.agent_type,
+            parent_conversation_id=parent_session_id,
             tools=child_tools,
         )
 

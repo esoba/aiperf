@@ -142,6 +142,18 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
     )
+    agent_depth: int = Field(
+        default=0,
+        description="Nesting depth of this request. 0=root, 1=child, 2=grandchild, etc.",
+    )
+    subagent_type: str | None = Field(
+        default=None,
+        description="Type of subagent (explore, general, plan). None for root requests.",
+    )
+    parent_correlation_id: str | None = Field(
+        default=None,
+        description="Runtime x_correlation_id of the parent session. None for root requests.",
+    )
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -541,6 +553,18 @@ class RequestInfo(AIPerfBaseModel):
         default=None,
         exclude=True,
         description="Pre-encoded payload bytes from payload mmap. Bypasses all serialization.",
+    )
+    agent_depth: int = Field(
+        default=0,
+        description="Nesting depth of this request. 0=root, 1=child, 2=grandchild, etc.",
+    )
+    subagent_type: str | None = Field(
+        default=None,
+        description="Type of subagent (explore, general, plan). None for root requests.",
+    )
+    parent_correlation_id: str | None = Field(
+        default=None,
+        description="Runtime x_correlation_id of the parent session. None for root requests.",
     )
 
 

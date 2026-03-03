@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 from pydantic import Field
 
 from aiperf.common.enums import MediaType
+from aiperf.common.enums.enums import SubagentType
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
@@ -336,6 +337,14 @@ class ConversationMetadata(AIPerfBaseModel):
         default=0,
         description="Nesting depth of this conversation. 0=root, 1=child, 2=grandchild, etc.",
     )
+    subagent_type: SubagentType | None = Field(
+        default=None,
+        description="Type of subagent (EXPLORE, GENERAL, PLAN). None for root conversations.",
+    )
+    parent_conversation_id: str | None = Field(
+        default=None,
+        description="Template session_id of the parent conversation. None for root conversations.",
+    )
 
 
 class DatasetMetadata(AIPerfBaseModel):
@@ -404,6 +413,14 @@ class Conversation(AIPerfBaseModel):
         default=0,
         description="Nesting depth of this conversation. 0=root, 1=child, 2=grandchild, etc.",
     )
+    subagent_type: SubagentType | None = Field(
+        default=None,
+        description="Type of subagent (EXPLORE, GENERAL, PLAN). None for root conversations.",
+    )
+    parent_conversation_id: str | None = Field(
+        default=None,
+        description="Template session_id of the parent conversation. None for root conversations.",
+    )
     subagent_spawns: list[SubagentSpawnInfo] = Field(
         default_factory=list,
         description="Subagent spawn points linking to child conversations.",
@@ -423,6 +440,8 @@ class Conversation(AIPerfBaseModel):
             turns=turn_metas,
             subagent_spawns=self.subagent_spawns,
             agent_depth=self.agent_depth,
+            subagent_type=self.subagent_type,
+            parent_conversation_id=self.parent_conversation_id,
         )
 
 
