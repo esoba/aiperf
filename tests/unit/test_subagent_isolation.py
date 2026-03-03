@@ -66,6 +66,7 @@ def _make_sequential_credit(
     corr_id: str = "xcorr-1",
     turn_index: int = 0,
     num_turns: int = 10,
+    agent_depth: int = 0,
 ) -> Credit:
     return Credit(
         id=credit_id,
@@ -75,6 +76,7 @@ def _make_sequential_credit(
         turn_index=turn_index,
         num_turns=num_turns,
         issued_at_ns=0,
+        agent_depth=agent_depth,
     )
 
 
@@ -829,6 +831,7 @@ class TestAdaptiveScaleSubagentDispatch:
             corr_id=child_corr_ids[0],
             turn_index=2,
             num_turns=3,
+            agent_depth=1,
         )
         assert child_credit.is_final_turn
 

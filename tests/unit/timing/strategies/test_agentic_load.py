@@ -1060,42 +1060,23 @@ class TestEdgeCases:
 
 
 class TestSubagentCreditReturn:
-    """Verify handle_credit_return behavior for subagent credits (agent_depth > 0)."""
+    """Verify handle_credit_return behavior for subagent credits (agent_depth > 0).
+
+    NOTE: Child non-final dispatch is now centralized in SubagentSessionManager.
+    Strategy only sees child final turns (delegated by SubagentSessionManager for cleanup).
+    """
 
     @pytest.mark.asyncio
-    async def test_subagent_non_final_turn_issues_continuation(self) -> None:
-        """Subagent mid-conversation: issue next turn via from_previous_credit."""
+    async def test_subagent_final_turn_no_session_lookup(self) -> None:
+        """Subagent final turn: no session lookup, no credit issued."""
         strategy, _, issuer, _, _ = _make_strategy()
         await strategy.setup_phase()
+        user = strategy._users[0]
+        strategy._build_first_turn_for_user(user)
 
-        credit = Credit(
-            id=1,
-            phase=CreditPhase.PROFILING,
-            conversation_id="child_conv",
-            x_correlation_id="sub-corr-1",
-            turn_index=0,
-            num_turns=3,
-            issued_at_ns=0,
-            agent_depth=1,
-            system_prompt_suffix="[sub]",
-        )
-        await strategy.handle_credit_return(credit)
+        sessions_before = dict(strategy._active_sessions)
 
-        assert issuer.issue_credit.call_count == 1
-        next_turn: TurnToSend = issuer.issue_credit.call_args[0][0]
-        assert next_turn.turn_index == 1
-        assert next_turn.num_turns == 3
-        assert next_turn.conversation_id == "child_conv"
-        assert next_turn.x_correlation_id == "sub-corr-1"
-        assert next_turn.agent_depth == 1
-        assert next_turn.system_prompt_suffix == "[sub]"
-
-    @pytest.mark.asyncio
-    async def test_subagent_final_turn_silently_discarded(self) -> None:
-        """Subagent final turn: no credit issued, no session lookup."""
-        strategy, _, issuer, _, _ = _make_strategy()
-        await strategy.setup_phase()
-
+        # Root credit with unknown session -- should not crash
         credit = Credit(
             id=2,
             phase=CreditPhase.PROFILING,
@@ -1104,61 +1085,12 @@ class TestSubagentCreditReturn:
             turn_index=2,
             num_turns=3,
             issued_at_ns=0,
-            agent_depth=1,
+            agent_depth=0,
         )
         await strategy.handle_credit_return(credit)
 
-        assert issuer.issue_credit.call_count == 0
-
-    @pytest.mark.asyncio
-    async def test_subagent_does_not_affect_active_sessions(self) -> None:
-        """Subagent returns should not pop or look up _active_sessions."""
-        strategy, _, issuer, _, _ = _make_strategy()
-        await strategy.setup_phase()
-        user = strategy._users[0]
-        turn = strategy._build_first_turn_for_user(user)
-
-        sessions_before = dict(strategy._active_sessions)
-
-        # Return a subagent credit with the same correlation ID as a real session
-        credit = Credit(
-            id=3,
-            phase=CreditPhase.PROFILING,
-            conversation_id=turn.conversation_id,
-            x_correlation_id=turn.x_correlation_id,
-            turn_index=4,
-            num_turns=5,
-            issued_at_ns=0,
-            agent_depth=2,
-        )
-        await strategy.handle_credit_return(credit)
-
-        # Session should still be present (subagent path returns early)
+        # Active sessions unchanged
         assert strategy._active_sessions == sessions_before
-        assert issuer.issue_credit.call_count == 0
-
-    @pytest.mark.asyncio
-    async def test_subagent_depth_two_non_final_continues(self) -> None:
-        """Nested subagent (depth=2) non-final turn still gets continuation."""
-        strategy, _, issuer, _, _ = _make_strategy()
-        await strategy.setup_phase()
-
-        credit = Credit(
-            id=4,
-            phase=CreditPhase.PROFILING,
-            conversation_id="nested_child",
-            x_correlation_id="nested-corr",
-            turn_index=1,
-            num_turns=4,
-            issued_at_ns=0,
-            agent_depth=2,
-        )
-        await strategy.handle_credit_return(credit)
-
-        assert issuer.issue_credit.call_count == 1
-        next_turn: TurnToSend = issuer.issue_credit.call_args[0][0]
-        assert next_turn.turn_index == 2
-        assert next_turn.agent_depth == 2
 
 
 # ===========================================================================

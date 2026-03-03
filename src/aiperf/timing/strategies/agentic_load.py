@@ -261,12 +261,6 @@ class AgenticLoadStrategy(AIPerfLoggerMixin):
         - Final turn: advance to next conversation, issue its first turn
         - All conversations exhausted: loop back (increment pass_count)
         """
-        if credit.agent_depth > 0:
-            if not credit.is_final_turn:
-                turn = TurnToSend.from_previous_credit(credit)
-                await self._credit_issuer.issue_credit(turn)
-            return
-
         session = self._active_sessions.get(credit.x_correlation_id)
         if session is None:
             return

@@ -349,6 +349,14 @@ class AdaptiveScaleStrategy(AIPerfLoggerMixin):
         # Update last-active timestamp for TTL tracking
         self._session_last_active_ns[credit.x_correlation_id] = time.perf_counter_ns()
 
+        # Defensive depth tracking: if a child credit arrives for a session not
+        # yet tracked in _session_depth, record it from the credit itself.
+        if (
+            credit.agent_depth > 0
+            and credit.x_correlation_id not in self._session_depth
+        ):
+            self._session_depth[credit.x_correlation_id] = credit.agent_depth
+
         if credit.is_final_turn:
             self._cleanup_session(credit.x_correlation_id)
             if credit.agent_depth > 0:

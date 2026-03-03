@@ -167,6 +167,32 @@ class CreditPhaseStats(BasePhaseStats):
         description="The total number of turns in all user sessions so far (not all have been sent or returned yet).",
     )
 
+    subagent_children_spawned: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of subagent child sessions spawned during this phase.",
+    )
+    subagent_children_completed: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of subagent child sessions that completed successfully.",
+    )
+    subagent_children_errored: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of subagent child sessions that errored or were cancelled.",
+    )
+    subagent_parents_suspended: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of parent sessions suspended waiting for blocking children.",
+    )
+    subagent_parents_resumed: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of parent sessions resumed after all blocking children completed.",
+    )
+
     @property
     def in_flight_sessions(self) -> int:
         """Sessions started but not yet finished (no final turn returned)."""

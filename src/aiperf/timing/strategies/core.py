@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
-    from aiperf.credit.structs import Credit
+    from aiperf.credit.messages import CreditReturn
+    from aiperf.credit.structs import Credit, TurnToSend
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
@@ -105,3 +106,94 @@ class RateSettableProtocol(Protocol):
             rate: New request rate in requests per second (must be > 0).
         """
         ...
+
+
+# =============================================================================
+# SubagentDispatchProtocol - Strategy hooks for subagent child session dispatch
+# =============================================================================
+
+
+@runtime_checkable
+class ChildSessionObserverProtocol(Protocol):
+    """Protocol for strategies that track subagent child session creation."""
+
+    def on_child_session_started(
+        self, corr_id: str, depth: int, parent_corr_id: str
+    ) -> None:
+        """Hook called when a child session is created.
+
+        Args:
+            corr_id: Child session correlation ID.
+            depth: Nesting depth of the child (1=direct child, 2=grandchild).
+            parent_corr_id: Parent session correlation ID.
+        """
+        ...
+
+
+@runtime_checkable
+class ChildTurnDispatchProtocol(Protocol):
+    """Protocol for strategies that pace child turns through parent rate limiting."""
+
+    def dispatch_child_turn(self, credit: Credit, turn: TurnToSend) -> None:
+        """Dispatch a child's next turn, optionally paced by parent rate.
+
+        Args:
+            credit: Completed credit from the child's previous turn.
+            turn: Next turn to send for the child.
+        """
+        ...
+
+
+# =============================================================================
+# CreditReturnObserverProtocol - Strategy hooks for credit return events
+# =============================================================================
+
+
+@runtime_checkable
+class RequestCompleteObserverProtocol(Protocol):
+    """Protocol for strategies that observe completed (non-cancelled) requests."""
+
+    def on_request_complete(self, credit_return: CreditReturn) -> None:
+        """Handle a completed (non-cancelled) request.
+
+        Args:
+            credit_return: Return details including credit and timing info.
+        """
+        ...
+
+
+@runtime_checkable
+class CancelledReturnObserverProtocol(Protocol):
+    """Protocol for strategies that observe cancelled credit returns."""
+
+    def on_cancelled_return(self, credit: Credit) -> None:
+        """Handle a cancelled credit return.
+
+        Args:
+            credit: The cancelled credit.
+        """
+        ...
+
+
+# =============================================================================
+# SubagentStatsProtocol - Strategy hook for subagent metrics
+# =============================================================================
+
+
+@runtime_checkable
+class SubagentStatsProtocol(Protocol):
+    """Protocol for strategies/managers that expose subagent counters."""
+
+    def get_subagent_stats(self) -> dict[str, int]: ...
+
+
+# =============================================================================
+# CleanableProtocol - Strategy hook for phase-end cleanup
+# =============================================================================
+
+
+@runtime_checkable
+class CleanableProtocol(Protocol):
+    """Protocol for strategies that need phase-end cleanup."""
+
+    def cleanup(self) -> None: ...

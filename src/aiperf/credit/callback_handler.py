@@ -18,6 +18,10 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
+from aiperf.timing.strategies.core import (
+    CancelledReturnObserverProtocol,
+    RequestCompleteObserverProtocol,
+)
 
 if TYPE_CHECKING:
     from aiperf.credit.messages import CreditReturn, FirstToken
@@ -44,6 +48,8 @@ class PhaseCallbackContext:
     stop_checker: StopConditionChecker
     strategy: TimingStrategyProtocol
     concurrency_manager: ConcurrencyManager
+    strategy_has_request_complete: bool = False
+    strategy_has_cancelled_return: bool = False
 
 
 # =============================================================================
@@ -109,6 +115,12 @@ class CreditCallbackHandler:
             stop_checker=stop_checker,
             strategy=strategy,
             concurrency_manager=self._concurrency_manager,
+            strategy_has_request_complete=isinstance(
+                strategy, RequestCompleteObserverProtocol
+            ),
+            strategy_has_cancelled_return=isinstance(
+                strategy, CancelledReturnObserverProtocol
+            ),
         )
         _logger.debug(lambda: f"Registered callback handler for phase {phase}")
 
@@ -191,10 +203,12 @@ class CreditCallbackHandler:
             handler.strategy.on_ttft_sample(credit_return.ttft_ns, credit=credit)
 
         # 5b. Forward completed request to timing strategy for SLO evaluation
-        if not credit_return.cancelled and hasattr(
-            handler.strategy, "on_request_complete"
-        ):
+        if not credit_return.cancelled and handler.strategy_has_request_complete:
             handler.strategy.on_request_complete(credit_return)
+
+        # 5c. Forward cancellation to timing strategy for child cleanup
+        if credit_return.cancelled and handler.strategy_has_cancelled_return:
+            handler.strategy.on_cancelled_return(credit_return.credit)
 
         # 6. Notify timing strategy for subsequent turns when phase can still send
         # Timing strategy queues subsequent turns for rate-limited issuance.

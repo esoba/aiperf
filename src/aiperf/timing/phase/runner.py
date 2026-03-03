@@ -23,6 +23,11 @@ from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
 from aiperf.timing.ramping import RampConfig, Ramper, RampType
+from aiperf.timing.strategies.core import (
+    CleanableProtocol,
+    RateSettableProtocol,
+    SubagentStatsProtocol,
+)
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
@@ -245,6 +250,9 @@ class PhaseRunner(TaskManagerMixin):
 
             await strategy.setup_phase()
 
+            if isinstance(strategy, SubagentStatsProtocol):
+                self._progress.set_subagent_stats_provider(strategy)
+
             self._create_rampers(strategy)
 
             self._lifecycle.start()
@@ -285,6 +293,8 @@ class PhaseRunner(TaskManagerMixin):
             for ramper in self._rampers:
                 ramper.stop()
             self._scheduler.cancel_all()
+            if isinstance(strategy, CleanableProtocol):
+                strategy.cleanup()
 
             return self._progress.create_stats(self._lifecycle)
 
@@ -295,6 +305,8 @@ class PhaseRunner(TaskManagerMixin):
             # we need to flush it through the lifecycle to ensure the other services
             # are notified that the phase has ended, and the benchmark does not hang forever.
             self.error(f"Error executing phase {self._config.phase.title}: {e!r}")
+            if isinstance(strategy, CleanableProtocol):
+                strategy.cleanup()
             if not self._was_cancelled:
                 self.cancel()
 
@@ -408,7 +420,7 @@ class PhaseRunner(TaskManagerMixin):
                 duration_sec=config.request_rate_ramp_duration_sec,
                 update_interval=update_interval,
             )
-            if hasattr(strategy, "set_request_rate"):
+            if isinstance(strategy, RateSettableProtocol):
                 self._rampers.append(
                     Ramper(setter=strategy.set_request_rate, config=ramp_config)
                 )

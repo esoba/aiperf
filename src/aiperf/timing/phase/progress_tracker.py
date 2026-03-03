@@ -16,11 +16,13 @@ from typing import TYPE_CHECKING
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.models import CreditPhaseStats
 from aiperf.timing.phase.credit_counter import CreditCounter
+from aiperf.timing.strategies.core import SubagentStatsProtocol
 
 if TYPE_CHECKING:
     from aiperf.credit.structs import TurnToSend
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
+
 
 _logger = AIPerfLogger(__name__)
 
@@ -50,6 +52,7 @@ class PhaseProgressTracker:
         """
         self._config = config
         self._counter = CreditCounter(config)
+        self._subagent_stats_provider: SubagentStatsProtocol | None = None
 
         # Events for synchronization
         self.all_credits_sent_event: asyncio.Event = asyncio.Event()
@@ -175,6 +178,10 @@ class PhaseProgressTracker:
     # Stats Creation
     # =========================================================================
 
+    def set_subagent_stats_provider(self, provider: SubagentStatsProtocol) -> None:
+        """Store provider for subagent stats in phase stats snapshots."""
+        self._subagent_stats_provider = provider
+
     def create_stats(self, lifecycle: PhaseLifecycle) -> CreditPhaseStats:
         """Create immutable stats snapshot.
 
@@ -186,6 +193,10 @@ class PhaseProgressTracker:
         Returns:
             Immutable CreditPhaseStats snapshot.
         """
+        subagent_kwargs: dict = {}
+        if self._subagent_stats_provider is not None:
+            subagent_kwargs = self._subagent_stats_provider.get_subagent_stats()
+
         return CreditPhaseStats(
             phase=self._config.phase,
             # Timestamps from lifecycle
@@ -218,4 +229,5 @@ class PhaseProgressTracker:
             timeout_triggered=lifecycle.timeout_triggered,
             grace_period_timeout_triggered=lifecycle.grace_period_triggered,
             was_cancelled=lifecycle.was_cancelled,
+            **subagent_kwargs,
         )

@@ -36,6 +36,7 @@ from aiperf.common.config.coding_session_config import (
 from aiperf.common.enums.enums import SubagentType
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.models.dataset_models import CacheLayerSizes, SubagentSpawnInfo
+from aiperf.common.random_generator import RandomGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.generator.coding_content import CodingContentGenerator
@@ -442,27 +443,6 @@ class CodingSessionComposer(BaseDatasetComposer):
                     child_conversations.extend(descendants)
                     child_conv_ids.append(child_conv.session_id)
 
-                # Correlated join turn tokens from subagent result distribution
-                join_delta = self._subagent_rng.sample_lognormal_integer(
-                    cfg.subagent_result_tokens_mean, cfg.subagent_result_tokens_median
-                )
-                cumulative_tokens += join_delta
-                if cumulative_tokens > cfg.max_prompt_tokens:
-                    cumulative_tokens = cfg.max_prompt_tokens
-
-                # Grow L3 for join turn
-                total_blocks = max(1, cumulative_tokens // block_size)
-                current_count = (
-                    len(l1_ids) + len(l2_ids) + len(l3_ids) + len(thinking_ids)
-                )
-                new_l3_count = total_blocks - current_count
-                if new_l3_count > 0:
-                    l3_ids.extend(
-                        self._hash_id_rng.randint(0, 2**31 - 1)
-                        for _ in range(new_l3_count)
-                    )
-
-                # Background spawn decision
                 is_background = (
                     cfg.subagent_background_probability > 0
                     and self._subagent_rng.random()
@@ -470,29 +450,22 @@ class CodingSessionComposer(BaseDatasetComposer):
                 )
 
                 join_turn_index = len(conversation.turns)
-                join_gen = self._gen_length_rng.sample_lognormal_integer(
-                    cfg.generation_length_mean, cfg.generation_length_median
+                join_turn, cumulative_tokens = self._build_join_turn(
+                    is_background=is_background,
+                    cumulative_tokens=cumulative_tokens,
+                    max_prompt_tokens=cfg.max_prompt_tokens,
+                    l1_ids=l1_ids,
+                    l2_ids=l2_ids,
+                    l3_ids=l3_ids,
+                    thinking_ids=thinking_ids,
+                    block_size=block_size,
+                    cfg=cfg,
+                    session_language=session_language,
+                    gen_rng=self._gen_length_rng,
+                    hash_rng=self._hash_id_rng,
+                    spawn_id=spawn_id,
                 )
-                join_content_type = self._select_content_type(cfg)
-                join_prompt = self._content_generator.generate_language_prompt(
-                    max(1, join_delta), join_content_type, session_language
-                )
-                join_hash_ids = l1_ids + l2_ids + l3_ids + thinking_ids
-                join_layer_sizes = CacheLayerSizes(
-                    l1=len(l1_ids), l2=len(l2_ids), l3=len(l3_ids)
-                )
-                join_turn = Turn(
-                    max_tokens=join_gen,
-                    input_tokens=cumulative_tokens,
-                    texts=[Text(name="text", contents=[join_prompt])],
-                    hash_ids=list(join_hash_ids),
-                    cache_layer_sizes=join_layer_sizes,
-                    subagent_spawn_ids=[spawn_id],
-                    delay=self._sample_delay(cfg),
-                )
-                self._finalize_turn(join_turn)
                 conversation.turns.append(join_turn)
-
                 conversation.subagent_spawns.append(
                     SubagentSpawnInfo(
                         spawn_id=spawn_id,
@@ -504,6 +477,78 @@ class CodingSessionComposer(BaseDatasetComposer):
                 continue
 
         return conversation, child_conversations
+
+    def _build_join_turn(
+        self,
+        *,
+        is_background: bool,
+        cumulative_tokens: int,
+        max_prompt_tokens: int,
+        l1_ids: list[int],
+        l2_ids: list[int],
+        l3_ids: list[int],
+        thinking_ids: list[int],
+        block_size: int,
+        cfg: CodingSessionConfig,
+        session_language: str,
+        gen_rng: RandomGenerator,
+        hash_rng: RandomGenerator,
+        spawn_id: str,
+        model: str | None = None,
+    ) -> tuple[Turn, int]:
+        """Build a subagent join turn and return it with updated cumulative tokens.
+
+        For blocking spawns, samples result tokens and grows L3 cache layer.
+        For background spawns, uses a minimal single-block prompt.
+        Mutates l3_ids in place when new blocks are needed.
+
+        Returns:
+            (join_turn, updated_cumulative_tokens)
+        """
+        if not is_background:
+            join_delta = self._subagent_rng.sample_lognormal_integer(
+                cfg.subagent_result_tokens_mean,
+                cfg.subagent_result_tokens_median,
+            )
+            cumulative_tokens += join_delta
+            if cumulative_tokens > max_prompt_tokens:
+                cumulative_tokens = max_prompt_tokens
+
+            total_blocks = max(1, cumulative_tokens // block_size)
+            current_count = len(l1_ids) + len(l2_ids) + len(l3_ids) + len(thinking_ids)
+            new_l3_count = total_blocks - current_count
+            if new_l3_count > 0:
+                l3_ids.extend(
+                    hash_rng.randint(0, 2**31 - 1) for _ in range(new_l3_count)
+                )
+            prompt_tokens = join_delta
+        else:
+            prompt_tokens = block_size
+
+        join_gen = gen_rng.sample_lognormal_integer(
+            cfg.generation_length_mean, cfg.generation_length_median
+        )
+        join_content_type = self._select_content_type(cfg)
+        join_prompt = self._content_generator.generate_language_prompt(
+            max(1, prompt_tokens), join_content_type, session_language
+        )
+
+        join_hash_ids = l1_ids + l2_ids + l3_ids + thinking_ids
+        join_layer_sizes = CacheLayerSizes(
+            l1=len(l1_ids), l2=len(l2_ids), l3=len(l3_ids)
+        )
+        join_turn = Turn(
+            model=model,
+            max_tokens=join_gen,
+            input_tokens=cumulative_tokens,
+            texts=[Text(name="text", contents=[join_prompt])],
+            hash_ids=list(join_hash_ids),
+            cache_layer_sizes=join_layer_sizes,
+            subagent_spawn_ids=[spawn_id],
+            delay=self._sample_delay(cfg),
+        )
+        self._finalize_turn(join_turn)
+        return join_turn, cumulative_tokens
 
     def _sample_subagent_count(self, cfg: CodingSessionConfig) -> int:
         """Sample subagent count clamped to [1, subagent_count_max]."""
@@ -685,63 +730,35 @@ class CodingSessionComposer(BaseDatasetComposer):
                         descendant_conversations.extend(gc_descendants)
                         gc_conv_ids.append(gc_conv.session_id)
 
-                    # Join turn for the child's subagent spawn
-                    gc_join_delta = self._subagent_rng.sample_lognormal_integer(
-                        cfg.subagent_result_tokens_mean,
-                        cfg.subagent_result_tokens_median,
-                    )
-                    cumulative_tokens += gc_join_delta
-                    if cumulative_tokens > profile.max_prompt_tokens:
-                        cumulative_tokens = profile.max_prompt_tokens
-
-                    total_blocks = max(1, cumulative_tokens // block_size)
-                    current_count = (
-                        len(child_l1_ids) + len(child_l2_ids) + len(child_l3_ids)
-                    )
-                    new_l3_count = total_blocks - current_count
-                    if new_l3_count > 0:
-                        child_l3_ids.extend(
-                            self._subagent_hash_rng.randint(0, 2**31 - 1)
-                            for _ in range(new_l3_count)
-                        )
-
-                    gc_join_gen = self._subagent_gen_rng.sample_lognormal_integer(
-                        cfg.generation_length_mean, cfg.generation_length_median
-                    )
-                    gc_join_ct = self._select_content_type(cfg)
-                    gc_join_prompt = self._content_generator.generate_language_prompt(
-                        max(1, gc_join_delta), gc_join_ct, session_language
-                    )
-                    gc_join_hash_ids = child_l1_ids + child_l2_ids + child_l3_ids
-                    gc_join_layers = CacheLayerSizes(
-                        l1=len(child_l1_ids),
-                        l2=len(child_l2_ids),
-                        l3=len(child_l3_ids),
-                    )
-                    gc_join_turn = Turn(
-                        model=profile.model_name,
-                        max_tokens=gc_join_gen,
-                        input_tokens=cumulative_tokens,
-                        texts=[Text(name="text", contents=[gc_join_prompt])],
-                        hash_ids=list(gc_join_hash_ids),
-                        cache_layer_sizes=gc_join_layers,
-                        subagent_spawn_ids=[gc_spawn_id],
-                        delay=self._sample_delay(cfg),
-                    )
-                    self._finalize_turn(gc_join_turn)
-                    child.turns.append(gc_join_turn)
-
                     is_background = (
                         cfg.subagent_background_probability > 0
                         and self._subagent_rng.random()
                         < cfg.subagent_background_probability
                     )
 
+                    gc_join_turn_index = len(child.turns)
+                    gc_join_turn, cumulative_tokens = self._build_join_turn(
+                        is_background=is_background,
+                        cumulative_tokens=cumulative_tokens,
+                        max_prompt_tokens=profile.max_prompt_tokens,
+                        l1_ids=child_l1_ids,
+                        l2_ids=child_l2_ids,
+                        l3_ids=child_l3_ids,
+                        thinking_ids=[],
+                        block_size=block_size,
+                        cfg=cfg,
+                        session_language=session_language,
+                        gen_rng=self._subagent_gen_rng,
+                        hash_rng=self._subagent_hash_rng,
+                        spawn_id=gc_spawn_id,
+                        model=profile.model_name,
+                    )
+                    child.turns.append(gc_join_turn)
                     child.subagent_spawns.append(
                         SubagentSpawnInfo(
                             spawn_id=gc_spawn_id,
                             child_conversation_ids=gc_conv_ids,
-                            join_turn_index=len(child.turns) - 1,
+                            join_turn_index=gc_join_turn_index,
                             is_background=is_background,
                         )
                     )
