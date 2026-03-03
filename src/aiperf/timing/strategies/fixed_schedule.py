@@ -81,9 +81,10 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         """
         self._absolute_schedule = []  # Fresh schedule for each phase
 
-        # Validate and build schedule
+        # Validate and build schedule (root conversations only; children are
+        # spawned by SubagentSessionManager when the parent reaches the spawn turn)
         for conv in self._conversation_source.dataset_metadata.conversations:
-            if not conv.turns:
+            if not conv.turns or conv.agent_depth > 0:
                 continue
 
             # Validate first turn has timestamp (required for fixed schedule mode)
