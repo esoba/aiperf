@@ -39,6 +39,8 @@ class _WorkerInitArgs:
     block_size: int
     sep_token: int | None
     trace_id: str
+    trust_remote_code: bool = False
+    revision: str = "main"
 
 
 @dataclass(slots=True)
@@ -83,7 +85,12 @@ def _init_worker(args: _WorkerInitArgs) -> None:
     hash_rng.set_trace_id(args.trace_id)
 
     _worker_state = _WorkerState(
-        tokenizer=Tokenizer.from_pretrained(args.tokenizer_name, resolve_alias=False),
+        tokenizer=Tokenizer.from_pretrained(
+            args.tokenizer_name,
+            trust_remote_code=args.trust_remote_code,
+            revision=args.revision,
+            resolve_alias=False,
+        ),
         corpus=np.ndarray((args.corpus_len,), dtype=np.int32, buffer=shm.buf),
         shm=shm,
         hash_rng=hash_rng,
@@ -210,6 +217,8 @@ def parallel_convert(
     block_size: int,
     sep_token: int | None,
     trace_id: str,
+    trust_remote_code: bool = False,
+    revision: str = "main",
     num_workers: int | None = None,
     batch_size: int = 100,
 ) -> Iterator[Conversation]:
@@ -261,6 +270,8 @@ def parallel_convert(
                 block_size=block_size,
                 sep_token=sep_token,
                 trace_id=trace_id,
+                trust_remote_code=trust_remote_code,
+                revision=revision,
             )
             with Pool(workers, _init_worker, (init_args,)) as pool:
                 # imap preserves submission order (unlike imap_unordered)

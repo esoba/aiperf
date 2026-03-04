@@ -12,6 +12,7 @@ from aiperf.common.config import (
     InputTokensConfig,
     PromptConfig,
     SynthesisConfig,
+    TokenizerConfig,
     UserConfig,
 )
 from aiperf.dataset.loader.models import MooncakeTrace
@@ -868,6 +869,47 @@ class TestMooncakeTraceDatasetLoader:
         # Third: input_length=50 passes, output_length=50 not capped
         assert traces[2][0].input_length == 50
         assert traces[2][0].output_length == 50
+
+
+class TestBaseTraceLoaderTokenizerConfig:
+    """Tests that tokenizer config options flow through to parallel_convert."""
+
+    def test_stores_trust_remote_code_and_revision(self):
+        """BaseTraceDatasetLoader stores tokenizer config from user_config."""
+        generator = Mock()
+        generator.generate.return_value = "prompt"
+        generator._cache = {}
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            tokenizer=TokenizerConfig(trust_remote_code=True, revision="v2.0"),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=generator,
+        )
+
+        assert loader._trust_remote_code is True
+        assert loader._revision == "v2.0"
+
+    def test_default_tokenizer_config(self):
+        """Default tokenizer config should be trust_remote_code=False, revision='main'."""
+        generator = Mock()
+        generator.generate.return_value = "prompt"
+        generator._cache = {}
+
+        user_config = UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=user_config,
+            prompt_generator=generator,
+        )
+
+        assert loader._trust_remote_code is False
+        assert loader._revision == "main"
 
 
 class TestMooncakeTraceReproducibility:

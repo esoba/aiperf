@@ -521,6 +521,90 @@ class TestInitWorker:
             shm.close()
             shm.unlink()
 
+    def test_init_worker_passes_tokenizer_config(self, sample_corpus_array):
+        """_init_worker should forward trust_remote_code and revision to Tokenizer."""
+        from multiprocessing import shared_memory
+
+        shm = shared_memory.SharedMemory(create=True, size=sample_corpus_array.nbytes)
+        try:
+            np.copyto(
+                np.ndarray(
+                    sample_corpus_array.shape,
+                    dtype=sample_corpus_array.dtype,
+                    buffer=shm.buf,
+                ),
+                sample_corpus_array,
+            )
+
+            args = _WorkerInitArgs(
+                shm_name=shm.name,
+                corpus_len=len(sample_corpus_array),
+                tokenizer_name="test-model",
+                base_seed=42,
+                block_size=10,
+                sep_token=None,
+                trace_id="abc",
+                trust_remote_code=True,
+                revision="v2.0",
+            )
+            with patch(
+                "aiperf.common.tokenizer.Tokenizer.from_pretrained",
+                return_value=MagicMock(),
+            ) as mock_from_pretrained:
+                _init_worker(args)
+
+                mock_from_pretrained.assert_called_once_with(
+                    "test-model",
+                    trust_remote_code=True,
+                    revision="v2.0",
+                    resolve_alias=False,
+                )
+        finally:
+            parallel_convert_mod._worker_state = None
+            shm.close()
+            shm.unlink()
+
+    def test_init_worker_default_tokenizer_config(self, sample_corpus_array):
+        """_init_worker defaults to trust_remote_code=False and revision='main'."""
+        from multiprocessing import shared_memory
+
+        shm = shared_memory.SharedMemory(create=True, size=sample_corpus_array.nbytes)
+        try:
+            np.copyto(
+                np.ndarray(
+                    sample_corpus_array.shape,
+                    dtype=sample_corpus_array.dtype,
+                    buffer=shm.buf,
+                ),
+                sample_corpus_array,
+            )
+
+            args = _WorkerInitArgs(
+                shm_name=shm.name,
+                corpus_len=len(sample_corpus_array),
+                tokenizer_name="test-model",
+                base_seed=42,
+                block_size=10,
+                sep_token=None,
+                trace_id="abc",
+            )
+            with patch(
+                "aiperf.common.tokenizer.Tokenizer.from_pretrained",
+                return_value=MagicMock(),
+            ) as mock_from_pretrained:
+                _init_worker(args)
+
+                mock_from_pretrained.assert_called_once_with(
+                    "test-model",
+                    trust_remote_code=False,
+                    revision="main",
+                    resolve_alias=False,
+                )
+        finally:
+            parallel_convert_mod._worker_state = None
+            shm.close()
+            shm.unlink()
+
     def test_init_worker_sets_offline_env(self, sample_corpus_array):
         """Worker should set HF offline environment variables."""
         import os
@@ -853,6 +937,46 @@ class TestParallelConvert:
             assert args.block_size == 64
             assert args.sep_token == 7
             assert args.trace_id == "trace_abc"
+            assert args.trust_remote_code is False
+            assert args.revision == "main"
+
+    def test_pool_receives_tokenizer_config(self, sample_corpus):
+        """Pool init args should include trust_remote_code and revision."""
+        with patch("aiperf.dataset.loader.parallel_convert.Pool") as MockPool:
+            mock_pool_instance = MagicMock()
+            MockPool.return_value.__enter__ = Mock(return_value=mock_pool_instance)
+            MockPool.return_value.__exit__ = Mock(return_value=False)
+            mock_pool_instance.imap.return_value = []
+
+            list(
+                parallel_convert(
+                    sessions=[
+                        (
+                            "s1",
+                            [
+                                {
+                                    "text_input": "t",
+                                    "timestamp": 1,
+                                    "delay": None,
+                                    "output_length": 1,
+                                }
+                            ],
+                        )
+                    ],
+                    tokenizer_name="kimi-model",
+                    corpus=sample_corpus,
+                    base_seed=42,
+                    block_size=10,
+                    sep_token=None,
+                    trace_id="test",
+                    trust_remote_code=True,
+                    revision="v2.0",
+                )
+            )
+
+            args = MockPool.call_args[0][2][0]
+            assert args.trust_remote_code is True
+            assert args.revision == "v2.0"
 
 
 # -----------------------------------------------------------------------

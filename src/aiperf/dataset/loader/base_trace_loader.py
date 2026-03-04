@@ -72,6 +72,8 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self._max_isl = user_config.input.synthesis.max_isl
         self._max_osl = user_config.input.synthesis.max_osl
         self._trace_id: str = ""
+        self._trust_remote_code = user_config.tokenizer.trust_remote_code
+        self._revision = user_config.tokenizer.revision
 
         # Precedence: user CLI --isl-block-size > plugin metadata default > hardcoded fallback
         user_block_size = user_config.input.prompt.input_tokens.block_size
@@ -284,6 +286,8 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
             block_size=self._block_size,
             sep_token=pg.tokenizer.block_separation_token_id,
             trace_id=self._trace_id,
+            trust_remote_code=self._trust_remote_code,
+            revision=self._revision,
             num_workers=num_workers,
             batch_size=batch_size,
         )
