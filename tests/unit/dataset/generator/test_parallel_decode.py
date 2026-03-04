@@ -34,7 +34,9 @@ class TestParallelDecode:
         result = parallel_decode(token_sequences, "gpt2")
 
         # Should use sequential decoding (Tokenizer.from_pretrained called once)
-        mock_tokenizer_class.from_pretrained.assert_called_once_with("gpt2")
+        mock_tokenizer_class.from_pretrained.assert_called_once_with(
+            "gpt2", trust_remote_code=False, revision="main"
+        )
         assert mock_tokenizer.decode.call_count == 2
         assert result == ["decoded", "decoded"]
 
@@ -204,7 +206,10 @@ class TestWorkerFunctions:
         pd_module._init_worker("gpt2")
 
         mock_tokenizer_class.from_pretrained.assert_called_once_with(
-            "gpt2", resolve_alias=False
+            "gpt2",
+            trust_remote_code=False,
+            revision="main",
+            resolve_alias=False,
         )
         assert pd_module._worker_tokenizer is mock_tokenizer
         assert pd_module._worker_tokenizer_name == "gpt2"
@@ -250,7 +255,10 @@ class TestWorkerFunctions:
         pd_module._init_worker("llama")
 
         mock_tokenizer_class.from_pretrained.assert_called_once_with(
-            "llama", resolve_alias=False
+            "llama",
+            trust_remote_code=False,
+            revision="main",
+            resolve_alias=False,
         )
         assert pd_module._worker_tokenizer is new_tokenizer
         assert pd_module._worker_tokenizer_name == "llama"
@@ -267,3 +275,66 @@ class TestWorkerFunctions:
             [1, 2, 3], skip_special_tokens=False
         )
         assert result == "decoded text"
+
+    @patch("aiperf.common.tokenizer.Tokenizer")
+    def test_init_worker_passes_trust_remote_code_and_revision(
+        self, mock_tokenizer_class
+    ):
+        """Test that _init_worker forwards trust_remote_code and revision."""
+        pd_module._worker_tokenizer = None
+        pd_module._worker_tokenizer_name = None
+        mock_tokenizer_class.from_pretrained.return_value = MagicMock()
+
+        pd_module._init_worker("kimi-vl", trust_remote_code=True, revision="v1.2")
+
+        mock_tokenizer_class.from_pretrained.assert_called_once_with(
+            "kimi-vl",
+            trust_remote_code=True,
+            revision="v1.2",
+            resolve_alias=False,
+        )
+
+
+class TestParallelDecodeTokenizerArgs:
+    """Test that parallel_decode passes tokenizer args through."""
+
+    @patch("aiperf.common.tokenizer.Tokenizer")
+    def test_small_batch_passes_trust_remote_code_and_revision(
+        self, mock_tokenizer_class
+    ):
+        """Test sequential path forwards trust_remote_code and revision."""
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.decode.return_value = "decoded"
+        mock_tokenizer_class.from_pretrained.return_value = mock_tokenizer
+
+        parallel_decode(
+            [[1, 2]],
+            "kimi-vl",
+            trust_remote_code=True,
+            revision="v1.2",
+        )
+
+        mock_tokenizer_class.from_pretrained.assert_called_once_with(
+            "kimi-vl", trust_remote_code=True, revision="v1.2"
+        )
+
+    @patch.object(pd_module, "ProcessPoolExecutor")
+    def test_large_batch_passes_trust_remote_code_and_revision_to_workers(
+        self, mock_executor_class
+    ):
+        """Test executor path forwards trust_remote_code and revision via initargs."""
+        mock_executor = MagicMock()
+        mock_executor.__enter__ = MagicMock(return_value=mock_executor)
+        mock_executor.__exit__ = MagicMock(return_value=False)
+        mock_executor.map.return_value = ["decoded"] * 15
+        mock_executor_class.return_value = mock_executor
+
+        parallel_decode(
+            [[i] for i in range(15)],
+            "kimi-vl",
+            trust_remote_code=True,
+            revision="v1.2",
+        )
+
+        call_kwargs = mock_executor_class.call_args.kwargs
+        assert call_kwargs["initargs"] == ("kimi-vl", True, "v1.2")

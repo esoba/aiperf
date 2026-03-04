@@ -65,6 +65,8 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
             or user_config.tokenizer.name
             or user_config.endpoint.model_names[0]
         )
+        self._trust_remote_code = user_config.tokenizer.trust_remote_code
+        self._revision = user_config.tokenizer.revision
         self._block_size = user_config.input.prompt.input_tokens.block_size
 
     @classmethod
@@ -228,7 +230,12 @@ class MooncakeTraceDatasetLoader(BaseFileLoader):
                 f"({len(data)} conversations)"
             )
             token_sequences = [p[2] for p in pending_decodes]
-            decoded_prompts = parallel_decode(token_sequences, self._tokenizer_name)
+            decoded_prompts = parallel_decode(
+                token_sequences,
+                self._tokenizer_name,
+                trust_remote_code=self._trust_remote_code,
+                revision=self._revision,
+            )
 
             # Fill in placeholders and update cache
             for (session_id, idx, _, cache_key), prompt in zip(
