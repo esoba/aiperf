@@ -298,6 +298,16 @@ class PrometheusMetricType(CaseInsensitiveStrEnum):
             return cls.UNKNOWN
 
 
+class PromptCorpus(CaseInsensitiveStrEnum):
+    """Corpus used for synthetic prompt text generation."""
+
+    SONNET = "sonnet"
+    """Shakespeare sonnets (default). Classic prose for filler text."""
+
+    CODING = "coding"
+    """Realistic coding content: code, bash output, JSON, error tracebacks, git diffs."""
+
+
 class PromptSource(CaseInsensitiveStrEnum):
     SYNTHETIC = "synthetic"
     FILE = "file"

@@ -15,6 +15,7 @@ from aiperf.common.config.config_defaults import (
     PromptDefaults,
 )
 from aiperf.common.config.groups import Groups
+from aiperf.common.enums import PromptCorpus
 
 
 class InputTokensConfig(BaseConfig):
@@ -253,6 +254,19 @@ class PromptConfig(BaseConfig):
     input_tokens: InputTokensConfig = InputTokensConfig()
     output_tokens: OutputTokensConfig = OutputTokensConfig()
     prefix_prompt: PrefixPromptConfig = PrefixPromptConfig()
+
+    prompt_corpus: Annotated[
+        PromptCorpus,
+        Field(
+            description="Source corpus for synthetic prompt text generation. "
+            "'sonnet' uses Shakespeare sonnets (default). "
+            "'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs).",
+        ),
+        CLIParameter(
+            name=("--prompt-corpus",),
+            group=_CLI_GROUP,
+        ),
+    ] = PromptCorpus.SONNET
 
     sequence_distribution: Annotated[
         str | None,

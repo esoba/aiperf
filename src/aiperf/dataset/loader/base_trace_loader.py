@@ -11,7 +11,7 @@ from typing import Any, Generic, TypeVar
 from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
-from aiperf.dataset.generator.prompt import PromptGenerator
+from aiperf.dataset.generator.base import BaseGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.parallel_convert import parallel_convert
 from aiperf.dataset.synthesis.models import SynthesisParams
@@ -57,7 +57,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self,
         *,
         filename: str,
-        prompt_generator: PromptGenerator,
+        prompt_generator: BaseGenerator,
         user_config: UserConfig,
         default_block_size: int | None = None,
         **kwargs: Any,
