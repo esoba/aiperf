@@ -15,6 +15,7 @@ Paths in handle_credit_return:
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -110,8 +111,9 @@ class SubagentSessionManager(AIPerfLoggerMixin):
         await self._inner.setup_phase()
 
     async def execute_phase(self) -> None:
-        """Delegate to inner strategy."""
+        """Delegate to inner strategy, then dispatch turn 0 background children."""
         await self._inner.execute_phase()
+        self._dispatch_turn0_background_spawns()
 
     # =========================================================================
     # Explicit delegation methods (replaces __getattr__ proxy)
@@ -204,6 +206,46 @@ class SubagentSessionManager(AIPerfLoggerMixin):
     # Core dispatch logic
     # =========================================================================
 
+    def _is_background_spawn(self, conversation_id: str, spawn_id: str) -> bool:
+        """Check if a spawn is background (no join accounting needed)."""
+        spawn = self._conversation_source.get_subagent_spawn(conversation_id, spawn_id)
+        return spawn is not None and spawn.is_background
+
+    def _dispatch_turn0_background_spawns(self) -> None:
+        """Dispatch background children for turn 0 of all root conversations.
+
+        Called during execute_phase so children are scheduled at the same time
+        as turn 0, not after turn 0 completes.
+        """
+        for conv in self._conversation_source.dataset_metadata.conversations:
+            if conv.agent_depth > 0 or not conv.turns:
+                continue
+
+            spawn_ids = conv.turns[0].subagent_spawn_ids
+            if not spawn_ids:
+                continue
+
+            parent_corr_id = str(uuid.uuid4())
+            child_depth = 1
+
+            for spawn_id in spawn_ids:
+                spawn = self._conversation_source.get_subagent_spawn(
+                    conv.conversation_id, spawn_id
+                )
+                if spawn is None or not spawn.is_background:
+                    continue
+
+                for child_cid in spawn.child_conversation_ids:
+                    child_session = self._conversation_source.start_child_session(
+                        child_cid
+                    )
+                    self._dispatch_single_child(
+                        child_session,
+                        child_depth,
+                        parent_corr_id,
+                        is_blocking=False,
+                    )
+
     async def handle_credit_return(self, credit: Credit) -> None:
         """Intercept subagent spawn/join events, delegate the rest.
 
@@ -234,14 +276,20 @@ class SubagentSessionManager(AIPerfLoggerMixin):
             return
 
         # Path B0: Turn 0 just completed -- check turn 0's own spawn_ids.
-        # execute_phase fires turn 0 directly without checking its spawns,
-        # so we dispatch them here on first credit return.
+        # Background spawns were already dispatched in execute_phase, so only
+        # dispatch blocking spawns here (they need the real Credit for join tracking).
         if credit.turn_index == 0:
             turn0_meta = self._conversation_source.get_turn_metadata_at(
                 credit.conversation_id, 0
             )
             if turn0_meta.subagent_spawn_ids:
-                self._dispatch_subagent_spawns(credit, turn0_meta.subagent_spawn_ids)
+                blocking_spawn_ids = [
+                    sid
+                    for sid in turn0_meta.subagent_spawn_ids
+                    if not self._is_background_spawn(credit.conversation_id, sid)
+                ]
+                if blocking_spawn_ids:
+                    self._dispatch_subagent_spawns(credit, blocking_spawn_ids)
 
         # Path B: Next turn has subagent spawn(s) -> fan out children
         if not credit.is_final_turn:
@@ -322,30 +370,44 @@ class SubagentSessionManager(AIPerfLoggerMixin):
         # === Pass 2: Dispatch children ===
         for _spawn, is_blocking, child_sessions in resolved_spawns:
             for child_session in child_sessions:
-                if is_blocking:
-                    self._subagent_child_to_parent[child_session.x_correlation_id] = (
-                        parent_corr_id
-                    )
-                self.on_child_session_started(
-                    child_session.x_correlation_id,
+                self._dispatch_single_child(
+                    child_session,
                     child_depth,
                     parent_corr_id,
+                    is_blocking=is_blocking,
                 )
-                self._stats.children_spawned += 1
-                if self._inner_has_child_first_dispatch:
-                    self._inner.dispatch_child_first_turn(
-                        child_session, child_depth, parent_corr_id
-                    )
-                else:
-                    child_turn = child_session.build_first_turn(
-                        agent_depth=child_depth,
-                        parent_correlation_id=parent_corr_id,
-                    )
-                    self._scheduler.execute_async(
-                        self._credit_issuer.issue_credit(child_turn),
-                    )
 
         return total_blocking_children > 0 and join_turn_index is not None
+
+    def _dispatch_single_child(
+        self,
+        child_session: SampledSession,
+        child_depth: int,
+        parent_corr_id: str,
+        *,
+        is_blocking: bool,
+    ) -> None:
+        """Dispatch a single child session's first turn."""
+        if is_blocking:
+            self._subagent_child_to_parent[child_session.x_correlation_id] = (
+                parent_corr_id
+            )
+        self.on_child_session_started(
+            child_session.x_correlation_id, child_depth, parent_corr_id
+        )
+        self._stats.children_spawned += 1
+        if self._inner_has_child_first_dispatch:
+            self._inner.dispatch_child_first_turn(
+                child_session, child_depth, parent_corr_id
+            )
+        else:
+            child_turn = child_session.build_first_turn(
+                agent_depth=child_depth,
+                parent_correlation_id=parent_corr_id,
+            )
+            self._scheduler.execute_async(
+                self._credit_issuer.issue_credit(child_turn),
+            )
 
     def _handle_subagent_child_complete(self, credit: Credit) -> None:
         """Handle a subagent child's final turn. Dispatch parent join when all children complete."""

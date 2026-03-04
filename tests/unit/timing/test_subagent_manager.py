@@ -1277,6 +1277,214 @@ class TestUserCentricDispatchChildTurn:
         scheduler.execute_async.assert_called_once()
 
 
+# =============================================================================
+# Turn 0 background spawn timing tests
+# =============================================================================
+
+
+def _make_turn0_spawn_dataset_and_manager(
+    *,
+    is_background: bool = True,
+    num_children: int = 2,
+    inner_has_first_dispatch: bool = False,
+    extra_blocking_spawn: bool = False,
+) -> tuple[SubagentSessionManager, MagicMock, MagicMock, MagicMock, list[str]]:
+    """Create a dataset where turn 0 of a root conversation has subagent spawns."""
+    parent_turns = []
+    spawn_ids_on_turn0 = ["s0"]
+    if extra_blocking_spawn:
+        spawn_ids_on_turn0.append("s1")
+    for i in range(6):
+        parent_turns.append(
+            TurnMetadata(
+                delay_ms=200.0 if i > 0 else None,
+                input_tokens=500 + i * 100,
+                subagent_spawn_ids=spawn_ids_on_turn0 if i == 0 else [],
+            )
+        )
+
+    child_conv_ids = [f"conv_0_s0_c{ci}" for ci in range(num_children)]
+    spawns = [
+        SubagentSpawnInfo(
+            spawn_id="s0",
+            child_conversation_ids=child_conv_ids,
+            join_turn_index=1,
+            is_background=is_background,
+        ),
+    ]
+    blocking_child_ids: list[str] = []
+    if extra_blocking_spawn:
+        blocking_child_ids = [f"conv_0_s1_c{ci}" for ci in range(num_children)]
+        spawns.append(
+            SubagentSpawnInfo(
+                spawn_id="s1",
+                child_conversation_ids=blocking_child_ids,
+                join_turn_index=1,
+                is_background=False,
+            ),
+        )
+
+    convs = [
+        ConversationMetadata(
+            conversation_id="conv_0",
+            turns=parent_turns,
+            subagent_spawns=spawns,
+        )
+    ]
+    all_child_ids = child_conv_ids + blocking_child_ids
+    for child_id in all_child_ids:
+        convs.append(
+            ConversationMetadata(
+                conversation_id=child_id,
+                turns=[TurnMetadata(input_tokens=300 + j * 50) for j in range(3)],
+                agent_depth=1,
+            )
+        )
+
+    ds = DatasetMetadata(
+        conversations=convs,
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    sampler = make_sampler(["conv_0"], ds.sampling_strategy)
+    src = ConversationSource(ds, sampler)
+
+    inner = MagicMock()
+    inner.setup_phase = AsyncMock()
+    inner.execute_phase = AsyncMock()
+    inner.handle_credit_return = AsyncMock()
+    del inner.on_child_session_started
+    del inner.dispatch_child_turn
+    if inner_has_first_dispatch:
+        inner.dispatch_child_first_turn = MagicMock()
+    else:
+        del inner.dispatch_child_first_turn
+
+    scheduler = MagicMock()
+    scheduler.execute_async = MagicMock()
+    issuer = MagicMock()
+    issuer.issue_credit = AsyncMock(return_value=True)
+
+    manager = SubagentSessionManager(
+        inner=inner,
+        conversation_source=src,
+        credit_issuer=issuer,
+        scheduler=scheduler,
+    )
+    return manager, inner, scheduler, issuer, child_conv_ids
+
+
+class TestTurn0BackgroundSpawnTiming:
+    """Test that turn 0 background children dispatch during execute_phase."""
+
+    @pytest.mark.asyncio
+    async def test_turn0_background_spawns_dispatched_in_execute_phase(self):
+        """Background children for turn 0 are dispatched when execute_phase runs."""
+        manager, inner, scheduler, issuer, child_ids = (
+            _make_turn0_spawn_dataset_and_manager(is_background=True, num_children=2)
+        )
+
+        await manager.execute_phase()
+
+        inner.execute_phase.assert_awaited_once()
+        assert scheduler.execute_async.call_count == 2
+        assert manager._stats.children_spawned == 2
+
+    @pytest.mark.asyncio
+    async def test_turn0_background_spawns_use_dispatch_child_first_turn(self):
+        """When inner has dispatch_child_first_turn, background children use it."""
+        manager, inner, scheduler, _, child_ids = _make_turn0_spawn_dataset_and_manager(
+            is_background=True,
+            inner_has_first_dispatch=True,
+        )
+
+        await manager.execute_phase()
+
+        assert inner.dispatch_child_first_turn.call_count == 2
+        scheduler.execute_async.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_turn0_blocking_spawns_dispatched_in_handle_credit_return(self):
+        """Blocking turn 0 spawns still use Path B0 with real Credit."""
+        manager, inner, scheduler, _, child_ids = _make_turn0_spawn_dataset_and_manager(
+            is_background=False
+        )
+
+        await manager.execute_phase()
+        # No children dispatched in execute_phase (blocking, not background)
+        assert scheduler.execute_async.call_count == 0
+        assert manager._stats.children_spawned == 0
+
+        # Now simulate turn 0 credit return
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=0, num_turns=6
+        )
+        await manager.handle_credit_return(credit)
+
+        # Blocking children dispatched via Path B0
+        assert scheduler.execute_async.call_count == 2
+        assert manager._stats.children_spawned == 2
+        assert "parent-1" in manager._pending_subagent_joins
+
+    @pytest.mark.asyncio
+    async def test_turn0_background_spawns_not_double_dispatched(self):
+        """Path B0 skips background spawns that were already dispatched in execute_phase."""
+        manager, inner, scheduler, _, child_ids = _make_turn0_spawn_dataset_and_manager(
+            is_background=True
+        )
+
+        await manager.execute_phase()
+        assert scheduler.execute_async.call_count == 2
+        assert manager._stats.children_spawned == 2
+
+        # Now turn 0 credit returns -- background spawns should NOT be re-dispatched
+        scheduler.execute_async.reset_mock()
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=0, num_turns=6
+        )
+        await manager.handle_credit_return(credit)
+
+        # No additional children dispatched (background already handled)
+        assert scheduler.execute_async.call_count == 0
+        assert manager._stats.children_spawned == 2
+
+    @pytest.mark.asyncio
+    async def test_turn0_mixed_background_and_blocking_spawns(self):
+        """Turn 0 with both background (s0) and blocking (s1) spawns."""
+        manager, inner, scheduler, _, bg_child_ids = (
+            _make_turn0_spawn_dataset_and_manager(
+                is_background=True,
+                extra_blocking_spawn=True,
+            )
+        )
+
+        # execute_phase dispatches only background children
+        await manager.execute_phase()
+        assert scheduler.execute_async.call_count == 2
+        assert manager._stats.children_spawned == 2
+
+        # Turn 0 credit return dispatches only blocking children
+        scheduler.execute_async.reset_mock()
+        credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=0, num_turns=6
+        )
+        await manager.handle_credit_return(credit)
+
+        assert scheduler.execute_async.call_count == 2
+        assert manager._stats.children_spawned == 4
+        assert "parent-1" in manager._pending_subagent_joins
+
+    @pytest.mark.asyncio
+    async def test_turn0_no_spawns_execute_phase_is_noop(self):
+        """execute_phase is a no-op when turn 0 has no spawn_ids."""
+        manager, inner, scheduler, _, _ = _make_manager()
+
+        await manager.execute_phase()
+
+        inner.execute_phase.assert_awaited_once()
+        scheduler.execute_async.assert_not_called()
+        assert manager._stats.children_spawned == 0
+
+
 class TestAdaptiveScaleDefensiveDepth:
     """AdaptiveScaleStrategy defensive depth tracking."""
 
