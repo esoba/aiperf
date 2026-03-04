@@ -56,9 +56,17 @@ def _register_trace_commands() -> None:
     app.command(analyze_app)
 
 
+def _register_claude_code_gen_commands() -> None:
+    """Register Claude Code dataset generation commands."""
+    from aiperf.dataset.claude_code_gen.cli import claude_code_gen_app
+
+    app.command(claude_code_gen_app)
+
+
 # Register subcommands
 _register_trace_commands()
 _register_service_command()
+_register_claude_code_gen_commands()
 
 
 @app.command(name="profile")
