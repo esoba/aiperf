@@ -10,10 +10,22 @@ from pathlib import Path
 import orjson
 import pytest
 
-from aiperf.dataset.claude_code_gen.config_loader import load_config
+from aiperf.dataset.claude_code_gen.config_loader import (
+    list_bundled_configs,
+    load_config,
+)
 
 
 class TestLoadConfig:
+    def test_load_bundled_default(self) -> None:
+        config = load_config("default")
+        assert config.system_prompt_tokens == 8_000
+        assert config.max_prompt_tokens == 200_000
+
+    def test_list_bundled_configs(self) -> None:
+        names = list_bundled_configs()
+        assert "default" in names
+
     def test_load_from_file_path(self, tmp_path: Path) -> None:
         data = {
             "system_prompt_tokens": 5000,
