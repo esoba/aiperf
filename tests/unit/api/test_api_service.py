@@ -163,6 +163,14 @@ class TestFastAPIServiceStartStop:
     """Test _start_api_server and _stop_api_server."""
 
     @pytest.mark.asyncio
+    async def test_start_raises_when_port_not_configured(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        mock_fastapi_service.api_port = None
+        with pytest.raises(ValueError, match="API port is not configured"):
+            await mock_fastapi_service._start_api_server()
+
+    @pytest.mark.asyncio
     async def test_start_creates_server_and_task(
         self, mock_fastapi_service: FastAPIService
     ) -> None:

@@ -295,8 +295,13 @@ class TestServiceConfigAPIFields:
         config = ServiceConfig()
         assert config.api_host is None
 
-    def test_api_enabled_false_by_default(self, monkeypatch) -> None:
-        monkeypatch.delenv("AIPERF_API_SERVER_PORT", raising=False)
+    def test_api_enabled_false_by_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "aiperf.common.environment.Environment.API_SERVER",
+            type("_FakeAPI", (), {"PORT": None})(),
+        )
         config = ServiceConfig()
         assert config.api_enabled is False
 
@@ -304,7 +309,7 @@ class TestServiceConfigAPIFields:
         config = ServiceConfig(api_port=8080)
         assert config.api_enabled is True
 
-    def test_api_enabled_true_from_env(self, monkeypatch) -> None:
+    def test_api_enabled_true_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             "aiperf.common.environment.Environment.API_SERVER",
             type("_FakeAPI", (), {"PORT": 9090})(),
@@ -328,8 +333,13 @@ class TestServiceConfigAPIFields:
         config = ServiceConfig(api_port=port)
         assert config.api_port == port
 
-    def test_api_host_without_port_raises_error(self, monkeypatch) -> None:
-        monkeypatch.delenv("AIPERF_API_SERVER_PORT", raising=False)
+    def test_api_host_without_port_raises_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "aiperf.common.environment.Environment.API_SERVER",
+            type("_FakeAPI", (), {"PORT": None})(),
+        )
         with pytest.raises(
             ValueError,
             match="--api-host requires --api-port",

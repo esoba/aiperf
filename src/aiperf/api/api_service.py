@@ -138,6 +138,10 @@ class FastAPIService(BaseComponentService):
     @on_start
     async def _start_api_server(self) -> None:
         """Start the FastAPI server."""
+        if self.api_port is None:
+            raise ValueError(
+                "API port is not configured. Set --api-port or AIPERF_API_SERVER_PORT."
+            )
         config = uvicorn.Config(
             self.app,
             host=self.api_host,
