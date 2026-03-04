@@ -17,14 +17,13 @@ Generation uses window slicing from pre-built token pools, same as PromptGenerat
 
 from __future__ import annotations
 
-from typing import Any
-
 from aiperf.common import random_generator as rng
 from aiperf.common.config import PromptConfig
 from aiperf.common.exceptions import ConfigurationError, NotInitializedError
 from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset.generator.base import BaseGenerator
+from aiperf.dataset.generator.prompt import sample_tokens_from_corpus
 
 # fmt: off
 # -- Vocabulary tuples for template fills --
@@ -51,6 +50,10 @@ _MODULES = (
     "dns_resolver", "cert_manager", "secret_store", "telemetry", "alerter",
     # security
     "firewall", "encryptor", "key_manager", "audit", "compliance",
+    # real libraries / frameworks
+    "torch", "numpy", "pandas", "sqlalchemy", "fastapi", "pydantic",
+    "celery", "redis", "boto3", "transformers", "datasets", "accelerate",
+    "flask", "django", "requests",
 )
 
 _CLASSES = (
@@ -79,6 +82,10 @@ _CLASSES = (
     # infra / orchestration
     "ServiceMesh", "HealthProbe", "AutoScaler", "SecretProvider",
     "CertRotator", "DnsCache", "TelemetryExporter", "AlertDispatcher",
+    # real framework classes
+    "Tensor", "DataFrame", "Series", "Session", "Engine", "Router",
+    "Pipeline", "Trainer", "Dataset", "DataLoader", "Optimizer",
+    "Tokenizer",
 )
 
 _METHODS = (
@@ -95,6 +102,9 @@ _METHODS = (
     "finalize", "abort", "resume", "suspend", "escalate", "demote",
     "promote", "quarantine", "scrub", "warm_up", "cool_down", "heal",
     "reclaim", "tombstone", "seal", "unseal", "bootstrap", "teardown",
+    # real library methods
+    "forward", "backward", "train", "evaluate", "predict", "fit",
+    "load_state_dict", "save_pretrained", "from_pretrained", "to_dict",
 )
 
 _TYPES = (
@@ -214,6 +224,10 @@ _ERROR_MESSAGES = (
     "write conflict detected", "token revoked", "session expired",
     "circuit breaker open", "backpressure applied", "partition offline",
     "consensus timeout", "snapshot corrupted", "migration in progress",
+    # GPU / infra errors
+    "CUDA out of memory", "NCCL timeout", "connection reset by peer",
+    "relation does not exist", "broken pipe", "no route to host",
+    "too many open files", "disk quota exceeded",
 )
 
 _CLI_COMMANDS = (
@@ -254,18 +268,31 @@ _GO_PACKAGES = (
     "fmt", "os", "io", "net", "http", "context", "sync", "time",
     "strings", "strconv", "encoding/json", "log", "errors", "math",
     "sort", "bytes", "crypto", "regexp", "path/filepath", "database/sql",
+    # popular third-party packages
+    "github.com/gin-gonic/gin", "go.uber.org/zap",
+    "github.com/spf13/viper", "github.com/spf13/cobra",
+    "gorm.io/gorm", "google.golang.org/grpc",
+    "github.com/prometheus/client_golang/prometheus",
+    "github.com/redis/go-redis/v9", "github.com/nats-io/nats.go",
+    "github.com/jackc/pgx/v5",
 )
 
 _RUST_CRATES = (
     "std::io", "std::fs", "std::collections", "std::sync", "std::fmt",
     "serde", "serde_json", "tokio", "anyhow", "thiserror", "tracing",
     "clap", "reqwest", "axum", "sqlx", "uuid", "chrono", "regex",
+    # additional popular crates
+    "tower", "hyper", "diesel", "sea_orm", "tonic", "prost",
+    "async_trait", "futures",
 )
 
 _TS_IMPORTS = (
     "express", "axios", "lodash", "zod", "prisma", "next",
     "react", "react-dom", "typescript", "jest", "vitest",
     "node:fs", "node:path", "node:http", "node:crypto",
+    # additional popular packages
+    "@nestjs/common", "typeorm", "drizzle-orm", "bullmq",
+    "@trpc/server", "ioredis", "pg", "knex",
 )
 
 _DECORATORS = (
@@ -273,6 +300,61 @@ _DECORATORS = (
     "@override", "@cached_property", "@dataclass", "@lru_cache",
     "@pytest.mark.asyncio", "@pytest.mark.parametrize",
     "@app.route", "@app.get", "@app.post", "@router.get",
+    # ML framework decorators
+    "@torch.no_grad()", "@torch.inference_mode()", "@torch.compile",
+    "@torch.jit.script", "@torch.cuda.amp.autocast",
+)
+
+_ML_IMPORTS = (
+    "torch", "torch.nn", "torch.optim", "torch.utils.data",
+    "torch.cuda", "torch.distributed", "torch.amp",
+    "transformers", "datasets", "accelerate", "peft",
+    "numpy", "safetensors", "wandb", "tensorboard",
+    "deepspeed", "bitsandbytes", "trl", "vllm", "triton",
+)
+
+_ML_CLASSES = (
+    "Linear", "Conv2d", "MultiheadAttention", "LayerNorm", "Embedding",
+    "CrossEntropyLoss", "AdamW", "CosineAnnealingLR", "DataLoader",
+    "DistributedDataParallel", "AutoModelForCausalLM", "AutoTokenizer",
+    "TrainingArguments", "Trainer", "GenerationConfig",
+    "BitsAndBytesConfig", "LoraConfig", "PeftModel",
+    "StoppingCriteria", "LogitsProcessor",
+)
+
+_ML_METHODS = (
+    "forward", "backward", "zero_grad", "step", "state_dict",
+    "load_state_dict", "save_pretrained", "from_pretrained",
+    "generate", "encode", "decode", "batch_decode",
+    "to", "cuda", "cpu",
+)
+
+_ML_VARS = (
+    "logits", "hidden_states", "attention_mask", "input_ids",
+    "labels", "loss", "grad_norm", "learning_rate", "num_epochs",
+    "batch_size", "max_length", "temperature", "top_p", "top_k",
+    "model_name",
+)
+
+_MODEL_NAMES = (
+    "meta-llama/Llama-3.1-8B", "meta-llama/Llama-3.1-70B",
+    "mistralai/Mixtral-8x7B-v0.1", "mistralai/Mistral-7B-v0.1",
+    "google/gemma-2-9b", "Qwen/Qwen2.5-72B",
+    "nvidia/Llama-3.1-Nemotron-70B-Instruct",
+    "deepseek-ai/DeepSeek-V3", "microsoft/phi-4",
+)
+
+_CUDA_ERRORS = (
+    "CUDA out of memory. Tried to allocate 2.00 GiB",
+    "RuntimeError: Expected all tensors to be on the same device",
+    "torch.cuda.OutOfMemoryError: CUDA out of memory",
+    "NCCL error: unhandled system error, NCCL version 2.18.5",
+    "RuntimeError: NCCL communicator was aborted on rank 0",
+    "RuntimeError: cuDNN error: CUDNN_STATUS_NOT_SUPPORTED",
+    "RuntimeError: FlashAttention only supports Ampere GPUs or newer",
+    "torch.distributed.DistBackendError: NCCL error",
+    "RuntimeError: Deterministic behavior was enabled",
+    "CUDA error: device-side assert triggered",
 )
 
 _USER_REQUESTS = (
@@ -349,257 +431,246 @@ _USER_REQUESTS = (
     "Normalize the {var} schema in {module}: split the nested object into its own table with a foreign key",
 )
 
-_TEXT_POOL_BLOCKS = 200
-_BASELINE_POOL_TOKENS = 200_000
+# -- Bridge text for multi-turn conversations --
 
-# Block counts per generator, weighted to match real trace data distribution:
-# ~35% code, ~25% bash, ~15% JSON, ~10% errors, ~15% other (diffs, CI, configs, docs, tests)
-_TOOL_POOL_BLOCK_COUNTS: dict[str, int] = {
-    "_gen_python_code": 53,
-    "_gen_go_code": 53,
-    "_gen_rust_code": 53,
-    "_gen_typescript_code": 53,
-    "_gen_bash_output": 150,
-    "_gen_json_response": 90,
-    "_gen_error_traceback": 60,
-    "_gen_tool_use_block": 45,
-    "_gen_git_diff": 18,
-    "_gen_cicd_output": 18,
-    "_gen_config_file": 18,
-    "_gen_markdown_doc": 18,
-    "_gen_test_output": 18,
-}
-
-# Language-specific pool: single code generator replaces all 4, rest stays proportional.
-# ~35% code, ~25% bash, ~15% JSON, ~10% errors/tests/configs, ~15% other
-_LANGUAGE_POOL_BLOCK_COUNTS: dict[str, int] = {
-    "code": 160,
-    "_gen_bash_output": 115,
-    "_gen_json_response": 70,
-    "_gen_error_traceback": 45,
-    "_gen_tool_use_block": 30,
-    "_gen_test_output": 25,
-    "_gen_config_file": 20,
-    "_gen_git_diff": 15,
-    "_gen_cicd_output": 15,
-    "_gen_markdown_doc": 10,
-}
-
-_LANGUAGE_AGNOSTIC_GENERATORS = (
-    "_gen_bash_output", "_gen_json_response", "_gen_git_diff",
-    "_gen_tool_use_block",
+_BRIDGE_ANALYZE = (
+    "Let me look at the relevant code.",
+    "I'll start by reading the file to understand the current implementation.",
+    "Let me search for where this is defined.",
+    "First, let me check the existing code.",
+    "Let me examine the implementation.",
+    "I'll read the source to understand what's happening.",
+    "Let me look at the file to see the current state.",
+    "I need to understand the existing logic first.",
+    "Let me check where {cls} is defined.",
+    "I'll look at the {method}() implementation first.",
+    "Let me find all the callers of {method}() so we know the impact.",
+    "I want to see the full {cls} class before making changes.",
 )
 
-_LANGUAGE_GENERATORS: dict[str, tuple[str, ...]] = {
-    "python": ("_gen_python_code",),
-    "go": ("_gen_go_code",),
-    "rust": ("_gen_rust_code",),
-    "typescript": ("_gen_typescript_code",),
+_BRIDGE_FIX = (
+    "I can see the issue. Let me fix it.",
+    "The problem is in the error handling. Here's the fix:",
+    "This needs to be updated. Let me apply the change.",
+    "Found it. The logic is incorrect here. Let me correct it.",
+    "I see the bug. The condition is inverted. Here's the fix:",
+    "The issue is a missing null check. Let me add it.",
+    "This needs to be async. Let me update it.",
+    "The root cause is a race condition on the shared state. Here's a fix:",
+    "I see the problem -- {var} is being mutated after it's shared. Let me fix it.",
+    "The issue is that {method}() doesn't account for the empty case. Here's the change:",
+    "This is a classic off-by-one. Let me correct the boundary check.",
+    "The lock ordering is wrong here. Let me restructure it.",
+)
+
+_BRIDGE_TEST = (
+    "Let me run the tests to verify.",
+    "Now let me check if the tests pass.",
+    "Let me verify the fix with the test suite.",
+    "Running the tests to confirm the change works.",
+    "Let me make sure nothing else broke.",
+    "I'll add a test for the new behavior and run the suite.",
+    "Let me run just the relevant tests first.",
+    "Let me verify with both unit and integration tests.",
+)
+
+_BRIDGE_EXPLAIN = (
+    "Here's what's happening in this code:",
+    "The flow works like this:",
+    "This is structured as follows:",
+    "The key parts are:",
+    "Let me walk through the logic:",
+    "The architecture here is layered -- {cls} delegates to {module} for the heavy lifting.",
+    "There are two paths through this code depending on whether {var} is set.",
+    "The call chain is: {method}() -> {module}.{method}() -> the underlying store.",
+)
+
+_BRIDGE_SUMMARY = (
+    "The fix adds proper error handling for the {var} case.",
+    "I've updated {cls}.{method}() to handle the edge case.",
+    "The change ensures {var} is validated before use.",
+    "This should resolve the {error} issue. The root cause was missing validation on {var}.",
+    "Done. The {method}() call now correctly handles the {var} boundary condition.",
+    "Summary: added null check for {var} and updated the return type of {method}().",
+    "All tests pass. The change is backward-compatible since {method}() still returns the same type.",
+    "Fixed. The {cls} now properly cleans up {var} on both the happy path and the error path.",
+    "To summarize: {cls}.{method}() was holding a reference to {var} after the connection closed. "
+    "The fix moves the cleanup into a finally block.",
+)
+
+_BRIDGE_SECURITY = (
+    "This endpoint is vulnerable to SQL injection. The {var} parameter is interpolated directly into the query without sanitization.",
+    "The JWT validation is missing the audience claim check. An attacker could use a token issued for a different service.",
+    "Let me check the authentication middleware. The RBAC rules should prevent unauthorized access to {method}().",
+    "The TLS certificate is using an insecure cipher suite. Let me update the configuration.",
+    "I see the issue -- the CORS policy allows wildcard origins, which bypasses the CSRF protection.",
+    "The API key is being logged in plaintext. Let me add a secrets filter to the logging configuration.",
+    "The password hashing is using MD5. Let me migrate to bcrypt with a proper salt.",
+    "Let me verify the OAuth2 authorization code flow. The redirect URI validation looks incomplete.",
+)
+
+_BRIDGE_DISTRIBUTED = (
+    "The problem is a split-brain scenario. When the network partitions, both nodes think they're the leader.",
+    "This needs eventual consistency. Let me add a vector clock to track causal ordering of {var} updates.",
+    "The quorum calculation is wrong -- with 5 nodes you need at least 3 for a write quorum, not 2.",
+    "Let me add a distributed lock with a TTL to prevent the {method}() race condition across replicas.",
+    "The gossip protocol is flooding the network. Let me switch to a pull-based protocol with exponential backoff.",
+    "I see the issue -- the Raft log is not being compacted, so leader election takes increasingly long.",
+    "The shard rebalancing is not atomic. If it fails midway, some keys become unreachable.",
+    "Let me add a read-repair mechanism so stale replicas converge after the partition heals.",
+)
+
+_BRIDGE_OBSERVABILITY = (
+    "The trace spans are not being propagated across the {module} service boundary. Let me add the OpenTelemetry context injection.",
+    "I'll add a histogram metric for {method}() latency with buckets at p50/p90/p99 to track the SLO.",
+    "The structured logs are missing the correlation_id field, making it impossible to trace requests across services.",
+    "Let me set up a Prometheus alert that fires when the error rate exceeds the SLI threshold for 5 minutes.",
+    "The dashboard is missing the {cls} service panel. Let me add a Grafana query for the {method} latency distribution.",
+    "I see the problem -- the span context is being dropped at the async boundary. Let me propagate it through the task.",
+)
+
+_BRIDGE_DATA_ARCHITECTURE = (
+    "The EXPLAIN ANALYZE shows a sequential scan on {var} -- we need a composite index on ({var}, {method}).",
+    "This is a classic N+1 query problem. The ORM is issuing a separate SELECT for each {var} in the loop.",
+    "Let me batch the {method}() inserts into a single transaction. The current approach holds a lock per row.",
+    "The connection pool is exhausted because {cls}.{method}() opens a new connection without releasing it on error.",
+    "I'll denormalize the {var} join to avoid the cross-shard query. The read pattern is 100x more frequent than writes.",
+    "The transaction isolation level needs to be SERIALIZABLE here to prevent phantom reads on {var}.",
+    "Let me add a covering index so the query can be satisfied from the index alone without a table lookup.",
+    "The partition key is wrong -- hashing by {var} creates hot spots because the distribution is skewed.",
+)
+
+_BRIDGE_ARCHITECTURE_TRADEOFF = (
+    "There are two approaches here. Option A: add a caching layer in front of {cls}.{method}() with a TTL-based invalidation. "
+    "This gives us sub-millisecond reads but introduces a consistency window where stale {var} can be returned. "
+    "Option B: use a write-through cache that invalidates on every {method}() call. This maintains consistency but adds "
+    "latency to writes and complexity to the error handling path. Given the read-heavy workload (100:1 ratio), "
+    "I'd recommend Option A with a 30-second TTL and a manual invalidation endpoint for critical updates.",
+
+    "The current architecture has {cls} calling {module} synchronously, which blocks the event loop during {method}(). "
+    "We could switch to a message queue (Redis Streams or Kafka) to decouple the producer and consumer. "
+    "The tradeoff is that we lose the synchronous error feedback -- if {method}() fails, the caller won't know until it "
+    "polls for the result. We'd need to add a dead-letter queue and a retry policy with exponential backoff. "
+    "For this use case, I think the decoupling is worth it because the {method}() latency varies 10x under load.",
+
+    "Looking at this from a security perspective, the {var} field is user-controlled input that flows through "
+    "{cls}.{method}() into a SQL query. The ORM provides parameterized queries, so SQL injection isn't a risk, "
+    "but the {var} value is reflected in error messages which could leak internal table names. Additionally, "
+    "the rate limiter on this endpoint uses a per-IP strategy, but behind a load balancer all requests share "
+    "the same source IP. We should switch to a per-API-key rate limit and sanitize error responses.",
+
+    "This is a classic CAP theorem tradeoff. The {module} service currently prioritizes consistency (CP) -- "
+    "if a network partition occurs, the service rejects writes rather than risk divergent state. For the {cls} "
+    "use case, availability matters more than strict consistency because {method}() is idempotent and clients "
+    "already handle retries. I'd recommend switching to an AP model with conflict resolution via last-write-wins "
+    "using the timestamp from the {var} field. We'd need to add a reconciliation job that runs hourly.",
+)
+
+_BRIDGE_REFACTOR = (
+    "Let me extract this into a separate method for clarity.",
+    "I'll restructure {cls} to separate the {method} concern from the lifecycle logic.",
+    "The current approach mixes IO with business logic. Let me split them.",
+    "I'll move {method}() into its own module since it's used across multiple services.",
+    "Let me introduce an interface so we can swap the {module} implementation later.",
+    "I'll consolidate the duplicate {method} logic into a shared helper.",
+    "The {cls} class is doing too much. Let me split it along the {var}/{method} boundary.",
+)
+
+_BRIDGE_PERF = (
+    "Let me profile {method}() to see where the time goes.",
+    "The bottleneck is likely in the {var} allocation. Let me check.",
+    "I'll add some timing instrumentation first.",
+    "The issue is that {cls} creates a new {var} on every call. Let me add pooling.",
+    "Let me check the query plan to see if we're missing an index.",
+    "This is doing N+1 queries. Let me batch the {method}() calls.",
+    "The {var} is being serialized on every request. Let me cache it.",
+    "I see the problem -- {method}() is called inside the lock, blocking all other workers.",
+)
+
+_BRIDGE_DEPLOY = (
+    "Let me check the deployment configuration.",
+    "I'll look at the Dockerfile and the k8s manifests.",
+    "Let me verify the environment variables are set correctly.",
+    "I'll check the CI pipeline configuration.",
+    "Let me look at the health check endpoint.",
+    "I see the issue in the resource limits. Let me update the deployment.",
+    "The liveness probe is too aggressive. Let me increase the timeout.",
+)
+
+_BRIDGE_WRITE_TEST = (
+    "Let me write tests for the new behavior.",
+    "I'll add test cases for both the happy path and the error cases.",
+    "Let me add a parametrized test to cover all the edge cases.",
+    "I'll write an integration test that exercises the full {method}() flow.",
+    "Let me add a regression test for this specific bug.",
+    "I'll mock the {module} dependency so the test is isolated.",
+    "Here's a test that verifies the fix -- it would have caught the original bug.",
+)
+
+_FOLLOWUP_QUESTIONS = (
+    "Can you also add a test for the edge case where {var} is None?",
+    "What about the {method} path -- does it need the same fix?",
+    "Should we add logging here too?",
+    "Can you explain why {cls} uses {var} instead of a local?",
+    "Is there a performance concern with this approach?",
+    "Should we also update the {method} docstring?",
+    "What happens if {var} is empty instead of None?",
+    "Can you also check if {method}() handles concurrent access correctly?",
+    "Does this need a database migration?",
+    "Should we add a feature flag for this change?",
+    "What about backward compatibility? The old callers pass {var} as a string.",
+    "Can you check if the {module} service needs the same fix?",
+    "Is this safe to deploy without a maintenance window?",
+    "Can you run the integration tests too?",
+    "Looks good. Can you also update the config to increase the default {var}?",
+    "One more thing -- can you make {method}() idempotent?",
+)
+
+_LANGUAGES = ("python", "go", "rust", "typescript")
+
+_TEXT_POOL_BLOCKS = 200
+_BASELINE_POOL_TOKENS = 10_000_000
+
+# Block counts per generator, weighted to reflect AI inference server workloads.
+# ML/AI content (~12%) reflects the primary use case of benchmarking LLM inference
+# servers, where MoE models route tokens based on content domain. Real library
+# names (torch, numpy, etc.) activate correct expert pathways.
+# ~28% code, ~11% ML/AI code, ~20% bash/output+training logs, ~11% JSON,
+# ~9% errors, ~3% SQL, ~10% other (tool use, diffs, CI, config, docs, tests),
+# ~8% user prompts (natural language coding requests)
+_TOOL_POOL_BLOCK_COUNTS: dict[str, int] = {
+    # Code (~28%)
+    "_gen_python_code": 45,
+    "_gen_go_code": 45,
+    "_gen_rust_code": 45,
+    "_gen_typescript_code": 45,
+    # ML/AI code (~11%)
+    "_gen_ml_training_code": 30,
+    "_gen_ml_inference_code": 25,
+    "_gen_ml_config": 15,
+    # Bash/output + training logs (~20%)
+    "_gen_bash_output": 130,
+    "_gen_ml_training_log": 20,
+    # JSON (~11%)
+    "_gen_json_response": 80,
+    # Errors (~9%)
+    "_gen_error_traceback": 45,
+    "_gen_cuda_error": 20,
+    # SQL (~3%)
+    "_gen_sql_query": 20,
+    # User prompts (~6%)
+    "_gen_user_prompt": 35,
+    # Tool use / diffs / CI / config / docs / tests (~8%)
+    "_gen_tool_use_block": 25,
+    # Multi-turn conversations (~10%)
+    "_gen_coding_conversation": 90,
+    "_gen_git_diff": 15,
+    "_gen_cicd_output": 15,
+    "_gen_config_file": 15,
+    "_gen_markdown_doc": 15,
+    "_gen_test_output": 15,
 }
 # fmt: on
-
-_TOOL_DEFINITIONS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read the contents of a file at the specified path. Returns the file content as a string with line numbers. Supports text files, images, PDFs, and Jupyter notebooks.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The absolute path to the file to read.",
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "The line number to start reading from.",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "The number of lines to read.",
-                    },
-                },
-                "required": ["file_path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "edit_file",
-            "description": "Perform an exact string replacement in a file. The old_string must match exactly one location in the file. Use replace_all to change every occurrence.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The absolute path to the file to modify.",
-                    },
-                    "old_string": {
-                        "type": "string",
-                        "description": "The text to search for and replace.",
-                    },
-                    "new_string": {
-                        "type": "string",
-                        "description": "The replacement text.",
-                    },
-                    "replace_all": {
-                        "type": "boolean",
-                        "description": "Replace all occurrences of old_string.",
-                        "default": False,
-                    },
-                },
-                "required": ["file_path", "old_string", "new_string"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_files",
-            "description": "Search for a regex pattern across files in the codebase. Supports glob filtering, file type filtering, and multiple output modes.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "The regular expression pattern to search for.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "File or directory to search in.",
-                    },
-                    "glob": {
-                        "type": "string",
-                        "description": "Glob pattern to filter files (e.g. '*.py').",
-                    },
-                    "output_mode": {
-                        "type": "string",
-                        "enum": ["content", "files_with_matches", "count"],
-                        "description": "Output mode for search results.",
-                    },
-                },
-                "required": ["pattern"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_command",
-            "description": "Execute a shell command and return its output. The working directory persists between calls. Commands time out after 120 seconds by default.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The shell command to execute.",
-                    },
-                    "timeout": {
-                        "type": "integer",
-                        "description": "Optional timeout in milliseconds.",
-                    },
-                    "run_in_background": {
-                        "type": "boolean",
-                        "description": "Run the command in the background.",
-                    },
-                },
-                "required": ["command"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_directory",
-            "description": "List files matching a glob pattern in the project directory tree. Returns matching file paths sorted by modification time.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "The glob pattern to match files against.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "The directory to search in.",
-                    },
-                },
-                "required": ["pattern"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Write content to a file at the specified path. Overwrites the existing file if present. Prefer edit_file for modifying existing files.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "The absolute path to the file to write.",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "The content to write to the file.",
-                    },
-                },
-                "required": ["file_path", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "find_references",
-            "description": "Find all references to a symbol across the codebase. Searches for usages of classes, functions, variables, and other identifiers.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "The symbol name to find references for.",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Directory scope to search within.",
-                    },
-                    "include_definitions": {
-                        "type": "boolean",
-                        "description": "Include the definition site in results.",
-                        "default": True,
-                    },
-                },
-                "required": ["symbol"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_diagnostics",
-            "description": "Retrieve linter warnings, type errors, and other diagnostics for the specified file or project. Returns structured diagnostic information.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Path to the file to check. Omit for project-wide diagnostics.",
-                    },
-                    "severity": {
-                        "type": "string",
-                        "enum": ["error", "warning", "info", "hint"],
-                        "description": "Minimum severity level to report.",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-]
 
 
 class CodingContentGenerator(BaseGenerator):
@@ -612,8 +683,6 @@ class CodingContentGenerator(BaseGenerator):
     Supports both PromptGenerator-compatible interface and typed generation
     that selects the appropriate pool based on content type.
     """
-
-    supports_typed_prompt = True
 
     def __init__(
         self,
@@ -638,13 +707,11 @@ class CodingContentGenerator(BaseGenerator):
 
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
 
-        self._text_pool: list[int] = []
+        self._text_pool: list[int] | None = None
         self._tool_pool: list[int] = []
-        self._language_pools: dict[str, list[int]] = {}
         self._cache: dict[int, list[int]] = {}
         self._decoded_cache: dict[tuple[tuple[int, ...], int, int], str] = {}
 
-        self._build_text_pool()
         self._build_tool_pool()
 
         # Alias for BaseTraceDatasetLoader compatibility (parallel_convert reads this)
@@ -660,6 +727,8 @@ class CodingContentGenerator(BaseGenerator):
         block_size: int | None = None,
     ) -> str:
         if hash_ids:
+            if mean is None:
+                raise ValueError("mean must be provided when hash_ids is set.")
             bs = block_size or self.config.input_tokens.block_size
             return self._generate_cached_prompt(mean, hash_ids, bs)
         num_tokens = self.calculate_num_tokens(mean, stddev)
@@ -671,106 +740,6 @@ class CodingContentGenerator(BaseGenerator):
         tokens = self._sample_tokens(num_tokens, self._tool_pool)
         return self.tokenizer.decode(tokens)
 
-    def generate_typed_prompt(self, num_tokens: int, content_type: str) -> str:
-        """Generate a prompt from the pool matching the content type.
-
-        Args:
-            num_tokens: Number of tokens to generate.
-            content_type: Either "text" (user prompts) or "tool_result" (code/technical).
-        """
-        pool = self._text_pool if content_type == "text" else self._tool_pool
-        tokens = self._sample_tokens(num_tokens, pool)
-        return self.tokenizer.decode(tokens)
-
-    def generate_language_prompt(
-        self, num_tokens: int, content_type: str, language: str
-    ) -> str:
-        """Generate a prompt from a language-specific pool.
-
-        Args:
-            num_tokens: Number of tokens to generate.
-            content_type: Either "text" (user prompts) or "tool_result" (code/technical).
-            language: Programming language for tool pool selection.
-        """
-        if content_type == "text":
-            pool = self._text_pool
-        else:
-            pool = self.build_language_pool(language)
-        tokens = self._sample_tokens(num_tokens, pool)
-        return self.tokenizer.decode(tokens)
-
-    def generate_tool_definitions(self) -> list[dict[str, Any]]:
-        """Return a copy of the built-in tool definitions.
-
-        Returns OpenAI-format tool schemas matching the tool types this
-        generator produces (read, edit, search, bash) plus extras.
-        """
-        return [dict(t) for t in _TOOL_DEFINITIONS]
-
-    def build_language_pool(self, language: str) -> list[int]:
-        """Build or return a cached language-specific tool pool.
-
-        Args:
-            language: One of "python", "go", "rust", "typescript".
-
-        Returns:
-            Token pool for the given language.
-        """
-        if language in self._language_pools:
-            return self._language_pools[language]
-
-        lang_gens = _LANGUAGE_GENERATORS.get(language, ())
-        code_count = int(_LANGUAGE_POOL_BLOCK_COUNTS["code"] * self._pool_scale)
-
-        blocks: list[str] = []
-
-        # Language-specific code blocks
-        for gen_name in lang_gens:
-            gen_fn = getattr(self, gen_name)
-            for _ in range(code_count):
-                blocks.append(gen_fn())
-
-        # Language-agnostic generators
-        for gen_name in _LANGUAGE_AGNOSTIC_GENERATORS:
-            gen_fn = getattr(self, gen_name)
-            count = int(_LANGUAGE_POOL_BLOCK_COUNTS[gen_name] * self._pool_scale)
-            for _ in range(count):
-                blocks.append(gen_fn())
-
-        # Language-specific mixed generators (errors, tests, configs, CI/CD, markdown)
-        for _ in range(
-            int(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_error_traceback"] * self._pool_scale)
-        ):
-            blocks.append(self._gen_error_traceback(language=language))
-        for _ in range(
-            int(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_test_output"] * self._pool_scale)
-        ):
-            blocks.append(self._gen_test_output(language=language))
-        for _ in range(
-            int(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_config_file"] * self._pool_scale)
-        ):
-            blocks.append(self._gen_config_file(language=language))
-        for _ in range(
-            int(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_cicd_output"] * self._pool_scale)
-        ):
-            blocks.append(self._gen_cicd_output(language=language))
-        for _ in range(
-            int(_LANGUAGE_POOL_BLOCK_COUNTS["_gen_markdown_doc"] * self._pool_scale)
-        ):
-            blocks.append(self._gen_markdown_doc(language=language))
-
-        # Shuffle so any window slice gets diverse content types
-        self._template_rng.shuffle(blocks)
-
-        text = "\n\n".join(blocks)
-        pool = self.tokenizer.encode(text)
-        self._language_pools[language] = pool
-        self.debug(
-            lambda: f"Built {language} pool with {len(pool)} tokens "
-            f"from {len(blocks)} blocks"
-        )
-        return pool
-
     def calculate_num_tokens(
         self,
         mean: int | None = None,
@@ -780,15 +749,21 @@ class CodingContentGenerator(BaseGenerator):
 
     # -- Pool building --
 
+    def _ensure_text_pool(self) -> list[int]:
+        if self._text_pool is None:
+            self._build_text_pool()
+        assert self._text_pool is not None
+        return self._text_pool
+
     def _build_text_pool(self) -> None:
         blocks: list[str] = []
         for _ in range(int(_TEXT_POOL_BLOCKS * self._pool_scale)):
             blocks.append(self._gen_user_prompt())
         text = "\n\n".join(blocks)
         self._text_pool = self.tokenizer.encode(text)
+        pool = self._text_pool
         self.debug(
-            lambda: f"Built text pool with {len(self._text_pool)} tokens "
-            f"from {len(blocks)} blocks"
+            lambda: f"Built text pool with {len(pool)} tokens from {len(blocks)} blocks"
         )
 
     def _build_tool_pool(self) -> None:
@@ -856,21 +831,16 @@ class CodingContentGenerator(BaseGenerator):
             if index == len(hash_ids) - 1:
                 current_block_size = final_block_size
 
-            cache_key = (hash_id, current_block_size)
-            if cache_key not in self._cache:
-                prompt_tokens: list[int] = []
-                if self.tokenizer.block_separation_token_id is not None:
-                    prompt_tokens += [self.tokenizer.block_separation_token_id]
-                    prompt_tokens += self._sample_tokens(
-                        current_block_size - 1, self._tool_pool
-                    )
-                else:
-                    prompt_tokens += self._sample_tokens(
-                        current_block_size, self._tool_pool
-                    )
-                self._cache[cache_key] = prompt_tokens
+            if hash_id not in self._cache:
+                self._hash_id_corpus_rng.reseed_for_hash_id(hash_id)
+                self._cache[hash_id] = sample_tokens_from_corpus(
+                    self._tool_pool,
+                    current_block_size,
+                    self._hash_id_corpus_rng,
+                    self.tokenizer.block_separation_token_id,
+                )
 
-            final_prompt.extend(self._cache[cache_key])
+            final_prompt.extend(self._cache[hash_id])
 
         return final_prompt
 
@@ -2209,9 +2179,7 @@ $ git log --oneline -3
             if language in lang_to_kind
             else r.choice(["python", "go", "rust", "node"])
         )
-        file_pool = (
-            _LANG_FILE_PATHS.get(language, _FILE_PATHS) if language else _FILE_PATHS
-        )
+        file_pool = self._file_pool(language)
         f1, f2, f3, f4 = r.sample(list(file_pool), 4)
         if kind == "python":
             v = r.choice(_VARS)
@@ -2845,6 +2813,336 @@ Performs the {m2} operation.
             )
             return "\n".join(lines) + "\n"
 
+    def _gen_ml_training_code(self) -> str:
+        r = self._template_rng
+        model = r.choice(_MODEL_NAMES)
+        imp1, imp2, imp3 = r.sample(list(_ML_IMPORTS), 3)
+        cls1, cls2 = r.sample(list(_ML_CLASSES), 2)
+        m1, m2 = r.sample(list(_ML_METHODS), 2)
+        v1, v2, v3, v4 = r.sample(list(_ML_VARS), 4)
+        lr = r.choice([1e-5, 2e-5, 5e-5, 1e-4, 3e-4])
+        epochs = r.randint(1, 10)
+        bs = r.choice([1, 2, 4, 8, 16, 32])
+        grad_accum = r.choice([1, 2, 4, 8])
+
+        return f"""\
+import {imp1}
+import {imp2}
+from {imp3} import {cls1}, {cls2}
+
+model_name = "{model}"
+tokenizer = {cls2}.from_pretrained(model_name)
+model = {cls1}.from_pretrained(
+    model_name,
+    torch_dtype=torch.bfloat16,
+    device_map="auto",
+)
+
+train_dataset = datasets.load_dataset("json", data_files="train.jsonl", split="train")
+
+training_args = TrainingArguments(
+    output_dir="./checkpoints",
+    num_train_epochs={epochs},
+    per_device_train_batch_size={bs},
+    gradient_accumulation_steps={grad_accum},
+    learning_rate={lr},
+    max_grad_norm=1.0,
+    warmup_ratio=0.1,
+    bf16=True,
+    logging_steps=10,
+    save_strategy="epoch",
+    report_to="wandb",
+)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr={lr}, weight_decay=0.01)
+
+for epoch in range({epochs}):
+    model.train()
+    for step, batch in enumerate(train_loader):
+        {v1} = batch["{v1}"].to("cuda")
+        {v2} = batch["{v2}"].to("cuda")
+        outputs = model({m1}={v1}, {v2}={v2})
+        {v3} = outputs.{v3}
+        {v3}.{m2}()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if step % 10 == 0:
+            print(f"Epoch {{epoch}} Step {{step}} {v3}: {{{{{v3}.item():.4f}}}}")
+
+model.save_pretrained("./final_model")
+tokenizer.save_pretrained("./final_model")
+"""
+
+    def _gen_ml_inference_code(self) -> str:
+        r = self._template_rng
+        model = r.choice(_MODEL_NAMES)
+        cls1 = r.choice(("AutoModelForCausalLM", "AutoModelForSeq2SeqLM"))
+        v1, v2, v3 = r.sample(list(_ML_VARS), 3)
+        temp = r.choice([0.1, 0.3, 0.7, 1.0])
+        top_p = r.choice([0.9, 0.95, 1.0])
+        max_new = r.choice([128, 256, 512, 1024, 2048])
+
+        return f"""\
+import torch
+from transformers import {cls1}, AutoTokenizer, GenerationConfig
+
+model_name = "{model}"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = {cls1}.from_pretrained(
+    model_name,
+    torch_dtype=torch.float16,
+    device_map="auto",
+    attn_implementation="flash_attention_2",
+)
+
+generation_config = GenerationConfig(
+    max_new_tokens={max_new},
+    temperature={temp},
+    top_p={top_p},
+    do_sample={"True" if temp > 0 else "False"},
+    repetition_penalty=1.1,
+)
+
+prompt = "Explain the architecture of a transformer model."
+{v1} = tokenizer(prompt, return_tensors="pt").to(model.device)
+
+with torch.inference_mode():
+    {v2} = model.generate(
+        **{v1},
+        generation_config=generation_config,
+        pad_token_id=tokenizer.eos_token_id,
+    )
+
+{v3} = tokenizer.batch_decode({v2}[:, {v1}["{v1}"].shape[-1]:], skip_special_tokens=True)
+print({v3}[0])
+"""
+
+    def _gen_ml_config(self) -> str:
+        r = self._template_rng
+        model = r.choice(_MODEL_NAMES)
+        lr = r.choice([1e-5, 2e-5, 5e-5, 1e-4, 3e-4])
+        epochs = r.randint(1, 10)
+        bs = r.choice([1, 2, 4, 8, 16, 32])
+        grad_accum = r.choice([1, 2, 4, 8])
+        max_len = r.choice([512, 1024, 2048, 4096])
+        warmup = r.choice([0.03, 0.05, 0.1])
+        lora_r = r.choice([8, 16, 32, 64])
+        lora_alpha = lora_r * 2
+        quant_bits = r.choice([4, 8])
+
+        return f"""\
+{{{{
+  "model_name_or_path": "{model}",
+  "torch_dtype": "bfloat16",
+  "attn_implementation": "flash_attention_2",
+  "max_seq_length": {max_len},
+  "training": {{{{
+    "num_train_epochs": {epochs},
+    "per_device_train_batch_size": {bs},
+    "gradient_accumulation_steps": {grad_accum},
+    "learning_rate": {lr},
+    "weight_decay": 0.01,
+    "warmup_ratio": {warmup},
+    "lr_scheduler_type": "cosine",
+    "max_grad_norm": 1.0,
+    "bf16": true,
+    "gradient_checkpointing": true,
+    "optim": "adamw_torch_fused"
+  }}}},
+  "lora": {{{{
+    "r": {lora_r},
+    "lora_alpha": {lora_alpha},
+    "lora_dropout": 0.05,
+    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "task_type": "CAUSAL_LM"
+  }}}},
+  "quantization": {{{{
+    "load_in_{quant_bits}bit": true,
+    "bnb_{quant_bits}bit_compute_dtype": "bfloat16",
+    "bnb_{quant_bits}bit_quant_type": "nf4",
+    "bnb_{quant_bits}bit_use_double_quant": true
+  }}}},
+  "data": {{{{
+    "dataset_name": "train.jsonl",
+    "max_length": {max_len},
+    "packing": true,
+    "num_proc": 8
+  }}}}
+}}}}
+"""
+
+    def _gen_ml_training_log(self) -> str:
+        r = self._template_rng
+        model = r.choice(_MODEL_NAMES).split("/")[-1]
+        total_steps = r.randint(500, 10000)
+        epoch = r.randint(0, 5)
+        lines = []
+
+        for _ in range(r.randint(8, 15)):
+            step = r.randint(1, total_steps)
+            loss = r.uniform(0.3, 4.0)
+            lr_val = r.uniform(1e-6, 5e-4)
+            grad = r.uniform(0.1, 10.0)
+            tokens_per_sec = r.randint(1000, 50000)
+            lines.append(
+                f"{{{{'step': {step}, 'epoch': {epoch + step / total_steps:.2f}, "
+                f"'loss': {loss:.4f}, 'lr': {lr_val:.2e}, "
+                f"'grad_norm': {grad:.3f}, 'tokens_per_sec': {tokens_per_sec}}}}}"
+            )
+
+        gpu_mem = r.uniform(10, 80)
+        gpu_util = r.randint(80, 100)
+        eval_loss = r.uniform(0.5, 3.0)
+        eval_ppl = r.uniform(2.0, 20.0)
+
+        lines.append(
+            f"\n[Eval] epoch={epoch + 1} loss={eval_loss:.4f} perplexity={eval_ppl:.2f}"
+        )
+        lines.append(f"[GPU] memory_allocated={gpu_mem:.1f}GB utilization={gpu_util}%")
+        lines.append(
+            f"[GPU] peak_memory={gpu_mem + r.uniform(1, 10):.1f}GB "
+            f"reserved={gpu_mem + r.uniform(5, 20):.1f}GB"
+        )
+        lines.append(
+            f"[Checkpoint] Saved model checkpoint to ./checkpoints/{model}/step-{total_steps}"
+        )
+
+        return "\n".join(lines) + "\n"
+
+    def _gen_cuda_error(self) -> str:
+        r = self._template_rng
+        err = r.choice(_CUDA_ERRORS)
+        model = r.choice(_MODEL_NAMES).split("/")[-1]
+        rank = r.randint(0, 7)
+        gpu_id = r.randint(0, 7)
+        alloc_gb = r.uniform(0.5, 16.0)
+        total_gb = r.choice([24.0, 40.0, 48.0, 80.0])
+        free_gb = r.uniform(0.01, 2.0)
+        cls1, cls2 = r.sample(list(_ML_CLASSES), 2)
+        m1, m2 = r.sample(list(_ML_METHODS), 2)
+
+        return f"""\
+Traceback (most recent call last):
+  File "train.py", line {r.randint(50, 300)}, in main
+    outputs = model.{m1}(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+  File "torch/nn/modules/module.py", line {r.randint(1400, 1600)}, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "transformers/models/llama/modeling_llama.py", line {r.randint(800, 1200)}, in {m1}
+    hidden_states = self.model(input_ids, attention_mask=attention_mask)
+  File "torch/nn/modules/module.py", line {r.randint(1400, 1600)}, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "transformers/models/llama/modeling_llama.py", line {r.randint(400, 800)}, in {m2}
+    layer_outputs = decoder_layer(hidden_states, attention_mask=attention_mask)
+{err}
+
+|===========================================================================|
+|                  PyTorch CUDA memory summary, device: {gpu_id}                |
+|---------------------------------------------------------------------------|
+|            CUDA OOMs: {r.randint(1, 5):>10}                                          |
+|---------------------------------------------------------------------------|
+|        Metric        |  Cur Usage  |  Peak Usage  |  Total Alloc  |
+|---------------------------------------------------------------------------|
+| Allocated memory     | {alloc_gb:>8.2f} GB | {total_gb - free_gb:>8.2f} GB  | {total_gb * r.randint(2, 10):>9.2f} GB  |
+| Reserved memory      | {total_gb - free_gb + 1:>8.2f} GB | {total_gb:>8.2f} GB  | {total_gb * r.randint(2, 10):>9.2f} GB  |
+| Free memory          | {free_gb:>8.2f} GB |              |               |
+|===========================================================================|
+
+Model: {model} | Rank: {rank} | GPU: {gpu_id} (NVIDIA A100-SXM4-{int(total_gb)}GB)
+"""
+
+    def _gen_sql_query(self) -> str:
+        r = self._template_rng
+        t1, t2, t3 = r.sample(list(_DB_TABLES), 3)
+        v1, v2, v3 = r.sample(list(_VARS), 3)
+        kind = r.choice(["select_join", "insert", "create", "alter"])
+
+        if kind == "select_join":
+            limit = r.randint(10, 1000)
+            offset = r.randint(0, 500)
+            return f"""\
+SELECT
+    t1.id,
+    t1.{v1},
+    t1.created_at,
+    t2.{v2},
+    t2.{v3},
+    COUNT(t3.id) AS {v3}_count
+FROM {t1} t1
+INNER JOIN {t2} t2 ON t2.{t1}_id = t1.id
+LEFT JOIN {t3} t3 ON t3.{t2}_id = t2.id
+WHERE t1.status = 'active'
+  AND t1.created_at >= NOW() - INTERVAL '30 days'
+  AND t2.{v2} IS NOT NULL
+GROUP BY t1.id, t1.{v1}, t1.created_at, t2.{v2}, t2.{v3}
+HAVING COUNT(t3.id) > 0
+ORDER BY t1.created_at DESC
+LIMIT {limit} OFFSET {offset};
+"""
+        elif kind == "insert":
+            n_rows = r.randint(1, 5)
+            rows = []
+            for _ in range(n_rows):
+                rows.append(
+                    f"    ('{r.choice(_MODULES)}', {r.randint(1, 1000)}, "
+                    f"'{r.choice(_STATUS_CODES).split()[0]}', NOW())"
+                )
+            rows_str = ",\n".join(rows)
+            return f"""\
+INSERT INTO {t1} ({v1}, {v2}, status, created_at)
+VALUES
+{rows_str}
+ON CONFLICT ({v1})
+DO UPDATE SET
+    {v2} = EXCLUDED.{v2},
+    status = EXCLUDED.status,
+    updated_at = NOW()
+RETURNING id, {v1}, {v2};
+"""
+        elif kind == "create":
+            return f"""\
+CREATE TABLE IF NOT EXISTS {t1} (
+    id BIGSERIAL PRIMARY KEY,
+    {v1} VARCHAR(256) NOT NULL,
+    {v2} INTEGER DEFAULT 0,
+    {v3} JSONB DEFAULT '{{}}'::jsonb,
+    status VARCHAR(32) DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT {t1}_{v1}_unique UNIQUE ({v1})
+);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_{t1}_{v1}
+    ON {t1} ({v1});
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_{t1}_status_created
+    ON {t1} (status, created_at DESC);
+"""
+        else:
+            col_type = r.choice(
+                ["VARCHAR(256)", "INTEGER", "BOOLEAN", "JSONB", "TIMESTAMPTZ"]
+            )
+            return f"""\
+BEGIN;
+
+ALTER TABLE {t1}
+    ADD COLUMN IF NOT EXISTS {v1} {col_type},
+    ADD COLUMN IF NOT EXISTS {v2} INTEGER DEFAULT 0;
+
+UPDATE {t1}
+SET {v1} = (
+    SELECT {v2} FROM {t2}
+    WHERE {t2}.{t1}_id = {t1}.id
+    LIMIT 1
+)
+WHERE {v1} IS NULL;
+
+ALTER TABLE {t1}
+    ALTER COLUMN {v1} SET NOT NULL;
+
+COMMIT;
+"""
+
     def _gen_user_prompt(self) -> str:
         r = self._template_rng
         template = r.choice(_USER_REQUESTS)
@@ -2902,3 +3200,890 @@ Performs the {m2} operation.
                     "We need this for the release on Friday — keep it simple.",
                 )
             )
+
+    # -- Multi-turn conversation generators --
+
+    def _gen_coding_conversation(self) -> str:
+        r = self._template_rng
+        return r.choice(
+            [
+                self._gen_conv_bugfix,
+                self._gen_conv_review,
+                self._gen_conv_feature,
+                self._gen_conv_debug,
+                self._gen_conv_qa,
+                self._gen_conv_refactor,
+                self._gen_conv_perf,
+                self._gen_conv_cicd,
+                self._gen_conv_ml_debug,
+                self._gen_conv_test_write,
+                self._gen_conv_migration,
+                self._gen_conv_deploy,
+                self._gen_conv_security,
+                self._gen_conv_distributed,
+                self._gen_conv_observability,
+                self._gen_conv_db_optimize,
+                self._gen_conv_architecture_review,
+                self._gen_conv_incident_response,
+            ]
+        )()
+
+    def _conv_ids(self) -> dict[str, str]:
+        r = self._template_rng
+        return {
+            "cls": r.choice(_CLASSES),
+            "module": r.choice(_MODULES),
+            "method": r.choice(_METHODS),
+            "var": r.choice(_VARS),
+            "error": r.choice(_ERROR_MESSAGES),
+        }
+
+    def _conv_bridge(self, pool: tuple[str, ...], ids: dict[str, str]) -> str:
+        r = self._template_rng
+        return r.choice(pool).format_map(_SafeFormatMap(ids))
+
+    def _conv_user_msg(self, ids: dict[str, str]) -> str:
+        r = self._template_rng
+        template = r.choice(_USER_REQUESTS)
+        return template.format_map(_SafeFormatMap(ids))
+
+    def _gen_tool_read_long(self, language: str | None = None) -> str:
+        """Like _gen_tool_read but with 40-80 lines for realistic large file reads."""
+        r = self._template_rng
+        file_pool = self._file_pool(language)
+        f = r.choice(file_pool)
+        start_line = r.randint(1, 200)
+        cls = r.choice(_CLASSES)
+        m1, m2, m3 = r.sample(_METHODS, 3)
+        v1, v2, v3 = r.sample(_VARS, 3)
+        mod = r.choice(_MODULES)
+        err = r.choice(_ERROR_MESSAGES)
+        t1, t2 = r.sample(_TYPES, 2)
+
+        blocks: dict[str | None, list[str]] = {
+            "python": [
+                f"class {cls}:",
+                f'    """{cls} handles {m1} operations for {mod}."""',
+                "",
+                f"    _default_{v3} = 64",
+                "",
+                f"    def __init__(self, {v1}: {t1}, {v2}: {t2} = None):",
+                f"        self._{v1} = {v1}",
+                f"        self._{v2} = {v2}",
+                f"        self._{v3} = self._default_{v3}",
+                "        self._initialized = False",
+                "        self._lock = asyncio.Lock()",
+                "",
+                f"    async def {m1}(self, {v1}: {t1}) -> {t2}:",
+                "        if not self._initialized:",
+                f'            raise RuntimeError("{cls} not initialized")',
+                "        async with self._lock:",
+                f"            {v2} = await self._{m2}({v1})",
+                f"            if {v2} is None:",
+                f'                raise ValueError("{err}")',
+                f"            return {v2}",
+                "",
+                f"    async def _{m2}(self, {v1}: {t1}) -> {t2}:",
+                "        try:",
+                f"            {v2} = await {mod}.{m2}({v1})",
+                f'            logger.debug(f"{cls}.{m2}: {{{{{v1}}}}}")',
+                f"            return {v2}",
+                "        except Exception as e:",
+                f'            logger.error("{err}: %s", e)',
+                f'            raise ValueError("{err}") from e',
+                "",
+                f"    async def {m3}(self, {v1}: {t1}, {v2}: {t2}) -> None:",
+                f"        if {v1} is None:",
+                "            return",
+                f"        existing = await self._{m2}({v1})",
+                "        if existing is not None:",
+                f"            existing.{v3} = {v2}",
+                "            await existing.save()",
+                "        else:",
+                f"            await {mod}.{m3}({v1}, {v2})",
+                "",
+                f"    def {m1}_sync(self) -> None:",
+                "        self._initialized = True",
+                f"        self._{v3} = 0",
+            ],
+            "go": [
+                f"type {cls} struct {{",
+                f"\t{v1} {t1}",
+                f"\t{v2} {t2}",
+                "\tmu   sync.RWMutex",
+                "\tlog  *zap.Logger",
+                "}",
+                "",
+                f"func New{cls}({v1} {t1}, log *zap.Logger) *{cls} {{",
+                f"\treturn &{cls}{{",
+                f"\t\t{v1}: {v1},",
+                "\t\tlog: log,",
+                "\t}",
+                "}",
+                "",
+                f"func (s *{cls}) {m1.title()}(ctx context.Context) error {{",
+                "\ts.mu.Lock()",
+                "\tdefer s.mu.Unlock()",
+                "",
+                f"\t{v2}, err := s.{m2.title()}(ctx)",
+                "\tif err != nil {",
+                f'\t\treturn fmt.Errorf("{err}: %w", err)',
+                "\t}",
+                f"\ts.{v1} = {v2}",
+                "\treturn nil",
+                "}",
+                "",
+                f"func (s *{cls}) {m2.title()}(ctx context.Context) ({t2}, error) {{",
+                f'\ts.log.Debug("{cls}.{m2.title()}", zap.String("{v1}", s.{v1}))',
+                f"\tresult, err := {mod}.{m2.title()}(ctx, s.{v1})",
+                "\tif err != nil {",
+                f'\t\treturn "", fmt.Errorf("{err}: %w", err)',
+                "\t}",
+                "\treturn result, nil",
+                "}",
+            ],
+            "rust": [
+                f"pub struct {cls} {{",
+                f"    {v1}: {t1},",
+                f"    {v2}: Option<{t2}>,",
+                "    initialized: bool,",
+                "}",
+                "",
+                f"impl {cls} {{",
+                f"    pub fn new({v1}: {t1}) -> Self {{",
+                f"        Self {{ {v1}, {v2}: None, initialized: false }}",
+                "    }",
+                "",
+                f"    pub async fn {m1}(&mut self) -> Result<{t2}> {{",
+                f'        anyhow::ensure!(self.initialized, "{cls} not initialized");',
+                f"        let {v2} = self.{m2}().await?;",
+                f"        if {v2}.is_empty() {{",
+                f'            anyhow::bail!("{err}");',
+                "        }",
+                f"        Ok({v2})",
+                "    }",
+                "",
+                f"    async fn {m2}(&self) -> Result<{t2}> {{",
+                f"        let {v2} = {mod}::{m2}(&self.{v1}).await?;",
+                f'        tracing::debug!("{cls}.{m2}: {{}}", self.{v1});',
+                f"        Ok({v2})",
+                "    }",
+                "",
+                f"    pub async fn {m3}(&mut self, {v1}: {t1}) -> Result<()> {{",
+                f"        let existing = self.{m2}().await.ok();",
+                "        match existing {",
+                "            Some(val) if !val.is_empty() => {",
+                f"                self.{v2} = Some(val);",
+                "            }",
+                "            _ => {",
+                f"                {mod}::{m3}(&{v1}).await?;",
+                "            }",
+                "        }",
+                "        Ok(())",
+                "    }",
+                "}",
+            ],
+            "typescript": [
+                f"export class {cls} {{",
+                f"  private {v1}: {t1};",
+                f"  private {v2}: {t2} | null = null;",
+                "  private initialized = false;",
+                "",
+                f"  constructor({v1}: {t1}) {{",
+                f"    this.{v1} = {v1};",
+                "  }",
+                "",
+                f"  async {m1}({v1}: {t1}): Promise<{t2}> {{",
+                "    if (!this.initialized) {",
+                f"      throw new Error('{cls} not initialized');",
+                "    }",
+                f"    const {v2} = await this.{m2}({v1});",
+                f"    if (!{v2}) {{",
+                f"      throw new Error('{err}');",
+                "    }",
+                f"    return {v2};",
+                "  }",
+                "",
+                f"  private async {m2}({v1}: {t1}): Promise<{t2} | null> {{",
+                "    try {",
+                f"      const {v2} = await {mod}.{m2}({v1});",
+                f"      console.debug(`{cls}.{m2}: ${{{{{v1}}}}}`);",
+                f"      return {v2};",
+                "    } catch (err) {",
+                f"      console.error('{err}:', err);",
+                "      throw err;",
+                "    }",
+                "  }",
+                "",
+                f"  async {m3}({v1}: {t1}, {v2}: {t2}): Promise<void> {{",
+                f"    const existing = await this.{m2}({v1}).catch(() => null);",
+                "    if (existing) {",
+                f"      Object.assign(existing, {{ {v3}: {v2} }});",
+                "      await existing.save();",
+                "    } else {",
+                f"      await {mod}.{m3}({v1}, {v2});",
+                "    }",
+                "  }",
+                "}",
+            ],
+        }
+        code_lines = blocks.get(language, blocks["python"])
+
+        lines = []
+        for i, content in enumerate(code_lines, start=start_line):
+            lines.append(f"{i:>6}\t{content}")
+
+        content = "\n".join(lines)
+        return f"""\
+<tool_name>read</tool_name>
+<parameter name="file_path">{f}</parameter>
+<result>
+{content}
+</result>
+"""
+
+    def _gen_tool_bash_verbose(self, language: str | None = None) -> str:
+        """Like _gen_tool_bash but with longer, more realistic test output."""
+        r = self._template_rng
+        mod = r.choice(_MODULES)
+        cls = r.choice(_CLASSES)
+        methods = r.sample(list(_METHODS), r.randint(8, 15))
+        n_pass = r.randint(30, 150)
+        n_fail = r.randint(0, 3)
+        dur = r.uniform(2.0, 45.0)
+
+        lang_cmds: dict[str | None, str] = {
+            "python": "pytest -xvs tests/",
+            "go": "go test -v ./...",
+            "rust": "cargo test",
+            "typescript": "npx vitest run",
+        }
+        cmd = lang_cmds.get(language, r.choice(_CLI_COMMANDS))
+
+        test_lines = []
+        for m in methods:
+            passed = r.random() > 0.15
+            t = r.uniform(0.001, 3.0)
+            if language == "go":
+                status = "ok" if passed else "FAIL"
+                test_lines.append(f"--- {status}: Test{m.title()} ({t:.3f}s)")
+                if not passed:
+                    v = r.choice(_VARS)
+                    test_lines.append(
+                        f"        {mod}_test.go:{r.randint(20, 300)}: "
+                        f"expected {v} to be non-nil"
+                    )
+            elif language == "rust":
+                status = "ok" if passed else "FAILED"
+                test_lines.append(f"test {mod}::{cls.lower()}::test_{m} ... {status}")
+                if not passed:
+                    err = r.choice(_ERROR_MESSAGES)
+                    test_lines.append(f"  thread '{m}' panicked at '{err}'")
+            elif language == "typescript":
+                mark = "\u2713" if passed else "\u2717"
+                test_lines.append(f"  {mark} {cls} > {m} ({r.randint(1, 800)} ms)")
+                if not passed:
+                    test_lines.append("    Expected: true\n    Received: false")
+            else:
+                status = "PASSED" if passed else "FAILED"
+                test_lines.append(f"tests/test_{mod}.py::Test{cls}::test_{m} {status}")
+                if not passed:
+                    err = r.choice(_ERROR_MESSAGES)
+                    v = r.choice(_VARS)
+                    test_lines.extend(
+                        [
+                            f"    FAILED tests/test_{mod}.py::Test{cls}::test_{m}",
+                            f"    AssertionError: assert {v} == expected",
+                            f"      where {v} = {cls}().{m}()",
+                            f"    {err}",
+                        ]
+                    )
+        test_output = "\n".join(test_lines)
+
+        warnings = ""
+        if r.random() < 0.4:
+            w_count = r.randint(1, 5)
+            warnings = f"\n\n{w_count} warning(s)"
+
+        return f"""\
+<tool_name>bash</tool_name>
+<parameter name="command">{cmd}</parameter>
+<result>
+{test_output}
+{warnings}
+========================= {n_pass} passed, {n_fail} failed in {dur:.2f}s =========================
+</result>
+"""
+
+    def _gen_tool_search_verbose(self, language: str | None = None) -> str:
+        """Like _gen_tool_search but returns many matches across multiple files."""
+        r = self._template_rng
+        file_pool = self._file_pool(language)
+        pattern = r.choice(_CLASSES)
+
+        files = r.sample(list(file_pool), min(r.randint(6, 12), len(file_pool)))
+        matches = []
+        for f in files:
+            n_hits = r.randint(1, 4)
+            for _ in range(n_hits):
+                line_num = r.randint(1, 500)
+                v = r.choice(_VARS)
+                m = r.choice(_METHODS)
+                ctx = r.choice(
+                    [
+                        f"class {pattern}({r.choice(_CLASSES)}):",
+                        f"    {m} = {pattern}({v})",
+                        f"from {r.choice(_MODULES)} import {pattern}",
+                        f"    self._{v} = {pattern}.{m}()",
+                        f"    result: {pattern} = await svc.{m}({v})",
+                        f"# TODO: refactor {pattern} to use async",
+                    ]
+                )
+                matches.append(f"{f}:{line_num}:{ctx}")
+
+        content = "\n".join(matches)
+        return f"""\
+<tool_name>search</tool_name>
+<parameter name="pattern">{pattern}</parameter>
+<result>
+Found {len(matches)} matches in {len(files)} files:
+
+{content}
+</result>
+"""
+
+    def _gen_conv_bugfix(self) -> str:
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        turns = [
+            f"[User]\n{self._conv_user_msg(ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_review(self) -> str:
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        turns = [
+            f"[User]\n{self._conv_user_msg(ids)}\n\n"
+            f"{self._gen_git_diff(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[User]\n{self._conv_bridge(_FOLLOWUP_QUESTIONS, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_feature(self) -> str:
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        turns = [
+            f"[User]\n{self._conv_user_msg(ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_search_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_WRITE_TEST, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_debug(self) -> str:
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+        error_block = r.choice(
+            [
+                lambda: self._gen_error_traceback(language=lang),
+                self._gen_cuda_error,
+            ]
+        )()
+
+        turns = [
+            f"[User]\n{self._conv_user_msg(ids)}\n\n{error_block}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_search_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_qa(self) -> str:
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        turns = [
+            f"[User]\n{self._conv_user_msg(ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_EXPLAIN, ids)}",
+            f"[User]\n{self._conv_bridge(_FOLLOWUP_QUESTIONS, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_refactor(self) -> str:
+        """Multi-file refactoring: search callers, read multiple files, edit each."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        turns = [
+            f"[User]\n{self._conv_user_msg(ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_search_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_REFACTOR, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\nNow let me update the callers.\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_REFACTOR, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_perf(self) -> str:
+        """Performance investigation: profile, read hot path, optimize, benchmark."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        turns = [
+            f"[User]\n{self._conv_user_msg(ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_PERF, ids)}\n\n"
+            f"{self._gen_tool_bash(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_PERF, ids)}\n\n"
+            f"{self._gen_tool_search(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+            f"[User]\n{self._conv_bridge(_FOLLOWUP_QUESTIONS, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_EXPLAIN, ids)}\n\n"
+            f"{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_cicd(self) -> str:
+        """CI/CD debugging: failing pipeline, read logs, fix config, re-run."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        ci_output = self._gen_cicd_output(language=lang)
+
+        turns = [
+            f"[User]\nThe CI pipeline is failing on the {ids['module']} service. "
+            f"Can you take a look?\n\n{ci_output}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+            f"[User]\n{self._conv_bridge(_FOLLOWUP_QUESTIONS, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_EXPLAIN, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_ml_debug(self) -> str:
+        """ML/GPU debugging: CUDA error, read training code, fix, re-run."""
+        ids = self._conv_ids()
+
+        cuda_err = self._gen_cuda_error()
+        training_code = self._gen_ml_training_code()
+        training_log = self._gen_ml_training_log()
+        inference_code = self._gen_ml_inference_code()
+
+        turns = [
+            f"[User]\nI'm getting a CUDA error during training. "
+            f"Here's the error:\n\n{cuda_err}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"<tool_name>read</tool_name>\n"
+            f'<parameter name="file_path">train.py</parameter>\n'
+            f"<result>\n{training_code}\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"<tool_name>read</tool_name>\n"
+            f'<parameter name="file_path">inference.py</parameter>\n'
+            f"<result>\n{inference_code}\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language='python')}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"<tool_name>bash</tool_name>\n"
+            f'<parameter name="command">python train.py --max-steps 10</parameter>\n'
+            f"<result>\n{training_log}\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+            "[User]\nCan you also check if the inference script has the same issue?",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._conv_bridge(_BRIDGE_EXPLAIN, ids)}\n\n"
+            f"{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_test_write(self) -> str:
+        """Test writing session: read code, write tests, iterate on failures."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        turns = [
+            f"[User]\nWrite comprehensive tests for {ids['cls']}.{ids['method']}(). "
+            f"Cover the happy path, edge cases, and error handling.",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_search(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_WRITE_TEST, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+            f"[User]\n{self._conv_bridge(_FOLLOWUP_QUESTIONS, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_WRITE_TEST, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_migration(self) -> str:
+        """Multi-file migration: search all usages, update each file, run tests."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        turns = [
+            f"[User]\nMigrate {ids['cls']}.{ids['method']}() from "
+            f"sync to async. It's called across multiple files in {ids['module']}. "
+            f"Update all callers and add backward compat.",
+            f"[Assistant]\nLet me find all the callers first.\n\n"
+            f"{self._gen_tool_search_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read(language=lang)}",
+            f"[Assistant]\nI'll start with the core change to {ids['cls']}, "
+            f"then update each caller.\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\nNow updating the first caller.\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\nUpdating the second caller.\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\nUpdating the third caller and adding the "
+            f"backward-compat wrapper.\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+            f"[User]\n{self._conv_bridge(_FOLLOWUP_QUESTIONS, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_EXPLAIN, ids)}\n\n"
+            f"{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_deploy(self) -> str:
+        """Deployment troubleshooting: check config, logs, fix, verify."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        config_block = self._gen_config_file(language=lang)
+        json_resp = self._gen_json_response(language=lang)
+
+        turns = [
+            f"[User]\nThe {ids['module']} service keeps crashing after deploy. "
+            f"The health check is failing and pods are in CrashLoopBackOff.",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_DEPLOY, ids)}\n\n"
+            f"<tool_name>bash</tool_name>\n"
+            f'<parameter name="command">kubectl describe pod {ids["module"]}-'
+            f"{r.randint(1000, 9999)}-{r.choice('abcdef')}"
+            f"{r.choice('abcdef')}{r.choice('0123456789')}"
+            f"{r.choice('abcdef')}{r.choice('0123456789')}</parameter>\n"
+            f"<result>\n"
+            f"Name:         {ids['module']}-deployment-{r.randint(1000, 9999)}\n"
+            f"Namespace:    default\n"
+            f"Status:       Running\n"
+            f"Containers:\n"
+            f"  {ids['module']}:\n"
+            f"    Image:          registry.internal/{ids['module']}:latest\n"
+            f"    State:          Waiting (CrashLoopBackOff)\n"
+            f"    Last State:     Terminated (Error, exit code 1)\n"
+            f"    Ready:          False\n"
+            f"    Restart Count:  7\n"
+            f"    Limits:\n"
+            f"      cpu:     2\n"
+            f"      memory:  512Mi\n"
+            f"    Requests:\n"
+            f"      cpu:     500m\n"
+            f"      memory:  256Mi\n"
+            f"    Liveness:   http-get http://:8080/health delay=10s timeout=3s period=5s\n"
+            f"    Readiness:  http-get http://:8080/ready delay=5s timeout=3s period=5s\n"
+            f"Events:\n"
+            f"  Warning  BackOff  2m (x7 over 10m)  kubelet  "
+            f"Back-off restarting failed container\n"
+            f"</result>",
+            f"[Assistant]\nThe memory limit looks too low. Let me check the config.\n\n"
+            f"<tool_name>read</tool_name>\n"
+            f'<parameter name="file_path">kubernetes/deployment.yaml</parameter>\n'
+            f"<result>\n{config_block}\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_DEPLOY, ids)}\n\n"
+            f"<tool_name>bash</tool_name>\n"
+            f'<parameter name="command">kubectl logs deploy/{ids["module"]} '
+            f"--tail=30</parameter>\n"
+            f"<result>\n"
+            f"{self._gen_error_traceback(language=lang)}\n"
+            f"</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\nLet me also increase the memory limits.\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"<tool_name>bash</tool_name>\n"
+            f'<parameter name="command">kubectl apply -f kubernetes/deployment.yaml '
+            f"&& kubectl rollout status deploy/{ids['module']} --timeout=120s</parameter>\n"
+            f"<result>\n"
+            f"deployment.apps/{ids['module']} configured\n"
+            f'Waiting for deployment "{ids["module"]}" rollout to finish: '
+            f"1 old replicas are pending termination...\n"
+            f'deployment "{ids["module"]}" successfully rolled out\n'
+            f"</result>",
+            f"[Assistant]\nLet me verify the health check is passing now.\n\n"
+            f"<tool_name>bash</tool_name>\n"
+            f'<parameter name="command">curl -s http://localhost:8080/health '
+            f"| python -m json.tool</parameter>\n"
+            f"<result>\n{json_resp}\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_security(self) -> str:
+        """Security vulnerability investigation: find vuln, analyze attack vectors, fix, test."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        turns = [
+            f"[User]\nI think there's a security vulnerability in the {ids['module']} "
+            f"service. The {ids['method']}() endpoint accepts user input for {ids['var']} "
+            f"without proper validation.",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SECURITY, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_search_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ARCHITECTURE_TRADEOFF, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SECURITY, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_WRITE_TEST, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_distributed(self) -> str:
+        """Distributed systems debugging: inconsistency, analyze replication, fix consensus."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        config_block = self._gen_config_file(language=lang)
+
+        turns = [
+            f"[User]\nThere are inconsistent reads across replicas in the "
+            f"{ids['module']} service. After writing to {ids['var']} via "
+            f"{ids['cls']}.{ids['method']}(), some replicas return stale data.",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_DISTRIBUTED, ids)}\n\n"
+            f"<tool_name>read</tool_name>\n"
+            f'<parameter name="file_path">config/replication.yaml</parameter>\n'
+            f"<result>\n{config_block}\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_search_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ARCHITECTURE_TRADEOFF, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_DISTRIBUTED, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+            f"[User]\n{self._conv_bridge(_FOLLOWUP_QUESTIONS, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_DISTRIBUTED, ids)}\n\n"
+            f"{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_observability(self) -> str:
+        """Observability gap: add tracing, metrics, structured logging."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        config_block = self._gen_config_file(language=lang)
+
+        turns = [
+            f"[User]\nCan't debug a production latency spike in {ids['module']}. "
+            f"There's no tracing or metrics on {ids['cls']}.{ids['method']}().",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_OBSERVABILITY, ids)}\n\n"
+            f"{self._gen_tool_search_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_OBSERVABILITY, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_OBSERVABILITY, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\nLet me also add the telemetry configuration.\n\n"
+            f"<tool_name>read</tool_name>\n"
+            f'<parameter name="file_path">config/telemetry.yaml</parameter>\n'
+            f"<result>\n{config_block}\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"<tool_name>bash</tool_name>\n"
+            f'<parameter name="command">curl -s http://localhost:8080/metrics '
+            f"| head -20</parameter>\n"
+            f"<result>\n{self._gen_json_response(language=lang)}\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_db_optimize(self) -> str:
+        """Database optimization: EXPLAIN, read ORM code, add index, benchmark."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        table = r.choice(_DB_TABLES)
+        sql_block = self._gen_sql_query()
+
+        turns = [
+            f"[User]\nThe {ids['method']}() query on the {table} table is taking "
+            f"over 5 seconds in production. Can you optimize it?",
+            f"[Assistant]\nLet me run EXPLAIN ANALYZE to see the query plan.\n\n"
+            f"<tool_name>bash</tool_name>\n"
+            f'<parameter name="command">psql -d mydb -c "EXPLAIN ANALYZE '
+            f"SELECT * FROM {table} WHERE {ids['var']} = 'test'\"</parameter>\n"
+            f"<result>\n{sql_block}\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_DATA_ARCHITECTURE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ARCHITECTURE_TRADEOFF, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_DATA_ARCHITECTURE, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+            f"[User]\nShould we also partition the {table} table?",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ARCHITECTURE_TRADEOFF, ids)}\n\n"
+            f"{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_architecture_review(self) -> str:
+        """Architecture review: read multiple files, deep multi-paragraph analysis, refactor."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        turns = [
+            f"[User]\nCan you do an architecture review of the {ids['module']} "
+            f"service? I'm concerned about coupling and scalability.",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_read_long(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ANALYZE, ids)}\n\n"
+            f"{self._gen_tool_search_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ARCHITECTURE_TRADEOFF, ids)}\n\n"
+            f"{self._conv_bridge(_BRIDGE_ARCHITECTURE_TRADEOFF, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_REFACTOR, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[User]\nWhat about the scalability of {ids['cls']}? Will this "
+            f"approach hold up under 10x traffic?",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ARCHITECTURE_TRADEOFF, ids)}\n\n"
+            f"{self._conv_bridge(_BRIDGE_PERF, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_SUMMARY, ids)}",
+        ]
+        return "\n\n".join(turns)
+
+    def _gen_conv_incident_response(self) -> str:
+        """Production incident: cascading failure, diagnose, fix, add monitoring, post-mortem."""
+        r = self._template_rng
+        lang = r.choice(_LANGUAGES)
+        ids = self._conv_ids()
+
+        config_block = self._gen_config_file(language=lang)
+        error_block = self._gen_error_traceback(language=lang)
+
+        turns = [
+            f"[User]\nProduction incident: the {ids['module']} service is down "
+            f"and it's causing cascading failures in downstream services.",
+            "[Assistant]\nLet me check the service health immediately.\n\n"
+            "<tool_name>bash</tool_name>\n"
+            '<parameter name="command">curl -s http://localhost:8080/health '
+            "|| echo 'Connection refused'</parameter>\n"
+            "<result>\nConnection refused\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_DEPLOY, ids)}\n\n"
+            f"<tool_name>read</tool_name>\n"
+            f'<parameter name="file_path">kubernetes/deployment.yaml</parameter>\n'
+            f"<result>\n{config_block}\n</result>",
+            f"[Assistant]\nLet me check the logs for the root cause.\n\n"
+            f"<tool_name>bash</tool_name>\n"
+            f'<parameter name="command">kubectl logs deploy/{ids["module"]} '
+            f"--tail=50</parameter>\n"
+            f"<result>\n{error_block}\n</result>",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_ARCHITECTURE_TRADEOFF, ids)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_FIX, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\nNow let me add a circuit breaker to prevent cascading failures.\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_OBSERVABILITY, ids)}\n\n"
+            f"{self._gen_tool_edit(language=lang)}",
+            f"[Assistant]\n{self._conv_bridge(_BRIDGE_TEST, ids)}\n\n"
+            f"{self._gen_tool_bash_verbose(language=lang)}",
+            f"[Assistant]\nPost-mortem summary: The {ids['module']} service experienced "
+            f"a cascading failure triggered by {ids['error']}. The root cause was "
+            f"{ids['cls']}.{ids['method']}() not handling the error gracefully, which "
+            f"caused the health check to fail and pods to restart in a loop. "
+            f"Fixes applied: error handling in {ids['method']}(), circuit breaker "
+            f"pattern for downstream calls, and Prometheus alerts for early detection.",
+        ]
+        return "\n\n".join(turns)
+
+
+class _SafeFormatMap(dict):
+    """Dict subclass that returns '{key}' for missing keys in str.format_map."""
+
+    def __missing__(self, key: str) -> str:
+        return f"{{{key}}}"
