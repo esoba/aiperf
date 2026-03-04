@@ -25,14 +25,7 @@ jobs:
       rc_number: ${{ steps.rc.outputs.rc_number }}
       rc_tag: ${{ steps.rc.outputs.rc_tag }}
       pep440_version: ${{ steps.rc.outputs.pep440_version }}
-      container_image: ${{ steps.metadata.outputs.container_image }}
-      container_platform_amd64_tag: ${{ steps.metadata.outputs.container_platform_amd64_tag }}
-      container_platform_arm64_tag: ${{ steps.metadata.outputs.container_platform_arm64_tag }}
-      container_platform_amd64_ref: ${{ steps.metadata.outputs.container_platform_amd64_ref }}
-      container_platform_arm64_ref: ${{ steps.metadata.outputs.container_platform_arm64_ref }}
-      container_multiarch_tag: ${{ steps.metadata.outputs.container_multiarch_tag }}
-      container_multiarch_ref: ${{ steps.metadata.outputs.container_multiarch_ref }}
-      wheel_filename: ${{ steps.metadata.outputs.wheel_filename }}
+      wheel_filename: ${{ steps.rc.outputs.wheel_filename }}
     steps:
       - name: Set test version
         id: extract
@@ -67,19 +60,12 @@ jobs:
 
           RC_TAG="v${VERSION}-rc${NEXT_RC}"
           PEP440_VERSION="${VERSION}rc${NEXT_RC}"
+          WHEEL_FILENAME="aiperf-${PEP440_VERSION}-py3-none-any.whl"
 
           echo "rc_number=${NEXT_RC}" >> "$GITHUB_OUTPUT"
           echo "rc_tag=${RC_TAG}" >> "$GITHUB_OUTPUT"
           echo "pep440_version=${PEP440_VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Generate release metadata
-        id: metadata
-        uses: ./.github/actions/release-metadata
-        with:
-          branch_name: release/${{ steps.extract.outputs.version }}
-          rc_number: ${{ steps.rc.outputs.rc_number }}
-          container_registry: ${{ secrets.RC_CONTAINER_REGISTRY }}
-          container_repository: aiperf
+          echo "wheel_filename=${WHEEL_FILENAME}" >> "$GITHUB_OUTPUT"
 
   # ============================================================================
   # QUALITY GATES
@@ -236,31 +222,26 @@ jobs:
   build-container:
     name: Build Container (${{ matrix.arch }})
     needs: [prepare-release]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: true
       matrix:
         include:
           - arch: amd64
             platform: linux/amd64
+            runner: prod-aiperf-builder-amd-v1
           - arch: arm64
             platform: linux/arm64
+            runner: prod-aiperf-builder-arm-v1
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
 
       - name: Build and export image
         env:
           PLATFORM: ${{ matrix.platform }}
         run: |
-          docker buildx build \
-            --platform "${PLATFORM}" \
+          docker build \
             --target runtime \
             --output type=oci,dest=aiperf-${{ matrix.arch }}.tar \
             .
@@ -342,11 +323,31 @@ jobs:
   stage-container:
     name: Stage Container
     needs: [prepare-release, create-rc-tag]
-    runs-on: ubuntu-latest
+    runs-on: prod-aiperf-default-v1
     environment: automated-release
+    env:
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
     steps:
-      - name: Install skopeo
-        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Compute image references
+        id: refs
+        env:
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+        run: |
+          set -euo pipefail
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          ECR_HOSTNAME="${ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          IMAGE="${ECR_HOSTNAME}/ai-dynamo/aiperf"
+          echo "ecr_hostname=${ECR_HOSTNAME}" >> "$GITHUB_OUTPUT"
+          echo "amd64_ref=${IMAGE}:${PEP440_VERSION}-amd64" >> "$GITHUB_OUTPUT"
+          echo "arm64_ref=${IMAGE}:${PEP440_VERSION}-arm64" >> "$GITHUB_OUTPUT"
+          echo "multiarch_ref=${IMAGE}:${PEP440_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to ECR
+        env:
+          ECR_HOSTNAME: ${{ steps.refs.outputs.ecr_hostname }}
+        run: |
+          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+            | skopeo login "${ECR_HOSTNAME}" --username AWS --password-stdin
 
       - name: Download amd64 container artifact
         uses: actions/download-artifact@v4
@@ -360,18 +361,9 @@ jobs:
           name: aiperf-container-arm64
           path: artifacts/
 
-      - name: Log in to container registry
-        env:
-          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
-          REGISTRY_USER: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
-        run: |
-          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
-          echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
-
       - name: Push amd64 image
         env:
-          IMAGE_REF: ${{ needs.prepare-release.outputs.container_platform_amd64_ref }}
+          IMAGE_REF: ${{ steps.refs.outputs.amd64_ref }}
         run: |
           skopeo copy \
             oci-archive:artifacts/aiperf-amd64.tar \
@@ -379,7 +371,7 @@ jobs:
 
       - name: Push arm64 image
         env:
-          IMAGE_REF: ${{ needs.prepare-release.outputs.container_platform_arm64_ref }}
+          IMAGE_REF: ${{ steps.refs.outputs.arm64_ref }}
         run: |
           skopeo copy \
             oci-archive:artifacts/aiperf-arm64.tar \
@@ -387,9 +379,9 @@ jobs:
 
       - name: Create and push multi-arch manifest
         env:
-          MULTIARCH_REF: ${{ needs.prepare-release.outputs.container_multiarch_ref }}
-          AMD64_REF: ${{ needs.prepare-release.outputs.container_platform_amd64_ref }}
-          ARM64_REF: ${{ needs.prepare-release.outputs.container_platform_arm64_ref }}
+          MULTIARCH_REF: ${{ steps.refs.outputs.multiarch_ref }}
+          AMD64_REF: ${{ steps.refs.outputs.amd64_ref }}
+          ARM64_REF: ${{ steps.refs.outputs.arm64_ref }}
         run: |
           set -euo pipefail
           docker manifest create "${MULTIARCH_REF}" \
@@ -397,19 +389,49 @@ jobs:
             "${ARM64_REF}"
           docker manifest push "${MULTIARCH_REF}"
 
-      - name: Log out from registry
+      - name: Logout from ECR
         if: always()
         env:
-          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
+          ECR_HOSTNAME: ${{ steps.refs.outputs.ecr_hostname }}
         run: |
-          REGISTRY_HOST=$(echo "${REGISTRY}" | cut -d/ -f1)
-          docker logout "${REGISTRY_HOST}" 2>/dev/null || true
+          skopeo logout "${ECR_HOSTNAME}" 2>/dev/null || true
 
   stage-wheel:
-    name: Stage Wheel (skipped - requires internal network)
+    name: Stage Wheel
     needs: [prepare-release, create-rc-tag, validate-wheel]
-    runs-on: ubuntu-latest
+    runs-on: prod-aiperf-default-v1
     environment: automated-release
     steps:
-      - name: Skip
-        run: echo "Skipped - Artifactory requires internal network access (self-hosted runners)"
+      - name: Set up Python and twine
+        run: |
+          python3 -m venv /tmp/wheel-venv
+          source /tmp/wheel-venv/bin/activate
+          pip install --upgrade pip twine
+          echo "/tmp/wheel-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aiperf-wheel
+          path: dist/
+
+      - name: Publish wheel to Artifactory
+        env:
+          ARTIFACTORY_URL: ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
+          TWINE_NON_INTERACTIVE: "1"
+        run: |
+          set -euo pipefail
+          echo "Publishing wheel to Artifactory..."
+          python3 -m twine upload \
+            --repository-url "${ARTIFACTORY_URL}" \
+            --username "${ARTIFACTORY_USER}" \
+            --password "${ARTIFACTORY_TOKEN}" \
+            --disable-progress-bar \
+            dist/*.whl
+          echo "Artifactory upload complete."
+
+          WHEEL_FILE=$(basename dist/*.whl)
+          echo "### Artifactory Upload" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Wheel**: \`${WHEEL_FILE}\`" >> "$GITHUB_STEP_SUMMARY"
