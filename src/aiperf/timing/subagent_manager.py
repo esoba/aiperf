@@ -233,6 +233,16 @@ class SubagentSessionManager(AIPerfLoggerMixin):
                     )
             return
 
+        # Path B0: Turn 0 just completed -- check turn 0's own spawn_ids.
+        # execute_phase fires turn 0 directly without checking its spawns,
+        # so we dispatch them here on first credit return.
+        if credit.turn_index == 0:
+            turn0_meta = self._conversation_source.get_turn_metadata_at(
+                credit.conversation_id, 0
+            )
+            if turn0_meta.subagent_spawn_ids:
+                self._dispatch_subagent_spawns(credit, turn0_meta.subagent_spawn_ids)
+
         # Path B: Next turn has subagent spawn(s) -> fan out children
         if not credit.is_final_turn:
             next_meta = self._conversation_source.get_next_turn_metadata(credit)
