@@ -14,9 +14,11 @@ services run as daemons.
 
 from __future__ import annotations
 
+import logging
 import multiprocessing as mp
 import os
 import sys
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from multiprocessing import Pool, shared_memory
@@ -26,6 +28,8 @@ import numpy as np
 from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -252,11 +256,24 @@ def parallel_convert(
     try:
         np.ndarray((corpus_len,), dtype=np.int32, buffer=shm.buf)[:] = corpus
 
+        workers = num_workers or min(os.cpu_count() or 4, 16)
+        # Use small batches so progress updates appear frequently.
+        effective_batch = max(1, min(batch_size, len(sessions) // (workers * 4) or 1))
         batches = [
-            sessions[i : i + batch_size] for i in range(0, len(sessions), batch_size)
+            sessions[i : i + effective_batch]
+            for i in range(0, len(sessions), effective_batch)
         ]
 
-        workers = num_workers or min(os.cpu_count() or 4, 16)
+        total_sessions = len(sessions)
+        total_traces = sum(len(traces) for _, traces in sessions)
+        logger.info(
+            "Converting %s sessions (%s turns) to prompts using %s workers "
+            "(batch_size=%s)...",
+            f"{total_sessions:,}",
+            f"{total_traces:,}",
+            workers,
+            effective_batch,
+        )
 
         was_daemon = mp.current_process().daemon
         try:
@@ -273,9 +290,25 @@ def parallel_convert(
                 trust_remote_code=trust_remote_code,
                 revision=revision,
             )
+            sessions_done = 0
+            t0 = time.monotonic()
+            last_log = 0.0
             with Pool(workers, _init_worker, (init_args,)) as pool:
                 # imap preserves submission order (unlike imap_unordered)
                 for batch_result in pool.imap(_process_batch, batches):
+                    sessions_done += len(batch_result)
+                    elapsed = time.monotonic() - t0
+                    # Log at most every 2 seconds, plus always log the last batch
+                    if elapsed - last_log >= 2.0 or sessions_done == total_sessions:
+                        pct = sessions_done / total_sessions * 100
+                        logger.info(
+                            "Prompt generation: %s/%s sessions (%.0f%%) in %.1fs",
+                            f"{sessions_done:,}",
+                            f"{total_sessions:,}",
+                            pct,
+                            elapsed,
+                        )
+                        last_log = elapsed
                     for sid, turns in batch_result:
                         yield Conversation(
                             session_id=sid,

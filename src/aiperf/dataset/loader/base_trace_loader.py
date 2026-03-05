@@ -191,6 +191,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self._trace_id = _compute_file_hash(self.filename)
         self.prompt_generator._hash_id_corpus_rng.set_trace_id(self._trace_id)
         self.debug(lambda: f"Trace ID: {self._trace_id} for {self.filename}")
+        self.info(f"Loading traces from {self.filename}...")
         items: list[TraceT] = []
 
         with open(self.filename) as f:
@@ -209,11 +210,9 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self._log_filtering_summary()
 
         data = self._group_traces(items)
-        self.debug(
-            lambda: (
-                f"Loaded {sum(len(v) for v in data.values()):,} traces "
-                f"across {len(data):,} sessions from {self.filename}"
-            )
+        self.info(
+            f"Loaded {sum(len(v) for v in data.values()):,} traces "
+            f"across {len(data):,} sessions from {self.filename}"
         )
 
         if self.user_config.input.synthesis.should_synthesize():
