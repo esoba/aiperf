@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -98,7 +99,7 @@ def write_dataset(
     quality_path = output_dir / "quality.json"
 
     # Write JSONL
-    _write_jsonl(sessions, jsonl_path)
+    _write_jsonl(sessions, jsonl_path, config.cache.block_size)
 
     # Write manifest
     manifest = DatasetManifest(
@@ -179,17 +180,32 @@ def _write_comparison_text(
     return out_path
 
 
-def _write_jsonl(sessions: list[SynthesizedSession], path: Path) -> None:
-    """Write Mooncake-compatible JSONL rows."""
+def _write_jsonl(
+    sessions: list[SynthesizedSession], path: Path, block_size: int
+) -> None:
+    """Write Mooncake-compatible JSONL rows with incremental values.
+
+    Each row's input_length = new_tokens for that turn, and hash_ids contains
+    ceil(new_tokens / block_size) fresh block IDs (last block partial).
+    The downstream worker accumulates turns to reconstruct the full ISL.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:
         for session in sessions:
+            next_hash_id: int | None = None
             for turn in session.turns:
+                n_blocks = math.ceil(turn.new_tokens / block_size)
+                if turn.turn_index == 0:
+                    hash_ids = turn.hash_ids
+                    next_hash_id = hash_ids[-1] + 1 if hash_ids else 0
+                else:
+                    hash_ids = list(range(next_hash_id, next_hash_id + n_blocks))
+                    next_hash_id += n_blocks
                 row: dict = {
                     "session_id": session.session_id,
-                    "input_length": turn.input_length,
+                    "input_length": turn.new_tokens,
                     "output_length": turn.output_length,
-                    "hash_ids": turn.hash_ids,
+                    "hash_ids": hash_ids,
                 }
                 if turn.turn_index == 0:
                     row["timestamp"] = round(turn.timestamp_ms, 1)

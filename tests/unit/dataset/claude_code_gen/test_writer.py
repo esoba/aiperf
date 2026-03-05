@@ -86,6 +86,28 @@ class TestWriteDataset:
                 session_ids.add(data["session_id"])
         assert len(session_ids) == 10
 
+    def test_jsonl_hash_ids_consistent_with_input_length(
+        self, tmp_path: Path, sessions, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Verify each row's hash_ids and input_length are self-consistent."""
+        run_dir = tmp_path / "run"
+        write_dataset(sessions, run_dir, coding_config, seed=42)
+        jsonl = run_dir / "dataset.jsonl"
+        block_size = coding_config.cache.block_size
+
+        with jsonl.open("rb") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                data = orjson.loads(line)
+                n_blocks = len(data["hash_ids"])
+                final_block = data["input_length"] - (n_blocks - 1) * block_size
+                assert 1 <= final_block <= block_size, (
+                    f"line {line_num}: final_block_size {final_block} "
+                    f"out of range [1, {block_size}]"
+                )
+
 
 class TestQualityReport:
     def test_report_has_expected_metrics(
