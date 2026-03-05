@@ -13,7 +13,12 @@ from rich.console import Console
 
 
 def load_sessions(jsonl_path: Path) -> list[dict]:
-    """Parse JSONL into grouped sessions with turns."""
+    """Parse JSONL into grouped sessions with turns.
+
+    JSONL rows contain incremental input_length (new tokens per turn).
+    This function reconstructs cumulative_input_length for each turn
+    so the simulation can track total ISL in-flight.
+    """
     sessions: dict[str, list[dict]] = {}
     with open(jsonl_path, "rb") as f:
         for line in f:
@@ -29,7 +34,15 @@ def load_sessions(jsonl_path: Path) -> list[dict]:
             }
             sessions.setdefault(sid, []).append(turn)
 
-    return [{"session_id": sid, "turns": turns} for sid, turns in sessions.items()]
+    result = []
+    for sid, turns in sessions.items():
+        cumulative = 0
+        for turn in turns:
+            cumulative += turn["input_length"]
+            turn["cumulative_input_length"] = cumulative
+            cumulative += turn["output_length"]
+        result.append({"session_id": sid, "turns": turns})
+    return result
 
 
 def render_simulation(sessions: list[dict], output_path: Path) -> None:
@@ -368,12 +381,12 @@ function simulate(sessions, concurrency, cacheHitRate, prefillWorkers, dpWorkers
     if (type === 'request_start') {
       activeRequests++;
       const turn = sessions[sIdx].turns[tIdx];
-      inputTokens += turn.input_length;
+      inputTokens += turn.cumulative_input_length;
       outputTokens += turn.output_length;
     } else if (type === 'request_end') {
       activeRequests--;
       const turn = sessions[sIdx].turns[tIdx];
-      inputTokens -= turn.input_length;
+      inputTokens -= turn.cumulative_input_length;
       outputTokens -= turn.output_length;
 
       if (tIdx + 1 < sessions[sIdx].turns.length) {
