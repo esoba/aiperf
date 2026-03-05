@@ -350,6 +350,57 @@ class TestWebSocketEndpoint:
             assert response["type"] == "error"
 
 
+class TestWebSocketPayloadValidation:
+    """Test WebSocket payload validation."""
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            param("[]", id="json-array"),
+            param('"a string"', id="json-string"),
+            param("42", id="json-number"),
+            param("true", id="json-boolean"),
+            param("null", id="json-null"),
+        ],
+    )  # fmt: skip
+    def test_non_object_payload_returns_error(
+        self, api_test_client: TestClient, payload: str
+    ) -> None:
+        """Test that non-object JSON payloads return an error without disconnecting."""
+        with api_test_client.websocket_connect("/ws") as websocket:
+            websocket.send_text(payload)
+            response = websocket.receive_json()
+            assert response["type"] == "error"
+            assert "JSON object" in response["message"]
+            websocket.send_json({"type": "ping"})
+            pong = websocket.receive_json()
+            assert pong["type"] == "pong"
+
+    @pytest.mark.parametrize(
+        "msg_type",
+        [param("subscribe", id="subscribe"), param("unsubscribe", id="unsubscribe")],
+    )  # fmt: skip
+    def test_string_message_types_returns_error(
+        self, api_test_client: TestClient, msg_type: str
+    ) -> None:
+        """Test that a string message_types value returns an error."""
+        with api_test_client.websocket_connect("/ws") as websocket:
+            websocket.send_json({"type": msg_type, "message_types": "realtime_metrics"})
+            response = websocket.receive_json()
+            assert response["type"] == "error"
+            assert "list of strings" in response["message"]
+
+    def test_non_string_items_in_message_types_returns_error(
+        self, api_test_client: TestClient
+    ) -> None:
+        """Test that non-string items in message_types returns an error."""
+        with api_test_client.websocket_connect("/ws") as websocket:
+            websocket.send_json({"type": "subscribe", "message_types": [1, 2]})
+            response = websocket.receive_json()
+            assert response["type"] == "error"
+            assert "list of strings" in response["message"]
+
+
 class TestWebSocketUnknownMessageType:
     """Test WebSocket behavior with unknown message types."""
 

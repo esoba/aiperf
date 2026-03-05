@@ -72,10 +72,28 @@ async def websocket_endpoint(websocket: WebSocket, component: WebSocketDep) -> N
                 await websocket.send_text(err.decode())
                 continue
 
+            if not isinstance(data, dict):
+                err = orjson.dumps(
+                    {"type": "error", "message": "Payload must be a JSON object"}
+                )
+                await websocket.send_text(err.decode())
+                continue
+
             msg_type = data.get("type")
 
             if msg_type == "subscribe":
                 types = data.get("message_types", [])
+                if not isinstance(types, list) or not all(
+                    isinstance(t, str) for t in types
+                ):
+                    err = orjson.dumps(
+                        {
+                            "type": "error",
+                            "message": "message_types must be a list of strings",
+                        }
+                    )
+                    await websocket.send_text(err.decode())
+                    continue
                 component.ws_manager.subscribe(client_id, types)
                 resp = orjson.dumps({"type": "subscribed", "message_types": types})
                 await websocket.send_text(resp.decode())
@@ -83,6 +101,17 @@ async def websocket_endpoint(websocket: WebSocket, component: WebSocketDep) -> N
 
             elif msg_type == "unsubscribe":
                 types = data.get("message_types", [])
+                if not isinstance(types, list) or not all(
+                    isinstance(t, str) for t in types
+                ):
+                    err = orjson.dumps(
+                        {
+                            "type": "error",
+                            "message": "message_types must be a list of strings",
+                        }
+                    )
+                    await websocket.send_text(err.decode())
+                    continue
                 component.ws_manager.unsubscribe(client_id, types)
                 resp = orjson.dumps({"type": "unsubscribed", "message_types": types})
                 await websocket.send_text(resp.decode())
