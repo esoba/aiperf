@@ -10,11 +10,12 @@ from unittest.mock import MagicMock
 
 import pytest
 import zstandard
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
+from pytest import param
 from starlette.testclient import TestClient
 
-from aiperf.api.routers.dataset import DatasetRouter
+from aiperf.api.routers.dataset import DatasetRouter, _stream_dataset_file
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.messages import DatasetConfiguredNotification
 from aiperf.common.models import MemoryMapClientMetadata
@@ -135,11 +136,21 @@ class TestDatasetEndpoints:
         assert "index file not found" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_dataset_compress_only_mode_requires_zstd(
+    @pytest.mark.parametrize(
+        "accept_encoding",
+        [
+            param("gzip", id="no-zstd"),
+            param("zstd;q=0, gzip", id="zstd-rejected-q0"),
+            param("zstd;q=0", id="zstd-rejected-q0-only"),
+            param("", id="empty-header"),
+        ],
+    )
+    async def test_dataset_compress_only_mode_rejects_without_zstd(
         self,
         dataset_async_client: AsyncClient,
         dataset_router: DatasetRouter,
         tmp_path,
+        accept_encoding: str,
     ) -> None:
         compressed_file = tmp_path / "data.dat.zst"
         compressed_file.write_bytes(b"compressed data")
@@ -155,10 +166,23 @@ class TestDatasetEndpoints:
 
         response = await dataset_async_client.get(
             "/api/dataset/data",
-            headers={"Accept-Encoding": "gzip"},
+            headers={"Accept-Encoding": accept_encoding},
         )
         assert response.status_code == 406
         assert "zstd" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_dataset_compress_only_mode_rejects_no_accept_encoding_header(
+        self, tmp_path
+    ) -> None:
+        compressed_file = tmp_path / "data.dat.zst"
+        compressed_file.write_bytes(b"compressed data")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _stream_dataset_file(
+                tmp_path / "data.dat", compressed_file, None, "Dataset"
+            )
+        assert exc_info.value.status_code == 406
 
 
 class TestDatasetEndpointSuccessfulStreaming:

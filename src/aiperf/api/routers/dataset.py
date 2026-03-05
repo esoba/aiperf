@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
-from typing import Annotated, Any
+from typing import Annotated
 
 import aiofiles.os as aio_os
 from fastapi import APIRouter, HTTPException, Request
@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
 from aiperf.common.compression import (
     CompressionEncoding,
+    parse_accept_encoding,
     select_encoding,
     stream_file_compressed,
 )
@@ -34,7 +35,7 @@ dataset_router = APIRouter(tags=["Dataset"], include_in_schema=False)
 class DatasetRouter(MessageBusClientMixin, BaseRouter):
     """Owns dataset metadata and exposes /api/dataset endpoints."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._dataset_client_metadata: MemoryMapClientMetadata | None = None
         self._dataset_configured = asyncio.Event()
@@ -88,7 +89,8 @@ async def _stream_dataset_file(
         )
 
     if compress_only_mode:
-        if "zstd" not in (accept_encoding or "").lower():
+        accepted = parse_accept_encoding(accept_encoding or "")
+        if accepted.get("zstd", 0) <= 0:
             raise HTTPException(
                 status_code=406,
                 detail=f"{file_type} is pre-compressed with zstd. Client must accept zstd encoding.",
