@@ -53,7 +53,10 @@ def _supports_kwarg(obj: object, method_name: str, kwarg: str) -> bool:
     method = getattr(obj, method_name, None)
     if method is None:
         return False
-    return kwarg in inspect.signature(method).parameters
+    try:
+        return kwarg in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _is_offline_mode() -> bool:
@@ -150,6 +153,7 @@ class Tokenizer:
         self._call_args = {"add_special_tokens": False}
         self._encode_args = {"add_special_tokens": False}
         self._decode_args = {"skip_special_tokens": True}
+        self._supported_decode_kwargs: set[str] | None = None
 
     def _require_init(self) -> None:
         """Raise NotInitializedError if tokenizer is not initialized."""
@@ -161,10 +165,28 @@ class Tokenizer:
         if self._tokenizer is None:
             return
         if _supports_kwarg(self._tokenizer, "encode", "allow_special_tokens"):
-            self._call_args = {"allow_special_tokens": False}
             self._encode_args = {"allow_special_tokens": False}
+        elif not _supports_kwarg(self._tokenizer, "encode", "add_special_tokens"):
+            self._encode_args = {}
+
+        if _supports_kwarg(self._tokenizer, "__call__", "allow_special_tokens"):
+            self._call_args = {"allow_special_tokens": False}
+        elif not _supports_kwarg(self._tokenizer, "__call__", "add_special_tokens"):
+            self._call_args = {}
+
         if not _supports_kwarg(self._tokenizer, "decode", "skip_special_tokens"):
             self._decode_args = {}
+
+        # Cache supported decode params so caller kwargs can be filtered
+        try:
+            sig = inspect.signature(self._tokenizer.decode)
+            self._supported_decode_kwargs = {
+                k
+                for k, p in sig.parameters.items()
+                if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+            }
+        except (TypeError, ValueError):
+            self._supported_decode_kwargs = None
 
     @staticmethod
     def resolve_alias(name: str) -> AliasResolutionResult:
@@ -354,6 +376,10 @@ class Tokenizer:
             The decoded string.
         """
         self._require_init()
+        if self._supported_decode_kwargs is not None:
+            kwargs = {
+                k: v for k, v in kwargs.items() if k in self._supported_decode_kwargs
+            }
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
 
     @property
