@@ -442,3 +442,6 @@ The delays between turns are controlled by:
 - Consider using `--request-rate` to control conversation start rate for more predictable load
 - Use `--random-seed` for reproducible conversation patterns
 
+**See also:**
+- [Conversation Context Mode](conversation-context-mode.md) — Control how conversation history accumulates (delta-compressed, standalone, etc.)
+

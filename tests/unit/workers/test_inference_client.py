@@ -14,7 +14,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import RequestRecord
+from aiperf.common.models.record_models import RequestInfo, RequestRecord
 from aiperf.plugin.enums import EndpointType, TransportType
 from aiperf.workers.inference_client import InferenceClient, detect_transport_from_url
 
@@ -221,3 +221,41 @@ class TestInferenceClient:
         call_args = inference_client.transport.send_request.call_args
         assert call_args[0][0] == request_info
         assert record == expected_record
+
+    def test_enrich_request_record_uses_last_turn_model(self, inference_client):
+        """Test _enrich_request_record uses turns[-1] not turns[turn_index].
+
+        In STANDALONE mode, turn_list has only 1 element but turn_index
+        reflects the actual conversation position (e.g. 3). Using
+        turns[turn_index] would raise IndexError.
+        """
+        from aiperf.common.enums import CreditPhase
+        from aiperf.common.models.dataset_models import Text, Turn
+
+        turn = Turn(
+            texts=[Text(contents=["standalone turn"])],
+            role="user",
+            model="standalone-model",
+        )
+        request_info = RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[turn],
+            turn_index=3,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-id",
+            x_correlation_id="test-corr",
+            conversation_id="test-conv",
+        )
+        record = RequestRecord(
+            request_info=request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+        )
+
+        result = inference_client._enrich_request_record(
+            record=record, request_info=request_info
+        )
+
+        assert result.model_name == "standalone-model"
