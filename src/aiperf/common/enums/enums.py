@@ -213,6 +213,8 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_PHASE_START = "credit_phase_start"
     CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
     CREDITS_COMPLETE = "credits_complete"
+    DATASET_CLIENT_REQUEST = "dataset_client_request"
+    DATASET_CLIENT_RESPONSE = "dataset_client_response"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
     ERROR = "error"
     HEARTBEAT = "heartbeat"

@@ -299,12 +299,19 @@ class TestRetrieveConversation:
     async def test_falls_back_to_dataset_manager_when_no_client_and_not_stopping(
         self, monkeypatch, mock_worker, sample_credit_context
     ):
-        """When _dataset_client is None and not stopping, should request from DatasetManager."""
+        """When _dataset_client is None and not stopping, should request client metadata from DatasetManager."""
         mock_worker._dataset_client = None
         expected_conversation = Conversation(session_id="test-conv-123", turns=[])
-        mock_fallback = AsyncMock(return_value=expected_conversation)
+
+        async def mock_request_client(self_worker):
+            mock_client = AsyncMock()
+            mock_client.get_conversation = AsyncMock(return_value=expected_conversation)
+            self_worker._dataset_client = mock_client
+
         monkeypatch.setattr(
-            mock_worker, "_request_conversation_from_dataset_manager", mock_fallback
+            mock_worker,
+            "_request_dataset_client_from_dataset_manager",
+            lambda: mock_request_client(mock_worker),
         )
 
         result = await mock_worker._retrieve_conversation(
@@ -313,4 +320,3 @@ class TestRetrieveConversation:
         )
 
         assert result == expected_conversation
-        mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)

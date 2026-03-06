@@ -16,6 +16,31 @@ from aiperf.common.models import (
 from aiperf.common.types import MessageTypeT
 
 
+class DatasetClientRequestMessage(BaseServiceMessage):
+    """Request the dataset client metadata from the DatasetManager."""
+
+    message_type: MessageTypeT = MessageType.DATASET_CLIENT_REQUEST
+
+
+class DatasetClientResponseMessage(BaseServiceMessage):
+    """Response containing the dataset client metadata for connection."""
+
+    message_type: MessageTypeT = MessageType.DATASET_CLIENT_RESPONSE
+
+    client_metadata: SerializeAsAny[DatasetClientMetadata] = Field(
+        ...,
+        description="Client access metadata (e.g., mmap file paths) for reading the dataset.",
+    )
+
+    @field_validator("client_metadata", mode="before")
+    @classmethod
+    def route_client_metadata(cls, v: Any) -> DatasetClientMetadata:
+        """Route nested AutoRoutedModel field to correct subclass."""
+        if isinstance(v, dict):
+            return DatasetClientMetadata.from_json(v)
+        return v
+
+
 class ConversationRequestMessage(BaseServiceMessage):
     """Message to request a full conversation by ID."""
 

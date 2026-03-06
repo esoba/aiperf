@@ -26,12 +26,13 @@ from aiperf.common.messages import (
     WorkerHealthMessage,
 )
 from aiperf.common.messages.dataset_messages import (
-    ConversationRequestMessage,
-    ConversationResponseMessage,
+    DatasetClientRequestMessage,
+    DatasetClientResponseMessage,
 )
 from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
     Conversation,
+    DatasetClientMetadata,
     ErrorDetails,
     ModelEndpointInfo,
     ReasoningResponseData,
@@ -197,10 +198,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             or self.user_config.loadgen.warmup_prefill_concurrency is not None
         )
 
-        # Only used as a fallback when dataset client is not initialized
-        # or was not available when the credit was dropped. Must be created here
-        # so it can be attached to the worker lifecycle.
-        self.conversation_request_client: RequestClientProtocol = (
+        # Used to request dataset client metadata from DatasetManager when
+        # the dataset client is not yet initialized (race condition at startup).
+        self._dataset_client_request_client: RequestClientProtocol = (
             self.comms.create_request_client(
                 address=CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
                 bind=False,
@@ -221,7 +221,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
-        """Initialize dataset client when configuration is received.
+        """Initialize dataset client when configuration is received."""
+        await self._initialize_dataset_client(msg.client_metadata)
+        self.debug(
+            lambda: (
+                f"Dataset client initialized: type={msg.client_metadata.client_type}"
+            )
+        )
+
+    async def _initialize_dataset_client(
+        self, client_metadata: DatasetClientMetadata
+    ) -> None:
+        """Create and initialize the dataset client from metadata.
 
         Uses factory pattern to dynamically create the appropriate client.
         The factory auto-extracts client_type from client_metadata, leveraging
@@ -229,16 +240,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         storage backends (S3, Redis, etc.) to work without modifying Worker code.
         """
         ClientStoreClass = plugins.get_class(
-            PluginType.DATASET_CLIENT_STORE, msg.client_metadata.client_type
+            PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
         )
-        self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
+        self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
         await self._dataset_client.initialize()
         self._dataset_configured_event.set()
-        self.debug(
-            lambda: (
-                f"Dataset client initialized: type={msg.client_metadata.client_type}"
-            )
-        )
 
     @on_stop
     async def _send_worker_shutdown_message(self) -> None:
@@ -576,52 +582,32 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         elif self.stop_requested:
             raise asyncio.CancelledError("Stop requested while retrieving conversation")
 
-        return await self._request_conversation_from_dataset_manager(
-            conversation_id, credit_context
+        await self._request_dataset_client_from_dataset_manager()
+        return await self._dataset_client.get_conversation(conversation_id)
+
+    async def _request_dataset_client_from_dataset_manager(self) -> None:
+        """Fallback: Request dataset client metadata from DatasetManager and initialize client."""
+        self.info(
+            "Dataset client not available, requesting metadata from DatasetManager"
+        )
+        response: (
+            DatasetClientResponseMessage | ErrorMessage
+        ) = await self._dataset_client_request_client.request(
+            DatasetClientRequestMessage(service_id=self.service_id)
         )
 
-    async def _request_conversation_from_dataset_manager(
-        self, conversation_id: str, credit_context: CreditContext
-    ) -> Conversation:
-        """Fallback: Request from DatasetManager via ZMQ"""
-        conversation_response: (
-            ConversationResponseMessage | ErrorMessage
-        ) = await self.conversation_request_client.request(
-            ConversationRequestMessage(
-                service_id=self.service_id,
-                conversation_id=conversation_id,
-                credit_phase=credit_context.credit.phase,
+        if isinstance(response, ErrorMessage):
+            raise ValueError(
+                f"Failed to retrieve dataset client metadata: {response.error}"
+            )
+
+        await self._initialize_dataset_client(response.client_metadata)
+        self.info(
+            lambda: (
+                f"Dataset client initialized via fallback request: "
+                f"type={response.client_metadata.client_type}"
             )
         )
-        if self.is_trace_enabled:
-            self.trace(f"Received response message: {conversation_response}")
-
-        # Check for error in conversation response
-        if isinstance(conversation_response, ErrorMessage):
-            error = conversation_response.error
-            await self._send_inference_result_message(
-                RequestRecord(
-                    request_info=RequestInfo(
-                        model_endpoint=self.model_endpoint,
-                        conversation_id=conversation_id,
-                        turn_index=0,
-                        turns=[],
-                        credit_num=credit_context.credit.id,
-                        credit_phase=credit_context.credit.phase,
-                        x_request_id=str(uuid.uuid4()),
-                        x_correlation_id=credit_context.credit.x_correlation_id,
-                        drop_perf_ns=credit_context.drop_perf_ns,
-                    ),
-                    model_name=self.model_endpoint.primary_model_name,
-                    timestamp_ns=time.time_ns(),
-                    start_perf_ns=time.perf_counter_ns(),
-                    end_perf_ns=time.perf_counter_ns(),
-                    error=error,
-                )
-            )
-            raise ValueError(f"Failed to retrieve conversation response: {error}")
-
-        return conversation_response.conversation
 
     async def _process_response(self, record: RequestRecord) -> Turn | None:
         """Extract assistant response from RequestRecord and convert to Turn for session.

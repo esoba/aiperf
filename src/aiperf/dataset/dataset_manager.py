@@ -25,6 +25,8 @@ from aiperf.common.messages import (
     ConversationResponseMessage,
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
+    DatasetClientRequestMessage,
+    DatasetClientResponseMessage,
     DatasetConfiguredNotification,
     ProfileConfigureCommand,
 )
@@ -462,6 +464,22 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             service_id=self.service_id,
             request_id=message.request_id,
             turn=turn,
+        )
+
+    @on_request(MessageType.DATASET_CLIENT_REQUEST)
+    async def _handle_dataset_client_request(
+        self, message: DatasetClientRequestMessage
+    ) -> DatasetClientResponseMessage:
+        """Return dataset client metadata so the requester can initialize its own client."""
+        self.debug(lambda: f"Handling dataset client request from {message.service_id}")
+
+        await self._wait_for_dataset_configuration()
+
+        client_metadata = self._backing_store.get_client_metadata()
+        return DatasetClientResponseMessage(
+            service_id=self.service_id,
+            request_id=message.request_id,
+            client_metadata=client_metadata,
         )
 
     async def _wait_for_dataset_configuration(self) -> None:
