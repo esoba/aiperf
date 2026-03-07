@@ -223,6 +223,9 @@ def parse_file(value: str | None) -> Path | None:
     """
     Parses the given string value and returns a Path object if the value represents
     a valid file or directory. Returns None if the input value is empty.
+
+    Accepts regular files, directories, and compressed archive files.
+
     Args:
         value (str): The string value to parse.
     Returns:

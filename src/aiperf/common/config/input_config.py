@@ -204,6 +204,21 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.FILE
 
+    input_file_subpath: Annotated[
+        str | None,
+        Field(
+            description="Relative path to the dataset file inside a compressed archive. "
+            "Required for multi-file archives (zip, tar) when a specific file is needed. "
+            "For single-file compression (gz, zst, xz), the inner filename is inferred "
+            "by stripping the compression extension. "
+            "Example: `--input-file dataset.tar.zst --input-file-subpath data/prompts.jsonl`.",
+        ),
+        CLIParameter(
+            name=("--input-file-subpath",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
     fixed_schedule: Annotated[
         bool,
         Field(

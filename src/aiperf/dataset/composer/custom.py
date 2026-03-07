@@ -9,6 +9,11 @@ from aiperf.common.config import UserConfig
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
+from aiperf.dataset.archive import (
+    cleanup_temp_dir,
+    extract_compressed_file,
+    is_compressed_file,
+)
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.utils import check_file_exists
 from aiperf.plugin import plugins
@@ -20,7 +25,11 @@ class CustomDatasetComposer(BaseDatasetComposer):
         super().__init__(config, tokenizer)
 
     def create_dataset(self) -> list[Conversation]:
-        """Create conversations from a file or directory.
+        """Create conversations from a file, directory, or compressed archive.
+
+        Compressed archives (.gz, .zst, .xz, .zip, .tar, .tar.gz, .tgz,
+        .tar.zst, .tar.xz) are extracted to a temporary directory, loaded,
+        then cleaned up automatically.
 
         Returns:
             list[Conversation]: A list of conversation objects.
@@ -29,9 +38,29 @@ class CustomDatasetComposer(BaseDatasetComposer):
         check_file_exists(self.config.input.file)
 
         # Auto-infer dataset type if not provided
+        file_path = Path(self.config.input.file)
+        temp_dir = None
+
+        if file_path.is_file() and is_compressed_file(file_path):
+            subpath = self.config.input.input_file_subpath
+            extracted_path, temp_dir = extract_compressed_file(file_path, subpath)
+            self.info(
+                f"Extracted compressed dataset '{file_path.name}' to '{extracted_path}'"
+            )
+            file_path = extracted_path
+
+        try:
+            return self._load_from_path(file_path)
+        finally:
+            if temp_dir is not None:
+                cleanup_temp_dir(temp_dir)
+                self.debug(f"Cleaned up temporary directory: {temp_dir}")
+
+    def _load_from_path(self, file_path: Path) -> list[Conversation]:
+        """Load conversations from the given file or directory path."""
         dataset_type = self.config.input.custom_dataset_type
         if dataset_type is None:
-            dataset_type = self._infer_dataset_type(self.config.input.file)
+            dataset_type = self._infer_dataset_type(file_path)
             self.info(f"Auto-detected dataset type: {dataset_type}")
 
         # Validate synthesis options are only used with mooncake_trace
@@ -40,7 +69,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
         # Set dataset sampling strategy based on inferred type if not explicitly set
         self._set_sampling_strategy(dataset_type)
 
-        self._create_loader_instance(dataset_type)
+        self._create_loader_instance(dataset_type, file_path)
         dataset = self.loader.load_dataset()
         conversations = self.loader.convert_to_conversations(dataset)
 
@@ -53,7 +82,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
         self._finalize_conversations(conversations)
         return conversations
 
-    def _infer_dataset_type(self, file_path: str) -> CustomDatasetType:
+    def _infer_dataset_type(self, file_path: str | Path) -> CustomDatasetType:
         """Infer the custom dataset type from the input file.
 
         Queries all registered loaders to check if they can handle the data format.
@@ -184,11 +213,14 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 f"Either remove synthesis options or use a trace dataset type."
             )
 
-    def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
+    def _create_loader_instance(
+        self, dataset_type: CustomDatasetType, file_path: str | Path | None = None
+    ) -> None:
         """Initializes the dataset loader based on the custom dataset type.
 
         Args:
             dataset_type: The type of custom dataset to create.
+            file_path: Path to use for loading. If None, uses config.input.file.
         """
         kwargs: dict[str, Any] = {}
         loader_metadata = plugins.get_dataset_loader_metadata(dataset_type)
@@ -208,7 +240,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
         LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
         self.loader = LoaderClass(
-            filename=self.config.input.file,
+            filename=file_path if file_path is not None else self.config.input.file,
             user_config=self.config,
             **kwargs,
         )

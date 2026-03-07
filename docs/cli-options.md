@@ -261,6 +261,10 @@ Custom HTTP headers to include with every request. Specify as `Header:Value` pai
 
 Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
 
+#### `--input-file-subpath` `<str>`
+
+Relative path to the dataset file inside a compressed archive. Required for multi-file archives (zip, tar) when a specific file is needed. For single-file compression (gz, zst, xz), the inner filename is inferred by stripping the compression extension. Example: `--input-file dataset.tar.zst --input-file-subpath data/prompts.jsonl`.
+
 #### `--fixed-schedule`
 
 Run requests according to timestamps specified in the input dataset. When enabled, AIPerf replays the exact timing pattern from the dataset. This mode is automatically enabled for trace datasets.

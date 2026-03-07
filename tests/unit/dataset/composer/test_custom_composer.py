@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -285,3 +286,123 @@ class TestSynthesisValidation:
 
         # Should not raise - max_isl doesn't trigger should_synthesize()
         composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
+
+
+class TestCompressedDatasetFlow:
+    """Test compressed archive handling in create_dataset."""
+
+    @patch("aiperf.dataset.composer.custom.cleanup_temp_dir")
+    @patch("aiperf.dataset.composer.custom.extract_compressed_file")
+    @patch("aiperf.dataset.composer.custom.is_compressed_file", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
+    def test_create_dataset_extracts_compressed_file(
+        self,
+        mock_check_file,
+        mock_is_file,
+        mock_is_compressed,
+        mock_extract,
+        mock_cleanup,
+        custom_config,
+        mock_tokenizer,
+    ) -> None:
+        """Test that create_dataset calls extract for compressed files."""
+        extracted_path = Path("/tmp/aiperf_dataset_xyz/data.jsonl")
+        temp_dir = Path("/tmp/aiperf_dataset_xyz")
+        mock_extract.return_value = (extracted_path, temp_dir)
+
+        custom_config.input.file = Path("/path/to/data.jsonl.gz")
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+        with patch.object(composer, "_load_from_path", return_value=[]) as mock_load:
+            composer.create_dataset()
+
+        mock_extract.assert_called_once_with(Path("/path/to/data.jsonl.gz"), None)
+        mock_load.assert_called_once_with(extracted_path)
+        mock_cleanup.assert_called_once_with(temp_dir)
+
+    @patch("aiperf.dataset.composer.custom.cleanup_temp_dir")
+    @patch("aiperf.dataset.composer.custom.extract_compressed_file")
+    @patch("aiperf.dataset.composer.custom.is_compressed_file", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
+    def test_create_dataset_passes_subpath(
+        self,
+        mock_check_file,
+        mock_is_file,
+        mock_is_compressed,
+        mock_extract,
+        mock_cleanup,
+        custom_config,
+        mock_tokenizer,
+    ) -> None:
+        """Test that input_file_subpath is forwarded to extract_compressed_file."""
+        extracted_path = Path("/tmp/aiperf_dataset_xyz/inner/data.jsonl")
+        temp_dir = Path("/tmp/aiperf_dataset_xyz")
+        mock_extract.return_value = (extracted_path, temp_dir)
+
+        custom_config.input.file = Path("/path/to/archive.tar.gz")
+        custom_config.input.input_file_subpath = "inner/data.jsonl"
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+        with patch.object(composer, "_load_from_path", return_value=[]):
+            composer.create_dataset()
+
+        mock_extract.assert_called_once_with(
+            Path("/path/to/archive.tar.gz"), "inner/data.jsonl"
+        )
+
+    @patch("aiperf.dataset.composer.custom.cleanup_temp_dir")
+    @patch("aiperf.dataset.composer.custom.extract_compressed_file")
+    @patch("aiperf.dataset.composer.custom.is_compressed_file", return_value=True)
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
+    def test_create_dataset_cleans_up_on_load_failure(
+        self,
+        mock_check_file,
+        mock_is_file,
+        mock_is_compressed,
+        mock_extract,
+        mock_cleanup,
+        custom_config,
+        mock_tokenizer,
+    ) -> None:
+        """Test that temp dir is cleaned up even when loading fails."""
+        extracted_path = Path("/tmp/aiperf_dataset_xyz/data.jsonl")
+        temp_dir = Path("/tmp/aiperf_dataset_xyz")
+        mock_extract.return_value = (extracted_path, temp_dir)
+
+        custom_config.input.file = Path("/path/to/data.jsonl.gz")
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+        with (
+            patch.object(
+                composer, "_load_from_path", side_effect=ValueError("parse error")
+            ),
+            pytest.raises(ValueError, match="parse error"),
+        ):
+            composer.create_dataset()
+
+        mock_cleanup.assert_called_once_with(temp_dir)
+
+    @patch("aiperf.dataset.composer.custom.extract_compressed_file")
+    @patch("aiperf.dataset.composer.custom.is_compressed_file", return_value=False)
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("aiperf.dataset.composer.custom.check_file_exists")
+    def test_create_dataset_skips_extraction_for_plain_files(
+        self,
+        mock_check_file,
+        mock_is_file,
+        mock_is_compressed,
+        mock_extract,
+        custom_config,
+        mock_tokenizer,
+    ) -> None:
+        """Test that non-compressed files bypass extraction."""
+        custom_config.input.file = Path("/path/to/data.jsonl")
+
+        composer = CustomDatasetComposer(custom_config, mock_tokenizer)
+        with patch.object(composer, "_load_from_path", return_value=[]):
+            composer.create_dataset()
+
+        mock_extract.assert_not_called()

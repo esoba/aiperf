@@ -65,6 +65,7 @@ aiperf profile \
 - [Trace Benchmarking](docs/benchmark_modes/trace_replay.md) - Deterministic workload replay
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
+- [Compressed Datasets](docs/tutorials/compressed-datasets.md) - Load datasets from compressed archives
 - [ShareGPT Dataset](docs/tutorials/sharegpt.md) - Profile with ShareGPT dataset
 - [Synthetic Dataset Generation](docs/tutorials/synthetic-dataset.md) - Generate synthetic datasets
 - [Fixed Schedule](docs/tutorials/fixed-schedule.md) - Precise timestamp-based execution
