@@ -28,10 +28,9 @@ class CompletionsEndpoint(BaseEndpoint):
         Returns:
             OpenAI Completions API payload
         """
-        if len(request_info.turns) != 1:
-            raise ValueError("Completions endpoint only supports one turn.")
-
-        turn = request_info.turns[0]
+        # Use only the last turn — completions has no message history,
+        # so multi-turn conversations just send the current turn's prompt.
+        turn = request_info.turns[-1]
         model_endpoint = request_info.model_endpoint
 
         prompts = [

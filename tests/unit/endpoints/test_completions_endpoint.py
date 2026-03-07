@@ -152,8 +152,8 @@ class TestCompletionsEndpoint:
 
         assert payload["prompt"] == []
 
-    def test_format_payload_uses_first_turn_only(self, endpoint, model_endpoint):
-        """Test that only request_info.turns[0] is used (hardcoded)."""
+    def test_format_payload_uses_last_turn(self, endpoint, model_endpoint):
+        """Test that the last turn is used for multi-turn conversations."""
         turn1 = Turn(texts=[Text(contents=["First"])], model="model1")
         turn2 = Turn(texts=[Text(contents=["Second"])], model="model2")
 
@@ -161,8 +161,6 @@ class TestCompletionsEndpoint:
             model_endpoint=model_endpoint, turn_index=0, turns=[turn1, turn2]
         )
 
-        # Should raise ValueError because completions endpoint only supports one turn
-        with pytest.raises(
-            ValueError, match="Completions endpoint only supports one turn"
-        ):
-            endpoint.format_payload(request_info)
+        payload = endpoint.format_payload(request_info)
+        assert payload["prompt"] == ["Second"]
+        assert payload["model"] == "model2"

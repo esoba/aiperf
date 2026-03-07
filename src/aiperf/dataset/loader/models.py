@@ -287,6 +287,38 @@ class MooncakeTrace(AIPerfBaseModel):
         return self
 
 
+class SessionStepReplaySubstep(AIPerfBaseModel):
+    """Defines the schema for a single substep in a session step replay dataset.
+
+    Each substep contains one or more candidate prompts (one is randomly
+    selected at load time) and an expected output token count used as
+    max_tokens for the request.
+    """
+
+    candidate_prompts: list[str] = Field(
+        ..., description="List of candidate prompt strings. One is randomly selected."
+    )
+    expected_output_tokens: int = Field(
+        default=512,
+        description="Maximum number of output tokens for this substep.",
+    )
+    expected_input_tokens: int | None = Field(
+        default=None,
+        description="Expected input token count (informational, not used in requests).",
+    )
+    step: int | None = Field(
+        default=None,
+        description="Step number within the session (informational).",
+    )
+
+    @model_validator(mode="after")
+    def validate_candidates_not_empty(self) -> "SessionStepReplaySubstep":
+        """Ensure at least one candidate prompt is provided."""
+        if not self.candidate_prompts:
+            raise ValueError("candidate_prompts must contain at least one prompt")
+        return self
+
+
 class BailianTrace(AIPerfBaseModel):
     """Defines the schema for Alibaba Bailian trace data.
 
@@ -338,6 +370,11 @@ class BailianTrace(AIPerfBaseModel):
 
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
-    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | BailianTrace,
+    bound=SingleTurn
+    | MultiTurn
+    | RandomPool
+    | MooncakeTrace
+    | BailianTrace
+    | SessionStepReplaySubstep,
 )
 """A union type of all custom data types."""

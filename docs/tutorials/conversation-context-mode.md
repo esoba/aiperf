@@ -85,6 +85,7 @@ Each turn is sent exactly as it appears in the dataset.
 
 Default for:
 - Mooncake traces with pre-built `messages` arrays
+- Session step replay (each step is self-contained)
 
 ## How It Works
 

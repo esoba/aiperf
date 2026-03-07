@@ -552,6 +552,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             is_final_turn=credit.is_final_turn,
             # Use session's url_index to ensure all turns hit the same backend
             url_index=session.url_index,
+            candidate_rand=credit.candidate_rand,
         )
 
     async def _retrieve_conversation(

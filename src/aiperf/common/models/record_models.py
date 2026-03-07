@@ -533,6 +533,11 @@ class RequestInfo(AIPerfBaseModel):
         description="Index of the URL to use when multiple --url values are configured. "
         "None means use the default (first) URL. Used for round-robin load balancing.",
     )
+    candidate_rand: float | None = Field(
+        default=None,
+        description="Random float in [0, 1) from the credit for deterministic prompt candidate selection. "
+        "Ensures the same candidate is chosen regardless of which worker processes the credit.",
+    )
 
 
 class RequestRecord(AIPerfBaseModel):

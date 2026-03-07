@@ -437,6 +437,7 @@ custom_dataset_loader:
       conversation chains and fixed_schedule timing mode.
     metadata:
       is_trace: true
+      supports_multi_turn: true
       default_block_size: 16
 
   mooncake_trace:
@@ -446,6 +447,7 @@ custom_dataset_loader:
       timestamp-based replay support. Designed for fixed_schedule timing mode.
     metadata:
       is_trace: true
+      supports_multi_turn: true
       default_block_size: 512
 
   multi_turn:
@@ -454,6 +456,19 @@ custom_dataset_loader:
       Multi-turn dataset loader supporting conversation sessions with turn delays
       and multi-modal content. Enables realistic multi-turn conversation replay
       with session management.
+    metadata:
+      supports_multi_turn: true
+
+  session_step_replay:
+    class: aiperf.dataset.loader.session_step_replay:SessionStepReplayDatasetLoader
+    description: |
+      Session step replay dataset loader for replaying captured agent sessions.
+      Loads a JSON file containing sessions with sequential substeps, each
+      having candidate prompts (one randomly selected) and per-substep
+      max_tokens. Designed for use with the completions endpoint. Supports
+      auto-detection via .json file extension.
+    metadata:
+      supports_multi_turn: true
 
   random_pool:
     class: aiperf.dataset.loader.random_pool:RandomPoolDatasetLoader
@@ -688,6 +703,13 @@ results_processor:
       Timeslice results processor that computes metrics for user-configurable
       time slices, enabling time-series analysis of benchmark performance.
       Enabled when timeslice config is set.
+
+  session_metrics:
+    class: aiperf.post_processors.session_metrics_results_processor:SessionMetricsResultsProcessor
+    description: |
+      Session-level metrics processor for multi-turn conversations. Computes
+      session duration, turns per session, session count, and session throughput.
+      Self-disables for single-turn datasets.
 
   accuracy_results:
     class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor

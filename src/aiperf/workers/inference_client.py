@@ -7,12 +7,14 @@ import time
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from aiperf.common import random_generator as rng
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
     ModelEndpointInfo,
     RequestInfo,
     RequestRecord,
+    Text,
 )
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -73,6 +75,29 @@ class InferenceClient(AIPerfLifecycleMixin):
         )
         self.transport = TransportClass(model_endpoint=self.model_endpoint)
         self.attach_child_lifecycle(self.transport)
+        self._candidate_rng = rng.derive(f"inference_client.{service_id}")
+
+    def _resolve_prompt_candidates(self, request_info: RequestInfo) -> None:
+        """Resolve prompt_candidates on the current turn into a concrete text prompt.
+
+        Uses candidate_rand from the credit to select deterministically,
+        ensuring the same candidate is chosen regardless of which worker
+        processes the credit. Falls back to local RNG if candidate_rand
+        is not set (backward compatibility).
+        """
+        if not request_info.turns:
+            return
+        turn = request_info.turns[-1]
+        if turn.prompt_candidates is None:
+            return
+        if request_info.candidate_rand is not None:
+            index = int(request_info.candidate_rand * len(turn.prompt_candidates))
+            index = min(index, len(turn.prompt_candidates) - 1)
+            selected = turn.prompt_candidates[index]
+        else:
+            selected = self._candidate_rng.choice(turn.prompt_candidates)
+        turn.texts = [Text(contents=[selected])]
+        turn.prompt_candidates = None
 
     async def _send_request_to_transport(
         self,
@@ -96,6 +121,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         Returns:
             RequestRecord containing the response data and metadata.
         """
+        self._resolve_prompt_candidates(request_info)
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
         formatted_payload = self.endpoint.format_payload(request_info)

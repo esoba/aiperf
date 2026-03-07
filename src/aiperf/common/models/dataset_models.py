@@ -136,6 +136,12 @@ class Turn(AIPerfBaseModel):
     max_tokens: int | None = Field(
         default=None, description="Maximum number of tokens to generate for this turn."
     )
+    prompt_candidates: list[str] | None = Field(
+        default=None,
+        description="List of candidate prompt strings. One is randomly selected at "
+        "request time and placed into texts. Enables different selections on each "
+        "replay of the same conversation.",
+    )
     raw_messages: list[dict[str, Any]] | None = Field(
         default=None,
         description="Pre-formatted OpenAI-compatible messages array. "
@@ -183,6 +189,7 @@ class Turn(AIPerfBaseModel):
             timestamp=self.timestamp,
             delay=self.delay,
             max_tokens=self.max_tokens,
+            prompt_candidates=None,
             raw_messages=list(self.raw_messages)
             if self.raw_messages is not None
             else None,

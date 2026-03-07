@@ -17,6 +17,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+from aiperf.common import random_generator as rng
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
@@ -82,6 +83,7 @@ class CreditIssuer:
         self._cancellation_policy = cancellation_policy
         self._lifecycle = lifecycle
         self._url_selection_strategy = url_selection_strategy
+        self._rng = rng.derive("credit_issuer")
 
     def can_acquire_and_start_new_session(self) -> bool:
         """Check if a session slot can be acquired and a new session can be started."""
@@ -227,6 +229,7 @@ class CreditIssuer:
             issued_at_ns=issued_at_ns,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
+            candidate_rand=self._rng.random(),
         )
 
         await self._credit_router.send_credit(credit=credit)

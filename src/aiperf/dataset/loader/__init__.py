@@ -12,11 +12,13 @@ from aiperf.dataset.loader.models import (
     MooncakeTrace,
     MultiTurn,
     RandomPool,
+    SessionStepReplaySubstep,
     SingleTurn,
 )
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
+from aiperf.dataset.loader.session_step_replay import SessionStepReplayDatasetLoader
 from aiperf.dataset.loader.sharegpt import ShareGPTLoader
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
 
@@ -34,6 +36,8 @@ __all__ = [
     "MultiTurnDatasetLoader",
     "RandomPool",
     "RandomPoolDatasetLoader",
+    "SessionStepReplayDatasetLoader",
+    "SessionStepReplaySubstep",
     "ShareGPTLoader",
     "SingleTurn",
     "SingleTurnDatasetLoader",

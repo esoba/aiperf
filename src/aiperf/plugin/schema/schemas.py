@@ -335,6 +335,14 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "options, and prefer sequential sampling with fixed_schedule timing."
         ),
     )
+    supports_multi_turn: bool = Field(
+        default=False,
+        description=(
+            "Whether this loader produces multi-turn conversations from the data itself "
+            "(independent of --conversation-turn-mean). Used to enable session-level "
+            "metrics for data-driven multi-turn datasets like session_step_replay."
+        ),
+    )
     default_block_size: int | None = Field(
         default=None,
         ge=1,

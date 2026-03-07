@@ -35,6 +35,9 @@ class Credit(
                          Note: this is NOT the same as the credit being cancelled!
         url_index: Index of the URL to use when multiple --url values are configured (optional).
                    None means use the default (first) URL.
+        candidate_rand: Random float in [0, 1) for deterministic prompt candidate selection (optional).
+                        Generated once at issuance so the same credit always picks the same candidate
+                        regardless of which worker processes it.
     """
 
     id: int
@@ -46,6 +49,7 @@ class Credit(
     issued_at_ns: int
     cancel_after_ns: int | None = None
     url_index: int | None = None
+    candidate_rand: float | None = None
 
     @property
     def is_final_turn(self) -> bool:

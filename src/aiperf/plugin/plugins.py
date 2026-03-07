@@ -1197,6 +1197,18 @@ def is_trace_dataset(name: str) -> bool:
     return get_dataset_loader_metadata(name).is_trace
 
 
+def supports_multi_turn_dataset(name: str) -> bool:
+    """Check if a custom dataset loader produces multi-turn conversations from its data.
+
+    Args:
+        name: Dataset loader plugin name (e.g., 'session_step_replay', 'multi_turn').
+
+    Returns:
+        True if the loader's data is inherently multi-turn.
+    """
+    return get_dataset_loader_metadata(name).supports_multi_turn
+
+
 # Mapping of categories to their metadata classes (for categories with typed metadata)
 _CATEGORY_METADATA_CLASSES: dict[str, type] = {
     "endpoint": EndpointMetadata,

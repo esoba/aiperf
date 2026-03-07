@@ -74,6 +74,7 @@ aiperf profile \
 - [Reproducibility](docs/reproducibility.md) - Deterministic datasets with `--random-seed`
 - [Template Endpoint](docs/tutorials/template-endpoint.md) - Custom Jinja2 request templates
 - [Multi-Turn Conversations](docs/tutorials/multi-turn.md) - Multi-turn conversation benchmarking
+- [Session Step Replay](docs/tutorials/session-step-replay.md) - Replay captured agent sessions with session-level metrics
 - [Conversation Context Mode](docs/tutorials/conversation-context-mode.md) - Control how conversation history accumulates
 - [Local Tokenizer](docs/tutorials/local-tokenizer.md) - Use local tokenizers without HuggingFace
 
