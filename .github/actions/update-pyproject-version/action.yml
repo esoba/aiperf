@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Update pyproject.toml version
+description: >
+  Validates a PEP 440 version string and patches the version field
+  in pyproject.toml using Python regex (safer than sed).
+
+inputs:
+  version:
+    description: 'PEP 440 version string to write (e.g. 0.6.0rc0)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Patch pyproject.toml version
+      shell: python
+      env:
+        TARGET_VERSION: ${{ inputs.version }}
+      run: |
+        import os
+        import re
+        from packaging.version import Version
+
+        target = os.environ["TARGET_VERSION"]
+
+        # Validate PEP 440
+        try:
+            Version(target)
+        except Exception as exc:
+            raise SystemExit(f"::error::Invalid PEP 440 version '{target}': {exc}") from exc
+
+        path = "pyproject.toml"
+        text = open(path).read()
+        patched, n = re.subn(
+            r'^(version\s*=\s*")[^"]*(")',
+            rf'\g<1>{target}\g<2>',
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if n != 1:
+            raise SystemExit(f"::error::Could not find 'version = \"...\"' in {path}")
+        open(path, "w").write(patched)
+        print(f"Patched {path}: version = \"{target}\"")

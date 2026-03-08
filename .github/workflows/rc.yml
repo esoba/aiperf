@@ -155,17 +155,16 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install build tools
-        run: pip install --upgrade pip build twine
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Patch version for RC
-        env:
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
-        run: |
-          sed -i "s/^version = .*/version = \"${PEP440_VERSION}\"/" pyproject.toml
+        uses: ./.github/actions/update-pyproject-version
+        with:
+          version: ${{ needs.prepare-release.outputs.pep440_version }}
 
       - name: Build wheel
-        run: python -m build --wheel --outdir dist/
+        run: uv build --wheel --out-dir dist/
 
       - name: Verify wheel exists
         env:
@@ -237,12 +236,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and export image
-        env:
-          PLATFORM: ${{ matrix.platform }}
         run: |
-          docker build \
+          docker buildx build \
+            --platform ${{ matrix.platform }} \
             --target runtime \
+            --cache-from type=gha,scope=${{ matrix.arch }} \
+            --cache-to type=gha,mode=max,scope=${{ matrix.arch }} \
             --output type=oci,dest=aiperf-${{ matrix.arch }}.tar \
             .
 
@@ -325,29 +328,29 @@ jobs:
     needs: [prepare-release, create-rc-tag]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
-    env:
-      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Compute image references
         id: refs
         env:
           PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
         run: |
           set -euo pipefail
-          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-          ECR_HOSTNAME="${ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-          IMAGE="${ECR_HOSTNAME}/ai-dynamo/aiperf"
-          echo "ecr_hostname=${ECR_HOSTNAME}" >> "$GITHUB_OUTPUT"
+          IMAGE="${REGISTRY}/aiperf"
+          echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
           echo "amd64_ref=${IMAGE}:${PEP440_VERSION}-amd64" >> "$GITHUB_OUTPUT"
           echo "arm64_ref=${IMAGE}:${PEP440_VERSION}-arm64" >> "$GITHUB_OUTPUT"
           echo "multiarch_ref=${IMAGE}:${PEP440_VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Login to ECR
-        env:
-          ECR_HOSTNAME: ${{ steps.refs.outputs.ecr_hostname }}
-        run: |
-          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
-            | skopeo login "${ECR_HOSTNAME}" --username AWS --password-stdin
+      - name: Login to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.RC_CONTAINER_REGISTRY }}
+          username: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
+          password: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
 
       - name: Download amd64 container artifact
         uses: actions/download-artifact@v4
@@ -378,23 +381,23 @@ jobs:
             "docker://${IMAGE_REF}"
 
       - name: Create and push multi-arch manifest
-        env:
-          MULTIARCH_REF: ${{ steps.refs.outputs.multiarch_ref }}
-          AMD64_REF: ${{ steps.refs.outputs.amd64_ref }}
-          ARM64_REF: ${{ steps.refs.outputs.arm64_ref }}
-        run: |
-          set -euo pipefail
-          docker manifest create "${MULTIARCH_REF}" \
-            "${AMD64_REF}" \
-            "${ARM64_REF}"
-          docker manifest push "${MULTIARCH_REF}"
+        uses: ./.github/actions/create-multiarch-manifest
+        with:
+          registry: ${{ steps.refs.outputs.registry }}
+          registry-username: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
+          registry-password: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
+          target-image: ${{ steps.refs.outputs.multiarch_ref }}
+          source-images: >-
+            ${{ steps.refs.outputs.amd64_ref }}
+            ${{ steps.refs.outputs.arm64_ref }}
 
-      - name: Logout from ECR
+      - name: Logout from Artifactory container registry
         if: always()
         env:
-          ECR_HOSTNAME: ${{ steps.refs.outputs.ecr_hostname }}
+          REGISTRY: ${{ steps.refs.outputs.registry }}
         run: |
-          skopeo logout "${ECR_HOSTNAME}" 2>/dev/null || true
+          docker logout "${REGISTRY}" 2>/dev/null || true
+          skopeo logout "${REGISTRY}" 2>/dev/null || true
 
   stage-wheel:
     name: Stage Wheel
@@ -402,12 +405,8 @@ jobs:
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     steps:
-      - name: Set up Python and twine
-        run: |
-          python3 -m venv /tmp/wheel-venv
-          source /tmp/wheel-venv/bin/activate
-          pip install --upgrade pip twine
-          echo "/tmp/wheel-venv/bin" >> "$GITHUB_PATH"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Download wheel artifact
         uses: actions/download-artifact@v4
@@ -421,17 +420,17 @@ jobs:
           ARTIFACTORY_USER: ${{ secrets.ARTIFACTORY_USER }}
           ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
           TWINE_NON_INTERACTIVE: "1"
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
         run: |
           set -euo pipefail
-          echo "Publishing wheel to Artifactory..."
-          python3 -m twine upload \
+          uvx twine upload \
             --repository-url "${ARTIFACTORY_URL}" \
             --username "${ARTIFACTORY_USER}" \
             --password "${ARTIFACTORY_TOKEN}" \
             --disable-progress-bar \
             dist/*.whl
-          echo "Artifactory upload complete."
-
-          WHEEL_FILE=$(basename dist/*.whl)
-          echo "### Artifactory Upload" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Wheel**: \`${WHEEL_FILE}\`" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Artifactory Upload"
+            echo "- **Repository**: \`${ARTIFACTORY_URL}\`"
+            echo "- **Package**: \`aiperf==${PEP440_VERSION}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

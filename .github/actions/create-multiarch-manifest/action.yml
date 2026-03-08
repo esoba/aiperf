@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Create multi-arch manifest
+description: >
+  Creates and pushes a Docker multi-arch manifest list from a set of
+  already-pushed platform images.
+
+inputs:
+  registry:
+    description: 'Container registry hostname'
+    required: true
+  registry-username:
+    description: 'Registry username'
+    required: true
+  registry-password:
+    description: 'Registry password or token'
+    required: true
+  target-image:
+    description: 'Full image reference for the manifest list (e.g. registry/repo:tag)'
+    required: true
+  source-images:
+    description: 'Space-separated list of platform image references to include'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Login to registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}
+
+    - name: Create and push manifest
+      shell: bash
+      env:
+        TARGET_IMAGE: ${{ inputs.target-image }}
+        SOURCE_IMAGES: ${{ inputs.source-images }}
+      run: |
+        set -euo pipefail
+
+        read -ra IMAGES <<< "${SOURCE_IMAGES}"
+
+        if [ "${#IMAGES[@]}" -lt 2 ]; then
+          echo "::error::At least two source images are required for a multi-arch manifest"
+          exit 1
+        fi
+
+        docker manifest create "${TARGET_IMAGE}" "${IMAGES[0]}"
+        for img in "${IMAGES[@]:1}"; do
+          docker manifest amend "${TARGET_IMAGE}" "${img}"
+        done
+        docker manifest push "${TARGET_IMAGE}"
