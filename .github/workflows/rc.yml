@@ -145,15 +145,10 @@ jobs:
   build-wheel:
     name: Build Wheel
     needs: [prepare-release]
-    runs-on: ubuntu-latest
+    runs-on: prod-aiperf-builder-amd-v1
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -163,23 +158,33 @@ jobs:
         with:
           version: ${{ needs.prepare-release.outputs.pep440_version }}
 
-      - name: Build wheel
-        run: uv build --wheel --out-dir dist/
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build wheel-builder stage and extract wheel
+        run: |
+          docker buildx build \
+            --target wheel-builder \
+            --cache-from type=gha,scope=amd64 \
+            --cache-to type=gha,mode=max,scope=amd64 \
+            --output type=local,dest=./wheel-out/ \
+            .
 
       - name: Verify wheel exists
         env:
           EXPECTED_WHEEL: ${{ needs.prepare-release.outputs.wheel_filename }}
         run: |
-          if [ ! -f "dist/${EXPECTED_WHEEL}" ]; then
-            echo "::error::Expected wheel not found"
+          if [ ! -f "wheel-out/dist/${EXPECTED_WHEEL}" ]; then
+            echo "::error::Expected wheel not found: wheel-out/dist/${EXPECTED_WHEEL}"
             exit 1
           fi
+          ls -la wheel-out/dist/
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
           name: aiperf-wheel
-          path: dist/*.whl
+          path: wheel-out/dist/*.whl
           retention-days: 30
 
   validate-wheel:
@@ -236,10 +241,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Patch version for RC
+        uses: ./.github/actions/update-pyproject-version
+        with:
+          version: ${{ needs.prepare-release.outputs.pep440_version }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and export image
+      - name: Build and export runtime image
         run: |
           docker buildx build \
             --platform ${{ matrix.platform }} \
