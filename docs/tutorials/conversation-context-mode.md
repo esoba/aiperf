@@ -1,7 +1,9 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Conversation Context Mode
+---
+
 # Conversation Context Mode
 
 Conversation context mode controls how prior turns are accumulated when building multi-turn chat requests. Different dataset formats imply different accumulation strategies, and AIPerf automatically selects the right one based on your data.
@@ -84,6 +86,8 @@ Request 3: sends Turn 3 as-is
 Each turn is sent exactly as it appears in the dataset.
 
 Default for:
+- [Raw payload replay](raw-payload-replay.md) (pre-built API request bodies)
+- [Inputs JSON replay](inputs-json-replay.md) (pre-formatted multi-turn payloads)
 - Mooncake traces with pre-built `messages` arrays
 
 ## How It Works

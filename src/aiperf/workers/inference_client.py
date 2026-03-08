@@ -98,7 +98,14 @@ class InferenceClient(AIPerfLifecycleMixin):
         """
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
-        formatted_payload = self.endpoint.format_payload(request_info)
+        if request_info.payload_bytes is not None:
+            formatted_payload = request_info.payload_bytes
+        else:
+            current_turn = request_info.turns[-1] if request_info.turns else None
+            if current_turn and current_turn.raw_payload is not None:
+                formatted_payload = current_turn.raw_payload
+            else:
+                formatted_payload = self.endpoint.format_payload(request_info)
         return await self.transport.send_request(
             request_info,
             payload=formatted_payload,
@@ -173,9 +180,8 @@ class InferenceClient(AIPerfLifecycleMixin):
         request_info: RequestInfo,
     ) -> RequestRecord:
         """Enrich a RequestRecord with the original request info."""
-        record.model_name = (
-            request_info.turns[-1].model or self.model_endpoint.primary_model_name
-        )
+        turn_model = request_info.turns[-1].model if request_info.turns else None
+        record.model_name = turn_model or self.model_endpoint.primary_model_name
         record.request_info = request_info
 
         # Copy turns with stripped multimodal data to avoid mutating original session
