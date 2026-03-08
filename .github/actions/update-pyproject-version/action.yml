@@ -15,17 +15,17 @@ runs:
   using: composite
   steps:
     - name: Patch pyproject.toml version
-      shell: python
+      shell: bash
       env:
         TARGET_VERSION: ${{ inputs.version }}
       run: |
+        uv run --with packaging python3 - << 'EOF'
         import os
         import re
         from packaging.version import Version
 
         target = os.environ["TARGET_VERSION"]
 
-        # Validate PEP 440
         try:
             Version(target)
         except Exception as exc:
@@ -44,3 +44,4 @@ runs:
             raise SystemExit(f"::error::Could not find 'version = \"...\"' in {path}")
         open(path, "w").write(patched)
         print(f"Patched {path}: version = \"{target}\"")
+        EOF

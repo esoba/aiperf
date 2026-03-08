@@ -391,7 +391,7 @@ jobs:
             ${{ steps.refs.outputs.amd64_ref }}
             ${{ steps.refs.outputs.arm64_ref }}
 
-      - name: Logout from Artifactory container registry
+      - name: Logout from container registry
         if: always()
         env:
           REGISTRY: ${{ steps.refs.outputs.registry }}
