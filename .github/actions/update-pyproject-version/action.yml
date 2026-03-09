@@ -19,17 +19,15 @@ runs:
       env:
         TARGET_VERSION: ${{ inputs.version }}
       run: |
-        uv run --with packaging python3 - << 'EOF'
+        python3 - <<'PYEOF'
         import os
         import re
-        from packaging.version import Version
 
         target = os.environ["TARGET_VERSION"]
 
-        try:
-            Version(target)
-        except Exception as exc:
-            raise SystemExit(f"::error::Invalid PEP 440 version '{target}': {exc}") from exc
+        # Validate PEP 440 RC format (X.Y.Z, X.Y.Zrc<N>, X.Y.Za<N>, X.Y.Zb<N>)
+        if not re.match(r'^\d+\.\d+\.\d+((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?$', target):
+            raise SystemExit(f"::error::Invalid PEP 440 version '{target}'")
 
         path = "pyproject.toml"
         text = open(path).read()
@@ -44,4 +42,4 @@ runs:
             raise SystemExit(f"::error::Could not find 'version = \"...\"' in {path}")
         open(path, "w").write(patched)
         print(f"Patched {path}: version = \"{target}\"")
-        EOF
+        PYEOF

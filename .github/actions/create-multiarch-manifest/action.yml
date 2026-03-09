@@ -48,8 +48,5 @@ runs:
           exit 1
         fi
 
-        docker manifest create "${TARGET_IMAGE}" "${IMAGES[0]}"
-        for img in "${IMAGES[@]:1}"; do
-          docker manifest amend "${TARGET_IMAGE}" "${img}"
-        done
+        docker manifest create "${TARGET_IMAGE}" "${IMAGES[@]}"
         docker manifest push "${TARGET_IMAGE}"

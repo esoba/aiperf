@@ -284,6 +284,7 @@ jobs:
       - validate-wheel
       - build-container
     runs-on: ubuntu-latest
+    environment: automated-release
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -446,4 +447,132 @@ jobs:
             echo "### Artifactory Upload"
             echo "- **Repository**: \`${ARTIFACTORY_URL}\`"
             echo "- **Package**: \`aiperf==${PEP440_VERSION}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
+  # REGISTER WITH NSPECT
+  # ============================================================================
+
+  register-nspect:
+    name: Register RC in nSpect
+    needs: [ stage-container, stage-wheel]
+    runs-on: prod-aiperf-default-v1
+    environment: automated-release
+    steps:
+      - name: Obtain SSA bearer token
+        id: token
+        env:
+          NSPECT_SSA_CLIENT_ID: ${{ secrets.NSPECT_SSA_CLIENT_ID }}
+          NSPECT_SSA_CLIENT_SECRET: ${{ secrets.NSPECT_SSA_CLIENT_SECRET }}
+          SSA_TOKEN_URL: ${{ secrets.NSPECT_SSA_TOKEN_URL }}
+        run: |
+          set -euo pipefail
+          BASIC_AUTH=$(echo -n "${NSPECT_SSA_CLIENT_ID}:${NSPECT_SSA_CLIENT_SECRET}" | base64 -w0)
+          TOKEN_RESPONSE=$(curl -sf --request POST \
+            "${SSA_TOKEN_URL}" \
+            --header "Authorization: Basic ${BASIC_AUTH}" \
+            --header 'Content-Type: application/x-www-form-urlencoded' \
+            --data-urlencode 'grant_type=client_credentials' \
+            --data-urlencode 'scope=public.api:read public.api:write')
+          ACCESS_TOKEN=$(echo "${TOKEN_RESPONSE}" | jq -r '.access_token')
+          if [ -z "${ACCESS_TOKEN}" ] || [ "${ACCESS_TOKEN}" = "null" ]; then
+            echo "::error::Failed to obtain nSpect SSA token"
+            exit 1
+          fi
+          echo "::add-mask::${ACCESS_TOKEN}"
+          echo "access_token=${ACCESS_TOKEN}" >> "$GITHUB_OUTPUT"
+
+      - name: Register program version in nSpect
+        id: register
+        env:
+          ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
+          NSPECT_ID: ${{ secrets.NSPECT_ID }}
+          NSPECT_API_URL: ${{ secrets.NSPECT_API_URL }}
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          RC_TAG: ${{ needs.prepare-release.outputs.rc_tag }}
+          WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
+          ARTIFACTORY_PYPI_URL: ${{ secrets.ARTIFACTORY_PYPI_URL }}
+          CONTAINER_IMAGE_BASE: ${{ secrets.NSPECT_CONTAINER_IMAGE_BASE }}
+        run: |
+          set -euo pipefail
+          RELEASE_DATE=$(date -u '+%Y-%m-%d %H:%M:%S')
+          WHEEL_URL="${ARTIFACTORY_PYPI_URL}/aiperf/${PEP440_VERSION}/${WHEEL_FILENAME}"
+          CONTAINER_TAG="${CONTAINER_IMAGE_BASE}:${PEP440_VERSION}"
+
+          PAYLOAD=$(jq -n \
+            --arg version "${PEP440_VERSION}" \
+            --arg desc "Release candidate ${RC_TAG}" \
+            --arg date "${RELEASE_DATE}" \
+            --arg wheel_url "${WHEEL_URL}" \
+            --arg container "${CONTAINER_TAG}" \
+            '{
+              request: {
+                versionName: $version,
+                description: $desc,
+                releaseType_id: 2,
+                releaseDate: $date,
+                binaryArtifacts: [
+                  { sourcePointer: $wheel_url }
+                ],
+                containerImages: [
+                  { imageUrl: $container }
+                ]
+              }
+            }')
+
+          RESPONSE=$(curl -sf --request POST \
+            "${NSPECT_API_URL}/pm/api/v1.0/public/programs/${NSPECT_ID}/programVersions" \
+            --header 'Content-Type: application/json' \
+            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+            --data "${PAYLOAD}")
+
+          echo "nSpect response: ${RESPONSE}"
+          SUCCESS=$(echo "${RESPONSE}" | jq -r '.success')
+          if [ "${SUCCESS}" != "true" ]; then
+            echo "::error::nSpect registration failed: ${RESPONSE}"
+            exit 1
+          fi
+
+          STATUS_URL=$(echo "${RESPONSE}" | jq -r '.data.status_url // empty')
+          echo "status_url=${STATUS_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Poll nSpect job status
+        if: steps.register.outputs.status_url != ''
+        env:
+          ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
+          NSPECT_API_URL: ${{ secrets.NSPECT_API_URL }}
+          STATUS_URL: ${{ steps.register.outputs.status_url }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 12); do
+            sleep 10
+            RESULT=$(curl -sf \
+              "${NSPECT_API_URL}/${STATUS_URL}" \
+              --header "Authorization: Bearer ${ACCESS_TOKEN}")
+            STATUS=$(echo "${RESULT}" | jq -r '.data.job.status')
+            echo "Poll ${i}: status=${STATUS}"
+            if [ "${STATUS}" = "SUCCESS" ]; then
+              echo "nSpect registration completed successfully"
+              break
+            elif [ "${STATUS}" = "FAILURE" ] || [ "${STATUS}" = "ERROR" ]; then
+              echo "::error::nSpect job failed: ${RESULT}"
+              exit 1
+            fi
+          done
+
+      - name: nSpect summary
+        env:
+          NSPECT_ID: ${{ secrets.NSPECT_ID }}
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
+          CONTAINER_IMAGE_BASE: ${{ secrets.NSPECT_CONTAINER_IMAGE_BASE }}
+        run: |
+          {
+            echo "### nSpect Registration"
+            echo "- **nSpect ID**: \`${NSPECT_ID}\`"
+            echo "- **Version**: \`${PEP440_VERSION}\`"
+            echo "- **Release Type**: Internal"
+            echo "- **Wheel**: \`${WHEEL_FILENAME}\`"
+            echo "- **Container**: \`${CONTAINER_IMAGE_BASE}:${PEP440_VERSION}\`"
+            echo "- **Status**: Registered"
           } >> "$GITHUB_STEP_SUMMARY"
