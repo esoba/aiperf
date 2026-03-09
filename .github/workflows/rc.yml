@@ -161,9 +161,8 @@ jobs:
 
       - name: Validate wheel
         run: |
-          pip install --upgrade pip twine
-          twine check wheel-out/dist/*.whl
-          pip install wheel-out/dist/*.whl
+          uvx twine check wheel-out/dist/*.whl
+          uv pip install --system wheel-out/dist/*.whl
           python -c "import aiperf; print(f'aiperf version: {aiperf.__version__}')"
           aiperf --help
 
