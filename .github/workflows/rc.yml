@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
   # ============================================================================
@@ -121,7 +122,7 @@ jobs:
   # ============================================================================
 
   build-wheel:
-    name: Build Wheel
+    name: Build and Validate Wheel
     needs: [prepare-release]
     runs-on: prod-aiperf-builder-amd-v1
     steps:
@@ -158,53 +159,29 @@ jobs:
           fi
           ls -la wheel-out/dist/
 
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: aiperf-wheel
-          path: wheel-out/dist/*.whl
-          retention-days: 30
-
-  validate-wheel:
-    name: Validate Wheel
-    needs: [prepare-release, build-wheel]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install validation tools
-        run: pip install --upgrade pip twine
-
-      - name: Download wheel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: aiperf-wheel
-          path: dist/
-
-      - name: Run twine check
-        run: twine check dist/*.whl
-
-      - name: Validate license metadata
+      - name: Validate wheel
         run: |
-          set -euo pipefail
-          WHEEL=$(ls dist/*.whl)
-          python -m zipfile -l "${WHEEL}" | grep -i license || {
-            echo "::warning::No LICENSE file found in wheel"
-          }
-
-      - name: Smoke test import
-        run: |
-          pip install dist/*.whl
+          pip install --upgrade pip twine
+          twine check wheel-out/dist/*.whl
+          pip install wheel-out/dist/*.whl
           python -c "import aiperf; print(f'aiperf version: {aiperf.__version__}')"
           aiperf --help
 
+      - name: Upload wheel to S3
+        env:
+          S3_BUCKET: ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+        run: |
+          set -euo pipefail
+          S3_KEY="wheels/aiperf/${PEP440_VERSION}/"
+          aws s3 cp wheel-out/dist/*.whl "s3://${S3_BUCKET}/${S3_KEY}" --sse AES256
+          echo "Uploaded wheel to s3://${S3_BUCKET}/${S3_KEY}"
+
   build-container:
-    name: Build Container (${{ matrix.arch }})
+    name: Build and Push Container (${{ matrix.arch }})
     needs: [prepare-release]
     runs-on: ${{ matrix.runner }}
+    environment: automated-release
     strategy:
       fail-fast: true
       matrix:
@@ -230,22 +207,34 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and export runtime image
+      - name: Login to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.RC_CONTAINER_REGISTRY }}
+          username: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
+          password: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
+
+      - name: Build and push arch-specific image
+        env:
+          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
         run: |
+          IMAGE_REF="${REGISTRY}/aiperf:${PEP440_VERSION}-${{ matrix.arch }}"
           docker buildx build \
             --platform ${{ matrix.platform }} \
             --target runtime \
             --cache-from type=gha,scope=${{ matrix.arch }} \
             --cache-to type=gha,mode=max,scope=${{ matrix.arch }} \
-            --output type=oci,dest=aiperf-${{ matrix.arch }}.tar \
+            --push \
+            --tag "${IMAGE_REF}" \
             .
+          echo "Pushed ${IMAGE_REF}"
 
-      - name: Upload container artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: aiperf-container-${{ matrix.arch }}
-          path: aiperf-${{ matrix.arch }}.tar
-          retention-days: 7
+      - name: Logout from container registry
+        if: always()
+        env:
+          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
+        run: docker logout "${REGISTRY}" 2>/dev/null || true
 
   # ============================================================================
   # TAG
@@ -259,7 +248,7 @@ jobs:
       - unit-tests
       - integration-tests
       - gpu-e2e-tests
-      - validate-wheel
+      - build-wheel
       - build-container
     runs-on: ubuntu-latest
     environment: automated-release
@@ -316,8 +305,8 @@ jobs:
   # ============================================================================
 
   stage-container:
-    name: Stage Container
-    needs: [prepare-release, create-rc-tag]
+    name: Stage Container (Multi-arch Manifest)
+    needs: [prepare-release, create-rc-tag, build-container]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     steps:
@@ -328,97 +317,45 @@ jobs:
         id: refs
         env:
           PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
+          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
         run: |
           set -euo pipefail
-          IMDS_TOKEN="$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")"
-          AWS_REGION="$(curl -s -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" http://169.254.169.254/latest/meta-data/placement/region)"
-          ACCOUNT_ID="$(aws sts get-caller-identity --region "${AWS_REGION}" --query Account --output text)"
-          ECR_HOSTNAME="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          IMAGE="${ECR_HOSTNAME}/ai-dynamo/aiperf"
-          echo "aws_region=${AWS_REGION}" >> "$GITHUB_OUTPUT"
-          echo "ecr_hostname=${ECR_HOSTNAME}" >> "$GITHUB_OUTPUT"
+          IMAGE="${REGISTRY}/aiperf"
+          echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
           echo "amd64_ref=${IMAGE}:${PEP440_VERSION}-amd64" >> "$GITHUB_OUTPUT"
           echo "arm64_ref=${IMAGE}:${PEP440_VERSION}-arm64" >> "$GITHUB_OUTPUT"
           echo "multiarch_ref=${IMAGE}:${PEP440_VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Login to ECR
-        env:
-          ECR_HOSTNAME: ${{ steps.refs.outputs.ecr_hostname }}
-          AWS_REGION: ${{ steps.refs.outputs.aws_region }}
-        run: |
-          aws ecr get-login-password --region "${AWS_REGION}" \
-            | skopeo login "${ECR_HOSTNAME}" --username AWS --password-stdin
-
-      - name: Download amd64 container artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: aiperf-container-amd64
-          path: artifacts/
-
-      - name: Download arm64 container artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: aiperf-container-arm64
-          path: artifacts/
-
-      - name: Push amd64 image
-        env:
-          IMAGE_REF: ${{ steps.refs.outputs.amd64_ref }}
-        run: |
-          skopeo copy \
-            oci-archive:artifacts/aiperf-amd64.tar \
-            "docker://${IMAGE_REF}"
-
-      - name: Push arm64 image
-        env:
-          IMAGE_REF: ${{ steps.refs.outputs.arm64_ref }}
-        run: |
-          skopeo copy \
-            oci-archive:artifacts/aiperf-arm64.tar \
-            "docker://${IMAGE_REF}"
-
       - name: Create and push multi-arch manifest
-        env:
-          ECR_HOSTNAME: ${{ steps.refs.outputs.ecr_hostname }}
-          AWS_REGION: ${{ steps.refs.outputs.aws_region }}
-          MULTIARCH_REF: ${{ steps.refs.outputs.multiarch_ref }}
-          AMD64_REF: ${{ steps.refs.outputs.amd64_ref }}
-          ARM64_REF: ${{ steps.refs.outputs.arm64_ref }}
-        run: |
-          aws ecr get-login-password --region "${AWS_REGION}" \
-            | docker login "${ECR_HOSTNAME}" --username AWS --password-stdin
-          docker manifest create "${MULTIARCH_REF}" "${AMD64_REF}" "${ARM64_REF}"
-          docker manifest push "${MULTIARCH_REF}"
+        uses: ./.github/actions/create-multiarch-manifest
+        with:
+          registry: ${{ steps.refs.outputs.registry }}
+          registry-username: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
+          registry-password: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
+          target-image: ${{ steps.refs.outputs.multiarch_ref }}
+          source-images: >-
+            ${{ steps.refs.outputs.amd64_ref }}
+            ${{ steps.refs.outputs.arm64_ref }}
 
-      - name: Logout from container registry
-        if: always()
-        env:
-          ECR_HOSTNAME: ${{ steps.refs.outputs.ecr_hostname }}
-        run: |
-          docker logout "${ECR_HOSTNAME}" 2>/dev/null || true
-          skopeo logout "${ECR_HOSTNAME}" 2>/dev/null || true
 
   stage-wheel:
     name: Stage Wheel
-    needs: [prepare-release, create-rc-tag, validate-wheel]
+    needs: [prepare-release, create-rc-tag, build-wheel]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     steps:
-      - name: Set up Python and twine
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Download wheel from S3
+        env:
+          S3_BUCKET: ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-pip python3-venv python3.12-venv
-          python3 -m venv /tmp/wheel-venv
-          source /tmp/wheel-venv/bin/activate
-          pip install --upgrade pip twine
-          echo "/tmp/wheel-venv/bin" >> "$GITHUB_PATH"
-
-      - name: Download wheel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: aiperf-wheel
-          path: dist/
+          mkdir -p dist/
+          aws s3 cp "s3://${S3_BUCKET}/wheels/aiperf/${PEP440_VERSION}/" dist/ --recursive
+          ls -la dist/
 
       - name: Publish wheel to Artifactory
         env:
@@ -429,7 +366,7 @@ jobs:
           PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
         run: |
           set -euo pipefail
-          twine upload \
+          uvx twine upload \
             --repository-url "${ARTIFACTORY_URL}" \
             --username "${ARTIFACTORY_USER}" \
             --password "${ARTIFACTORY_TOKEN}" \
