@@ -328,21 +328,26 @@ jobs:
         id: refs
         env:
           PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
-          REGISTRY: ${{ secrets.RC_CONTAINER_REGISTRY }}
         run: |
           set -euo pipefail
-          IMAGE="${REGISTRY}/aiperf"
-          echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
+          IMDS_TOKEN="$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")"
+          AWS_REGION="$(curl -s -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" http://169.254.169.254/latest/meta-data/placement/region)"
+          ACCOUNT_ID="$(aws sts get-caller-identity --region "${AWS_REGION}" --query Account --output text)"
+          ECR_HOSTNAME="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          IMAGE="${ECR_HOSTNAME}/ai-dynamo/aiperf"
+          echo "aws_region=${AWS_REGION}" >> "$GITHUB_OUTPUT"
+          echo "ecr_hostname=${ECR_HOSTNAME}" >> "$GITHUB_OUTPUT"
           echo "amd64_ref=${IMAGE}:${PEP440_VERSION}-amd64" >> "$GITHUB_OUTPUT"
           echo "arm64_ref=${IMAGE}:${PEP440_VERSION}-arm64" >> "$GITHUB_OUTPUT"
           echo "multiarch_ref=${IMAGE}:${PEP440_VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Login to container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ secrets.RC_CONTAINER_REGISTRY }}
-          username: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
-          password: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
+      - name: Login to ECR
+        env:
+          ECR_HOSTNAME: ${{ steps.refs.outputs.ecr_hostname }}
+          AWS_REGION: ${{ steps.refs.outputs.aws_region }}
+        run: |
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | skopeo login "${ECR_HOSTNAME}" --username AWS --password-stdin
 
       - name: Download amd64 container artifact
         uses: actions/download-artifact@v4
@@ -373,23 +378,25 @@ jobs:
             "docker://${IMAGE_REF}"
 
       - name: Create and push multi-arch manifest
-        uses: ./.github/actions/create-multiarch-manifest
-        with:
-          registry: ${{ steps.refs.outputs.registry }}
-          registry-username: ${{ secrets.RC_CONTAINER_REGISTRY_USERNAME }}
-          registry-password: ${{ secrets.RC_CONTAINER_REGISTRY_PASSWORD }}
-          target-image: ${{ steps.refs.outputs.multiarch_ref }}
-          source-images: >-
-            ${{ steps.refs.outputs.amd64_ref }}
-            ${{ steps.refs.outputs.arm64_ref }}
+        env:
+          ECR_HOSTNAME: ${{ steps.refs.outputs.ecr_hostname }}
+          AWS_REGION: ${{ steps.refs.outputs.aws_region }}
+          MULTIARCH_REF: ${{ steps.refs.outputs.multiarch_ref }}
+          AMD64_REF: ${{ steps.refs.outputs.amd64_ref }}
+          ARM64_REF: ${{ steps.refs.outputs.arm64_ref }}
+        run: |
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login "${ECR_HOSTNAME}" --username AWS --password-stdin
+          docker manifest create "${MULTIARCH_REF}" "${AMD64_REF}" "${ARM64_REF}"
+          docker manifest push "${MULTIARCH_REF}"
 
       - name: Logout from container registry
         if: always()
         env:
-          REGISTRY: ${{ steps.refs.outputs.registry }}
+          ECR_HOSTNAME: ${{ steps.refs.outputs.ecr_hostname }}
         run: |
-          docker logout "${REGISTRY}" 2>/dev/null || true
-          skopeo logout "${REGISTRY}" 2>/dev/null || true
+          docker logout "${ECR_HOSTNAME}" 2>/dev/null || true
+          skopeo logout "${ECR_HOSTNAME}" 2>/dev/null || true
 
   stage-wheel:
     name: Stage Wheel
@@ -397,8 +404,15 @@ jobs:
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     steps:
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - name: Set up Python and twine
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip python3-venv python3.12-venv
+          python3 -m venv /tmp/wheel-venv
+          source /tmp/wheel-venv/bin/activate
+          pip install --upgrade pip twine
+          echo "/tmp/wheel-venv/bin" >> "$GITHUB_PATH"
 
       - name: Download wheel artifact
         uses: actions/download-artifact@v4
@@ -415,7 +429,7 @@ jobs:
           PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
         run: |
           set -euo pipefail
-          uvx twine upload \
+          twine upload \
             --repository-url "${ARTIFACTORY_URL}" \
             --username "${ARTIFACTORY_USER}" \
             --password "${ARTIFACTORY_TOKEN}" \
@@ -428,129 +442,85 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ============================================================================
-  # REGISTER WITH NSPECT
+  # TRIGGER GITLAB RELEASE AUTOMATION
+  #
+  # nSpect registration, Pulse container scans, and wheeltamer wheel scans
+  # run on GitLab because GitHub AWS runners cannot reach internal NVIDIA
+  # endpoints (nSpect API, Pulse, sonar.nvidia.com).
+  #
+  # This job triggers the release-automation GitLab pipeline which performs:
+  #   1. Pulse container vulnerability scan (aiperf amd64 + arm64)
+  #   2. Wheeltamer wheel security scan (aiperf wheel)
+  #   3. nSpect registration (wheel URL + container image URL)
+  #
+  # Required secrets (in the automated-release environment):
+  #   GITLAB_TRIGGER_TOKEN  -- GitLab pipeline trigger token
+  #   GITLAB_PIPELINE_URL   -- https://gitlab-master.nvidia.com/api/v4/projects/<ID>/trigger/pipeline
   # ============================================================================
 
-  register-nspect:
-    name: Register RC in nSpect
+  trigger-gitlab-pipeline:
+    name: Trigger GitLab Release Automation
     needs: [prepare-release, stage-container, stage-wheel]
-    runs-on: prod-aiperf-default-v1
+    runs-on: github-ci-runner01
     environment: automated-release
     steps:
-      - name: Obtain SSA bearer token
-        id: token
+      - name: Trigger GitLab RC pipeline
         env:
-          NSPECT_SSA_CLIENT_ID: ${{ secrets.NSPECT_SSA_CLIENT_ID }}
-          NSPECT_SSA_CLIENT_SECRET: ${{ secrets.NSPECT_SSA_CLIENT_SECRET }}
-          SSA_TOKEN_URL: ${{ secrets.NSPECT_SSA_TOKEN_URL }}
-        run: |
-          set -euo pipefail
-          BASIC_AUTH=$(echo -n "${NSPECT_SSA_CLIENT_ID}:${NSPECT_SSA_CLIENT_SECRET}" | base64 -w0)
-          TOKEN_RESPONSE=$(curl -sf --request POST \
-            "${SSA_TOKEN_URL}" \
-            --header "Authorization: Basic ${BASIC_AUTH}" \
-            --header 'Content-Type: application/x-www-form-urlencoded' \
-            --data-urlencode 'grant_type=client_credentials' \
-            --data-urlencode 'scope=public.api:read public.api:write')
-          ACCESS_TOKEN=$(echo "${TOKEN_RESPONSE}" | jq -r '.access_token')
-          if [ -z "${ACCESS_TOKEN}" ] || [ "${ACCESS_TOKEN}" = "null" ]; then
-            echo "::error::Failed to obtain nSpect SSA token"
-            exit 1
-          fi
-          echo "::add-mask::${ACCESS_TOKEN}"
-          echo "access_token=${ACCESS_TOKEN}" >> "$GITHUB_OUTPUT"
-
-      - name: Register program version in nSpect
-        id: register
-        env:
-          ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
-          NSPECT_ID: ${{ secrets.NSPECT_ID }}
-          NSPECT_API_URL: ${{ secrets.NSPECT_API_URL }}
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
           RC_TAG: ${{ needs.prepare-release.outputs.rc_tag }}
+          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
           WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
-          ARTIFACTORY_PYPI_URL: ${{ secrets.ARTIFACTORY_PYPI_URL }}
-          CONTAINER_IMAGE_BASE: ${{ secrets.NSPECT_CONTAINER_IMAGE_BASE }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+          GITLAB_URL: ${{ secrets.GITLAB_PIPELINE_URL }}
         run: |
           set -euo pipefail
-          RELEASE_DATE=$(date -u '+%Y-%m-%d %H:%M:%S')
-          WHEEL_URL="${ARTIFACTORY_PYPI_URL}/aiperf/${PEP440_VERSION}/${WHEEL_FILENAME}"
-          CONTAINER_TAG="${CONTAINER_IMAGE_BASE}:${PEP440_VERSION}"
 
-          PAYLOAD=$(jq -n \
-            --arg version "${PEP440_VERSION}" \
-            --arg desc "Release candidate ${RC_TAG}" \
-            --arg date "${RELEASE_DATE}" \
-            --arg wheel_url "${WHEEL_URL}" \
-            --arg container "${CONTAINER_TAG}" \
-            '{
-              request: {
-                versionName: $version,
-                description: $desc,
-                releaseType_id: 2,
-                releaseDate: $date,
-                binaryArtifacts: [
-                  { sourcePointer: $wheel_url }
-                ],
-                containerImages: [
-                  { imageUrl: $container }
-                ]
-              }
-            }')
+          echo "=== Triggering GitLab Release Automation ==="
+          echo "Project:     aiperf"
+          echo "RC Tag:      ${RC_TAG}"
+          echo "PEP440:      ${PEP440_VERSION}"
+          echo "Wheel:       ${WHEEL_FILENAME}"
+          echo "Commit SHA:  ${{ github.sha }}"
+          echo "Run ID:      ${{ github.run_id }}"
 
-          RESPONSE=$(curl -sf --request POST \
-            "${NSPECT_API_URL}/pm/api/v1.0/public/programs/${NSPECT_ID}/programVersions" \
-            --header 'Content-Type: application/json' \
-            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
-            --data "${PAYLOAD}")
+          HTTP_CODE=$(curl -sS -o /tmp/gitlab_trigger.json -w "%{http_code}" \
+            --fail-with-body \
+            --request POST \
+            --form token="${GITLAB_TOKEN}" \
+            --form ref=main \
+            --form "variables[PIPELINE_TYPE]=rc" \
+            --form "variables[PROJECT]=aiperf" \
+            --form "variables[RC_TAG]=${RC_TAG}" \
+            --form "variables[PEP440_VERSION]=${PEP440_VERSION}" \
+            --form "variables[COMMIT_SHA]=${{ github.sha }}" \
+            --form "variables[GITHUB_RUN_ID]=${{ github.run_id }}" \
+            --form "variables[ARTIFACTS]=wheel,container" \
+            --form "variables[ENABLE_PULSE_SCAN]=true" \
+            --form "variables[ENABLE_WHEEL_SCAN]=true" \
+            --form "variables[ENABLE_SONARQUBE]=false" \
+            "${GITLAB_URL}")
 
-          echo "nSpect response: ${RESPONSE}"
-          SUCCESS=$(echo "${RESPONSE}" | jq -r '.success')
-          if [ "${SUCCESS}" != "true" ]; then
-            echo "::error::nSpect registration failed: ${RESPONSE}"
+          echo "GitLab API HTTP status: ${HTTP_CODE}"
+
+          PIPELINE_URL=$(jq -r '.web_url // empty' /tmp/gitlab_trigger.json)
+          PIPELINE_ID=$(jq -r '.id // empty' /tmp/gitlab_trigger.json)
+          rm -f /tmp/gitlab_trigger.json
+
+          if [ -z "${PIPELINE_URL}" ]; then
+            echo "::error::Failed to trigger GitLab pipeline (HTTP ${HTTP_CODE})"
             exit 1
           fi
 
-          STATUS_URL=$(echo "${RESPONSE}" | jq -r '.data.status_url // empty')
-          echo "status_url=${STATUS_URL}" >> "$GITHUB_OUTPUT"
+          echo "GitLab pipeline triggered: ${PIPELINE_URL}"
 
-      - name: Poll nSpect job status
-        if: steps.register.outputs.status_url != ''
-        env:
-          ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
-          NSPECT_API_URL: ${{ secrets.NSPECT_API_URL }}
-          STATUS_URL: ${{ steps.register.outputs.status_url }}
-        run: |
-          set -euo pipefail
-          for i in $(seq 1 12); do
-            sleep 10
-            RESULT=$(curl -sf \
-              "${NSPECT_API_URL}/${STATUS_URL}" \
-              --header "Authorization: Bearer ${ACCESS_TOKEN}")
-            STATUS=$(echo "${RESULT}" | jq -r '.data.job.status')
-            echo "Poll ${i}: status=${STATUS}"
-            if [ "${STATUS}" = "SUCCESS" ]; then
-              echo "nSpect registration completed successfully"
-              break
-            elif [ "${STATUS}" = "FAILURE" ] || [ "${STATUS}" = "ERROR" ]; then
-              echo "::error::nSpect job failed: ${RESULT}"
-              exit 1
-            fi
-          done
-
-      - name: nSpect summary
-        env:
-          NSPECT_ID: ${{ secrets.NSPECT_ID }}
-          PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
-          WHEEL_FILENAME: ${{ needs.prepare-release.outputs.wheel_filename }}
-          CONTAINER_IMAGE_BASE: ${{ secrets.NSPECT_CONTAINER_IMAGE_BASE }}
-        run: |
           {
-            echo "### nSpect Registration"
-            echo "- **nSpect ID**: \`${NSPECT_ID}\`"
-            echo "- **Version**: \`${PEP440_VERSION}\`"
-            echo "- **Release Type**: Internal"
-            echo "- **Wheel**: \`${WHEEL_FILENAME}\`"
-            echo "- **Container**: \`${CONTAINER_IMAGE_BASE}:${PEP440_VERSION}\`"
-            echo "- **Status**: Registered"
+            echo "### GitLab Release Automation"
+            echo "- **Pipeline**: [${PIPELINE_ID}](${PIPELINE_URL})"
+            echo "- **Type**: RC (security scans + nSpect registration)"
+            echo "- **Project**: aiperf"
+            echo "- **RC Tag**: \`${RC_TAG}\`"
+            echo ""
+            echo "The GitLab pipeline will:"
+            echo "1. Run Pulse container vulnerability scans"
+            echo "2. Run wheeltamer wheel security scan"
+            echo "3. Register artifacts with nSpect"
           } >> "$GITHUB_STEP_SUMMARY"
