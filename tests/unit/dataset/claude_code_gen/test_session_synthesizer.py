@@ -169,13 +169,13 @@ class TestMaxIsl:
         )
         from aiperf.dataset.claude_code_gen.models import (
             CacheLayerConfig,
+            GroupConfig,
             MixtureDelayConfig,
             ResetConfig,
         )
 
         base = SessionDistributionConfig(
             system_prompt_tokens=100,
-            initial_context=lognormal_from_mean_median(mean=5_000, median=4_000),
             new_tokens_per_turn=lognormal_from_mean_median(mean=200, median=100),
             generation_length=lognormal_from_mean_median(mean=50, median=30),
             inter_turn_delay=MixtureDelayConfig(
@@ -185,7 +185,13 @@ class TestMaxIsl:
             ),
             reset=ResetConfig(base_probability=0.02, context_scaling=2.0),
             max_prompt_tokens=50_000,
-            cache=CacheLayerConfig(layer1_tokens=200, block_size=64),
+            cache=CacheLayerConfig(
+                layer1_tokens=100,
+                layer1_5_tokens=50,
+                layer2=lognormal_from_mean_median(mean=4_000, median=3_000),
+                block_size=64,
+            ),
+            group=GroupConfig(num_groups=5, zipf_alpha=1.2),
         )
         max_isl = 2_000
         clipped = base.model_copy(update={"max_prompt_tokens": max_isl})
@@ -218,6 +224,90 @@ class TestInitialContextFloor:
             assert len(session.turns[0].hash_ids) >= alloc.l1_blocks
 
 
+class TestGroupAssignment:
+    def test_group_ids_within_range(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Every session's group_id must be in [0, num_groups)."""
+        synth = SessionSynthesizer(coding_config, seed=42)
+        sessions = synth.synthesize_sessions(100)
+        num_groups = coding_config.group.num_groups
+        for session in sessions:
+            assert 0 <= session.group_id < num_groups
+
+    def test_zipf_distribution_is_skewed(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Group 0 should appear more often than uniform (Zipf skew)."""
+        synth = SessionSynthesizer(coding_config, seed=42)
+        sessions = synth.synthesize_sessions(500)
+        group_counts = np.bincount(
+            [s.group_id for s in sessions],
+            minlength=coding_config.group.num_groups,
+        )
+        uniform_expected = 500 / coding_config.group.num_groups
+        assert group_counts[0] > uniform_expected * 2, (
+            f"Group 0 count {group_counts[0]} not significantly above "
+            f"uniform expectation {uniform_expected:.0f}"
+        )
+
+    def test_multiple_groups_used(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """With 500 sessions and 50 groups, at least 10 distinct groups should appear."""
+        synth = SessionSynthesizer(coding_config, seed=42)
+        sessions = synth.synthesize_sessions(500)
+        distinct_groups = len({s.group_id for s in sessions})
+        assert distinct_groups >= 10
+
+    def test_same_group_shares_l15_blocks(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Sessions in the same group must share identical L1.5 hash IDs."""
+        synth = SessionSynthesizer(coding_config, seed=42)
+        sessions = synth.synthesize_sessions(50)
+        alloc = synth.allocator
+        l1 = alloc.l1_blocks
+        l15 = alloc.l15_blocks
+
+        by_group: dict[int, list] = {}
+        for s in sessions:
+            by_group.setdefault(s.group_id, []).append(s)
+
+        for group_id, group_sessions in by_group.items():
+            if len(group_sessions) < 2:
+                continue
+            ref = group_sessions[0].turns[0].hash_ids[l1 : l1 + l15]
+            for s in group_sessions[1:]:
+                actual = s.turns[0].hash_ids[l1 : l1 + l15]
+                assert actual == ref, (
+                    f"Group {group_id}: L1.5 mismatch between "
+                    f"{group_sessions[0].session_id} and {s.session_id}"
+                )
+
+    def test_different_groups_have_different_l15_blocks(
+        self, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Sessions in different groups must have different L1.5 hash IDs."""
+        synth = SessionSynthesizer(coding_config, seed=42)
+        sessions = synth.synthesize_sessions(50)
+        alloc = synth.allocator
+        l1 = alloc.l1_blocks
+        l15 = alloc.l15_blocks
+
+        by_group: dict[int, list] = {}
+        for s in sessions:
+            by_group.setdefault(s.group_id, []).append(s)
+
+        group_ids = list(by_group.keys())
+        if len(group_ids) >= 2:
+            s_a = by_group[group_ids[0]][0]
+            s_b = by_group[group_ids[1]][0]
+            l15_a = s_a.turns[0].hash_ids[l1 : l1 + l15]
+            l15_b = s_b.turns[0].hash_ids[l1 : l1 + l15]
+            assert l15_a != l15_b
+
+
 class TestDistributionFidelity:
     def test_initial_context_mean_within_tolerance(
         self, coding_config: SessionDistributionConfig
@@ -226,7 +316,8 @@ class TestDistributionFidelity:
         sessions = synth.synthesize_sessions(500)
         initial_contexts = [s.turns[0].input_length for s in sessions]
         observed_mean = np.mean(initial_contexts)
-        target_mean = coding_config.initial_context.mean
+        cache = coding_config.cache
+        target_mean = cache.layer1_tokens + cache.layer1_5_tokens + cache.layer2.mean
         pct_error = abs(observed_mean - target_mean) / target_mean * 100
         assert pct_error < 10, (
             f"Initial context mean {observed_mean:.0f} vs target {target_mean:.0f} ({pct_error:.1f}%)"

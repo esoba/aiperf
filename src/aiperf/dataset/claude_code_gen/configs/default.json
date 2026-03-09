@@ -1,6 +1,5 @@
 {
   "system_prompt_tokens": 8000,
-  "initial_context": {"mean": 50000, "median": 40000},
   "new_tokens_per_turn": {"mean": 3500, "median": 1800},
   "generation_length": {"mean": 500, "median": 300},
   "inter_turn_delay": {
@@ -11,5 +10,11 @@
   "reset": {"base_probability": 0.02, "context_scaling": 2.0},
   "max_prompt_tokens": 200000,
   "new_tokens_bias": 1.0,
-  "cache": {"layer1_tokens": 32000, "block_size": 512}
+  "cache": {
+    "layer1_tokens": 32000,
+    "layer1_5_tokens": 20000,
+    "layer2": {"mean": 10000, "median": 5000},
+    "block_size": 512
+  },
+  "group": {"num_groups": 50, "zipf_alpha": 1.2}
 }

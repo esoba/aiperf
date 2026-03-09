@@ -785,24 +785,31 @@ def _classify_turn_blocks(
     hash_ids: list[int],
     prev_hash_id_set: set[int] | None,
     l1_blocks: int,
+    l15_blocks: int = 0,
+    turn_index: int = 0,
 ) -> list[dict]:
     """Classify each block in a turn by layer and cache status.
 
     Returns a list of dicts with keys: pos, hash_id, layer, status.
+    Layers: L1 (global), L1.5 (group-shared), L2 (session prefix), L3 (conversation).
     """
+    prefix_blocks = l1_blocks + l15_blocks
     blocks: list[dict] = []
     for pos, hid in enumerate(hash_ids):
         if pos < l1_blocks:
             blocks.append(
                 {"pos": pos, "hash_id": hid, "layer": "L1", "status": "cached"}
             )
-        elif prev_hash_id_set is None:
+        elif pos < prefix_blocks:
             blocks.append(
-                {"pos": pos, "hash_id": hid, "layer": "session", "status": "new"}
+                {"pos": pos, "hash_id": hid, "layer": "L1.5", "status": "cached"}
             )
+        elif prev_hash_id_set is None:
+            # Turn 0: everything beyond prefix is L2 (session prefix)
+            blocks.append({"pos": pos, "hash_id": hid, "layer": "L2", "status": "new"})
         elif hid in prev_hash_id_set:
             blocks.append(
-                {"pos": pos, "hash_id": hid, "layer": "session", "status": "cached"}
+                {"pos": pos, "hash_id": hid, "layer": "L2", "status": "cached"}
             )
         else:
             blocks.append({"pos": pos, "hash_id": hid, "layer": "L3", "status": "new"})
@@ -816,11 +823,14 @@ def write_cache_structure(
 ) -> dict:
     """Generate cache_structure.json with per-session, per-turn block classification."""
     l1_tokens = 32_000
+    l15_tokens = 0
     block_size = 512
     if manifest:
         block_size = manifest.block_size
         l1_tokens = manifest.generation_params.cache.layer1_tokens
+        l15_tokens = manifest.generation_params.cache.layer1_5_tokens
     l1_blocks = math.ceil(l1_tokens / block_size) if block_size > 0 else 0
+    l15_blocks_count = math.ceil(l15_tokens / block_size) if block_size > 0 else 0
 
     session_data: list[dict] = []
     for i, (sid, turns) in enumerate(sessions.items()):
@@ -828,8 +838,10 @@ def write_cache_structure(
             break
         turn_data: list[dict] = []
         prev_hash_id_set: set[int] | None = None
-        for t in turns:
-            classified = _classify_turn_blocks(t.hash_ids, prev_hash_id_set, l1_blocks)
+        for t_idx, t in enumerate(turns):
+            classified = _classify_turn_blocks(
+                t.hash_ids, prev_hash_id_set, l1_blocks, l15_blocks_count, t_idx
+            )
 
             # Run-length encode consecutive blocks with same (layer, status)
             segments: list[dict] = []
@@ -863,6 +875,7 @@ def write_cache_structure(
     payload = {
         "block_size": block_size,
         "l1_blocks": l1_blocks,
+        "l15_blocks": l15_blocks_count,
         "sessions": session_data,
     }
 
@@ -902,9 +915,10 @@ svg text{fill:#ccc;font-size:11px}
 <body>
 <h1>Cache Explorer</h1>
 <div class="legend">
-  <div class="legend-item"><div class="legend-swatch" style="background:#76b900"></div>L1 cached</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#4a90d9"></div>Session cached</div>
-  <div class="legend-item"><div class="legend-swatch" style="background:#4a90d9;border:2px dashed #fff"></div>Session new</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#76b900"></div>L1 (global)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#00bcd4"></div>L1.5 (group)</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#4a90d9"></div>L2 cached</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:#4a90d9;border:2px dashed #fff"></div>L2 new</div>
   <div class="legend-item"><div class="legend-swatch" style="background:#f97316"></div>L3 new</div>
   <div class="legend-item"><div class="legend-swatch" style="background:#9ca3af"></div>Output</div>
 </div>
@@ -915,11 +929,12 @@ svg text{fill:#ccc;font-size:11px}
 <div id="detail"></div>
 <script>
 const COLORS={
-  'L1-cached':'#76b900','session-cached':'#4a90d9','session-new':'#4a90d9',
+  'L1-cached':'#76b900','L1.5-cached':'#00bcd4',
+  'L2-cached':'#4a90d9','L2-new':'#4a90d9',
   'L3-new':'#f97316','output':'#9ca3af'
 };
 function segColor(s){return COLORS[s.layer+'-'+s.status]||'#555'}
-function segDash(s){return s.layer==='session'&&s.status==='new'}
+function segDash(s){return s.layer==='L2'&&s.status==='new'}
 
 let DATA;
 const tooltip=d3.select('body').append('div').attr('class','tooltip').style('display','none');
@@ -978,13 +993,15 @@ function renderStats(sess){
   const t0=sess.turns[0];
   if(!t0){d3.select('#stats').text('');return;}
   const l1Tok=DATA.l1_blocks*bs;
-  const sessPrefixTok=(t0.num_blocks-DATA.l1_blocks)*bs;
-  const lines=[`Turn 0: L1=${l1Tok.toLocaleString()} tok, session prefix=${Math.max(0,sessPrefixTok).toLocaleString()} tok`];
+  const l15Tok=(DATA.l15_blocks||0)*bs;
+  const l2Tok=Math.max(0,(t0.num_blocks-DATA.l1_blocks-(DATA.l15_blocks||0))*bs);
+  const lines=[`Turn 0: L1=${l1Tok.toLocaleString()} tok, L1.5=${l15Tok.toLocaleString()} tok, L2=${l2Tok.toLocaleString()} tok`];
   sess.turns.forEach((t,i)=>{
     if(i===0)return;
     const cached=t.segments.filter(s=>s.status==='cached').reduce((a,s)=>a+s.count,0);
     const rate=t.num_blocks>0?(cached/t.num_blocks*100).toFixed(1):'0.0';
-    lines.push(`Turn ${i}: cache hit ${rate}%`);
+    const l3New=t.segments.filter(s=>s.layer==='L3').reduce((a,s)=>a+s.count,0);
+    lines.push(`Turn ${i}: cache hit ${rate}%, L3 new=${(l3New*bs).toLocaleString()} tok`);
   });
   d3.select('#stats').html(lines.join(' &middot; '));
 }

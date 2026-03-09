@@ -237,29 +237,38 @@ class TestRenderCacheExplorer:
         assert all(b["status"] == "cached" for b in l1_blocks)
 
     def test_block_classification_turn0_no_l3(self) -> None:
-        hash_ids = list(range(10))
-        blocks = _classify_turn_blocks(hash_ids, prev_hash_id_set=None, l1_blocks=5)
+        hash_ids = list(range(12))
+        blocks = _classify_turn_blocks(
+            hash_ids, prev_hash_id_set=None, l1_blocks=5, l15_blocks=2
+        )
         l3_blocks = [b for b in blocks if b["layer"] == "L3"]
         assert len(l3_blocks) == 0
-        session_blocks = [b for b in blocks if b["layer"] == "session"]
-        assert len(session_blocks) == 5
-        assert all(b["status"] == "new" for b in session_blocks)
+        l15_blocks = [b for b in blocks if b["layer"] == "L1.5"]
+        assert len(l15_blocks) == 2
+        l2_blocks = [b for b in blocks if b["layer"] == "L2"]
+        assert len(l2_blocks) == 5
+        assert all(b["status"] == "new" for b in l2_blocks)
 
     def test_l3_appears_on_turn1(self) -> None:
         l1_blocks = 5
-        turn0_ids = list(range(10))
+        l15_blocks = 2
+        turn0_ids = list(range(12))
         prev_set = set(turn0_ids)
-        turn1_ids = list(range(15))
+        turn1_ids = list(range(17))
         blocks = _classify_turn_blocks(
-            turn1_ids, prev_hash_id_set=prev_set, l1_blocks=l1_blocks
+            turn1_ids,
+            prev_hash_id_set=prev_set,
+            l1_blocks=l1_blocks,
+            l15_blocks=l15_blocks,
+            turn_index=1,
         )
         l3_blocks = [b for b in blocks if b["layer"] == "L3"]
         assert len(l3_blocks) == 5
         assert all(b["status"] == "new" for b in l3_blocks)
-        session_cached = [
-            b for b in blocks if b["layer"] == "session" and b["status"] == "cached"
+        l2_cached = [
+            b for b in blocks if b["layer"] == "L2" and b["status"] == "cached"
         ]
-        assert len(session_cached) == 5
+        assert len(l2_cached) == 5
 
 
 class TestClassifierMatchesSynthesizer:
@@ -269,30 +278,37 @@ class TestClassifierMatchesSynthesizer:
     def test_turn0_all_session_new_no_l3(
         self, coding_config: SessionDistributionConfig
     ) -> None:
-        """Turn 0 from real synthesized data should be L1(cached) + session(new), no L3."""
+        """Turn 0 from real synthesized data should be L1(cached) + L1.5(cached) + L2(new), no L3."""
         synth = SessionSynthesizer(coding_config, seed=42)
         session = synth.synthesize_session()
         t0 = session.turns[0]
         l1_blocks = synth.allocator.l1_blocks
+        l15_blocks = synth.allocator.l15_blocks
 
         blocks = _classify_turn_blocks(
-            t0.hash_ids, prev_hash_id_set=None, l1_blocks=l1_blocks
+            t0.hash_ids,
+            prev_hash_id_set=None,
+            l1_blocks=l1_blocks,
+            l15_blocks=l15_blocks,
         )
 
         layers = {b["layer"] for b in blocks}
         assert "L3" not in layers
         assert all(b["status"] == "cached" for b in blocks if b["layer"] == "L1")
-        assert all(b["status"] == "new" for b in blocks if b["layer"] == "session")
+        assert all(b["status"] == "cached" for b in blocks if b["layer"] == "L1.5")
+        assert all(b["status"] == "new" for b in blocks if b["layer"] == "L2")
 
         l1_count = sum(1 for b in blocks if b["layer"] == "L1")
-        session_count = sum(1 for b in blocks if b["layer"] == "session")
+        l15_count = sum(1 for b in blocks if b["layer"] == "L1.5")
+        l2_count = sum(1 for b in blocks if b["layer"] == "L2")
         assert l1_count == l1_blocks
-        assert l1_count + session_count == len(t0.hash_ids)
+        assert l15_count == l15_blocks
+        assert l1_count + l15_count + l2_count == len(t0.hash_ids)
 
     def test_turn1_has_cached_session_and_new_l3(
         self, coding_config: SessionDistributionConfig
     ) -> None:
-        """Turn 1 should carry forward session prefix as cached, and add L3 new blocks."""
+        """Turn 1 should carry forward L2 as cached, and add L3 new blocks."""
         synth = SessionSynthesizer(coding_config, seed=42)
         session = synth.synthesize_session()
         assert len(session.turns) >= 2
@@ -300,25 +316,32 @@ class TestClassifierMatchesSynthesizer:
         t0 = session.turns[0]
         t1 = session.turns[1]
         l1_blocks = synth.allocator.l1_blocks
+        l15_blocks = synth.allocator.l15_blocks
         prev_set = set(t0.hash_ids)
 
         blocks = _classify_turn_blocks(
-            t1.hash_ids, prev_hash_id_set=prev_set, l1_blocks=l1_blocks
+            t1.hash_ids,
+            prev_hash_id_set=prev_set,
+            l1_blocks=l1_blocks,
+            l15_blocks=l15_blocks,
+            turn_index=1,
         )
 
         l1 = [b for b in blocks if b["layer"] == "L1"]
-        session_cached = [
-            b for b in blocks if b["layer"] == "session" and b["status"] == "cached"
+        l15 = [b for b in blocks if b["layer"] == "L1.5"]
+        l2_cached = [
+            b for b in blocks if b["layer"] == "L2" and b["status"] == "cached"
         ]
         l3_new = [b for b in blocks if b["layer"] == "L3" and b["status"] == "new"]
 
         assert len(l1) == l1_blocks
         assert all(b["status"] == "cached" for b in l1)
-        # Session prefix from turn 0 is carried forward
-        t0_session_count = len(t0.hash_ids) - l1_blocks
-        assert len(session_cached) == t0_session_count
+        assert len(l15) == l15_blocks
+        # L2 prefix from turn 0 is carried forward
+        t0_l2_count = len(t0.hash_ids) - l1_blocks - l15_blocks
+        assert len(l2_cached) == t0_l2_count
         # L3 accounts for the growth
-        assert len(l3_new) == len(t1.hash_ids) - l1_blocks - t0_session_count
+        assert len(l3_new) == len(t1.hash_ids) - l1_blocks - l15_blocks - t0_l2_count
         assert len(l3_new) > 0
 
     def test_all_blocks_classified_every_turn(
@@ -329,16 +352,20 @@ class TestClassifierMatchesSynthesizer:
         session = synth.synthesize_session()
         l1_blocks = synth.allocator.l1_blocks
 
+        l15_blocks = synth.allocator.l15_blocks
+
         prev_set: set[int] | None = None
-        for turn in session.turns:
-            blocks = _classify_turn_blocks(turn.hash_ids, prev_set, l1_blocks)
+        for i, turn in enumerate(session.turns):
+            blocks = _classify_turn_blocks(
+                turn.hash_ids, prev_set, l1_blocks, l15_blocks, turn_index=i
+            )
             assert len(blocks) == len(turn.hash_ids)
             assert [b["pos"] for b in blocks] == list(range(len(turn.hash_ids)))
             prev_set = set(turn.hash_ids)
 
 
 class TestSessionPrefixSizeInvariant:
-    """The core invariant: on turn 0, session prefix blocks = total_blocks - l1_blocks."""
+    """The core invariant: on turn 0, session prefix blocks = total_blocks - prefix_blocks."""
 
     def test_turn0_session_prefix_equals_remainder(
         self, coding_config: SessionDistributionConfig
@@ -352,7 +379,7 @@ class TestSessionPrefixSizeInvariant:
             t0 = session.turns[0]
             total_blocks = math.ceil(t0.input_length / alloc.block_size)
             session_ids = alloc.extract_session_ids(t0.hash_ids)
-            assert len(session_ids) == total_blocks - alloc.l1_blocks
+            assert len(session_ids) == total_blocks - alloc.prefix_blocks
 
     def test_initial_context_always_exceeds_l1(
         self, small_config: SessionDistributionConfig
@@ -397,7 +424,7 @@ class TestCacheStructureJson:
         assert data["l1_blocks"] == expected_l1
         assert data["block_size"] == manifest.block_size
 
-    def test_turn0_segments_are_l1_and_session_only(self, run_dir: Path) -> None:
+    def test_turn0_segments_are_l1_l15_l2_only(self, run_dir: Path) -> None:
         manifest = DatasetManifest(
             **orjson.loads((run_dir / "manifest.json").read_bytes())
         )
@@ -409,7 +436,7 @@ class TestCacheStructureJson:
             t0 = sess["turns"][0]
             layers = {s["layer"] for s in t0["segments"]}
             assert "L3" not in layers
-            assert layers <= {"L1", "session"}
+            assert layers <= {"L1", "L1.5", "L2"}
 
     def test_sessions_capped_at_50(self, tmp_path: Path) -> None:
         """write_cache_structure should emit at most 50 sessions."""

@@ -34,7 +34,7 @@ class SessionSynthesizer:
     """Synthesizes multi-turn sessions from distribution config.
 
     State machine per session:
-        START -> sample initial_context -> Turn 0
+        START -> derive initial_context (L1 + L1.5 + sampled L2) -> Turn 0
         TURN_LOOP:
             1. Sample delay (mixture: agentic 70% / human 30%)
             2. Sample new_tokens (lognormal)
@@ -53,6 +53,16 @@ class SessionSynthesizer:
         self._rng = np.random.default_rng(seed)
         self._allocator = PrefixAllocator(config.cache)
         self._session_counter = 0
+
+        # Pre-compute Zipf weights for group assignment
+        ng = config.group.num_groups
+        weights = np.array(
+            [1.0 / (k**config.group.zipf_alpha) for k in range(1, ng + 1)]
+        )
+        self._group_weights = weights / weights.sum()
+
+        # Fixed prefix size (L1 + L1.5)
+        self._fixed_prefix = config.cache.layer1_tokens + config.cache.layer1_5_tokens
 
         # Pre-compute bias-corrected new_tokens params: shift mu by log(bias)
         # to compensate for right-tail truncation at context limit
@@ -88,20 +98,34 @@ class SessionSynthesizer:
         p = cfg.base_probability * (1.0 + (cfg.context_scaling - 1.0) * ratio)
         return bool(self._rng.random() < p)
 
-    def synthesize_session(self) -> SynthesizedSession:
-        """Generate a single multi-turn session."""
+    def synthesize_session(
+        self, inject_restart: bool = False
+    ) -> SynthesizedSession:
+        """Generate a single multi-turn session.
+
+        If inject_restart is True, one turn mid-session gets a very long delay
+        (10-60 min) modeling a user who pauses and returns later.
+        """
         session_index = self._next_session_index()
         rand_bytes = self._rng.bytes(16)
         session_id = f"sess-{uuid.UUID(bytes=rand_bytes).hex[:12]}"
         turns: list[SynthesizedTurn] = []
 
-        # Turn 0: sample initial context
-        initial_ctx = int(
-            sample_lognormal(self._config.initial_context, self._rng, size=1)[0]
+        # Pick turn for restart pause (if applicable)
+        restart_at_turn = int(self._rng.integers(3, 12)) if inject_restart else -1
+
+        # Assign group via Zipf distribution
+        group_id = int(
+            self._rng.choice(self._config.group.num_groups, p=self._group_weights)
         )
-        layer1_tokens = self._config.cache.layer1_tokens
+
+        # Turn 0: derive initial_context = L1 + L1.5 + sampled L2
+        l2_tokens = int(
+            sample_lognormal(self._config.cache.layer2, self._rng, size=1)[0]
+        )
+        l2_tokens = max(l2_tokens, 1)
+        initial_ctx = self._fixed_prefix + l2_tokens
         initial_ctx = max(initial_ctx, self._config.system_prompt_tokens + 1)
-        initial_ctx = max(initial_ctx, layer1_tokens + 1)
         initial_ctx = min(initial_ctx, self._config.max_prompt_tokens)
 
         output_len = int(
@@ -115,7 +139,10 @@ class SessionSynthesizer:
 
         timestamp_ms = 0.0
         hash_ids = self._allocator.turn_hash_ids(
-            session_index, input_length=initial_ctx, prev_session_ids=None
+            session_index,
+            group_id=group_id,
+            input_length=initial_ctx,
+            prev_session_ids=None,
         )
 
         turns.append(
@@ -136,12 +163,22 @@ class SessionSynthesizer:
         turn_idx = 1
         end_reason = SessionEndReason.FORCED_RETIRE
         while True:
-            # 1. Sample delay
-            delay_ms = float(
-                sample_mixture_delay(self._config.inter_turn_delay, self._rng, size=1)[
-                    0
-                ]
-            )
+            # 1. Sample delay (or inject restart pause)
+            if turn_idx == restart_at_turn:
+                # Restart pause: lognormal ~5-20 min
+                restart_params = LognormalParams(mean=600_000, median=300_000)
+                delay_ms = float(
+                    sample_lognormal(restart_params, self._rng, size=1)[0]
+                )
+            else:
+                delay_ms = float(
+                    sample_mixture_delay(
+                        self._config.inter_turn_delay, self._rng, size=1
+                    )[0]
+                )
+                # Scale delay down as context fills up (deeper in session = more agentic)
+                context_ratio = prev_input / self._config.max_prompt_tokens
+                delay_ms *= max(0.2, 1.0 - 0.8 * context_ratio)
             timestamp_ms += delay_ms
 
             # 2. Sample new tokens (bias-corrected for truncation)
@@ -177,6 +214,7 @@ class SessionSynthesizer:
             prev_session = self._allocator.extract_session_ids(turns[-1].hash_ids)
             hash_ids = self._allocator.turn_hash_ids(
                 session_index,
+                group_id=group_id,
                 input_length=input_length,
                 prev_session_ids=prev_session,
             )
@@ -198,9 +236,28 @@ class SessionSynthesizer:
             turn_idx += 1
 
         return SynthesizedSession(
-            session_id=session_id, turns=turns, end_reason=end_reason
+            session_id=session_id,
+            group_id=group_id,
+            turns=turns,
+            end_reason=end_reason,
         )
 
     def synthesize_sessions(self, num_sessions: int) -> list[SynthesizedSession]:
-        """Generate multiple sessions."""
-        return [self.synthesize_session() for _ in range(num_sessions)]
+        """Generate multiple sessions with optional restart pauses.
+
+        Restart probability decreases linearly from restart_fraction to 0
+        so early sessions are more likely to pause and resume (modeling
+        returning users), while late sessions run without pausing.
+        """
+        restart_frac = self._config.restart_fraction
+        cutoff = 0.75
+        sessions: list[SynthesizedSession] = []
+        for i in range(num_sessions):
+            progress = i / max(1, num_sessions - 1)
+            if progress >= cutoff:
+                p_restart = 0.0
+            else:
+                p_restart = restart_frac * (1.0 - progress / cutoff)
+            inject = float(self._rng.random()) < p_restart
+            sessions.append(self.synthesize_session(inject_restart=inject))
+        return sessions

@@ -125,20 +125,42 @@ class ResetConfig(AIPerfBaseModel):
 
 
 class CacheLayerConfig(AIPerfBaseModel):
-    """Token sizes for the KV cache prefix model."""
+    """Token sizes for the KV cache prefix model.
+
+    L1: Global (tools + system prompt), shared by all sessions.
+    L1.5: Group-shared (CLAUDE.md, repo context), shared within a group.
+    L2: Session-specific prefix (initial files), sampled per session.
+    L3: Conversation history, grows turn-by-turn (not configured here).
+    """
 
     layer1_tokens: int = Field(
         default=32_000,
         ge=0,
-        description="Tools + system prompt tokens (globally cached)",
+        description="L1: tools + system prompt tokens (globally cached)",
+    )
+    layer1_5_tokens: int = Field(
+        default=20_000,
+        ge=0,
+        description="L1.5: group-shared prefix tokens (CLAUDE.md, repo context)",
+    )
+    layer2: LognormalParams = Field(
+        default_factory=lambda: LognormalParams(mean=10_000, median=5_000),
+        description="L2: session-specific prefix token distribution",
     )
     block_size: int = Field(
         default=512, ge=1, description="KV cache page size in tokens"
     )
 
 
-def _default_initial_context() -> LognormalParams:
-    return LognormalParams(mean=50_000, median=40_000)
+class GroupConfig(AIPerfBaseModel):
+    """Group assignment for L1.5 cache sharing via Zipf distribution."""
+
+    num_groups: int = Field(
+        default=50, ge=1, description="Number of distinct groups (repos/projects)"
+    )
+    zipf_alpha: float = Field(
+        default=1.2, ge=0.0, description="Zipf skew parameter (higher = more skewed)"
+    )
 
 
 def _default_new_tokens_per_turn() -> LognormalParams:
@@ -150,14 +172,13 @@ def _default_generation_length() -> LognormalParams:
 
 
 class SessionDistributionConfig(AIPerfBaseModel):
-    """Full configuration for synthesizing Claude Code sessions."""
+    """Full configuration for synthesizing Claude Code sessions.
+
+    initial_context is derived: L1 + L1.5 + sampled L2. Not directly configured.
+    """
 
     system_prompt_tokens: int = Field(
         default=8_000, ge=0, description="System prompt token count"
-    )
-    initial_context: LognormalParams = Field(
-        default_factory=_default_initial_context,
-        description="Initial context token distribution",
     )
     new_tokens_per_turn: LognormalParams = Field(
         default_factory=_default_new_tokens_per_turn,
@@ -184,6 +205,16 @@ class SessionDistributionConfig(AIPerfBaseModel):
     cache: CacheLayerConfig = Field(
         default_factory=CacheLayerConfig, description="Cache layer config"
     )
+    group: GroupConfig = Field(
+        default_factory=GroupConfig,
+        description="Group assignment config for L1.5 sharing",
+    )
+    restart_fraction: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of sessions that are restarts of earlier sessions (share L2 prefix)",
+    )
 
 
 class SynthesizedTurn(AIPerfBaseModel):
@@ -208,6 +239,7 @@ class SynthesizedSession(AIPerfBaseModel):
     """A complete synthesized multi-turn session."""
 
     session_id: str = Field(description="Unique session identifier")
+    group_id: int = Field(description="Group index for L1.5 cache sharing")
     turns: list[SynthesizedTurn] = Field(description="Ordered list of turns")
     end_reason: SessionEndReason = Field(description="Why the session ended")
 

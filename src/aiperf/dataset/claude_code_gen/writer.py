@@ -36,10 +36,18 @@ from aiperf.dataset.claude_code_gen.report import (
 
 def _config_summary(config: SessionDistributionConfig) -> dict[str, float | int]:
     """Flatten config into a readable dict of key parameters."""
+    l1 = config.cache.layer1_tokens
+    l15 = config.cache.layer1_5_tokens
     return {
         "system_prompt_tokens": config.system_prompt_tokens,
-        "initial_context_mean": config.initial_context.mean,
-        "initial_context_median": config.initial_context.median,
+        "initial_context_mean": l1 + l15 + config.cache.layer2.mean,
+        "initial_context_median": l1 + l15 + config.cache.layer2.median,
+        "layer1_tokens": l1,
+        "layer1_5_tokens": l15,
+        "layer2_mean": config.cache.layer2.mean,
+        "layer2_median": config.cache.layer2.median,
+        "num_groups": config.group.num_groups,
+        "zipf_alpha": config.group.zipf_alpha,
         "new_tokens_per_turn_mean": config.new_tokens_per_turn.mean,
         "new_tokens_per_turn_median": config.new_tokens_per_turn.median,
         "generation_length_mean": config.generation_length.mean,
@@ -209,6 +217,7 @@ def _write_jsonl(
                 }
                 if turn.turn_index == 0:
                     row["timestamp"] = round(turn.timestamp_ms, 1)
+                    row["group_id"] = session.group_id
                 else:
                     row["delay"] = round(turn.delay_ms, 1)
                 f.write(orjson.dumps(row))
@@ -251,10 +260,12 @@ def compute_quality_report(
     observed_vs_target: dict[str, QualityMetric] = {}
 
     if all_initial_ctx:
+        l1 = config.cache.layer1_tokens
+        l15 = config.cache.layer1_5_tokens
         observed_vs_target["initial_context"] = _build_quality_metric(
             np.array(all_initial_ctx),
-            target_mean=config.initial_context.mean,
-            target_median=config.initial_context.median,
+            target_mean=l1 + l15 + config.cache.layer2.mean,
+            target_median=l1 + l15 + config.cache.layer2.median,
         )
 
     if all_output_lens:

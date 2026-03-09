@@ -14,6 +14,7 @@ from aiperf.dataset.claude_code_gen.config_loader import load_config
 from aiperf.dataset.claude_code_gen.distributions import lognormal_from_mean_median
 from aiperf.dataset.claude_code_gen.models import (
     CacheLayerConfig,
+    GroupConfig,
     ResetConfig,
     SessionDistributionConfig,
 )
@@ -157,12 +158,17 @@ class TestRoundtrip:
         and input_length are consistent for parallel_convert."""
         config = SessionDistributionConfig(
             system_prompt_tokens=100,
-            initial_context=lognormal_from_mean_median(mean=500, median=400),
             new_tokens_per_turn=lognormal_from_mean_median(mean=200, median=100),
             generation_length=lognormal_from_mean_median(mean=50, median=30),
             reset=ResetConfig(base_probability=0.0, context_scaling=1.0),
             max_prompt_tokens=3_000,
-            cache=CacheLayerConfig(layer1_tokens=200, block_size=64),
+            cache=CacheLayerConfig(
+                layer1_tokens=100,
+                layer1_5_tokens=50,
+                layer2=lognormal_from_mean_median(mean=200, median=150),
+                block_size=64,
+            ),
+            group=GroupConfig(num_groups=5, zipf_alpha=1.2),
         )
         synth = SessionSynthesizer(config, seed=99)
         sessions = synth.synthesize_sessions(1)
@@ -209,6 +215,63 @@ class TestRoundtrip:
 
             # Add previous output for next turn's cumulative
             cumulative_isl += row["output_length"]
+
+    def test_jsonl_group_id_roundtrip(self, tmp_path: Path) -> None:
+        """group_id survives synthesize -> write -> reload cycle."""
+        config = SessionDistributionConfig()
+        synth = SessionSynthesizer(config, seed=42)
+        sessions = synth.synthesize_sessions(20)
+
+        run_dir = tmp_path / "run"
+        jsonl_path, _, _ = write_dataset(
+            sessions, run_dir, config, seed=42, config_name="default"
+        )
+
+        expected = {s.session_id: s.group_id for s in sessions}
+        found = {}
+        with jsonl_path.open("rb") as f:
+            for line in f:
+                data = orjson.loads(line.strip())
+                if "group_id" in data:
+                    found[data["session_id"]] = data["group_id"]
+
+        assert found == expected
+
+    def test_l15_sharing_in_written_dataset(self, tmp_path: Path) -> None:
+        """Sessions in the same group must share L1.5 hash IDs in the JSONL output."""
+        config = SessionDistributionConfig()
+        synth = SessionSynthesizer(config, seed=42)
+        sessions = synth.synthesize_sessions(50)
+        alloc = synth.allocator
+        l1 = alloc.l1_blocks
+        l15 = alloc.l15_blocks
+
+        run_dir = tmp_path / "run"
+        jsonl_path, _, _ = write_dataset(
+            sessions, run_dir, config, seed=42, config_name="default"
+        )
+
+        # Collect turn-0 hash_ids and group_id per session from JSONL
+        turn0_data: dict[str, dict] = {}
+        with jsonl_path.open("rb") as f:
+            for line in f:
+                data = orjson.loads(line.strip())
+                if "group_id" in data:
+                    turn0_data[data["session_id"]] = data
+
+        # Group by group_id and verify L1.5 blocks match within group
+        by_group: dict[int, list[list[int]]] = {}
+        for info in turn0_data.values():
+            gid = info["group_id"]
+            ids = info["hash_ids"]
+            if len(ids) > l1 + l15:
+                by_group.setdefault(gid, []).append(ids[l1 : l1 + l15])
+
+        for gid, l15_lists in by_group.items():
+            if len(l15_lists) < 2:
+                continue
+            for other in l15_lists[1:]:
+                assert other == l15_lists[0], f"L1.5 mismatch in group {gid}"
 
     def test_manifest_can_be_used_as_config(self, tmp_path: Path) -> None:
         """Verify that a manifest.json from a run can be loaded as config."""

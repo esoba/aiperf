@@ -10,6 +10,7 @@ import pytest
 from aiperf.dataset.claude_code_gen.distributions import lognormal_from_mean_median
 from aiperf.dataset.claude_code_gen.models import (
     CacheLayerConfig,
+    GroupConfig,
     MixtureDelayConfig,
     ResetConfig,
     SessionDistributionConfig,
@@ -27,7 +28,6 @@ def small_config() -> SessionDistributionConfig:
     """Small config for fast tests - low max_prompt_tokens to force resets."""
     return SessionDistributionConfig(
         system_prompt_tokens=100,
-        initial_context=lognormal_from_mean_median(mean=500, median=400),
         new_tokens_per_turn=lognormal_from_mean_median(mean=200, median=100),
         generation_length=lognormal_from_mean_median(mean=50, median=30),
         inter_turn_delay=MixtureDelayConfig(
@@ -37,5 +37,11 @@ def small_config() -> SessionDistributionConfig:
         ),
         reset=ResetConfig(base_probability=0.02, context_scaling=2.0),
         max_prompt_tokens=5_000,
-        cache=CacheLayerConfig(layer1_tokens=200, block_size=64),
+        cache=CacheLayerConfig(
+            layer1_tokens=100,
+            layer1_5_tokens=50,
+            layer2=lognormal_from_mean_median(mean=200, median=150),
+            block_size=64,
+        ),
+        group=GroupConfig(num_groups=5, zipf_alpha=1.2),
     )

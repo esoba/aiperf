@@ -109,6 +109,69 @@ class TestWriteDataset:
                 )
 
 
+class TestGroupIdInJsonl:
+    def test_turn0_rows_have_group_id(
+        self, tmp_path: Path, sessions, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Turn 0 rows must include group_id."""
+        run_dir = tmp_path / "run"
+        write_dataset(sessions, run_dir, coding_config, seed=42)
+        jsonl = run_dir / "dataset.jsonl"
+        turn0_count = 0
+        with jsonl.open("rb") as f:
+            for line in f:
+                data = orjson.loads(line.strip())
+                if "timestamp" in data:
+                    assert "group_id" in data
+                    turn0_count += 1
+        assert turn0_count == 10
+
+    def test_group_id_matches_session(
+        self, tmp_path: Path, coding_config: SessionDistributionConfig
+    ) -> None:
+        """group_id in JSONL must match the synthesized session's group_id."""
+        synth = SessionSynthesizer(coding_config, seed=42)
+        sessions = synth.synthesize_sessions(10)
+        run_dir = tmp_path / "run"
+        write_dataset(sessions, run_dir, coding_config, seed=42)
+        jsonl = run_dir / "dataset.jsonl"
+
+        expected_group_ids = {s.session_id: s.group_id for s in sessions}
+        with jsonl.open("rb") as f:
+            for line in f:
+                data = orjson.loads(line.strip())
+                if "group_id" in data:
+                    sid = data["session_id"]
+                    assert data["group_id"] == expected_group_ids[sid]
+
+    def test_non_turn0_rows_have_no_group_id(
+        self, tmp_path: Path, sessions, coding_config: SessionDistributionConfig
+    ) -> None:
+        """Only turn 0 rows (with timestamp) should have group_id."""
+        run_dir = tmp_path / "run"
+        write_dataset(sessions, run_dir, coding_config, seed=42)
+        jsonl = run_dir / "dataset.jsonl"
+        with jsonl.open("rb") as f:
+            for line in f:
+                data = orjson.loads(line.strip())
+                if "delay" in data:
+                    assert "group_id" not in data
+
+    def test_group_ids_in_valid_range(
+        self, tmp_path: Path, sessions, coding_config: SessionDistributionConfig
+    ) -> None:
+        """All group_id values must be in [0, num_groups)."""
+        run_dir = tmp_path / "run"
+        write_dataset(sessions, run_dir, coding_config, seed=42)
+        jsonl = run_dir / "dataset.jsonl"
+        num_groups = coding_config.group.num_groups
+        with jsonl.open("rb") as f:
+            for line in f:
+                data = orjson.loads(line.strip())
+                if "group_id" in data:
+                    assert 0 <= data["group_id"] < num_groups
+
+
 class TestQualityReport:
     def test_report_has_expected_metrics(
         self, sessions, coding_config: SessionDistributionConfig
@@ -136,7 +199,7 @@ class TestQualityReport:
     ) -> None:
         report = compute_quality_report(sessions, coding_config)
         assert report.config_summary["system_prompt_tokens"] == 8000
-        assert report.config_summary["initial_context_mean"] == 50000
+        assert report.config_summary["initial_context_mean"] == 62000
         assert report.config_summary["max_prompt_tokens"] == 200000
 
     def test_report_has_session_end_stats(
@@ -177,8 +240,35 @@ class TestQualityReport:
     ) -> None:
         report = compute_quality_report(sessions, coding_config)
         ic = report.observed_vs_target["initial_context"]
-        assert ic.target_mean == coding_config.initial_context.mean
-        assert ic.target_median == coding_config.initial_context.median
+        cache = coding_config.cache
+        assert (
+            ic.target_mean
+            == cache.layer1_tokens + cache.layer1_5_tokens + cache.layer2.mean
+        )
+        assert (
+            ic.target_median
+            == cache.layer1_tokens + cache.layer1_5_tokens + cache.layer2.median
+        )
         delay = report.observed_vs_target["inter_turn_delay_ms"]
         assert delay.target_mean is None
         assert delay.target_median is None
+
+    def test_config_summary_has_layer_fields(
+        self, sessions, coding_config: SessionDistributionConfig
+    ) -> None:
+        report = compute_quality_report(sessions, coding_config)
+        cs = report.config_summary
+        assert cs["layer1_tokens"] == coding_config.cache.layer1_tokens
+        assert cs["layer1_5_tokens"] == coding_config.cache.layer1_5_tokens
+        assert cs["layer2_mean"] == coding_config.cache.layer2.mean
+        assert cs["num_groups"] == coding_config.group.num_groups
+        assert cs["zipf_alpha"] == coding_config.group.zipf_alpha
+
+    def test_config_summary_initial_context_is_derived(
+        self, sessions, coding_config: SessionDistributionConfig
+    ) -> None:
+        """initial_context_mean in config_summary must equal L1 + L1.5 + L2.mean."""
+        report = compute_quality_report(sessions, coding_config)
+        cache = coding_config.cache
+        expected = cache.layer1_tokens + cache.layer1_5_tokens + cache.layer2.mean
+        assert report.config_summary["initial_context_mean"] == expected

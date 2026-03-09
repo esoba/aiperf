@@ -18,8 +18,9 @@ def load_sessions(jsonl_path: Path) -> list[dict]:
     JSONL rows contain incremental input_length (new tokens per turn).
     This function reconstructs cumulative_input_length for each turn
     so the simulation can track total ISL in-flight.
+    Also extracts group_id from turn 0 for L1.5 cache deduplication.
     """
-    sessions: dict[str, list[dict]] = {}
+    sessions: dict[str, dict] = {}
     with open(jsonl_path, "rb") as f:
         for line in f:
             line = line.strip()
@@ -31,17 +32,30 @@ def load_sessions(jsonl_path: Path) -> list[dict]:
                 "input_length": row["input_length"],
                 "output_length": row["output_length"],
                 "delay_ms": row.get("delay", row.get("timestamp", 0.0)),
+                "hash_ids": row.get("hash_ids", []),
             }
-            sessions.setdefault(sid, []).append(turn)
+            if sid not in sessions:
+                sessions[sid] = {
+                    "turns": [],
+                    "group_id": row.get("group_id", 0),
+                }
+            sessions[sid]["turns"].append(turn)
 
     result = []
-    for sid, turns in sessions.items():
+    for sid, data in sessions.items():
+        turns = data["turns"]
         cumulative = 0
         for turn in turns:
             cumulative += turn["input_length"]
             turn["cumulative_input_length"] = cumulative
             cumulative += turn["output_length"]
-        result.append({"session_id": sid, "turns": turns})
+        result.append(
+            {
+                "session_id": sid,
+                "group_id": data["group_id"],
+                "turns": turns,
+            }
+        )
     return result
 
 
@@ -75,6 +89,8 @@ _HTML_TEMPLATE = string.Template(r"""<!DOCTYPE html>
   --blue-dim: rgba(77, 166, 255, 0.3);
   --gray: #555;
   --orange: #e89b00;
+  --red: #ff4444;
+  --red-dim: rgba(255, 68, 68, 0.3);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -202,6 +218,20 @@ svg { display: block; }
   z-index: 100;
   line-height: 1.5;
 }
+.kv-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--surface);
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.kv-stats span { color: var(--text); font-weight: 600; }
+.kv-stats .overflow { color: var(--red); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -235,11 +265,34 @@ svg { display: block; }
   </div>
   <button id="run-btn">Run</button>
 </div>
+<div class="controls">
+  <div class="control-group">
+    <label>KV Bytes/Token:</label>
+    <input id="kv-bytes-per-token" type="number" value="35136" min="1">
+  </div>
+  <div class="control-group">
+    <label>GPU Count:</label>
+    <input id="gpu-count" type="number" value="16" min="1">
+  </div>
+  <div class="control-group">
+    <label>KV Cache per GPU (GB):</label>
+    <input id="kv-cache-per-gpu-gb" type="number" value="149" min="1" step="1">
+  </div>
+  <div class="control-group">
+    <label>Block Size (tokens):</label>
+    <input id="block-size" type="number" value="512" min="1">
+  </div>
+</div>
 <div class="computed-stats" id="computed-stats"></div>
 
 <div class="stats" id="stats"></div>
 <div class="chart-container"><h2>Active Requests Over Time</h2><div id="chart-requests"></div></div>
 <div class="chart-container"><h2>Input Tokens In-Flight</h2><div id="chart-tokens"></div></div>
+<div class="kv-stats" id="kv-stats"></div>
+<div class="chart-container"><h2>KV Cache Memory Pressure</h2><div id="chart-kv-cache"></div></div>
+<div class="kv-stats" id="block-stats"></div>
+<div class="chart-container"><h2>Unique KV Cache Blocks</h2><div id="chart-unique-blocks"></div></div>
+<div class="chart-container"><h2>Eviction Misses (blocks needed but evicted)</h2><div id="chart-eviction-misses"></div></div>
 <div class="chart-container">
   <h2>Session Gantt (by concurrency slot)</h2>
   <div class="gantt-legend">
@@ -256,7 +309,7 @@ svg { display: block; }
 <script>
 const SESSIONS = $SESSIONS_JSON;
 
-function simulate(sessions, concurrency, cacheHitRate, prefillWorkers, dpWorkers, perWorkerTps, decodeTps) {
+function simulate(sessions, concurrency, cacheHitRate, prefillWorkers, dpWorkers, perWorkerTps, decodeTps, kvBytesPerToken, gpuKvCapacityGb, l1Tokens, l15Tokens) {
   const effectivePrefillWorkers = prefillWorkers * dpWorkers;
   const prefillWorkerFreeAt = new Float64Array(effectivePrefillWorkers);
 
@@ -318,6 +371,45 @@ function simulate(sessions, concurrency, cacheHitRate, prefillWorkers, dpWorkers
 
   let activeCount = 0;
   let nextSession = 0;
+
+  // KV cache tracking: counts tokens for ALL resident sessions (active + ended-but-not-evicted)
+  let cachedTokens = 0;
+  let aliveSessions = 0;
+  const sessionCacheTokens = new Float64Array(sessions.length);
+  const sessionGroupId = new Int32Array(sessions.length);
+  const activeGroups = {};
+  sessions.forEach((s, i) => { sessionGroupId[i] = s.group_id || 0; });
+
+  // Unique block tracking: refcounted global map + per-session block sets
+  const blockRefCount = new Map();
+  const sessionBlocks = sessions.map(() => new Set());
+
+  // LRU eviction: one big blob of memory, evict oldest ended sessions when full
+  const lruQueue = [];  // sIdx of ended sessions, oldest first
+  let evictionCount = 0;
+  let evictionMissBlocks = 0;  // blocks needed but already evicted (cumulative)
+  const evictedBlocks = new Set();  // block IDs removed from cache by eviction
+  const totalCapacityTokens = gpuKvCapacityGb * 1e9 / kvBytesPerToken;
+
+  function evictLRU() {
+    while (cachedTokens > totalCapacityTokens && lruQueue.length > 0) {
+      const victimIdx = lruQueue.shift();
+      if (sessionCacheTokens[victimIdx] === 0) continue;
+      cachedTokens -= sessionCacheTokens[victimIdx];
+      sessionCacheTokens[victimIdx] = 0;
+      for (const bid of sessionBlocks[victimIdx]) {
+        const rc = blockRefCount.get(bid) - 1;
+        if (rc <= 0) {
+          blockRefCount.delete(bid);
+          evictedBlocks.add(bid);
+        } else {
+          blockRefCount.set(bid, rc);
+        }
+      }
+      sessionBlocks[victimIdx].clear();
+      evictionCount++;
+    }
+  }
 
   function startSession(sIdx, time, inheritSlot) {
     sessionStates[sIdx].startTime = time;
@@ -383,15 +475,56 @@ function simulate(sessions, concurrency, cacheHitRate, prefillWorkers, dpWorkers
       const turn = sessions[sIdx].turns[tIdx];
       inputTokens += turn.cumulative_input_length;
       outputTokens += turn.output_length;
+
+      // Cache: allocate blocks for this turn's input
+      const prevCache = sessionCacheTokens[sIdx];
+      sessionCacheTokens[sIdx] = turn.cumulative_input_length;
+      cachedTokens += (sessionCacheTokens[sIdx] - prevCache);
+      if (tIdx === 0) {
+        aliveSessions++;
+        const gid = sessionGroupId[sIdx];
+        activeGroups[gid] = (activeGroups[gid] || 0) + 1;
+      }
+
+      // Unique blocks: add this turn's hash_ids and detect eviction misses
+      const hids = turn.hash_ids;
+      if (hids) {
+        const sBlocks = sessionBlocks[sIdx];
+        for (let i = 0; i < hids.length; i++) {
+          const bid = hids[i];
+          if (!sBlocks.has(bid)) {
+            if (evictedBlocks.has(bid)) {
+              evictionMissBlocks++;
+              evictedBlocks.delete(bid);
+            }
+            sBlocks.add(bid);
+            blockRefCount.set(bid, (blockRefCount.get(bid) || 0) + 1);
+          }
+        }
+      }
+
+      // Evict LRU ended sessions if over capacity
+      evictLRU();
     } else if (type === 'request_end') {
       activeRequests--;
       const turn = sessions[sIdx].turns[tIdx];
       inputTokens -= turn.cumulative_input_length;
       outputTokens -= turn.output_length;
 
+      // Cache: output tokens now in KV cache too
+      cachedTokens += turn.output_length;
+      sessionCacheTokens[sIdx] += turn.output_length;
+
       if (tIdx + 1 < sessions[sIdx].turns.length) {
         startTurn(sIdx, tIdx + 1, time);
       } else {
+        // Session ends: keep blocks resident, add to LRU for lazy eviction
+        aliveSessions--;
+        const gid = sessionGroupId[sIdx];
+        activeGroups[gid]--;
+        if (activeGroups[gid] <= 0) delete activeGroups[gid];
+        lruQueue.push(sIdx);
+
         sessionStates[sIdx].endTime = time;
         const freedSlot = sessionStates[sIdx].slot;
         releaseSlot(sIdx, time);
@@ -404,6 +537,12 @@ function simulate(sessions, concurrency, cacheHitRate, prefillWorkers, dpWorkers
       }
     }
 
+    // L1/L1.5 deduplication for unique cache footprint
+    const l1Dedup = Math.max(0, aliveSessions - 1) * l1Tokens;
+    const l15Dedup = Object.values(activeGroups).reduce((sum, cnt) => sum + Math.max(0, cnt - 1) * l15Tokens, 0);
+    const uniqueCached = Math.max(0, cachedTokens - l1Dedup - l15Dedup);
+    const kvCacheGb = uniqueCached * kvBytesPerToken / 1e9;
+
     timeSeriesRaw.push({
       time_s: time / 1000,
       active_requests: activeRequests,
@@ -411,6 +550,12 @@ function simulate(sessions, concurrency, cacheHitRate, prefillWorkers, dpWorkers
       output_tokens: outputTokens,
       queued: sessions.length - nextSession,
       active_sessions: activeCount,
+      kv_cache_gb: kvCacheGb,
+      unique_cached_tokens: uniqueCached,
+      alive_sessions: aliveSessions,
+      unique_blocks: blockRefCount.size,
+      eviction_count: evictionCount,
+      eviction_miss_blocks: evictionMissBlocks,
     });
   }
 
@@ -442,7 +587,7 @@ function simulate(sessions, concurrency, cacheHitRate, prefillWorkers, dpWorkers
   });
   const avgTtft = turnCount > 0 ? ttftSum / turnCount : 0;
 
-  return { timeSeries, sessionStates, maxTime, totalPrefillMs, totalDecodeMs, totalWaitMs, avgTtft, turnCount };
+  return { timeSeries, sessionStates, maxTime, totalPrefillMs, totalDecodeMs, totalWaitMs, avgTtft, turnCount, evictionCount, evictionMissBlocks: timeSeriesRaw.length > 0 ? timeSeriesRaw[timeSeriesRaw.length - 1].eviction_miss_blocks : 0 };
 }
 
 function formatDuration(ms) {
@@ -467,8 +612,15 @@ function updateComputedStats() {
   const tps = +document.getElementById('per-worker-tps').value;
   const eff = pw * dp;
   const sysTps = eff * tps;
+  const kvBytesPerToken = +document.getElementById('kv-bytes-per-token').value;
+  const gpuCount = +document.getElementById('gpu-count').value;
+  const kvPerGpuGb = +document.getElementById('kv-cache-per-gpu-gb').value;
+  const totalKvGb = gpuCount * kvPerGpuGb;
+  const totalKvTokens = totalKvGb * 1e9 / kvBytesPerToken;
   document.getElementById('computed-stats').innerHTML =
-    `Effective prefill workers: <span>${eff}</span> &nbsp;|&nbsp; System prefill TPS: <span>${formatNumber(sysTps)}</span> tok/s`;
+    `Effective prefill workers: <span>${eff}</span> &nbsp;|&nbsp; ` +
+    `System prefill TPS: <span>${formatNumber(sysTps)}</span> tok/s &nbsp;|&nbsp; ` +
+    `Total KV capacity: <span>${totalKvGb.toFixed(0)} GB</span> (${gpuCount} GPUs × ${kvPerGpuGb} GB) ~<span>${formatNumber(Math.round(totalKvTokens))}</span> tokens`;
 }
 
 function runSimulation() {
@@ -478,11 +630,19 @@ function runSimulation() {
   const dpWorkers = +document.getElementById('dp-workers').value;
   const perWorkerTps = +document.getElementById('per-worker-tps').value;
   const decodeTps = +document.getElementById('decode-tps').value;
+  const kvBytesPerToken = +document.getElementById('kv-bytes-per-token').value;
+  const gpuCount = +document.getElementById('gpu-count').value;
+  const gpuKvCapacityGb = gpuCount * (+document.getElementById('kv-cache-per-gpu-gb').value);
+
+  // Derive L1/L1.5 from dataset metadata (use first session's group structure)
+  // For now use configurable defaults matching Kimi-K2 / Claude Code defaults
+  const l1Tokens = 32000;
+  const l15Tokens = 20000;
 
   updateComputedStats();
 
-  const { timeSeries, sessionStates, maxTime, totalPrefillMs, totalDecodeMs, totalWaitMs, avgTtft, turnCount } =
-    simulate(SESSIONS, concurrency, cacheHitRate, prefillWorkers, dpWorkers, perWorkerTps, decodeTps);
+  const { timeSeries, sessionStates, maxTime, totalPrefillMs, totalDecodeMs, totalWaitMs, avgTtft, turnCount, evictionCount, evictionMissBlocks } =
+    simulate(SESSIONS, concurrency, cacheHitRate, prefillWorkers, dpWorkers, perWorkerTps, decodeTps, kvBytesPerToken, gpuKvCapacityGb, l1Tokens, l15Tokens);
 
   const peakRequests = d3.max(timeSeries, d => d.active_requests);
   const peakISL = d3.max(timeSeries, d => d.input_tokens);
@@ -497,12 +657,45 @@ function runSimulation() {
     ` / decode <span>${formatDuration(totalDecodeMs)}</span>` +
     ` / wait <span>${formatDuration(totalWaitMs)}</span>`;
 
-  drawAreaChart('#chart-requests', timeSeries, 'active_requests', 'Requests', '--green', concurrency);
-  drawAreaChart('#chart-tokens', timeSeries, 'input_tokens', 'Tokens', '--blue', null);
+  // KV cache stats
+  const peakKvGb = d3.max(timeSeries, d => d.kv_cache_gb) || 0;
+  const peakOverflowGb = Math.max(0, peakKvGb - gpuKvCapacityGb);
+  const overflowPoints = timeSeries.filter(d => d.kv_cache_gb > gpuKvCapacityGb);
+  const overflowPct = timeSeries.length > 0 ? (overflowPoints.length / timeSeries.length * 100) : 0;
+  const avgOverflowGb = overflowPoints.length > 0 ? d3.mean(overflowPoints, d => d.kv_cache_gb - gpuKvCapacityGb) : 0;
+
+  const blockSize = +document.getElementById('block-size').value;
+  const missTokens = evictionMissBlocks * blockSize;
+  const missGb = missTokens * kvBytesPerToken / 1e9;
+  const needsOverflow = evictionMissBlocks > 0;
+
+  document.getElementById('kv-stats').innerHTML =
+    `Total KV Capacity: <span>${gpuKvCapacityGb.toFixed(0)} GB</span>` +
+    ` &nbsp;|&nbsp; Peak KV Usage: <span>${peakKvGb.toFixed(1)} GB</span>` +
+    ` &nbsp;|&nbsp; LRU Evictions: <span>${evictionCount}</span>` +
+    ` &nbsp;|&nbsp; Eviction Misses: <span class="${needsOverflow ? 'overflow' : ''}">${formatNumber(evictionMissBlocks)} blocks</span>` +
+    ` (${missGb.toFixed(1)} GB / ${formatNumber(missTokens)} tokens)` +
+    ` &nbsp;|&nbsp; Overflow Needed: <span class="${needsOverflow ? 'overflow' : ''}">${needsOverflow ? 'YES' : 'NO'}</span>`;
+
+  // Unique blocks stats
+  const peakBlocks = d3.max(timeSeries, d => d.unique_blocks) || 0;
+  const peakBlocksGb = peakBlocks * blockSize * kvBytesPerToken / 1e9;
+  const blockCapacity = gpuKvCapacityGb * 1e9 / (kvBytesPerToken * blockSize);
+  document.getElementById('block-stats').innerHTML =
+    `Peak Unique Blocks: <span>${formatNumber(peakBlocks)}</span>` +
+    ` &nbsp;|&nbsp; Peak Block Memory: <span>${peakBlocksGb.toFixed(1)} GB</span>` +
+    ` &nbsp;|&nbsp; Block Capacity: <span>${formatNumber(Math.round(blockCapacity))}</span> blocks` +
+    ` &nbsp;|&nbsp; Block Size: <span>${blockSize}</span> tokens`;
+
+  drawAreaChart('#chart-requests', timeSeries, 'active_requests', 'Requests', '--green', concurrency, 'concurrency limit');
+  drawAreaChart('#chart-tokens', timeSeries, 'input_tokens', 'Tokens', '--blue', null, null);
+  drawKvCacheChart('#chart-kv-cache', timeSeries, gpuKvCapacityGb);
+  drawAreaChart('#chart-unique-blocks', timeSeries, 'unique_blocks', 'Blocks', '--green', blockCapacity, 'block capacity');
+  drawAreaChart('#chart-eviction-misses', timeSeries, 'eviction_miss_blocks', 'Miss Blocks', '--red', null, null);
   drawGantt('#chart-gantt', sessionStates, maxTime, concurrency);
 }
 
-function drawAreaChart(selector, data, field, label, colorVar, limitLine) {
+function drawAreaChart(selector, data, field, label, colorVar, limitLine, limitLabel) {
   const container = d3.select(selector);
   container.selectAll('*').remove();
 
@@ -551,7 +744,7 @@ function drawAreaChart(selector, data, field, label, colorVar, limitLine) {
     g.append('text')
       .attr('x', width - 4).attr('y', y(limitLine) - 4)
       .attr('text-anchor', 'end').attr('fill', color).attr('font-size', '10px').attr('opacity', 0.8)
-      .text('concurrency limit');
+      .text(limitLabel || '');
   }
 
   g.append('g').attr('class', 'axis').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x).ticks(8).tickFormat(d => d + 's'));
@@ -577,6 +770,109 @@ function drawAreaChart(selector, data, field, label, colorVar, limitLine) {
       .style('left', (event.clientX + 12) + 'px')
       .style('top', (event.clientY - 30) + 'px')
       .html(`Time: ${d.time_s.toFixed(1)}s<br>${label}: ${formatNumber(d[field])}`);
+  });
+  overlay.on('mouseleave', function() {
+    crosshairLine.style('display', 'none');
+    crosshairDot.style('display', 'none');
+    tooltip.style('display', 'none');
+  });
+}
+
+function drawKvCacheChart(selector, data, capacityGb) {
+  const container = d3.select(selector);
+  container.selectAll('*').remove();
+
+  const margin = { top: 10, right: 20, bottom: 30, left: 60 };
+  const width = container.node().clientWidth - margin.left - margin.right;
+  const height = 220;
+
+  const svg = container.append('svg')
+    .attr('width', width + margin.left + margin.right)
+    .attr('height', height + margin.top + margin.bottom);
+
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const x = d3.scaleLinear()
+    .domain(d3.extent(data, d => d.time_s))
+    .range([0, width]);
+
+  const yMax = d3.max(data, d => d.kv_cache_gb) || 1;
+  const y = d3.scaleLinear()
+    .domain([0, Math.max(yMax, capacityGb * 1.1) * 1.1])
+    .range([height, 0])
+    .nice();
+
+  const green = getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+  const red = getComputedStyle(document.documentElement).getPropertyValue('--red').trim();
+
+  // Area below capacity (green)
+  const areaBelow = d3.area()
+    .x(d => x(d.time_s))
+    .y0(height)
+    .y1(d => y(Math.min(d.kv_cache_gb, capacityGb)))
+    .curve(d3.curveStepAfter);
+
+  // Area above capacity (red overflow)
+  const areaAbove = d3.area()
+    .x(d => x(d.time_s))
+    .y0(y(capacityGb))
+    .y1(d => y(Math.max(d.kv_cache_gb, capacityGb)))
+    .curve(d3.curveStepAfter);
+
+  g.append('path').datum(data).attr('d', areaBelow).attr('fill', green + '40');
+  g.append('path').datum(data).attr('d', areaAbove).attr('fill', red + '40');
+
+  // Line
+  const line = d3.line()
+    .x(d => x(d.time_s))
+    .y(d => y(d.kv_cache_gb))
+    .curve(d3.curveStepAfter);
+
+  g.append('path').datum(data).attr('d', line)
+    .attr('fill', 'none').attr('stroke', green).attr('stroke-width', 1.5);
+
+  // Capacity line
+  g.append('line')
+    .attr('x1', 0).attr('x2', width)
+    .attr('y1', y(capacityGb)).attr('y2', y(capacityGb))
+    .attr('stroke', red).attr('stroke-dasharray', '6,4').attr('stroke-width', 1.5).attr('opacity', 0.8);
+
+  g.append('text')
+    .attr('x', width - 4).attr('y', y(capacityGb) - 4)
+    .attr('text-anchor', 'end').attr('fill', red).attr('font-size', '10px').attr('opacity', 0.9)
+    .text('Total KV capacity: ' + capacityGb.toFixed(0) + ' GB');
+
+  g.append('g').attr('class', 'axis').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x).ticks(8).tickFormat(d => d + 's'));
+  g.append('g').attr('class', 'axis').call(d3.axisLeft(y).ticks(5).tickFormat(d => d.toFixed(0) + ' GB'));
+
+  // Crosshair + tooltip
+  const crosshairLine = g.append('line').attr('class', 'crosshair').attr('y1', 0).attr('y2', height).style('display', 'none');
+  const crosshairDot = g.append('circle').attr('r', 4).attr('fill', green).style('display', 'none');
+
+  const overlay = g.append('rect')
+    .attr('width', width).attr('height', height).attr('fill', 'none').attr('pointer-events', 'all');
+
+  overlay.on('mousemove', function(event) {
+    const [mx] = d3.pointer(event, this);
+    const xVal = x.invert(mx);
+    const bisect = d3.bisector(d => d.time_s).left;
+    const idx = Math.min(bisect(data, xVal), data.length - 1);
+    const d = data[idx];
+    crosshairLine.attr('x1', x(d.time_s)).attr('x2', x(d.time_s)).style('display', null);
+    crosshairDot.attr('cx', x(d.time_s)).attr('cy', y(d.kv_cache_gb)).style('display', null);
+
+    const overflow = Math.max(0, d.kv_cache_gb - capacityGb);
+    tooltip.style('display', 'block')
+      .style('left', (event.clientX + 12) + 'px')
+      .style('top', (event.clientY - 30) + 'px')
+      .html('Time: ' + d.time_s.toFixed(1) + 's<br>' +
+        'KV Cache: ' + d.kv_cache_gb.toFixed(2) + ' GB<br>' +
+        'Capacity: ' + capacityGb.toFixed(1) + ' GB<br>' +
+        'G2 Overflow: ' + overflow.toFixed(2) + ' GB<br>' +
+        'Cached Tokens: ' + formatNumber(d.unique_cached_tokens) + '<br>' +
+        'Alive Sessions: ' + d.alive_sessions + '<br>' +
+        'Evictions: ' + d.eviction_count + '<br>' +
+        'Eviction Misses: ' + formatNumber(d.eviction_miss_blocks) + ' blocks');
   });
   overlay.on('mouseleave', function() {
     crosshairLine.style('display', 'none');
@@ -700,7 +996,7 @@ document.getElementById('cache-hit').addEventListener('input', function() {
 });
 
 // Update computed stats on any input change
-['prefill-workers', 'dp-workers', 'per-worker-tps'].forEach(id => {
+['prefill-workers', 'dp-workers', 'per-worker-tps', 'kv-bytes-per-token', 'gpu-count', 'kv-cache-per-gpu-gb', 'block-size'].forEach(id => {
   document.getElementById(id).addEventListener('input', updateComputedStats);
 });
 
