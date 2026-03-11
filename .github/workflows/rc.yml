@@ -162,9 +162,10 @@ jobs:
       - name: Validate wheel
         run: |
           uvx twine check wheel-out/dist/*.whl
-          uv pip install --system wheel-out/dist/*.whl
-          python -c "import aiperf; print(f'aiperf version: {aiperf.__version__}')"
-          aiperf --help
+          uv venv .venv-validate
+          uv pip install --python .venv-validate/bin/python wheel-out/dist/*.whl
+          .venv-validate/bin/python -c "import aiperf; print(f'aiperf version: {aiperf.__version__}')"
+          .venv-validate/bin/aiperf --help
 
       - name: Upload wheel to S3
         env:
