@@ -58,7 +58,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Total Usage Total Tokens](#total-usage-total-tokens)
   - [Usage Discrepancy Metrics](#usage-discrepancy-metrics)
     - [Usage Prompt Tokens Diff %](#usage-prompt-tokens-diff-)
-    - [Usage Completion Tokens Diff %](#usage-output-tokens-diff-)
+    - [Usage Completion Tokens Diff %](#usage-completion-tokens-diff-)
     - [Usage Reasoning Tokens Diff %](#usage-reasoning-tokens-diff-)
     - [Usage Discrepancy Count](#usage-discrepancy-count)
   - [OSL Mismatch Metrics](#osl-mismatch-metrics)
