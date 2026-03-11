@@ -94,20 +94,35 @@ jobs:
           pre-commit run --all-files
 
   unit-tests:
-    name: Unit Tests (temporarily skipped)
+    name: Unit Tests
     needs: [prepare-release]
-    runs-on: ubuntu-latest
+    runs-on: prod-aiperf-default-v1
     steps:
-      - name: Skip
-        run: echo "Temporarily skipped"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Run unit tests
+        run: make test-ci
 
   integration-tests:
-    name: Integration Tests (temporarily skipped)
+    name: Integration Tests
     needs: [prepare-release]
-    runs-on: ubuntu-latest
+    runs-on: prod-aiperf-default-v1
     steps:
-      - name: Skip
-        run: echo "Temporarily skipped"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: make first-time-setup PYTHON_VERSION=3.12
+
+      - name: Install mock server
+        run: make install-mock-server
+
+      - name: Run integration tests
+        run: make integration-tests-ci
 
   gpu-e2e-tests:
     name: GPU End-to-End Tests (skipped - no GPU runner)
@@ -414,7 +429,7 @@ jobs:
   trigger-gitlab-pipeline:
     name: Trigger GitLab Release Automation
     needs: [prepare-release, stage-container, stage-wheel]
-    runs-on: github-ci-runner01
+    runs-on: gitlab_ci_runners
     environment: automated-release
     steps:
       - name: Trigger GitLab RC pipeline
