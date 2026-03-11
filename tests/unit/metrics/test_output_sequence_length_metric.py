@@ -60,12 +60,73 @@ class TestOutputSequenceLengthMetric:
 
     def test_output_sequence_length_with_reasoning_tokens(self):
         """Test output sequence length includes reasoning tokens"""
-        record = create_record(output_tokens_per_response=10)
-        record.token_counts.reasoning = 5
+        record = create_record(output_tokens_per_response=10, reasoning_tokens=5)
 
         metric = OutputSequenceLengthMetric()
         result = metric.parse_record(record, MetricRecordDict())
         assert result == 15
+
+    def test_output_fallback_to_local(self):
+        """Test that OSL falls back to output_local when server output is None"""
+        record = create_record(
+            output_tokens_per_response=0,
+            output_local_tokens=20,
+        )
+        record.token_counts.output = None
+
+        metric = OutputSequenceLengthMetric()
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == 20
+
+    def test_reasoning_fallback_to_local(self):
+        """Test that OSL falls back to reasoning_local when server reasoning is None"""
+        record = create_record(
+            output_tokens_per_response=10,
+            reasoning_local_tokens=5,
+        )
+        # reasoning defaults to None, so reasoning_local should be used
+
+        metric = OutputSequenceLengthMetric()
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == 15
+
+    def test_both_fallback_to_local(self):
+        """Test that OSL falls back to both local values when server values are None"""
+        record = create_record(
+            output_tokens_per_response=0,
+            output_local_tokens=20,
+            reasoning_local_tokens=10,
+        )
+        record.token_counts.output = None
+
+        metric = OutputSequenceLengthMetric()
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == 30
+
+    def test_all_none_raises(self):
+        """Test that NoMetricValue is raised when all values are None"""
+        record = create_record(output_tokens_per_response=0)
+        record.token_counts.output = None
+        record.token_counts.output_local = None
+        record.token_counts.reasoning = None
+        record.token_counts.reasoning_local = None
+
+        metric = OutputSequenceLengthMetric()
+        with pytest.raises(NoMetricValue):
+            metric.parse_record(record, MetricRecordDict())
+
+    def test_server_preferred_over_local(self):
+        """Test that server values are preferred over local values"""
+        record = create_record(
+            output_tokens_per_response=30,
+            output_local_tokens=20,
+            reasoning_tokens=10,
+            reasoning_local_tokens=5,
+        )
+
+        metric = OutputSequenceLengthMetric()
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == 40  # 30 (server output) + 10 (server reasoning)
 
 
 class TestTotalOutputSequenceLengthMetric:

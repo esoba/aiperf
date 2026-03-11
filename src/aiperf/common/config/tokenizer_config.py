@@ -3,6 +3,7 @@
 
 from typing import Annotated
 
+from cyclopts import Parameter
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
@@ -57,6 +58,39 @@ class TokenizerConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = TokenizerDefaults.TRUST_REMOTE_CODE
+
+    tokenize_output: Annotated[
+        bool,
+        Field(
+            description="Enable client-side tokenization of output and reasoning tokens, "
+            "even when the server reports token counts. When enabled, locally computed "
+            "counts are stored alongside server-reported values for validation and comparison. "
+            "Without this flag, local output/reasoning tokenization only occurs as a "
+            "fallback when the server does not report counts.",
+        ),
+        CLIParameter(
+            name=("--tokenize-output"),
+            group=_CLI_GROUP,
+        ),
+    ] = False
+
+    tokenize_input: Annotated[
+        bool,
+        Field(
+            description="Enable client-side tokenization of input prompts for every request. "
+            "When enabled, locally computed input token counts are always stored "
+            "in token_counts.input_local. When disabled, client-side input tokenization "
+            "only occurs as a fallback when the server does not report prompt tokens. "
+            "Automatically set to False for user-provided input datasets "
+            "(--custom-dataset-type or --public-dataset) unless explicitly overridden.",
+        ),
+        Parameter(
+            name=("--tokenize-input",),
+            group=_CLI_GROUP,
+            show_env_var=False,
+            negative="--no-tokenize-input",
+        ),
+    ] = True
 
     resolved_names: Annotated[
         dict[str, str] | None,

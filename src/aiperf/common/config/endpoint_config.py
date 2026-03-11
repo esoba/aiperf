@@ -33,6 +33,18 @@ class EndpointConfig(BaseConfig):
     _CLI_GROUP = Groups.ENDPOINT
 
     @model_validator(mode="after")
+    def warn_deprecated_use_server_token_count(self) -> Self:
+        """Log deprecation warning when --use-server-token-count is True."""
+        if self.use_server_token_count:
+            _logger.warning(
+                "--use-server-token-count is deprecated and will be removed in a future release. "
+                "AIPerf now always computes both client-side and server-reported token counts. "
+                "Server counts are preferred for output metrics; client counts are used for input validation. "
+                "This flag is now a no-op."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_streaming(self) -> Self:
         """Validate that streaming is supported for the endpoint type."""
         if not self.streaming:
@@ -217,13 +229,9 @@ class EndpointConfig(BaseConfig):
         bool,
         Field(
             description=(
-                "Use server-reported token counts from API usage fields instead of "
-                "client-side tokenization. When enabled, tokenizers are still loaded "
-                "(needed for dataset generation) but tokenizer.encode() is not called "
-                "for computing metrics. Token count fields will be None if the server "
-                "does not provide usage information. For OpenAI-compatible streaming "
-                "endpoints (chat/completions), stream_options.include_usage is automatically "
-                "configured when this flag is enabled."
+                "[Deprecated] This flag is a no-op and will be removed in a future release. "
+                "AIPerf now always computes both client-side and server-reported token counts. "
+                "Server counts are preferred for output metrics; client counts are used for input validation."
             ),
         ),
         CLIParameter(

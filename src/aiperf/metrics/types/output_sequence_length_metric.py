@@ -37,17 +37,32 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
         """
         This method extracts the output and reasoning token counts from the record and returns the sum.
 
+        For each component (output, reasoning): prefers the server-reported field,
+        falls back to the corresponding ``_local`` field.
+
         Raises:
-            ValueError: If the record does not have a output or reasoning token count.
+            NoMetricValue: If neither server nor local values are available for both components.
         """
-        if record.token_counts is None or (
-            record.token_counts.output is None and record.token_counts.reasoning is None
-        ):
+        if record.token_counts is None:
             raise NoMetricValue(
                 "Output and reasoning token counts are missing in the record."
             )
 
-        return (record.token_counts.output or 0) + (record.token_counts.reasoning or 0)
+        # Prefer server, fall back to local for each component
+        output = record.token_counts.output
+        if output is None:
+            output = record.token_counts.output_local
+
+        reasoning = record.token_counts.reasoning
+        if reasoning is None:
+            reasoning = record.token_counts.reasoning_local
+
+        if output is None and reasoning is None:
+            raise NoMetricValue(
+                "Output and reasoning token counts are missing in the record."
+            )
+
+        return (output or 0) + (reasoning or 0)
 
 
 class TotalOutputSequenceLengthMetric(

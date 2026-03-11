@@ -8,7 +8,9 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.input_sequence_length_metric import (
     ErrorInputSequenceLengthMetric,
+    InputSequenceLengthLocalMetric,
     InputSequenceLengthMetric,
+    InputSequenceLengthServerMetric,
     TotalErrorInputSequenceLengthMetric,
     TotalInputSequenceLengthMetric,
 )
@@ -29,8 +31,10 @@ class TestInputSequenceLengthMetric:
             (None, True),
         ],
     )
-    def test_input_sequence_length_parse_record(self, input_tokens, should_raise):
-        """Test input sequence length extraction."""
+    def test_input_sequence_length_parse_record_client_fallback(
+        self, input_tokens, should_raise
+    ):
+        """Test input sequence length falls back to client-side when no server count."""
         record = create_record(input_tokens=input_tokens)
 
         metric = InputSequenceLengthMetric()
@@ -42,6 +46,28 @@ class TestInputSequenceLengthMetric:
             result = metric.parse_record(record, MetricRecordDict())
             assert result == input_tokens
 
+    @pytest.mark.parametrize(
+        "input_tokens,input_local_tokens,expected",
+        [
+            (150, 8, 150),
+            (0, 8, 0),
+            (None, 8, 8),
+            (200, None, 200),
+        ],
+        ids=["server_preferred", "server_zero", "server_none_fallback", "server_only"],
+    )
+    def test_input_sequence_length_prefers_server(
+        self, input_tokens, input_local_tokens, expected
+    ):
+        """Test ISL prefers server-reported input over client-side input_local."""
+        record = create_record(
+            input_tokens=input_tokens, input_local_tokens=input_local_tokens
+        )
+
+        metric = InputSequenceLengthMetric()
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == expected
+
     def test_input_sequence_length_multiple_records(self):
         """Test processing multiple records with different token counts"""
         isl_values = [5, 10, 20]
@@ -52,6 +78,84 @@ class TestInputSequenceLengthMetric:
             InputSequenceLengthMetric.tag,
         )
         assert metric_results[InputSequenceLengthMetric.tag] == isl_values
+
+
+class TestInputSequenceLengthServerMetric:
+    @pytest.mark.parametrize(
+        "input_tokens,should_raise",
+        [
+            (150, False),
+            (0, False),
+            (None, True),
+        ],
+    )
+    def test_server_metric_parse_record(self, input_tokens, should_raise):
+        """Test server metric returns server count or raises NoMetricValue."""
+        record = create_record(input_tokens=input_tokens)
+
+        metric = InputSequenceLengthServerMetric()
+
+        if should_raise:
+            with pytest.raises(NoMetricValue):
+                metric.parse_record(record, MetricRecordDict())
+        else:
+            result = metric.parse_record(record, MetricRecordDict())
+            assert result == input_tokens
+
+    def test_server_metric_ignores_local(self):
+        """Server metric should raise even when local tokens are available."""
+        record = create_record(input_tokens=None, input_local_tokens=42)
+
+        metric = InputSequenceLengthServerMetric()
+        with pytest.raises(NoMetricValue):
+            metric.parse_record(record, MetricRecordDict())
+
+    def test_server_metric_flags(self):
+        """Verify NO_CONSOLE flag is set."""
+        assert InputSequenceLengthServerMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert InputSequenceLengthServerMetric.has_flags(
+            MetricFlags.TOKENIZES_INPUT_ONLY
+        )
+        assert InputSequenceLengthServerMetric.has_flags(MetricFlags.LARGER_IS_BETTER)
+
+
+class TestInputSequenceLengthLocalMetric:
+    @pytest.mark.parametrize(
+        "input_local_tokens,should_raise",
+        [
+            (42, False),
+            (0, False),
+            (None, True),
+        ],
+    )
+    def test_local_metric_parse_record(self, input_local_tokens, should_raise):
+        """Test local metric returns local count or raises NoMetricValue."""
+        record = create_record(input_local_tokens=input_local_tokens)
+
+        metric = InputSequenceLengthLocalMetric()
+
+        if should_raise:
+            with pytest.raises(NoMetricValue):
+                metric.parse_record(record, MetricRecordDict())
+        else:
+            result = metric.parse_record(record, MetricRecordDict())
+            assert result == input_local_tokens
+
+    def test_local_metric_ignores_server(self):
+        """Local metric should raise even when server tokens are available."""
+        record = create_record(input_tokens=99, input_local_tokens=None)
+
+        metric = InputSequenceLengthLocalMetric()
+        with pytest.raises(NoMetricValue):
+            metric.parse_record(record, MetricRecordDict())
+
+    def test_local_metric_flags(self):
+        """Verify NO_CONSOLE flag is set."""
+        assert InputSequenceLengthLocalMetric.has_flags(MetricFlags.NO_CONSOLE)
+        assert InputSequenceLengthLocalMetric.has_flags(
+            MetricFlags.TOKENIZES_INPUT_ONLY
+        )
+        assert InputSequenceLengthLocalMetric.has_flags(MetricFlags.LARGER_IS_BETTER)
 
 
 class TestTotalInputSequenceLengthMetric:
