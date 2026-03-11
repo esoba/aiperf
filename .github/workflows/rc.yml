@@ -265,6 +265,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.RC_GITHUB_PAT }}
 
       - name: Create and push RC tag
         env:
