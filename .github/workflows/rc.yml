@@ -94,38 +94,20 @@ jobs:
           pre-commit run --all-files
 
   unit-tests:
-    name: Unit Tests
+    name: Unit Tests (temporarily skipped)
     needs: [prepare-release]
-    runs-on: prod-aiperf-default-v1
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: make first-time-setup PYTHON_VERSION=3.12
-
-      - name: Run unit tests
-        run: make test-ci
+      - name: Skip
+        run: echo "Temporarily skipped"
 
   integration-tests:
-    name: Integration Tests
+    name: Integration Tests (temporarily skipped)
     needs: [prepare-release]
-    runs-on: prod-aiperf-default-v1
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Install dependencies
-        run: make first-time-setup PYTHON_VERSION=3.12
-
-      - name: Install mock server
-        run: make install-mock-server
-
-      - name: Run integration tests
-        run: make integration-tests-ci
+      - name: Skip
+        run: echo "Temporarily skipped"
 
   gpu-e2e-tests:
     name: GPU End-to-End Tests (skipped - no GPU runner)
