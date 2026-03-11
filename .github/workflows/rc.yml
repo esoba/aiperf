@@ -252,12 +252,14 @@ jobs:
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
           PEP440_VERSION: ${{ needs.prepare-release.outputs.pep440_version }}
         run: |
-          IMAGE_REF="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/aiperf:${PEP440_VERSION}-${{ matrix.arch }}"
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          IMAGE_REF="${ECR_REGISTRY}/aiperf:${PEP440_VERSION}-${{ matrix.arch }}"
+          CACHE_REF="${ECR_REGISTRY}/aiperf:cache-${{ matrix.arch }}"
           docker buildx build \
             --platform ${{ matrix.platform }} \
             --target runtime \
-            --cache-from type=gha,scope=${{ matrix.arch }} \
-            --cache-to type=gha,mode=max,scope=${{ matrix.arch }} \
+            --cache-from type=registry,ref=${CACHE_REF} \
+            --cache-to type=registry,ref=${CACHE_REF},mode=max \
             --push \
             --tag "${IMAGE_REF}" \
             .
