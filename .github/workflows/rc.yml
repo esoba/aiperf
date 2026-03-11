@@ -353,10 +353,10 @@ jobs:
             crane copy "${ECR_REGISTRY}/aiperf:${PEP440_VERSION}-${ARCH}" \
                        "${NGC_IMAGE}:${PEP440_VERSION}-${ARCH}"
           done
-          docker manifest create "${NGC_IMAGE}:${PEP440_VERSION}" \
-            "${NGC_IMAGE}:${PEP440_VERSION}-amd64" \
-            "${NGC_IMAGE}:${PEP440_VERSION}-arm64"
-          docker manifest push "${NGC_IMAGE}:${PEP440_VERSION}"
+          crane index append \
+            --manifest "${NGC_IMAGE}:${PEP440_VERSION}-amd64" \
+            --manifest "${NGC_IMAGE}:${PEP440_VERSION}-arm64" \
+            --tag "${NGC_IMAGE}:${PEP440_VERSION}"
 
 
   stage-wheel:
