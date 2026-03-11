@@ -3,7 +3,6 @@
 
 from typing import Annotated
 
-from cyclopts import Parameter
 from pydantic import Field
 
 from aiperf.common.config.base_config import BaseConfig
@@ -84,10 +83,9 @@ class TokenizerConfig(BaseConfig):
             "Automatically set to False for user-provided input datasets "
             "(--custom-dataset-type or --public-dataset) unless explicitly overridden.",
         ),
-        Parameter(
+        CLIParameter(
             name=("--tokenize-input",),
             group=_CLI_GROUP,
-            show_env_var=False,
             negative="--no-tokenize-input",
         ),
     ] = True

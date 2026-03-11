@@ -23,30 +23,6 @@ from tests.unit.metrics.conftest import (
 
 class TestInputSequenceLengthMetric:
     @pytest.mark.parametrize(
-        "input_tokens,should_raise",
-        [
-            (15, False),
-            (0, False),
-            (100, False),
-            (None, True),
-        ],
-    )
-    def test_input_sequence_length_parse_record_client_fallback(
-        self, input_tokens, should_raise
-    ):
-        """Test input sequence length falls back to client-side when no server count."""
-        record = create_record(input_tokens=input_tokens)
-
-        metric = InputSequenceLengthMetric()
-
-        if should_raise:
-            with pytest.raises(NoMetricValue):
-                metric.parse_record(record, MetricRecordDict())
-        else:
-            result = metric.parse_record(record, MetricRecordDict())
-            assert result == input_tokens
-
-    @pytest.mark.parametrize(
         "input_tokens,input_local_tokens,expected",
         [
             (150, 8, 150),
@@ -67,6 +43,13 @@ class TestInputSequenceLengthMetric:
         metric = InputSequenceLengthMetric()
         result = metric.parse_record(record, MetricRecordDict())
         assert result == expected
+
+    def test_input_sequence_length_both_none_raises(self):
+        """Test that NoMetricValue is raised when both server and local are None."""
+        record = create_record(input_tokens=None, input_local_tokens=None)
+        metric = InputSequenceLengthMetric()
+        with pytest.raises(NoMetricValue):
+            metric.parse_record(record, MetricRecordDict())
 
     def test_input_sequence_length_multiple_records(self):
         """Test processing multiple records with different token counts"""

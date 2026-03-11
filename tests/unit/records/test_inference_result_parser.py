@@ -257,10 +257,10 @@ class TestAsyncTokenizerEncode:
         assert result == 8
         assert spy_tokenizer.encode.call_count == 1
 
-    async def test_client_side_token_counts_uses_async(
+    async def test_compute_token_counts_uses_async(
         self, setup_inference_parser, spy_tokenizer
     ):
-        """_compute_client_side_token_counts calls async _compute_token_count for output/reasoning."""
+        """_compute_token_counts calls async _compute_token_count for output/reasoning."""
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
         record = RequestRecord(
             request_info=create_test_request_info(turns=[]),
@@ -273,11 +273,11 @@ class TestAsyncTokenizerEncode:
             [make_parsed_response(text="output tokens here")],
         )
 
-        result = await setup_inference_parser._compute_client_side_token_counts(
+        result = await setup_inference_parser._compute_token_counts(
             record, [make_parsed_response(text="output tokens here")]
         )
 
-        assert result.output == 3
+        assert result.output_local == 3
         assert spy_tokenizer.encode.called
 
 

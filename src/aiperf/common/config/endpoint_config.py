@@ -240,6 +240,20 @@ class EndpointConfig(BaseConfig):
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
 
+    stream_usage: Annotated[
+        bool,
+        Field(
+            description="Automatically include stream_options.include_usage in streaming requests "
+            "to retrieve server-reported token counts. Disable with --no-stream-usage if "
+            "the server does not support stream_options.",
+        ),
+        CLIParameter(
+            name=("--stream-usage",),
+            group=_CLI_GROUP,
+            negative="--no-stream-usage",
+        ),
+    ] = EndpointDefaults.STREAM_USAGE
+
     connection_reuse_strategy: Annotated[
         ConnectionReuseStrategy,
         Field(

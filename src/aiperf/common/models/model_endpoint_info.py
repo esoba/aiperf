@@ -112,6 +112,10 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.DOWNLOAD_VIDEO_CONTENT,
         description="For video generation endpoints, download the video content after generation completes.",
     )
+    stream_usage: bool = Field(
+        default=EndpointDefaults.STREAM_USAGE,
+        description="Automatically include stream_options.include_usage in streaming requests.",
+    )
     collect_trace_chunks: bool = Field(
         default=False,
         description="Collect per-chunk trace data (timestamps and sizes) for HTTP trace export. "
@@ -151,6 +155,7 @@ class EndpointInfo(AIPerfBaseModel):
             use_legacy_max_tokens=user_config.endpoint.use_legacy_max_tokens,
             connection_reuse_strategy=user_config.endpoint.connection_reuse_strategy,
             download_video_content=user_config.endpoint.download_video_content,
+            stream_usage=user_config.endpoint.stream_usage,
             collect_trace_chunks=user_config.output.export_http_trace,
         )
 

@@ -68,8 +68,7 @@ class ChatEndpoint(BaseEndpoint):
         if model_endpoint.endpoint.extra:
             payload.update(model_endpoint.endpoint.extra)
 
-        if model_endpoint.endpoint.streaming:
-            # Automatically set stream_options to include usage for streaming endpoints
+        if model_endpoint.endpoint.streaming and model_endpoint.endpoint.stream_usage:
             if "stream_options" not in payload:
                 payload["stream_options"] = {"include_usage": True}
             elif (

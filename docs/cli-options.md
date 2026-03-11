@@ -170,6 +170,11 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 [Deprecated] This flag is a no-op and will be removed in a future release. AIPerf now always computes both client-side and server-reported token counts. Server counts are preferred for output metrics; client counts are used for input validation.
 <br/>_Flag (no value required)_
 
+#### `--stream-usage`, `--no-stream-usage`
+
+Automatically include stream_options.include_usage in streaming requests to retrieve server-reported token counts. Disable with --no-stream-usage if the server does not support stream_options.
+<br/>_Default: `True`_
+
 #### `--connection-reuse-strategy` `<str>`
 
 Transport connection reuse strategy. 'pooled' (default): connections are pooled and reused across all requests. 'never': new connection for each request, closed after response. 'sticky-user-sessions': connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing).

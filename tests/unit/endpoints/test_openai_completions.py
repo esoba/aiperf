@@ -70,6 +70,19 @@ class TestCompletionsEndpoint:
         }
         assert payload == expected_payload
 
+    def test_format_payload_no_stream_options_when_stream_usage_false(
+        self, model_endpoint, sample_conversations
+    ):
+        """Verify stream_options is not added when stream_usage=False even with streaming=True."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        turn = sample_conversations["session_1"].turns[0]
+        turns = [turn]
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.stream_usage = False
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+        payload = endpoint.format_payload(request_info)
+        assert "stream_options" not in payload
+
     @pytest.mark.parametrize(
         "streaming,user_extra,expected_stream_options",
         [

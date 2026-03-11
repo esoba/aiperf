@@ -10,8 +10,8 @@ from aiperf.common.models.record_models import TextResponseData, TokenCounts
 from aiperf.common.models.usage_models import Usage
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.usage_diff_metrics import (
+    UsageCompletionTokensDiffMetric,
     UsageDiscrepancyCountMetric,
-    UsageOutputTokensDiffMetric,
     UsagePromptTokensDiffMetric,
     UsageReasoningTokensDiffMetric,
 )
@@ -475,8 +475,8 @@ class TestUsageDiscrepancyCountMetric:
         assert metric_results[UsageDiscrepancyCountMetric.tag] == 1
 
 
-class TestUsageOutputTokensDiffMetric:
-    """Tests for UsageOutputTokensDiffMetric."""
+class TestUsageCompletionTokensDiffMetric:
+    """Tests for UsageCompletionTokensDiffMetric."""
 
     def test_exact_match(self):
         """Test when server and client output token counts match exactly."""
@@ -485,7 +485,7 @@ class TestUsageOutputTokensDiffMetric:
             output_local_tokens=100,
         )
 
-        metric = UsageOutputTokensDiffMetric()
+        metric = UsageCompletionTokensDiffMetric()
         result = metric.parse_record(record, MetricRecordDict())
         assert result == 0.0
 
@@ -496,7 +496,7 @@ class TestUsageOutputTokensDiffMetric:
             output_local_tokens=100,
         )
 
-        metric = UsageOutputTokensDiffMetric()
+        metric = UsageCompletionTokensDiffMetric()
         result = metric.parse_record(record, MetricRecordDict())
         assert result == pytest.approx(10.0, rel=1e-9)
 
@@ -507,7 +507,7 @@ class TestUsageOutputTokensDiffMetric:
             output_local_tokens=100,
         )
 
-        metric = UsageOutputTokensDiffMetric()
+        metric = UsageCompletionTokensDiffMetric()
         result = metric.parse_record(record, MetricRecordDict())
         assert result == pytest.approx(5.0, rel=1e-9)
 
@@ -519,7 +519,7 @@ class TestUsageOutputTokensDiffMetric:
         )
         record.token_counts.output = None
 
-        metric = UsageOutputTokensDiffMetric()
+        metric = UsageCompletionTokensDiffMetric()
         with pytest.raises(NoMetricValue):
             metric.parse_record(record, MetricRecordDict())
 
@@ -530,7 +530,7 @@ class TestUsageOutputTokensDiffMetric:
         )
         # output_local_tokens defaults to None
 
-        metric = UsageOutputTokensDiffMetric()
+        metric = UsageCompletionTokensDiffMetric()
         with pytest.raises(NoMetricValue):
             metric.parse_record(record, MetricRecordDict())
 
@@ -541,15 +541,17 @@ class TestUsageOutputTokensDiffMetric:
             output_local_tokens=0,
         )
 
-        metric = UsageOutputTokensDiffMetric()
+        metric = UsageCompletionTokensDiffMetric()
         with pytest.raises(NoMetricValue):
             metric.parse_record(record, MetricRecordDict())
 
     def test_metric_metadata(self):
-        """Test that UsageOutputTokensDiffMetric has correct metadata."""
-        assert UsageOutputTokensDiffMetric.tag == "usage_output_tokens_diff_pct"
-        assert UsageOutputTokensDiffMetric.has_flags(MetricFlags.PRODUCES_TOKENS_ONLY)
-        assert UsageOutputTokensDiffMetric.has_flags(MetricFlags.NO_CONSOLE)
+        """Test that UsageCompletionTokensDiffMetric has correct metadata."""
+        assert UsageCompletionTokensDiffMetric.tag == "usage_completion_tokens_diff_pct"
+        assert UsageCompletionTokensDiffMetric.has_flags(
+            MetricFlags.PRODUCES_TOKENS_ONLY
+        )
+        assert UsageCompletionTokensDiffMetric.has_flags(MetricFlags.NO_CONSOLE)
 
 
 class TestUsageReasoningTokensDiffMetric:

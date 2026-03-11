@@ -84,7 +84,7 @@ class UsagePromptTokensDiffMetric(BaseRecordMetric[float]):
         return diff_pct
 
 
-class UsageOutputTokensDiffMetric(BaseRecordMetric[float]):
+class UsageCompletionTokensDiffMetric(BaseRecordMetric[float]):
     """
     Absolute percentage difference between server-reported and client-computed output tokens.
 
@@ -100,9 +100,9 @@ class UsageOutputTokensDiffMetric(BaseRecordMetric[float]):
         Diff % = abs((105 - 100) / 100) * 100 = 5.0%
     """
 
-    tag = "usage_output_tokens_diff_pct"
-    header = "Usage Output Diff"
-    short_header = "Output Diff"
+    tag = "usage_completion_tokens_diff_pct"
+    header = "Usage Completion Diff"
+    short_header = "Completion Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
     flags = MetricFlags.PRODUCES_TOKENS_ONLY | MetricFlags.NO_CONSOLE
@@ -233,7 +233,11 @@ class UsageDiscrepancyCountMetric(BaseAggregateCounterMetric[int]):
     short_header = "Discrepancies"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.NO_CONSOLE | MetricFlags.NO_INDIVIDUAL_RECORDS
+    flags = (
+        MetricFlags.TOKENIZES_INPUT_ONLY
+        | MetricFlags.NO_CONSOLE
+        | MetricFlags.NO_INDIVIDUAL_RECORDS
+    )
     required_metrics = {
         UsagePromptTokensDiffMetric.tag,
     }

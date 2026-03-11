@@ -41,8 +41,7 @@ class OutputTokenCountMetric(BaseRecordMetric[int]):
         """
         This method extracts the output token count from the record and returns it.
 
-        Prefers server-reported output, falls back to output_local. Uses truthy
-        check (excludes 0) for consistency with existing behavior.
+        Prefers server-reported output, falls back to output_local.
 
         Raises:
             NoMetricValue: If the record does not have an output token count.
@@ -50,10 +49,10 @@ class OutputTokenCountMetric(BaseRecordMetric[int]):
         if record.token_counts is None:
             raise NoMetricValue("Output token count is missing in the record.")
 
-        if record.token_counts.output:
+        if record.token_counts.output is not None:
             return record.token_counts.output
 
-        if record.token_counts.output_local:
+        if record.token_counts.output_local is not None:
             return record.token_counts.output_local
 
         raise NoMetricValue("Output token count is missing in the record.")

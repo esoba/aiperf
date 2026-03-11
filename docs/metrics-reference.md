@@ -58,7 +58,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Total Usage Total Tokens](#total-usage-total-tokens)
   - [Usage Discrepancy Metrics](#usage-discrepancy-metrics)
     - [Usage Prompt Tokens Diff %](#usage-prompt-tokens-diff-)
-    - [Usage Output Tokens Diff %](#usage-output-tokens-diff-)
+    - [Usage Completion Tokens Diff %](#usage-output-tokens-diff-)
     - [Usage Reasoning Tokens Diff %](#usage-reasoning-tokens-diff-)
     - [Usage Discrepancy Count](#usage-discrepancy-count)
   - [OSL Mismatch Metrics](#osl-mismatch-metrics)
@@ -826,7 +826,7 @@ usage_prompt_tokens_diff_pct = abs((usage_prompt_tokens - client_input_tokens) /
 
 ---
 
-### Usage Output Tokens Diff %
+### Usage Completion Tokens Diff %
 
 **Type:** [Record Metric](#record-metrics)
 
@@ -834,7 +834,7 @@ The percentage difference between server-reported output tokens (`token_counts.o
 
 **Formula:**
 ```python
-usage_output_tokens_diff_pct = abs((server_output_tokens - client_output_tokens) / client_output_tokens) * 100
+usage_completion_tokens_diff_pct = abs((server_output_tokens - client_output_tokens) / client_output_tokens) * 100
 ```
 
 **Notes:**

@@ -37,8 +37,9 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
         """
         This method extracts the output and reasoning token counts from the record and returns the sum.
 
-        For each component (output, reasoning): prefers the server-reported field,
-        falls back to the corresponding ``_local`` field.
+        Uses a consistent source for both components to avoid mixing server and
+        client counts (which can double-count when the server's completion_tokens
+        already includes reasoning tokens but doesn't break them out separately).
 
         Raises:
             NoMetricValue: If neither server nor local values are available for both components.
@@ -48,14 +49,22 @@ class OutputSequenceLengthMetric(BaseRecordMetric[int]):
                 "Output and reasoning token counts are missing in the record."
             )
 
-        # Prefer server, fall back to local for each component
-        output = record.token_counts.output
-        if output is None:
-            output = record.token_counts.output_local
+        tc = record.token_counts
+        server_output = tc.output
+        server_reasoning = tc.reasoning
 
-        reasoning = record.token_counts.reasoning
-        if reasoning is None:
-            reasoning = record.token_counts.reasoning_local
+        if server_output is not None and server_reasoning is not None:
+            output = server_output
+            reasoning = server_reasoning
+        elif tc.output_local is not None:
+            # Server didn't report both components — use all-client to avoid
+            # mixing sources (server output may already include reasoning).
+            output = tc.output_local
+            reasoning = tc.reasoning_local
+        else:
+            # No client-local available either — use whatever we have
+            output = server_output
+            reasoning = server_reasoning
 
         if output is None and reasoning is None:
             raise NoMetricValue(

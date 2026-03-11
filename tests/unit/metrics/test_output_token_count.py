@@ -29,12 +29,12 @@ class TestOutputTokenCountMetric:
         assert result == 25
 
     def test_output_token_count_zero(self):
-        """Test handling of zero output tokens raises error"""
+        """Test handling of zero output tokens returns zero."""
         record = create_record(output_tokens_per_response=0)
 
         metric = OutputTokenCountMetric()
-        with pytest.raises(NoMetricValue):
-            metric.parse_record(record, MetricRecordDict())
+        result = metric.parse_record(record, MetricRecordDict())
+        assert result == 0
 
     def test_output_token_count_none(self):
         """Test handling of None output tokens raises error"""
