@@ -37,6 +37,8 @@ class BaseInEngineTransport(BaseTransport):
         super().__init__(**kwargs)
         self._model_path: str = ""
         self._engine: Any = None  # Set by subclass in _start_engine
+        self._first_token_perf_ns: int | None = None
+        self._warmup_iterations: int = 0
 
     # ---- BaseTransport interface -----------------------------------------------
 
@@ -124,19 +126,41 @@ class BaseInEngineTransport(BaseTransport):
                 first_token_callback=first_token_callback,
             )
 
-            response = InEngineResponse(
-                perf_ns=time.perf_counter_ns(),
-                text=text,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                finish_reason=finish_reason,
+            first_token_perf_ns = self._first_token_perf_ns
+            self._first_token_perf_ns = None
+
+            now = time.perf_counter_ns()
+            responses: list[InEngineResponse] = []
+
+            if first_token_perf_ns is not None:
+                # Streaming path: two responses mimic SSE chunked output
+                first_response = InEngineResponse(
+                    perf_ns=first_token_perf_ns,
+                    text="",
+                    input_tokens=0,
+                    output_tokens=0,
+                    finish_reason="",
+                )
+                responses.append(first_response)
+                if first_token_callback is not None:
+                    ttft_ns = first_token_perf_ns - start_perf_ns
+                    await first_token_callback(ttft_ns, first_response)
+
+            responses.append(
+                InEngineResponse(
+                    perf_ns=now,
+                    text=text,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    finish_reason=finish_reason,
+                )
             )
 
             return RequestRecord(
                 request_info=request_info,
                 start_perf_ns=start_perf_ns,
                 end_perf_ns=time.perf_counter_ns(),
-                responses=[response],
+                responses=responses,
                 status=200,
             )
 
@@ -153,17 +177,27 @@ class BaseInEngineTransport(BaseTransport):
     # ---- Shared utilities ------------------------------------------------------
 
     def _extract_model_path(self) -> str:
-        """Extract model path from the configured URL scheme.
+        """Extract model path from ``--model`` name or the configured URL scheme.
+
+        Prefers the primary model name (from ``--model``) so that users don't
+        need to duplicate model info in the URL. Falls back to URL-scheme
+        parsing for explicit engine URLs (e.g., ``vllm://org/model``).
 
         Handles:
-          ``vllm://meta-llama/Llama-3.1-8B``    -> ``meta-llama/Llama-3.1-8B``
-          ``vllm:///absolute/path/to/model``     -> ``/absolute/path/to/model``
-          ``sglang://org/model``                 -> ``org/model``
-          ``trtllm:///path/to/engine``           -> ``/path/to/engine``
+          ``--model meta-llama/Llama-3.1-8B``    -> ``meta-llama/Llama-3.1-8B``
+          ``vllm://meta-llama/Llama-3.1-8B``     -> ``meta-llama/Llama-3.1-8B``
+          ``vllm:///absolute/path/to/model``      -> ``/absolute/path/to/model``
+          ``sglang://org/model``                  -> ``org/model``
+          ``trtllm:///path/to/engine``            -> ``/path/to/engine``
 
         Returns:
-            Model path extracted from the base URL
+            Model path derived from model name or base URL
         """
+        model_name = self.model_endpoint.primary_model_name
+        if model_name:
+            return model_name
+
+        # Fallback: extract from URL scheme (e.g., vllm://org/model)
         base_url = self.model_endpoint.endpoint.base_url
         parsed = urlparse(base_url)
         # For "vllm://meta-llama/Model" -> netloc="meta-llama", path="/Model"
@@ -205,6 +239,17 @@ class BaseInEngineTransport(BaseTransport):
         if self.model_endpoint.endpoint.engine_params:
             return dict(self.model_endpoint.endpoint.engine_params)
         return {}
+
+    def _pop_warmup_iterations(self, params: dict[str, Any]) -> None:
+        """Extract ``warmup_iterations`` from engine params and store on self.
+
+        Pops the key from *params* so it is not passed to the engine constructor.
+
+        Args:
+            params: Mutable dict of engine params (key is consumed if present)
+        """
+        if "warmup_iterations" in params:
+            self._warmup_iterations = int(params.pop("warmup_iterations"))
 
     # ---- Prompt formatting -----------------------------------------------------
 

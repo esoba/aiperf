@@ -278,6 +278,10 @@ class EndpointMetadata(BaseModel):
         default=False,
         description="Whether endpoint uses async job polling (submit job, poll for status, retrieve result).",
     )
+    supported_transports: list[str] = Field(
+        default_factory=lambda: ["http"],
+        description="Transport plugins this endpoint is compatible with (e.g., ['http'], ['vllm']).",
+    )
 
 
 class TransportMetadata(BaseModel):

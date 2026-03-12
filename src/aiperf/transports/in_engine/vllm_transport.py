@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from aiperf.plugin.schema.schemas import TransportMetadata
@@ -112,6 +113,16 @@ class VLLMTransport(BaseInEngineTransport):
         ):
             pass
 
+        if self._warmup_iterations > 0:
+            self.info(f"Running {self._warmup_iterations} warmup iterations...")
+            for i in range(self._warmup_iterations):
+                async for _ in self._engine.generate(
+                    prompt="warmup",
+                    sampling_params=warmup_params,
+                    request_id=f"warmup-{i}",
+                ):
+                    pass
+
     async def _stop_engine(self) -> None:
         """Shutdown vLLM async engine and free GPU memory."""
         if self._engine is not None:
@@ -128,28 +139,50 @@ class VLLMTransport(BaseInEngineTransport):
     ) -> tuple[str, int, int, str]:
         """Generate a response using vLLM's async engine.
 
-        Converts messages to a prompt string via the engine's chat template,
-        then iterates over the async generator from `engine.generate()`.
-        Uses `FINAL_ONLY` output mode for efficiency (single yield).
+        When streaming is enabled, uses ``DELTA`` output mode to capture
+        first-token timing. Otherwise uses ``FINAL_ONLY`` for efficiency.
 
         Args:
             messages: Chat messages in OpenAI format
             sampling_params: `vllm.SamplingParams` instance (built by endpoint)
             request_id: Unique request identifier
-            first_token_callback: Optional TTFT callback (not yet supported)
+            first_token_callback: Optional TTFT callback for streaming
 
         Returns:
             Tuple of (generated_text, input_token_count, output_token_count, finish_reason)
         """
+        from vllm import SamplingParams
         from vllm.sampling_params import RequestOutputKind
 
         prompt = self._messages_to_prompt(messages)
-        sampling_params.output_kind = RequestOutputKind.FINAL_ONLY
+        streaming = self.model_endpoint.endpoint.streaming
+
+        if streaming:
+            return await self._generate_streaming(
+                prompt, sampling_params, request_id, RequestOutputKind, SamplingParams
+            )
+
+        return await self._generate_final_only(
+            prompt, sampling_params, request_id, RequestOutputKind, SamplingParams
+        )
+
+    async def _generate_final_only(
+        self,
+        prompt: str,
+        sampling_params: Any,
+        request_id: str,
+        request_output_kind: Any,
+        sampling_params_cls: Any,
+    ) -> tuple[str, int, int, str]:
+        """Non-streaming generation using FINAL_ONLY output mode."""
+        params = sampling_params_cls(
+            **sampling_params, output_kind=request_output_kind.FINAL_ONLY
+        )
 
         final_output = None
         async for output in self._engine.generate(
             prompt=prompt,
-            sampling_params=sampling_params,
+            sampling_params=params,
             request_id=request_id,
         ):
             final_output = output
@@ -159,11 +192,68 @@ class VLLMTransport(BaseInEngineTransport):
 
         completion = final_output.outputs[0]
         prompt_token_ids = final_output.prompt_token_ids or []
+        finish_reason = (
+            str(completion.finish_reason)
+            if completion.finish_reason is not None
+            else "stop"
+        )
         return (
             completion.text,
             len(prompt_token_ids),
             len(completion.token_ids),
-            completion.finish_reason or "stop",
+            finish_reason,
+        )
+
+    async def _generate_streaming(
+        self,
+        prompt: str,
+        sampling_params: Any,
+        request_id: str,
+        request_output_kind: Any,
+        sampling_params_cls: Any,
+    ) -> tuple[str, int, int, str]:
+        """Streaming generation using DELTA output mode for TTFT capture."""
+        params = sampling_params_cls(
+            **sampling_params, output_kind=request_output_kind.DELTA
+        )
+
+        text_parts: list[str] = []
+        total_output_token_ids: list[int] = []
+        finish_reason: str = "stop"
+        prompt_token_ids: list[int] = []
+        is_first_delta = True
+
+        async for output in self._engine.generate(
+            prompt=prompt,
+            sampling_params=params,
+            request_id=request_id,
+        ):
+            if not output.outputs:
+                continue
+
+            delta = output.outputs[0]
+
+            if is_first_delta:
+                self._first_token_perf_ns = time.perf_counter_ns()
+                is_first_delta = False
+
+            text_parts.append(delta.text)
+            total_output_token_ids.extend(delta.token_ids)
+
+            if output.prompt_token_ids:
+                prompt_token_ids = output.prompt_token_ids
+
+            if delta.finish_reason is not None:
+                finish_reason = str(delta.finish_reason)
+
+        if is_first_delta:
+            raise RuntimeError(f"vLLM returned no output for request {request_id}")
+
+        return (
+            "".join(text_parts),
+            len(prompt_token_ids),
+            len(total_output_token_ids),
+            finish_reason,
         )
 
     def _get_tokenizer(self) -> Any | None:
@@ -185,6 +275,7 @@ class VLLMTransport(BaseInEngineTransport):
             Dict of kwargs suitable for `vllm.LLM(model=..., **kwargs)`
         """
         params = self._get_raw_engine_params()
+        self._pop_warmup_iterations(params)
         kwargs: dict[str, Any] = {}
 
         for src_key, dst_key in _INT_ENGINE_PARAMS.items():

@@ -12,20 +12,20 @@ from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
-    SSEMessage,
 )
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.models.record_models import InferenceServerResponse
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 from aiperf.common.types import RequestInputT
 from aiperf.plugin.schema.schemas import TransportMetadata
 
-FirstTokenCallback = Callable[[int, SSEMessage], Awaitable[bool]]
+FirstTokenCallback = Callable[[int, InferenceServerResponse], Awaitable[bool]]
 """
-Type alias for a callback that is called with the ttft_ns and the first SSE message:
+Type alias for a callback that is called with the ttft_ns and the first response:
 
 Args:
     ttft_ns: duration from request start
-    message: the first SSE message
+    response: the first response (SSEMessage for HTTP, InEngineResponse for in-engine)
 
 Returns:
     True if this is meaningful content (stop looking for first token), False otherwise

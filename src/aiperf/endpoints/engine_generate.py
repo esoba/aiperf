@@ -116,14 +116,23 @@ class EngineGenerateEndpoint(ChatEndpoint):
 
 
 class VLLMGenerateEndpoint(EngineGenerateEndpoint):
-    """vLLM direct-generate endpoint. Builds ``vllm.SamplingParams``."""
+    """vLLM direct-generate endpoint. Returns sampling params as a plain dict."""
 
-    def _build_sampling_params(self, request_info: RequestInfo) -> Any:
-        """Build a ``vllm.SamplingParams`` from turn config and extra inputs."""
-        from vllm import SamplingParams
+    def _build_sampling_params(self, request_info: RequestInfo) -> dict[str, Any]:
+        """Build vLLM sampling params with detokenize bool coercion.
 
+        Users pass ``--extra-inputs detokenize:false`` which arrives as a string.
+        vLLM's SamplingParams expects a bool, so coerce here.
+        """
         params = super()._build_sampling_params(request_info)
-        return SamplingParams(**params)
+        if "detokenize" in params:
+            val = params["detokenize"]
+            params["detokenize"] = (
+                val
+                if isinstance(val, bool)
+                else str(val).lower() in ("true", "1", "yes")
+            )
+        return params
 
 
 class SGLangGenerateEndpoint(EngineGenerateEndpoint):
@@ -141,12 +150,10 @@ class SGLangGenerateEndpoint(EngineGenerateEndpoint):
 
 
 class TRTLLMGenerateEndpoint(EngineGenerateEndpoint):
-    """TensorRT-LLM direct-generate endpoint. Builds ``tensorrt_llm.SamplingParams``."""
+    """TensorRT-LLM direct-generate endpoint. Remaps keys for TRT-LLM conventions."""
 
-    def _build_sampling_params(self, request_info: RequestInfo) -> Any:
-        """Build a ``tensorrt_llm.SamplingParams`` from turn config and extra inputs."""
-        from tensorrt_llm import SamplingParams
-
+    def _build_sampling_params(self, request_info: RequestInfo) -> dict[str, Any]:
+        """Build TRT-LLM sampling params dict with engine-specific key remapping."""
         params = super()._build_sampling_params(request_info)
 
         # TRT-LLM uses random_seed instead of seed
@@ -158,4 +165,4 @@ class TRTLLMGenerateEndpoint(EngineGenerateEndpoint):
             stop = params.pop("stop")
             params["stop_words"] = stop if isinstance(stop, list) else [stop]
 
-        return SamplingParams(**params)
+        return params

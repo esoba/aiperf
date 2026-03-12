@@ -95,11 +95,12 @@ class ConcreteTestTransport(BaseInEngineTransport):
 
 def _make_model_endpoint(
     base_url: str = "test-engine://meta-llama/Llama-3.1-8B",
+    model_name: str = "meta-llama/Llama-3.1-8B",
 ) -> ModelEndpointInfo:
     """Create a ModelEndpointInfo for in-engine transport testing."""
     return ModelEndpointInfo(
         models=ModelListInfo(
-            models=[ModelInfo(name="meta-llama/Llama-3.1-8B")],
+            models=[ModelInfo(name=model_name)],
             model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
         ),
         endpoint=EndpointInfo(
@@ -149,7 +150,22 @@ def request_info(model_endpoint: ModelEndpointInfo) -> RequestInfo:
 
 
 class TestExtractModelPath:
-    """Verify model path extraction from various URL schemes."""
+    """Verify model path extraction prefers --model name, falls back to URL."""
+
+    def test_prefers_primary_model_name(self) -> None:
+        """Model path uses --model name even when URL has an engine scheme."""
+        endpoint = _make_model_endpoint(
+            base_url="vllm://url-org/url-model",
+            model_name="cli-org/cli-model",
+        )
+        transport = ConcreteTestTransport(model_endpoint=endpoint)
+        assert transport._extract_model_path() == "cli-org/cli-model"
+
+    def test_prefers_model_name_over_plain_http_url(self) -> None:
+        """Model path uses --model name when URL has no engine scheme."""
+        endpoint = _make_model_endpoint(base_url="http://localhost:8000")
+        transport = ConcreteTestTransport(model_endpoint=endpoint)
+        assert transport._extract_model_path() == "meta-llama/Llama-3.1-8B"
 
     @pytest.mark.parametrize(
         "url,expected",
@@ -163,8 +179,11 @@ class TestExtractModelPath:
             param("sglang://org/model///", "org/model", id="multiple-trailing-slashes"),
         ],
     )  # fmt: skip
-    def test_extract_model_path(self, url: str, expected: str) -> None:
-        endpoint = _make_model_endpoint(base_url=url)
+    def test_url_extraction_when_model_name_matches(
+        self, url: str, expected: str
+    ) -> None:
+        """Model path returned correctly when --model matches URL path."""
+        endpoint = _make_model_endpoint(base_url=url, model_name=expected)
         transport = ConcreteTestTransport(model_endpoint=endpoint)
         assert transport._extract_model_path() == expected
 
@@ -388,3 +407,171 @@ class TestMessagesToPrompt:
         self, transport: ConcreteTestTransport
     ) -> None:
         assert transport._get_tokenizer() is None
+
+
+# ============================================================
+# Streaming Response Construction (first_token_perf_ns)
+# ============================================================
+
+
+class TestStreamingResponseConstruction:
+    """Verify send_request produces two responses when _first_token_perf_ns is set."""
+
+    @pytest.mark.asyncio
+    async def test_streaming_produces_two_responses(self) -> None:
+        """When _generate sets _first_token_perf_ns, send_request returns two responses."""
+        model_endpoint = _make_model_endpoint()
+        transport = ConcreteTestTransport(
+            model_endpoint=model_endpoint,
+            generate_result=("Full text", 10, 20, "stop"),
+        )
+
+        # Simulate what vLLM streaming does: set _first_token_perf_ns during _generate
+        original_generate = transport._generate
+
+        async def generate_with_ttft(**kwargs: Any) -> tuple[str, int, int, str]:
+            result = await original_generate(**kwargs)
+            transport._first_token_perf_ns = 500_000
+            return result
+
+        transport._generate = generate_with_ttft  # type: ignore[method-assign]
+
+        request_info = _make_request_info(model_endpoint)
+        payload = {
+            "messages": [{"role": "user", "content": "Hi"}],
+            "sampling_params": {},
+        }
+
+        record = await transport.send_request(request_info, payload)
+
+        assert len(record.responses) == 2
+
+        # First response is the TTFT marker
+        first = record.responses[0]
+        assert isinstance(first, InEngineResponse)
+        assert first.perf_ns == 500_000
+        assert first.text == ""
+        assert first.input_tokens == 0
+        assert first.output_tokens == 0
+        assert first.finish_reason == ""
+
+        # Second response has the full content
+        final = record.responses[1]
+        assert isinstance(final, InEngineResponse)
+        assert final.text == "Full text"
+        assert final.input_tokens == 10
+        assert final.output_tokens == 20
+        assert final.finish_reason == "stop"
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_produces_single_response(self) -> None:
+        """Without _first_token_perf_ns, send_request returns a single response."""
+        model_endpoint = _make_model_endpoint()
+        transport = ConcreteTestTransport(
+            model_endpoint=model_endpoint,
+            generate_result=("Output", 5, 10, "length"),
+        )
+        request_info = _make_request_info(model_endpoint)
+        payload = {
+            "messages": [{"role": "user", "content": "Hi"}],
+            "sampling_params": {},
+        }
+
+        record = await transport.send_request(request_info, payload)
+
+        assert len(record.responses) == 1
+        assert record.responses[0].text == "Output"
+
+    @pytest.mark.asyncio
+    async def test_streaming_fires_first_token_callback(self) -> None:
+        """first_token_callback is called with TTFT and first response when streaming."""
+        model_endpoint = _make_model_endpoint()
+        transport = ConcreteTestTransport(
+            model_endpoint=model_endpoint,
+            generate_result=("Text", 5, 10, "stop"),
+        )
+
+        original_generate = transport._generate
+
+        async def generate_with_ttft(**kwargs: Any) -> tuple[str, int, int, str]:
+            result = await original_generate(**kwargs)
+            transport._first_token_perf_ns = 500_000
+            return result
+
+        transport._generate = generate_with_ttft  # type: ignore[method-assign]
+
+        callback = AsyncMock(return_value=True)
+        request_info = _make_request_info(model_endpoint)
+        payload = {
+            "messages": [{"role": "user", "content": "Hi"}],
+            "sampling_params": {},
+        }
+
+        await transport.send_request(
+            request_info, payload, first_token_callback=callback
+        )
+
+        callback.assert_awaited_once()
+        ttft_ns, first_response = callback.call_args.args
+        assert isinstance(ttft_ns, int)
+        assert isinstance(first_response, InEngineResponse)
+        assert first_response.text == ""
+
+    @pytest.mark.asyncio
+    async def test_first_token_perf_ns_reset_after_request(self) -> None:
+        """_first_token_perf_ns is reset to None after send_request completes."""
+        model_endpoint = _make_model_endpoint()
+        transport = ConcreteTestTransport(model_endpoint=model_endpoint)
+
+        original_generate = transport._generate
+
+        async def generate_with_ttft(**kwargs: Any) -> tuple[str, int, int, str]:
+            result = await original_generate(**kwargs)
+            transport._first_token_perf_ns = 123
+            return result
+
+        transport._generate = generate_with_ttft  # type: ignore[method-assign]
+
+        request_info = _make_request_info(model_endpoint)
+        payload = {
+            "messages": [{"role": "user", "content": "Hi"}],
+            "sampling_params": {},
+        }
+
+        await transport.send_request(request_info, payload)
+        assert transport._first_token_perf_ns is None
+
+
+# ============================================================
+# _pop_warmup_iterations
+# ============================================================
+
+
+class TestPopWarmupIterations:
+    """Verify _pop_warmup_iterations extracts and stores warmup count."""
+
+    def test_pops_warmup_iterations_from_params(
+        self, transport: ConcreteTestTransport
+    ) -> None:
+        params = {"warmup_iterations": "5", "other_key": "val"}
+        transport._pop_warmup_iterations(params)
+
+        assert transport._warmup_iterations == 5
+        assert "warmup_iterations" not in params
+        assert params["other_key"] == "val"
+
+    def test_no_warmup_iterations_leaves_default(
+        self, transport: ConcreteTestTransport
+    ) -> None:
+        params = {"other_key": "val"}
+        transport._pop_warmup_iterations(params)
+
+        assert transport._warmup_iterations == 0
+        assert params == {"other_key": "val"}
+
+    def test_warmup_iterations_coerces_to_int(
+        self, transport: ConcreteTestTransport
+    ) -> None:
+        params = {"warmup_iterations": "10"}
+        transport._pop_warmup_iterations(params)
+        assert transport._warmup_iterations == 10

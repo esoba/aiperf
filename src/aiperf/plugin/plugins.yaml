@@ -215,6 +215,7 @@ endpoint:
       supports_streaming: false
       produces_tokens: true
       tokenizes_input: true
+      supported_transports: [vllm]
       metrics_title: LLM Metrics
 
   sglang_generate:
@@ -227,6 +228,7 @@ endpoint:
       supports_streaming: false
       produces_tokens: true
       tokenizes_input: true
+      supported_transports: [sglang]
       metrics_title: LLM Metrics
 
   trtllm_generate:
@@ -239,6 +241,7 @@ endpoint:
       supports_streaming: false
       produces_tokens: true
       tokenizes_input: true
+      supported_transports: [trtllm]
       metrics_title: LLM Metrics
 
   cohere_rankings:

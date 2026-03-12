@@ -281,7 +281,7 @@ class TestTRTLLMGenerate:
                 finish_reason,
             ) = await transport._generate(
                 messages=[{"role": "user", "content": "Hi"}],
-                sampling_params=MockTRTSamplingParams(temperature=0.5),
+                sampling_params={"temperature": 0.5},
                 request_id="req-trt-001",
             )
 
@@ -321,7 +321,7 @@ class TestTRTLLMGenerate:
                 finish_reason,
             ) = await transport._generate(
                 messages=[{"role": "user", "content": "Hi"}],
-                sampling_params=MockTRTSamplingParams(),
+                sampling_params={},
                 request_id="req-trt-002",
             )
 
@@ -348,7 +348,64 @@ class TestTRTLLMGenerate:
 
             _, _, _, finish_reason = await transport._generate(
                 messages=[{"role": "user", "content": "Hi"}],
-                sampling_params=MockTRTSamplingParams(),
+                sampling_params={},
                 request_id="req-trt-003",
             )
             assert finish_reason == "stop"
+
+    @pytest.mark.asyncio
+    async def test_generate_enum_finish_reason_normalized_to_string(self) -> None:
+        """TRT-LLM may return enum objects for finish_reason."""
+
+        class FinishReasonEnum:
+            def __str__(self) -> str:
+                return "length"
+
+        mock_trtllm = _build_mock_trtllm_module()
+        with patch.dict(sys.modules, {"tensorrt_llm": mock_trtllm}):
+            from aiperf.transports.in_engine.trtllm_transport import TRTLLMTransport
+
+            endpoint = _make_trtllm_endpoint()
+            transport = TRTLLMTransport(model_endpoint=endpoint)
+
+            mock_completion = MockTRTCompletionOutput(text="ok", token_ids=[1])
+            mock_completion.finish_reason = FinishReasonEnum()  # type: ignore[assignment]
+            mock_output = MockTRTRequestOutput(outputs=[mock_completion])
+            mock_engine = MagicMock()
+            mock_engine.generate.return_value = [mock_output]
+            del mock_engine.tokenizer
+            transport._engine = mock_engine
+
+            _, _, _, finish_reason = await transport._generate(
+                messages=[{"role": "user", "content": "Hi"}],
+                sampling_params={},
+                request_id="req-trt-enum",
+            )
+            assert finish_reason == "length"
+            assert isinstance(finish_reason, str)
+
+
+# ============================================================
+# Warmup Iterations
+# ============================================================
+
+
+class TestTRTLLMWarmupIterations:
+    """Verify warmup_iterations is popped from engine params."""
+
+    def test_warmup_iterations_popped_from_kwargs(self) -> None:
+        with patch.dict(sys.modules, {"tensorrt_llm": _build_mock_trtllm_module()}):
+            from aiperf.transports.in_engine.trtllm_transport import TRTLLMTransport
+
+            endpoint = _make_trtllm_endpoint(
+                engine_params=[
+                    ("warmup_iterations", "3"),
+                    ("tensor_parallel_size", "2"),
+                ]
+            )
+            transport = TRTLLMTransport(model_endpoint=endpoint)
+            kwargs = transport._build_engine_kwargs()
+
+            assert "warmup_iterations" not in kwargs
+            assert transport._warmup_iterations == 3
+            assert kwargs["tensor_parallel_size"] == 2

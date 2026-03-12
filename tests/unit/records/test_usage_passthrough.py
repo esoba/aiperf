@@ -63,6 +63,9 @@ def parser():
             return_value=mock_endpoint,
         ),
         patch("aiperf.plugin.plugins.get_endpoint_metadata"),
+        patch(
+            "aiperf.records.inference_result_parser.validate_endpoint_transport_compatibility"
+        ),
     ):
         parser = InferenceResultParser(
             service_config=ServiceConfig(),

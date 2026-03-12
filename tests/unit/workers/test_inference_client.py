@@ -16,7 +16,12 @@ from aiperf.common.models.model_endpoint_info import (
 )
 from aiperf.common.models.record_models import RequestRecord
 from aiperf.plugin.enums import EndpointType, TransportType
-from aiperf.workers.inference_client import InferenceClient, detect_transport_from_url
+from aiperf.plugin.schema.schemas import EndpointMetadata
+from aiperf.workers.inference_client import (
+    InferenceClient,
+    detect_transport_from_url,
+    validate_endpoint_transport_compatibility,
+)
 
 
 @pytest.fixture
@@ -26,6 +31,18 @@ def mock_http_transport_entry():
     entry.name = TransportType.HTTP.value
     entry.metadata = {"url_schemes": ["http", "https"]}
     return entry
+
+
+def _make_endpoint_metadata(**overrides) -> EndpointMetadata:
+    """Create an EndpointMetadata with sensible defaults."""
+    defaults = {
+        "metrics_title": "Test Metrics",
+        "endpoint_path": "/v1/test",
+        "supports_streaming": False,
+        "tokenizes_input": True,
+        "produces_tokens": True,
+    }
+    return EndpointMetadata(**(defaults | overrides))
 
 
 class TestDetectTransportFromUrl:
@@ -147,6 +164,10 @@ class TestInferenceClient:
                 "aiperf.workers.inference_client.plugins.list_entries",
                 return_value=[mock_http_transport_entry],
             ),
+            patch(
+                "aiperf.workers.inference_client.plugins.get_endpoint_metadata",
+                return_value=_make_endpoint_metadata(supported_transports=["http"]),
+            ),
         ):
             return InferenceClient(
                 model_endpoint=model_endpoint, service_id="test-service-id"
@@ -228,3 +249,169 @@ class TestInferenceClient:
         call_args = inference_client.transport.send_request.call_args
         assert call_args[0][0] == request_info
         assert record == expected_record
+
+
+class TestValidateEndpointTransportCompatibility:
+    """Tests for validate_endpoint_transport_compatibility function."""
+
+    @pytest.fixture
+    def model_endpoint(self):
+        """Create a test ModelEndpointInfo with chat endpoint and http URL."""
+        return ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000",
+            ),
+        )
+
+    @pytest.mark.parametrize(
+        "endpoint_type,transport,supported_transports",
+        [
+            param("chat", "http", ["http"], id="chat_http"),
+            param("completions", "http", ["http"], id="completions_http"),
+            param("vllm_generate", "vllm", ["vllm"], id="vllm_generate_vllm"),
+            param("sglang_generate", "sglang", ["sglang"], id="sglang_generate_sglang"),
+            param("trtllm_generate", "trtllm", ["trtllm"], id="trtllm_generate_trtllm"),
+        ],
+    )
+    def test_compatible_endpoint_transport_passes(
+        self,
+        model_endpoint,
+        endpoint_type,
+        transport,
+        supported_transports,
+    ):
+        """Test that compatible endpoint-transport combos pass validation."""
+        model_endpoint.endpoint.type = endpoint_type
+        model_endpoint.transport = transport
+
+        with patch(
+            "aiperf.workers.inference_client.plugins.get_endpoint_metadata",
+            return_value=_make_endpoint_metadata(
+                supported_transports=supported_transports
+            ),
+        ):
+            validate_endpoint_transport_compatibility(model_endpoint)
+
+    def test_incompatible_endpoint_transport_raises(self, model_endpoint):
+        """Test that incompatible endpoint-transport combos raise ValueError."""
+        model_endpoint.endpoint.type = "chat"
+        model_endpoint.transport = "vllm"
+
+        mock_vllm_entry = MagicMock()
+        mock_vllm_entry.name = "vllm_generate"
+        mock_vllm_entry.get_typed_metadata.return_value = _make_endpoint_metadata(
+            supported_transports=["vllm"]
+        )
+
+        with (
+            patch(
+                "aiperf.workers.inference_client.plugins.get_endpoint_metadata",
+                return_value=_make_endpoint_metadata(supported_transports=["http"]),
+            ),
+            patch(
+                "aiperf.workers.inference_client.plugins.list_entries",
+                return_value=[mock_vllm_entry],
+            ),
+            pytest.raises(ValueError, match="does not support transport 'vllm'"),
+        ):
+            validate_endpoint_transport_compatibility(model_endpoint)
+
+    def test_incompatible_error_suggests_compatible_endpoints(self, model_endpoint):
+        """Test that the error message includes compatible endpoints."""
+        model_endpoint.endpoint.type = "chat"
+        model_endpoint.transport = "vllm"
+
+        mock_vllm_entry = MagicMock()
+        mock_vllm_entry.name = "vllm_generate"
+        mock_vllm_entry.get_typed_metadata.return_value = _make_endpoint_metadata(
+            supported_transports=["vllm"]
+        )
+
+        with (
+            patch(
+                "aiperf.workers.inference_client.plugins.get_endpoint_metadata",
+                return_value=_make_endpoint_metadata(supported_transports=["http"]),
+            ),
+            patch(
+                "aiperf.workers.inference_client.plugins.list_entries",
+                return_value=[mock_vllm_entry],
+            ),
+            pytest.raises(ValueError, match="vllm_generate"),
+        ):
+            validate_endpoint_transport_compatibility(model_endpoint)
+
+    def test_auto_detects_transport_from_url(
+        self, model_endpoint, mock_http_transport_entry
+    ):
+        """Test that transport is auto-detected from URL when not set."""
+        model_endpoint.transport = None
+
+        with (
+            patch(
+                "aiperf.workers.inference_client.plugins.list_entries",
+                return_value=[mock_http_transport_entry],
+            ),
+            patch(
+                "aiperf.workers.inference_client.plugins.get_endpoint_metadata",
+                return_value=_make_endpoint_metadata(supported_transports=["http"]),
+            ),
+        ):
+            validate_endpoint_transport_compatibility(model_endpoint)
+
+        assert model_endpoint.transport == "http"
+
+    def test_infers_transport_from_endpoint_when_url_incompatible(
+        self, model_endpoint, mock_http_transport_entry
+    ):
+        """Test transport inferred from endpoint metadata when URL gives incompatible transport.
+
+        Simulates: --endpoint-type vllm_generate (no --url, no --transport).
+        URL defaults to http://localhost:8000 -> detected as 'http', but vllm_generate
+        only supports 'vllm'. Since transport was not explicit and endpoint has exactly
+        one supported transport, it should be inferred as 'vllm'.
+        """
+        model_endpoint.endpoint.type = "vllm_generate"
+        model_endpoint.transport = None
+
+        with (
+            patch(
+                "aiperf.workers.inference_client.plugins.list_entries",
+                return_value=[mock_http_transport_entry],
+            ),
+            patch(
+                "aiperf.workers.inference_client.plugins.get_endpoint_metadata",
+                return_value=_make_endpoint_metadata(supported_transports=["vllm"]),
+            ),
+        ):
+            validate_endpoint_transport_compatibility(model_endpoint)
+
+        assert model_endpoint.transport == "vllm"
+
+    def test_explicit_incompatible_transport_raises(self, model_endpoint):
+        """Test that explicit --transport that's incompatible still raises ValueError."""
+        model_endpoint.endpoint.type = "chat"
+        model_endpoint.transport = "vllm"  # explicitly set
+
+        mock_vllm_entry = MagicMock()
+        mock_vllm_entry.name = "vllm_generate"
+        mock_vllm_entry.get_typed_metadata.return_value = _make_endpoint_metadata(
+            supported_transports=["vllm"]
+        )
+
+        with (
+            patch(
+                "aiperf.workers.inference_client.plugins.get_endpoint_metadata",
+                return_value=_make_endpoint_metadata(supported_transports=["http"]),
+            ),
+            patch(
+                "aiperf.workers.inference_client.plugins.list_entries",
+                return_value=[mock_vllm_entry],
+            ),
+            pytest.raises(ValueError, match="does not support transport 'vllm'"),
+        ):
+            validate_endpoint_transport_compatibility(model_endpoint)

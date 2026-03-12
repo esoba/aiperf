@@ -330,6 +330,73 @@ class TestSGLangGenerate:
 # ============================================================
 
 
+# ============================================================
+# Warmup Iterations
+# ============================================================
+
+
+class TestSGLangWarmupIterations:
+    """Verify warmup_iterations is popped from engine params."""
+
+    def test_warmup_iterations_popped_from_kwargs(self) -> None:
+        with patch.dict(sys.modules, {"sglang": _build_mock_sglang_module()}):
+            from aiperf.transports.in_engine.sglang_transport import SGLangTransport
+
+            endpoint = _make_sglang_endpoint(
+                engine_params=[("warmup_iterations", "3"), ("tp", "2")]
+            )
+            transport = SGLangTransport(model_endpoint=endpoint)
+            kwargs = transport._build_engine_kwargs()
+
+            assert "warmup_iterations" not in kwargs
+            assert transport._warmup_iterations == 3
+            assert kwargs["tp"] == 2
+
+
+# ============================================================
+# finish_reason Normalization
+# ============================================================
+
+
+class TestSGLangFinishReasonNormalization:
+    """Verify finish_reason is normalized to string."""
+
+    @pytest.mark.asyncio
+    async def test_empty_string_finish_reason_defaults_to_stop(self) -> None:
+        mock_sglang = _build_mock_sglang_module()
+        with patch.dict(sys.modules, {"sglang": mock_sglang}):
+            from aiperf.transports.in_engine.sglang_transport import SGLangTransport
+
+            endpoint = _make_sglang_endpoint()
+            transport = SGLangTransport(model_endpoint=endpoint)
+
+            mock_engine = MagicMock()
+            mock_engine.async_generate = AsyncMock(
+                return_value={
+                    "text": "Done",
+                    "meta_info": {
+                        "prompt_tokens": 5,
+                        "completion_tokens": 1,
+                        "finish_reason": "",
+                    },
+                }
+            )
+            del mock_engine.tokenizer_manager
+            transport._engine = mock_engine
+
+            _, _, _, finish_reason = await transport._generate(
+                messages=[{"role": "user", "content": "Hi"}],
+                sampling_params={},
+                request_id="req-sgl-norm",
+            )
+            assert finish_reason == "stop"
+
+
+# ============================================================
+# Messages to Prompt (Fallback)
+# ============================================================
+
+
 class TestSGLangMessagesToPrompt:
     """Verify message-to-prompt conversion fallback when no tokenizer."""
 

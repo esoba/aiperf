@@ -97,6 +97,9 @@ def inference_result_parser(user_config):
         ),
         patch("aiperf.plugin.plugins.get_class"),
         patch("aiperf.plugin.plugins.get_endpoint_metadata"),
+        patch(
+            "aiperf.records.inference_result_parser.validate_endpoint_transport_compatibility"
+        ),
     ):
         parser = InferenceResultParser(
             service_config=ServiceConfig(),

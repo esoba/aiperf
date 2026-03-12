@@ -726,6 +726,14 @@
               "description": "Whether endpoint uses async job polling (submit job, poll for status, retrieve result).",
               "title": "Requires Polling",
               "type": "boolean"
+            },
+            "supported_transports": {
+              "description": "Transport plugins this endpoint is compatible with (e.g., ['http'], ['vllm']).",
+              "items": {
+                "type": "string"
+              },
+              "title": "Supported Transports",
+              "type": "array"
             }
           },
           "required": [

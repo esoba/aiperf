@@ -80,6 +80,18 @@ class TRTLLMTransport(BaseInEngineTransport):
             lambda: LLM(model=model_path, **engine_kwargs),
         )
 
+        if self._warmup_iterations > 0:
+            from tensorrt_llm import SamplingParams as TRTSamplingParams
+
+            self.info(f"Running {self._warmup_iterations} warmup iterations...")
+            warmup_params = TRTSamplingParams(max_tokens=1)
+            engine = self._engine
+            for _ in range(self._warmup_iterations):
+                await loop.run_in_executor(
+                    None,
+                    lambda: engine.generate(["warmup"], warmup_params),
+                )
+
     async def _stop_engine(self) -> None:
         """Shutdown TRT-LLM engine and free GPU resources.
 
@@ -115,7 +127,10 @@ class TRTLLMTransport(BaseInEngineTransport):
         Returns:
             Tuple of (generated_text, input_token_count, output_token_count, finish_reason).
         """
+        from tensorrt_llm import SamplingParams as TRTSamplingParams
+
         prompt = self._messages_to_prompt(messages)
+        sampling_params = TRTSamplingParams(**sampling_params)
 
         loop = asyncio.get_event_loop()
         engine = self._engine
@@ -136,7 +151,8 @@ class TRTLLMTransport(BaseInEngineTransport):
         output_tokens = 0
         if hasattr(completion, "token_ids") and completion.token_ids:
             output_tokens = len(completion.token_ids)
-        finish_reason = getattr(completion, "finish_reason", None) or "stop"
+        raw_finish = getattr(completion, "finish_reason", None)
+        finish_reason = str(raw_finish) if raw_finish is not None else "stop"
 
         return text, input_tokens, output_tokens, finish_reason
 
@@ -157,6 +173,7 @@ class TRTLLMTransport(BaseInEngineTransport):
             Dictionary of kwargs for the `tensorrt_llm.LLM` constructor.
         """
         params = self._get_raw_engine_params()
+        self._pop_warmup_iterations(params)
         kwargs: dict[str, Any] = {}
 
         if "tensor_parallel_size" in params:

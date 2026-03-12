@@ -11,13 +11,17 @@ Verifies:
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
 
 from aiperf.common.models import InEngineResponse, Text, Turn
 from aiperf.common.models.record_models import InferenceServerResponse
-from aiperf.endpoints.engine_generate import EngineGenerateEndpoint
+from aiperf.endpoints.engine_generate import (
+    EngineGenerateEndpoint,
+    VLLMGenerateEndpoint,
+)
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
@@ -190,3 +194,60 @@ class TestParseResponse:
         parsed = endpoint.parse_response(mock_response)
 
         assert parsed is None
+
+
+# ============================================================
+# VLLMGenerateEndpoint — detokenize bool coercion
+# ============================================================
+
+
+class TestVLLMDetokenizeCoercion:
+    """Verify detokenize string values are coerced to bool."""
+
+    @pytest.fixture
+    def vllm_endpoint(self):
+        """Create a VLLMGenerateEndpoint instance."""
+        model_endpoint = create_model_endpoint(
+            EndpointType.CHAT, base_url="vllm://org/model"
+        )
+        return create_endpoint_with_mock_transport(VLLMGenerateEndpoint, model_endpoint)
+
+    @pytest.mark.parametrize(
+        "input_val,expected",
+        [
+            ("false", False),
+            ("False", False),
+            ("true", True),
+            ("True", True),
+            ("1", True),
+            ("0", False),
+            ("yes", True),
+            ("no", False),
+            (True, True),
+            (False, False),
+        ],
+    )
+    def test_detokenize_coerced_to_bool(self, input_val: Any, expected: bool) -> None:
+        extra = [("detokenize", input_val)]
+        model_endpoint = create_model_endpoint(
+            EndpointType.CHAT, base_url="vllm://org/model", extra=extra
+        )
+        endpoint = create_endpoint_with_mock_transport(
+            VLLMGenerateEndpoint, model_endpoint
+        )
+
+        turn = Turn(texts=[Text(contents=["Hi"])], model="test-model")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+        assert payload["sampling_params"]["detokenize"] is expected
+
+    def test_no_detokenize_key_when_not_provided(self, vllm_endpoint) -> None:
+        model_endpoint = create_model_endpoint(
+            EndpointType.CHAT, base_url="vllm://org/model"
+        )
+        turn = Turn(texts=[Text(contents=["Hi"])], model="test-model")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = vllm_endpoint.format_payload(request_info)
+        assert "detokenize" not in payload["sampling_params"]

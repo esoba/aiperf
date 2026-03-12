@@ -462,7 +462,7 @@ class TestVLLMGenerate:
                 finish_reason,
             ) = await transport._generate(
                 messages=[{"role": "user", "content": "Hi"}],
-                sampling_params=MockVLLMSamplingParams(temperature=0.7),
+                sampling_params={"temperature": 0.7},
                 request_id="req-001",
             )
 
@@ -486,7 +486,7 @@ class TestVLLMGenerate:
 
             _, _, _, finish_reason = await transport._generate(
                 messages=[{"role": "user", "content": "Hi"}],
-                sampling_params=MockVLLMSamplingParams(),
+                sampling_params={},
                 request_id="req-001",
             )
             assert finish_reason == "stop"
@@ -504,7 +504,7 @@ class TestVLLMGenerate:
             with pytest.raises(RuntimeError, match="no output"):
                 await transport._generate(
                     messages=[{"role": "user", "content": "Hi"}],
-                    sampling_params=MockVLLMSamplingParams(),
+                    sampling_params={},
                     request_id="req-001",
                 )
 
@@ -525,9 +525,248 @@ class TestVLLMGenerate:
 
             _, input_tokens, output_tokens, _ = await transport._generate(
                 messages=[{"role": "user", "content": "Hi"}],
-                sampling_params=MockVLLMSamplingParams(),
+                sampling_params={},
                 request_id="req-001",
             )
 
             assert input_tokens == 0
             assert output_tokens == 2
+
+    @pytest.mark.asyncio
+    async def test_generate_finish_reason_normalized_to_string(self) -> None:
+        """Enum-like finish_reason is converted to string."""
+
+        class FinishReasonEnum:
+            def __str__(self) -> str:
+                return "length"
+
+        with _patch_vllm_modules():
+            from aiperf.transports.in_engine.vllm_transport import VLLMTransport
+
+            endpoint = _make_vllm_endpoint()
+            transport = VLLMTransport(model_endpoint=endpoint)
+
+            mock_output = MockRequestOutput(
+                outputs=[
+                    MockCompletionOutput(
+                        text="ok",
+                        token_ids=[1],
+                        finish_reason=FinishReasonEnum(),  # type: ignore[arg-type]
+                    )
+                ],
+            )
+            transport._engine = MockAsyncEngine(outputs=[mock_output])
+
+            _, _, _, finish_reason = await transport._generate(
+                messages=[{"role": "user", "content": "Hi"}],
+                sampling_params={},
+                request_id="req-001",
+            )
+            assert finish_reason == "length"
+            assert isinstance(finish_reason, str)
+
+
+# ============================================================
+# Streaming DELTA Mode
+# ============================================================
+
+
+class MockDeltaCompletionOutput:
+    """Mock vLLM CompletionOutput for DELTA mode (incremental text/tokens)."""
+
+    def __init__(
+        self,
+        text: str = "",
+        token_ids: list[int] | None = None,
+        finish_reason: str | None = None,
+    ) -> None:
+        self.text = text
+        self.token_ids = token_ids or []
+        self.finish_reason = finish_reason
+
+
+class MockDeltaRequestOutput:
+    """Mock vLLM RequestOutput for DELTA mode."""
+
+    def __init__(
+        self,
+        prompt_token_ids: list[int] | None = None,
+        outputs: list[MockDeltaCompletionOutput] | None = None,
+    ) -> None:
+        self.prompt_token_ids = prompt_token_ids
+        self.outputs = outputs or []
+
+
+class MockStreamingAsyncEngine:
+    """Mock AsyncLLMEngine that yields multiple DELTA outputs."""
+
+    def __init__(self, outputs: list[MockDeltaRequestOutput] | None = None) -> None:
+        self._outputs = outputs or []
+        self._tokenizer = MagicMock()
+
+    async def generate(self, prompt: str, sampling_params: Any, request_id: str) -> Any:
+        for output in self._outputs:
+            yield output
+
+    def get_tokenizer(self) -> Any:
+        return self._tokenizer
+
+    def shutdown(self) -> None:
+        pass
+
+
+class TestVLLMStreamingGenerate:
+    """Verify DELTA mode streaming generation."""
+
+    @pytest.mark.asyncio
+    async def test_streaming_accumulates_text_and_tokens(self) -> None:
+        """DELTA mode accumulates text and token_ids across deltas."""
+        with _patch_vllm_modules():
+            from aiperf.transports.in_engine.vllm_transport import VLLMTransport
+
+            endpoint = _make_vllm_endpoint()
+            endpoint.endpoint.streaming = True
+            transport = VLLMTransport(model_endpoint=endpoint)
+
+            deltas = [
+                MockDeltaRequestOutput(
+                    prompt_token_ids=list(range(10)),
+                    outputs=[MockDeltaCompletionOutput(text="Hello", token_ids=[1, 2])],
+                ),
+                MockDeltaRequestOutput(
+                    prompt_token_ids=list(range(10)),
+                    outputs=[
+                        MockDeltaCompletionOutput(text=" world", token_ids=[3, 4])
+                    ],
+                ),
+                MockDeltaRequestOutput(
+                    prompt_token_ids=list(range(10)),
+                    outputs=[
+                        MockDeltaCompletionOutput(
+                            text="!", token_ids=[5], finish_reason="stop"
+                        )
+                    ],
+                ),
+            ]
+            transport._engine = MockStreamingAsyncEngine(outputs=deltas)
+
+            (
+                text,
+                input_tokens,
+                output_tokens,
+                finish_reason,
+            ) = await transport._generate(
+                messages=[{"role": "user", "content": "Hi"}],
+                sampling_params={},
+                request_id="req-stream-001",
+            )
+
+            assert text == "Hello world!"
+            assert input_tokens == 10
+            assert output_tokens == 5
+            assert finish_reason == "stop"
+
+    @pytest.mark.asyncio
+    async def test_streaming_sets_first_token_perf_ns(self) -> None:
+        """DELTA mode sets _first_token_perf_ns on first delta."""
+        with _patch_vllm_modules():
+            from aiperf.transports.in_engine.vllm_transport import VLLMTransport
+
+            endpoint = _make_vllm_endpoint()
+            endpoint.endpoint.streaming = True
+            transport = VLLMTransport(model_endpoint=endpoint)
+
+            deltas = [
+                MockDeltaRequestOutput(
+                    prompt_token_ids=[1, 2, 3],
+                    outputs=[
+                        MockDeltaCompletionOutput(
+                            text="Hi", token_ids=[10], finish_reason="stop"
+                        )
+                    ],
+                ),
+            ]
+            transport._engine = MockStreamingAsyncEngine(outputs=deltas)
+
+            assert transport._first_token_perf_ns is None
+
+            await transport._generate(
+                messages=[{"role": "user", "content": "Hi"}],
+                sampling_params={},
+                request_id="req-stream-002",
+            )
+
+            assert transport._first_token_perf_ns is not None
+            assert transport._first_token_perf_ns > 0
+
+    @pytest.mark.asyncio
+    async def test_streaming_empty_output_raises(self) -> None:
+        """RuntimeError when DELTA mode yields no deltas."""
+        with _patch_vllm_modules():
+            from aiperf.transports.in_engine.vllm_transport import VLLMTransport
+
+            endpoint = _make_vllm_endpoint()
+            endpoint.endpoint.streaming = True
+            transport = VLLMTransport(model_endpoint=endpoint)
+            transport._engine = MockStreamingAsyncEngine(outputs=[])
+
+            with pytest.raises(RuntimeError, match="no output"):
+                await transport._generate(
+                    messages=[{"role": "user", "content": "Hi"}],
+                    sampling_params={},
+                    request_id="req-stream-003",
+                )
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_uses_final_only(self) -> None:
+        """When streaming is False, generate uses FINAL_ONLY (existing path)."""
+        with _patch_vllm_modules():
+            from aiperf.transports.in_engine.vllm_transport import VLLMTransport
+
+            endpoint = _make_vllm_endpoint()
+            endpoint.endpoint.streaming = False
+            transport = VLLMTransport(model_endpoint=endpoint)
+
+            mock_output = MockRequestOutput(
+                prompt_token_ids=list(range(5)),
+                outputs=[
+                    MockCompletionOutput(
+                        text="Final", token_ids=[1, 2], finish_reason="stop"
+                    )
+                ],
+            )
+            transport._engine = MockAsyncEngine(outputs=[mock_output])
+
+            text, _, _, _ = await transport._generate(
+                messages=[{"role": "user", "content": "Hi"}],
+                sampling_params={},
+                request_id="req-final-001",
+            )
+            assert text == "Final"
+            assert transport._first_token_perf_ns is None
+
+
+# ============================================================
+# Warmup Iterations
+# ============================================================
+
+
+class TestVLLMWarmupIterations:
+    """Verify warmup_iterations is popped from engine params."""
+
+    def test_warmup_iterations_popped_from_kwargs(self) -> None:
+        with _patch_vllm_modules():
+            from aiperf.transports.in_engine.vllm_transport import VLLMTransport
+
+            endpoint = _make_vllm_endpoint(
+                engine_params=[
+                    ("warmup_iterations", "5"),
+                    ("tensor_parallel_size", "2"),
+                ]
+            )
+            transport = VLLMTransport(model_endpoint=endpoint)
+            kwargs = transport._build_engine_kwargs()
+
+            assert "warmup_iterations" not in kwargs
+            assert transport._warmup_iterations == 5
+            assert kwargs["tensor_parallel_size"] == 2

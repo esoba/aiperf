@@ -64,6 +64,14 @@ class SGLangTransport(BaseInEngineTransport):
             ),
         )
 
+        if self._warmup_iterations > 0:
+            self.info(f"Running {self._warmup_iterations} warmup iterations...")
+            for _ in range(self._warmup_iterations):
+                await self._engine.async_generate(
+                    prompt="warmup",
+                    sampling_params={"max_new_tokens": 1},
+                )
+
     async def _stop_engine(self) -> None:
         """Shutdown SGLang Engine and all its subprocesses."""
         if self._engine is not None:
@@ -111,8 +119,7 @@ class SGLangTransport(BaseInEngineTransport):
         finish_reason = meta_info.get("finish_reason", {})
         if isinstance(finish_reason, dict):
             finish_reason = finish_reason.get("type", "stop")
-        if not finish_reason:
-            finish_reason = "stop"
+        finish_reason = str(finish_reason) if finish_reason else "stop"
 
         self.debug(
             lambda: f"SGLang output: input_tokens={input_tokens}, "
@@ -138,6 +145,7 @@ class SGLangTransport(BaseInEngineTransport):
             Keyword arguments for `sgl.Engine()`
         """
         params = self._get_raw_engine_params()
+        self._pop_warmup_iterations(params)
         kwargs: dict[str, Any] = {}
 
         # Accept both canonical and SGLang-native names for parallelism

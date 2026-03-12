@@ -16,43 +16,62 @@ from aiperf.common.models import (
 )
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
-
-# Maps in-engine transport names to their corresponding endpoint types.
-# Used to auto-select the engine-specific generate endpoint.
-_IN_ENGINE_ENDPOINTS: dict[str, str] = {
-    "vllm": "vllm_generate",
-    "sglang": "sglang_generate",
-    "trtllm": "trtllm_generate",
-}
+from aiperf.plugin.schema.schemas import EndpointMetadata
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
 
 
-def resolve_in_engine_endpoint(model_endpoint: ModelEndpointInfo) -> None:
-    """Auto-detect in-engine transport and switch to the engine-specific endpoint.
+def validate_endpoint_transport_compatibility(
+    model_endpoint: ModelEndpointInfo,
+) -> None:
+    """Validate that the endpoint is compatible with the chosen transport.
 
-    For in-engine transports (vllm://, sglang://, trtllm://), this:
-    1. Detects transport type from URL scheme if not already set
-    2. Switches endpoint type from generic chat/completions to engine-specific
-    3. Enables use_server_token_count (engine token counts are exact)
+    Auto-detects transport from URL scheme if not already set, then checks
+    the endpoint's ``supported_transports`` metadata to ensure compatibility.
 
-    Mutates ``model_endpoint`` in place. Safe to call multiple times.
+    When transport was not explicitly set (via ``--transport``) and URL-based
+    detection yields an incompatible transport, falls back to the endpoint's
+    sole supported transport if unambiguous.
+
+    Mutates ``model_endpoint.transport`` in place if auto-detected or inferred.
 
     Args:
-        model_endpoint: Model endpoint info to resolve
+        model_endpoint: Model endpoint info to validate.
+
+    Raises:
+        ValueError: If the endpoint does not support the transport.
     """
+    transport_was_explicit = model_endpoint.transport is not None
+
     if not model_endpoint.transport:
         model_endpoint.transport = detect_transport_from_url(
             model_endpoint.endpoint.base_url,
         )
 
     transport_name = str(model_endpoint.transport)
-    if transport_name in _IN_ENGINE_ENDPOINTS:
-        endpoint_type = str(model_endpoint.endpoint.type)
-        if endpoint_type in ("chat", "completions"):
-            model_endpoint.endpoint.type = _IN_ENGINE_ENDPOINTS[transport_name]
-        model_endpoint.endpoint.use_server_token_count = True
+    endpoint_name = str(model_endpoint.endpoint.type)
+    endpoint_meta = plugins.get_endpoint_metadata(endpoint_name)
+
+    if transport_name in endpoint_meta.supported_transports:
+        return
+
+    # Auto-infer from endpoint when transport wasn't explicit and endpoint is unambiguous
+    if not transport_was_explicit and len(endpoint_meta.supported_transports) == 1:
+        model_endpoint.transport = endpoint_meta.supported_transports[0]
+        return
+
+    compatible = [
+        entry.name
+        for entry in plugins.list_entries(PluginType.ENDPOINT)
+        if transport_name
+        in entry.get_typed_metadata(EndpointMetadata).supported_transports
+    ]
+    raise ValueError(
+        f"Endpoint '{endpoint_name}' does not support transport '{transport_name}'. "
+        f"Supported transports for '{endpoint_name}': {endpoint_meta.supported_transports}. "
+        f"Endpoints compatible with '{transport_name}': {compatible}."
+    )
 
 
 def detect_transport_from_url(url: str) -> str:
@@ -91,7 +110,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         self.model_endpoint = model_endpoint
         self.service_id = service_id
 
-        resolve_in_engine_endpoint(model_endpoint)
+        validate_endpoint_transport_compatibility(model_endpoint)
 
         # Create endpoint and transport instances
         EndpointClass = plugins.get_class(
