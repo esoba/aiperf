@@ -18,6 +18,7 @@ from pytest import param
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.kube_config import KubeOptions
+from aiperf.config.config import AIPerfConfig
 from aiperf.kubernetes.constants import KueueLabels, Labels
 from aiperf.kubernetes.resources import KubernetesDeployment
 from aiperf.operator.spec_converter import AIPerfJobSpecConverter
@@ -26,6 +27,19 @@ from aiperf.operator.status import Phase
 # =============================================================================
 # Fixtures
 # =============================================================================
+
+
+@pytest.fixture
+def aiperf_config() -> AIPerfConfig:
+    """Create a minimal AIPerfConfig for testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {"type": "synthetic", "entries": 100, "prompts": {"isl": 128}}
+        },
+        load={"default": {"type": "concurrency", "concurrency": 1, "requests": 10}},
+    )
 
 
 @pytest.fixture
@@ -102,14 +116,23 @@ def full_spec_with_scheduling() -> dict[str, Any]:
     """Create a complete AIPerfJob spec with Kueue scheduling config."""
     return {
         "image": "aiperf:test",
-        "userConfig": {
-            "endpoint": {
-                "model_names": ["gpt-4"],
-                "urls": ["http://api.example.com"],
+        "models": ["gpt-4"],
+        "endpoint": {
+            "urls": ["http://api.example.com/v1/chat/completions"],
+            "type": "chat",
+        },
+        "datasets": {
+            "main": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 128},
             },
-            "loadgen": {
+        },
+        "load": {
+            "profiling": {
+                "type": "concurrency",
                 "concurrency": 10,
-                "request_count": 100,
+                "requests": 100,
             },
         },
         "scheduling": {
@@ -129,6 +152,7 @@ class TestKueueManifestGeneration:
 
     def test_runner_generates_kueue_labels_when_queue_name_set(
         self,
+        aiperf_config: AIPerfConfig,
         user_config: UserConfig,
         service_config: ServiceConfig,
     ) -> None:
@@ -136,6 +160,7 @@ class TestKueueManifestGeneration:
         deployment = KubernetesDeployment(
             job_id="abc12345",
             image="aiperf:test",
+            aiperf_config=aiperf_config,
             user_config=user_config,
             service_config=service_config,
             queue_name="test-queue",
@@ -150,6 +175,7 @@ class TestKueueManifestGeneration:
 
     def test_runner_omits_kueue_labels_when_queue_name_not_set(
         self,
+        aiperf_config: AIPerfConfig,
         user_config: UserConfig,
         service_config: ServiceConfig,
     ) -> None:
@@ -157,6 +183,7 @@ class TestKueueManifestGeneration:
         deployment = KubernetesDeployment(
             job_id="abc12345",
             image="aiperf:test",
+            aiperf_config=aiperf_config,
             user_config=user_config,
             service_config=service_config,
         )
@@ -170,6 +197,7 @@ class TestKueueManifestGeneration:
 
     def test_full_deployment_manifests_include_kueue_on_jobset_only(
         self,
+        aiperf_config: AIPerfConfig,
         user_config: UserConfig,
         service_config: ServiceConfig,
     ) -> None:
@@ -177,6 +205,7 @@ class TestKueueManifestGeneration:
         deployment = KubernetesDeployment(
             job_id="abc12345",
             image="aiperf:test",
+            aiperf_config=aiperf_config,
             user_config=user_config,
             service_config=service_config,
             queue_name="test-queue",
@@ -201,6 +230,7 @@ class TestKueueManifestGeneration:
 
     def test_priority_class_flows_through_to_manifest(
         self,
+        aiperf_config: AIPerfConfig,
         user_config: UserConfig,
         service_config: ServiceConfig,
     ) -> None:
@@ -208,6 +238,7 @@ class TestKueueManifestGeneration:
         deployment = KubernetesDeployment(
             job_id="abc12345",
             image="aiperf:test",
+            aiperf_config=aiperf_config,
             user_config=user_config,
             service_config=service_config,
             queue_name="test-queue",
@@ -231,6 +262,7 @@ class TestKueueManifestGeneration:
     )  # fmt: skip
     def test_suspend_only_when_queue_name_set(
         self,
+        aiperf_config: AIPerfConfig,
         user_config: UserConfig,
         service_config: ServiceConfig,
         queue_name: str | None,
@@ -241,6 +273,7 @@ class TestKueueManifestGeneration:
         deployment = KubernetesDeployment(
             job_id="abc12345",
             image="aiperf:test",
+            aiperf_config=aiperf_config,
             user_config=user_config,
             service_config=service_config,
             queue_name=queue_name,
@@ -626,8 +659,10 @@ class TestKueueOperatorFlow:
     def test_spec_converter_returns_none_without_scheduling(self) -> None:
         """Verify scheduling fields are None when not in spec."""
         spec: dict[str, Any] = {
-            "userConfig": {
-                "endpoint": {"model_names": ["test"]},
+            "models": ["test"],
+            "endpoint": {
+                "urls": ["http://localhost:8000/v1/chat/completions"],
+                "type": "chat",
             },
         }
         converter = AIPerfJobSpecConverter(spec, "test-job", "default")

@@ -21,7 +21,7 @@
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
-		add-copyright generate-cli-docs generate-env-vars-docs generate-plugin-enums \
+		add-copyright generate-config-schema check-config-schema generate-crd check-crd generate-cli-docs generate-env-vars-docs generate-plugin-enums \
 		generate-plugin-overloads check-plugin-overloads generate-plugin-schemas \
 		generate-all-plugin-files generate-all-docs test-stress stress-tests \
 		test-fern-docs internal-help help \
@@ -269,6 +269,18 @@ test-fern-docs: #? validate Fern documentation (check, strict check, dev server)
 	$(activate_venv) && pytest tests/unit/fern/ -m fern -v --tb=short $(args)
 	@printf "$(bold)$(green)Fern documentation checks passed!$(reset)\n"
 
+generate-config-schema: #? generate the JSON Schema for AIPerf YAML config files.
+	$(activate_venv) && ./tools/generate_config_schema.py
+
+check-config-schema: #? check if the config JSON Schema is up-to-date.
+	$(activate_venv) && ./tools/generate_config_schema.py --check
+
+generate-crd: #? generate the Kubernetes CRD schema from AIPerfConfig.
+	$(activate_venv) && ./tools/generate_crd.py
+
+check-crd: #? check if the CRD schema is up-to-date.
+	$(activate_venv) && ./tools/generate_crd.py --check
+
 generate-cli-docs: #? generate the CLI documentation.
 	$(activate_venv) && ./tools/generate_cli_docs.py
 
@@ -293,7 +305,9 @@ validate-plugin-schemas: #? validate categories.yaml and plugins.yaml against th
 generate-all-plugin-files: #? generate all plugin files (enums, overloads, schemas).
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py
 
-generate-all-docs: #? generate all documentation files.
+generate-all-docs: #? generate all documentation and schema files.
+	$(activate_venv) && ./tools/generate_config_schema.py
+	$(activate_venv) && ./tools/generate_crd.py
 	$(activate_venv) && ./tools/generate_cli_docs.py
 	$(activate_venv) && ./tools/generate_env_vars_docs.py
 

@@ -14,20 +14,24 @@ kind: AIPerfJob
 metadata:
   name: agg-8xtp2-benchmark
 spec:
-  userConfig:
-    endpoint:
-      model_names:
-        - Qwen/Qwen3-32B
-      urls:
-        - http://agg-8xtp2-frontend:8000
-      streaming: true
-    input:
-      file: /perf-cache/traces/conversation_trace.jsonl
-      custom_dataset_type: mooncake_trace
-      fixed_schedule: true
-      goodput:
-        time_to_first_token: 2000
-        inter_token_latency: 25
+  models:
+    - Qwen/Qwen3-32B
+  endpoint:
+    urls:
+      - http://agg-8xtp2-frontend:8000
+    streaming: true
+  datasets:
+    main:
+      type: file
+      path: /perf-cache/traces/conversation_trace.jsonl
+      format: mooncake_trace
+  slos:
+    time_to_first_token: 2000
+    inter_token_latency: 25
+  load:
+    profiling:
+      type: fixed_schedule
+      dataset: main
   podTemplate:
     volumes:
       - name: model-cache

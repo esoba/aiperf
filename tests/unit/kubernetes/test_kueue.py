@@ -173,11 +173,12 @@ class TestKubernetesDeploymentKueue:
 
     @pytest.fixture
     def _deployment_kwargs(
-        self, sample_user_config, sample_service_config
+        self, sample_aiperf_config, sample_user_config, sample_service_config
     ) -> dict[str, Any]:
         return {
             "job_id": "ktest1",
             "image": "aiperf:latest",
+            "aiperf_config": sample_aiperf_config,
             "user_config": sample_user_config,
             "service_config": sample_service_config,
         }

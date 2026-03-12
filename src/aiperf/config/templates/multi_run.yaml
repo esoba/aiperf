@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Multi-Run Statistical Benchmarking
+# ===================================
+# Executes multiple benchmark runs and computes aggregate statistics
+# (mean, standard deviation, confidence intervals) across runs.
+#
+# Use case: Production-grade results with statistical confidence
+#
+# Run: aiperf run examples_v2/multi_run.yaml
+
+models:
+  - meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  urls:
+    - http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 600.0
+
+datasets:
+  warmup:
+    type: synthetic
+    entries: 100
+    prompts:
+      isl: 256
+      osl: 64
+
+  main:
+    type: synthetic
+    entries: 2000
+    prompts:
+      isl: {mean: 512, stddev: 50}
+      osl: {mean: 128, stddev: 25}
+
+load:
+  warmup:
+    type: concurrency
+    dataset: warmup
+    exclude: true
+    requests: 100
+    concurrency: 8
+
+  profiling:
+    type: poisson
+    dataset: main
+    duration: 120
+    rate: 20.0
+    concurrency: 64
+    seamless: true
+
+multi_run:
+  num_runs: 5             # Execute 5 independent runs
+  cooldown_seconds: 10.0  # Wait 10s between runs for system stabilization
+  confidence_level: 0.95  # 95% confidence intervals
+
+artifacts:
+  dir: ./artifacts/multi_run
+  console: table
+  summary: [json]

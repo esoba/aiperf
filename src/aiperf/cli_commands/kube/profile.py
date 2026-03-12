@@ -9,17 +9,16 @@ from typing import Annotated
 
 from cyclopts import App, Parameter
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.kube_config import KubeOptions
+from aiperf.config.cli_builder import CLIModel
 
 app = App(name="profile")
 
 
 @app.default
 async def profile(
-    user_config: UserConfig,
+    cli: CLIModel,
     kube_options: KubeOptions,
-    service_config: ServiceConfig | None = None,
     detach: Annotated[bool, Parameter(name=["-d", "--detach"])] = False,
     no_wait: Annotated[bool, Parameter(name="--no-wait", negative=())] = False,
     attach_port: Annotated[int, Parameter(name="--attach-port")] = 0,
@@ -48,9 +47,8 @@ async def profile(
             --url http://server:8000 --image aiperf:latest --detach
 
     Args:
-        user_config: User configuration for the benchmark (same as 'aiperf profile').
+        cli: Benchmark configuration (parsed from CLI flags).
         kube_options: Kubernetes-specific deployment options.
-        service_config: Service configuration options (optional).
         detach: Exit immediately after deploying (don't wait for completion).
             Automatically enabled in non-interactive environments (pipes, CI/CD).
         no_wait: Don't wait for pods to be ready before attaching (advanced).
@@ -65,17 +63,19 @@ async def profile(
     from aiperf.kubernetes import console as kube_console
 
     with cli_utils.exit_on_error(title="Error Running Kubernetes Benchmark"):
-        from aiperf.common.config import load_service_config
+        from aiperf.config.cli_builder import build_aiperf_config
+        from aiperf.config.reverse_converter import convert_to_legacy_configs
         from aiperf.kubernetes import runner
 
-        service_config = service_config or load_service_config()
+        aiperf_config = build_aiperf_config(cli)
+        user_config, service_config = convert_to_legacy_configs(aiperf_config)
 
         if not skip_preflight:
             from aiperf.kubernetes import preflight as kube_preflight
 
             endpoint_url = (
-                user_config.endpoint.url
-                if not skip_endpoint_check and user_config.endpoint.urls
+                aiperf_config.endpoint.urls[0]
+                if not skip_endpoint_check and aiperf_config.endpoint.urls
                 else None
             )
             preflight_ns = kube_options.namespace or "aiperf-preflight-check"
@@ -100,7 +100,11 @@ async def profile(
                 )
                 raise SystemExit(1)
         job_id, namespace = await runner.run_kubernetes_deployment(
-            user_config, service_config, kube_options, dry_run=False
+            user_config,
+            service_config,
+            kube_options,
+            dry_run=False,
+            aiperf_config=aiperf_config,
         )
 
         kube_console.save_last_benchmark(job_id, namespace, name=kube_options.name)

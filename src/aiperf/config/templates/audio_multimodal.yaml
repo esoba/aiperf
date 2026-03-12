@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Audio/Speech Multimodal Benchmark
+# =================================
+# Benchmarks speech-to-text or audio understanding models.
+# Generates synthetic audio clips of varying lengths.
+#
+# Use case: Benchmark Whisper, audio-LLMs, or speech recognition
+#
+# Run: aiperf --config examples_v2/audio_multimodal.yaml
+
+random_seed: 42
+
+models:
+  - openai/whisper-large-v3
+
+endpoint:
+  urls:
+    - http://localhost:8000/v1/audio/transcriptions
+  type: chat  # Audio transcription via chat endpoint
+  streaming: false
+  timeout: 180.0
+
+datasets:
+  # Short audio clips (5-10 seconds)
+  short_audio:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: 50  # Short text prompt
+      osl: {mean: 200, stddev: 50}  # Expected transcription length
+    audio:
+      batch_size: 1
+      length: {mean: 7.5, stddev: 2.5}  # 5-10 second clips
+      format: wav
+      sample_rates: [16.0]  # 16kHz for speech
+      depths: [16]
+      channels: 1  # Mono
+
+  # Longer audio clips (30-60 seconds)
+  long_audio:
+    type: synthetic
+    entries: 200
+    prompts:
+      isl: 50
+      osl: {mean: 500, stddev: 100}
+    audio:
+      batch_size: 1
+      length: {mean: 45.0, stddev: 15.0}  # 30-60 second clips
+      format: wav
+      sample_rates: [16.0]
+      depths: [16]
+      channels: 1
+
+
+load:
+  short_audio_test:
+    type: poisson
+    dataset: short_audio
+    requests: 500
+    concurrency: 8
+    rate: 5.0
+    grace_period: 120
+
+  long_audio_test:
+    type: poisson
+    dataset: long_audio
+    requests: 200
+    concurrency: 4
+    rate: 2.0
+    seamless: true
+    grace_period: 180
+
+artifacts:
+  dir: ./artifacts/audio_multimodal
+  console: table
+  summary: [json]
+  records: [jsonl, csv]

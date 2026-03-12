@@ -57,29 +57,37 @@ class AIPerfJobConfig:
     queue_name: str | None = None
     priority_class: str | None = None
 
-    def to_user_config(self) -> dict[str, Any]:
-        """Generate userConfig for CRD spec."""
-        loadgen: dict[str, Any] = {
+    def to_config_fields(self) -> dict[str, Any]:
+        """Generate inline AIPerfConfig fields for CRD spec."""
+        load_phase: dict[str, Any] = {
+            "type": "concurrency",
             "concurrency": self.concurrency,
-            "warmup_request_count": self.warmup_request_count,
         }
         if self.request_count is not None:
-            loadgen["request_count"] = self.request_count
+            load_phase["requests"] = self.request_count
         if self.benchmark_duration is not None:
-            loadgen["benchmark_duration"] = self.benchmark_duration
+            load_phase["duration"] = self.benchmark_duration
+        if self.warmup_request_count:
+            load_phase["warmup"] = {"requests": self.warmup_request_count}
 
         return {
+            "models": [self.model_name],
             "endpoint": {
-                "url": self.endpoint_url,
-                "model_names": [self.model_name],
+                "urls": [self.endpoint_url],
                 "type": self.endpoint_type,
             },
-            "loadgen": loadgen,
+            "datasets": {
+                "main": {
+                    "type": "synthetic",
+                    "entries": max(self.request_count or 100, 100),
+                    "prompts": {"isl": 128, "osl": 128},
+                },
+            },
+            "load": {
+                "profiling": load_phase,
+            },
             "tokenizer": {
                 "name": self.tokenizer_name,
-            },
-            "ui": {
-                "type": "none",  # Disable UI for cleaner logs
             },
         }
 
@@ -96,7 +104,7 @@ class AIPerfJobConfig:
         spec: dict[str, Any] = {
             "image": self.image,
             "imagePullPolicy": self.image_pull_policy,
-            "userConfig": self.to_user_config(),
+            **self.to_config_fields(),
         }
 
         if self.connections_per_worker is not None:

@@ -12,7 +12,7 @@ from typing import Any
 import yaml
 
 from aiperf.kubernetes import console as kube_console
-from aiperf.operator.spec_converter import AIPerfJobSpecConverter
+from aiperf.operator.spec_converter import CONFIG_FIELDS, AIPerfJobSpecConverter
 
 EXPECTED_API_VERSION = "aiperf.nvidia.com/v1alpha1"
 EXPECTED_KIND = "AIPerfJob"
@@ -22,7 +22,6 @@ K8S_NAME_MAX_LENGTH = 253
 KNOWN_SPEC_FIELDS = {
     "image",
     "imagePullPolicy",
-    "userConfig",
     "connectionsPerWorker",
     "timeoutSeconds",
     "ttlSecondsAfterFinished",
@@ -30,7 +29,7 @@ KNOWN_SPEC_FIELDS = {
     "cancel",
     "podTemplate",
     "scheduling",
-}
+} | CONFIG_FIELDS
 
 
 @dataclass(slots=True)
@@ -77,8 +76,11 @@ def validate_yaml_structure(doc: dict[str, Any], result: ValidationResult) -> bo
         result.errors.append("spec: missing or not a mapping")
         return False
 
-    if "userConfig" not in spec:
-        result.errors.append("spec.userConfig: required field missing")
+    has_config = any(f in spec for f in CONFIG_FIELDS)
+    if not has_config:
+        result.errors.append(
+            "spec: must contain AIPerfConfig fields (models, endpoint, datasets, load)"
+        )
         return False
 
     return True
@@ -110,39 +112,29 @@ def validate_unknown_spec_fields(
             result.warnings.append(msg)
 
 
-def validate_user_config(
+def validate_aiperf_config(
     spec: dict[str, Any], name: str, result: ValidationResult
 ) -> None:
-    """Validate spec.userConfig via AIPerfJobSpecConverter."""
+    """Validate spec via AIPerfJobSpecConverter."""
     try:
         converter = AIPerfJobSpecConverter(spec=spec, name=name, namespace="default")
-        user_config = converter.to_user_config()
+        config = converter.to_aiperf_config()
     except Exception as e:
-        result.errors.append(f"UserConfig validation failed: {e}")
+        result.errors.append(f"AIPerfConfig validation failed: {e}")
         return
 
-    if not user_config.endpoint.model_names:
-        result.errors.append("endpoint.model_names: must not be empty")
+    model_names = config.get_model_names()
+    if not model_names:
+        result.errors.append("models: must not be empty")
 
-    if not user_config.endpoint.urls:
+    if not config.endpoint.urls:
         result.errors.append("endpoint.urls: must not be empty")
 
-    for url in user_config.endpoint.urls:
+    for url in config.endpoint.urls:
         if not url.startswith(("http://", "https://")):
             result.errors.append(
                 f"endpoint.urls: '{url}' must start with http:// or https://"
             )
-
-
-def validate_service_config(
-    spec: dict[str, Any], name: str, result: ValidationResult
-) -> None:
-    """Validate ServiceConfig generation."""
-    try:
-        converter = AIPerfJobSpecConverter(spec=spec, name=name, namespace="default")
-        converter.to_service_config()
-    except Exception as e:
-        result.errors.append(f"ServiceConfig validation failed: {e}")
 
 
 def validate_pod_customization(
@@ -211,8 +203,7 @@ def validate_file(path: Path, *, strict: bool = False) -> ValidationResult:
 
     validate_k8s_name(name, result)
     validate_unknown_spec_fields(spec, result, strict=strict)
-    validate_user_config(spec, name, result)
-    validate_service_config(spec, name, result)
+    validate_aiperf_config(spec, name, result)
     validate_pod_customization(spec, name, result)
     validate_worker_count(spec, name, result)
 

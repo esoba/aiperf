@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Goodput / SLO Benchmark
+# =======================
+# Measures "good" requests per second that meet all SLO thresholds.
+# A request is "good" only if it meets ALL specified SLO criteria.
+#
+# Use case: Find maximum sustainable throughput while meeting latency SLAs
+#
+# Reference: DistServe paper (https://arxiv.org/pdf/2401.09670)
+#
+# Run: aiperf --config examples_v2/goodput_slo.yaml
+
+random_seed: 42
+
+models:
+  - meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  urls:
+    - http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true  # Required for TTFT and ITL measurement
+  timeout: 120.0
+
+datasets:
+  slo_test:
+    type: synthetic
+    entries: 5000
+    prompts:
+      isl: {mean: 512, stddev: 100}
+      osl: {mean: 256, stddev: 50}
+
+
+load:
+  # Warmup
+  warmup:
+    type: concurrency
+    exclude: true
+    requests: 100
+    concurrency: 16
+
+  # Goodput measurement at low load
+  low_load:
+    type: poisson
+    duration: 120
+    rate: 10.0
+    concurrency: 50
+    seamless: true
+    grace_period: 60
+
+  # Goodput measurement at medium load
+  medium_load:
+    type: poisson
+    duration: 120
+    rate: 30.0
+    concurrency: 100
+    seamless: true
+    grace_period: 60
+
+  # Goodput measurement at high load
+  high_load:
+    type: poisson
+    duration: 120
+    rate: 50.0
+    concurrency: 150
+    seamless: true
+    grace_period: 60
+
+# SLO definitions - request is "good" if ALL thresholds are met
+slos:
+  request_latency: 5000  # Max 5 seconds E2E latency (ms)
+  time_to_first_token: 500  # Max 500ms TTFT
+  inter_token_latency: 50  # Max 50ms between tokens
+  tokens_per_second: 20.0  # Min 20 tokens/sec output rate
+
+artifacts:
+  dir: ./artifacts/goodput_slo
+  console: table
+  summary: [json]
+  records: [jsonl, csv]
+  slice_duration: 30

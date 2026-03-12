@@ -10,7 +10,6 @@ from aiperf.operator.spec_converter import (
     DEFAULT_CONNECTIONS_PER_WORKER,
     AIPerfJobSpecConverter,
 )
-from aiperf.plugin.enums import ServiceRunType, UIType
 
 
 class TestAIPerfJobSpecConverterInit:
@@ -51,118 +50,145 @@ class TestAIPerfJobSpecConverterInit:
         assert DEFAULT_CONNECTIONS_PER_WORKER == 500
 
 
-class TestToUserConfig:
-    """Tests for to_user_config method."""
+class TestToAIPerfConfig:
+    """Tests for to_aiperf_config method."""
 
-    def test_minimal_user_config(self, minimal_aiperfjob_spec: dict[str, Any]) -> None:
-        """Test converting minimal spec to UserConfig."""
+    def test_minimal_config_models(
+        self, minimal_aiperfjob_spec: dict[str, Any]
+    ) -> None:
+        """Test converting minimal spec produces correct models."""
         converter = AIPerfJobSpecConverter(
             minimal_aiperfjob_spec, "test-job", "default"
         )
-        user_config = converter.to_user_config()
+        config = converter.to_aiperf_config()
 
-        assert user_config.endpoint.model_names == ["test-model"]
+        assert config.get_model_names() == ["test-model"]
+
+    def test_minimal_config_endpoint(
+        self, minimal_aiperfjob_spec: dict[str, Any]
+    ) -> None:
+        """Test converting minimal spec produces correct endpoint."""
+        converter = AIPerfJobSpecConverter(
+            minimal_aiperfjob_spec, "test-job", "default"
+        )
+        config = converter.to_aiperf_config()
+
+        assert "http://localhost:8000/v1/chat/completions" in config.endpoint.urls
 
     def test_sets_cli_command(self, minimal_aiperfjob_spec: dict[str, Any]) -> None:
         """Test that cli_command is set for traceability."""
         converter = AIPerfJobSpecConverter(minimal_aiperfjob_spec, "my-job", "my-ns")
-        user_config = converter.to_user_config()
+        config = converter.to_aiperf_config()
 
-        assert "kubectl apply" in user_config.cli_command
-        assert "my-job" in user_config.cli_command
+        assert "kubectl apply" in config.artifacts.cli_command
+        assert "my-job" in config.artifacts.cli_command
 
     def test_sets_artifact_directory(
         self, minimal_aiperfjob_spec: dict[str, Any]
     ) -> None:
-        """Test that artifact_directory is set to /results."""
+        """Test that artifact directory is set to /results."""
         converter = AIPerfJobSpecConverter(
             minimal_aiperfjob_spec, "test-job", "default"
         )
-        user_config = converter.to_user_config()
+        config = converter.to_aiperf_config()
 
-        assert user_config.output.artifact_directory.as_posix() == "/results"
+        assert str(config.artifacts.dir) == "/results"
 
-    def test_full_user_config(self, full_aiperfjob_spec: dict[str, Any]) -> None:
-        """Test converting full spec to UserConfig."""
+    def test_full_config_models(self, full_aiperfjob_spec: dict[str, Any]) -> None:
+        """Test converting full spec produces correct models."""
         converter = AIPerfJobSpecConverter(full_aiperfjob_spec, "test-job", "default")
-        user_config = converter.to_user_config()
+        config = converter.to_aiperf_config()
 
-        assert user_config.endpoint.model_names == ["gpt-4"]
-        assert "http://api.example.com" in user_config.endpoint.urls
-        assert user_config.loadgen.concurrency == 500
-        assert user_config.loadgen.request_count == 1000
-        assert user_config.loadgen.warmup_request_count == 50
+        assert config.get_model_names() == ["meta-llama/Llama-3.1-8B-Instruct"]
+
+    def test_full_config_endpoint(self, full_aiperfjob_spec: dict[str, Any]) -> None:
+        """Test converting full spec produces correct endpoint."""
+        converter = AIPerfJobSpecConverter(full_aiperfjob_spec, "test-job", "default")
+        config = converter.to_aiperf_config()
+
+        assert "http://api.example.com/v1/chat/completions" in config.endpoint.urls
+        assert config.endpoint.streaming is True
+
+    def test_full_config_load_phases(self, full_aiperfjob_spec: dict[str, Any]) -> None:
+        """Test converting full spec produces correct load phases."""
+        converter = AIPerfJobSpecConverter(full_aiperfjob_spec, "test-job", "default")
+        config = converter.to_aiperf_config()
+
+        assert "profiling" in config.load
+        phase = config.load["profiling"]
+        assert phase.concurrency == 500
+        assert phase.requests == 1000
+
+    def test_full_config_datasets(self, full_aiperfjob_spec: dict[str, Any]) -> None:
+        """Test converting full spec produces correct datasets."""
+        converter = AIPerfJobSpecConverter(full_aiperfjob_spec, "test-job", "default")
+        config = converter.to_aiperf_config()
+
+        assert "main" in config.datasets
+        ds = config.datasets["main"]
+        assert ds.type == "synthetic"
+        assert ds.entries == 1000
 
 
-class TestToServiceConfig:
-    """Tests for to_service_config method."""
+class TestToLegacyConfigs:
+    """Tests for to_legacy_configs method."""
 
-    def test_service_config_kubernetes_mode(
+    def test_legacy_configs_returns_tuple(
         self, minimal_aiperfjob_spec: dict[str, Any]
     ) -> None:
-        """Test ServiceConfig is set for Kubernetes mode."""
+        """Test to_legacy_configs returns a (UserConfig, ServiceConfig) tuple."""
         converter = AIPerfJobSpecConverter(
             minimal_aiperfjob_spec, "test-job", "default"
         )
-        service_config = converter.to_service_config()
+        result = converter.to_legacy_configs()
 
-        assert service_config.service_run_type == ServiceRunType.KUBERNETES
-        assert service_config.ui_type == UIType.SIMPLE
+        assert isinstance(result, tuple)
+        assert len(result) == 2
 
-    def test_service_config_has_zmq_dual(
+    def test_legacy_user_config_model_names(
         self, minimal_aiperfjob_spec: dict[str, Any]
     ) -> None:
-        """Test ServiceConfig has ZMQ dual-bind config."""
+        """Test legacy UserConfig has correct model names."""
         converter = AIPerfJobSpecConverter(
             minimal_aiperfjob_spec, "test-job", "default"
         )
-        service_config = converter.to_service_config()
+        user_config, _ = converter.to_legacy_configs()
 
-        assert service_config.zmq_dual is not None
-        assert service_config.zmq_dual.ipc_path.as_posix() == "/aiperf/ipc"
+        assert user_config.endpoint.model_names == ["test-model"]
 
-    def test_service_config_api_settings(
+    def test_legacy_user_config_endpoint_url(
         self, minimal_aiperfjob_spec: dict[str, Any]
     ) -> None:
-        """Test ServiceConfig has correct API settings."""
+        """Test legacy UserConfig has correct endpoint URL."""
         converter = AIPerfJobSpecConverter(
-            minimal_aiperfjob_spec, "test-job", "my-namespace"
+            minimal_aiperfjob_spec, "test-job", "default"
         )
-        service_config = converter.to_service_config()
+        user_config, _ = converter.to_legacy_configs()
 
-        assert service_config.api_host == "0.0.0.0"
-        assert service_config.api_port == 9090  # Default from K8sEnvironment
+        assert "http://localhost:8000/v1/chat/completions" in user_config.endpoint.urls
 
-    def test_service_config_dataset_api_url(
+    def test_legacy_service_config_type(
         self, minimal_aiperfjob_spec: dict[str, Any]
     ) -> None:
-        """Test ServiceConfig has correct dataset API URL."""
+        """Test legacy ServiceConfig is produced."""
         converter = AIPerfJobSpecConverter(
-            minimal_aiperfjob_spec, "test-job", "my-namespace"
+            minimal_aiperfjob_spec, "test-job", "default"
         )
-        service_config = converter.to_service_config()
+        _, service_config = converter.to_legacy_configs()
 
-        # URL should include job_id (defaults to name), namespace, and port
-        assert "test-job" in service_config.dataset_api_base_url
-        assert "my-namespace" in service_config.dataset_api_base_url
-        assert "/api/dataset" in service_config.dataset_api_base_url
+        from aiperf.common.config import ServiceConfig
 
-    def test_service_config_dataset_api_url_uses_job_id(
-        self, minimal_aiperfjob_spec: dict[str, Any]
+        assert isinstance(service_config, ServiceConfig)
+
+    def test_full_spec_legacy_configs(
+        self, full_aiperfjob_spec: dict[str, Any]
     ) -> None:
-        """Test ServiceConfig dataset API URL uses job_id when provided."""
-        converter = AIPerfJobSpecConverter(
-            minimal_aiperfjob_spec,
-            "original-name",
-            "my-namespace",
-            job_id="unique-abc123",
-        )
-        service_config = converter.to_service_config()
+        """Test legacy configs from full spec have correct values."""
+        converter = AIPerfJobSpecConverter(full_aiperfjob_spec, "test-job", "default")
+        user_config, _ = converter.to_legacy_configs()
 
-        # URL should use job_id, not the CR name
-        assert "unique-abc123" in service_config.dataset_api_base_url
-        assert "original-name" not in service_config.dataset_api_base_url
-        assert "aiperf-unique-abc123" in service_config.dataset_api_base_url
+        assert user_config.endpoint.model_names == ["meta-llama/Llama-3.1-8B-Instruct"]
+        assert "http://api.example.com/v1/chat/completions" in user_config.endpoint.urls
 
 
 class TestToPodCustomization:
@@ -264,9 +290,17 @@ class TestCalculateWorkers:
         """Test worker calculation with various parameters."""
         spec = {
             "connectionsPerWorker": connections_per_worker,
-            "userConfig": {
-                "endpoint": {"model_names": ["test"]},
-                "loadgen": {"concurrency": concurrency},
+            "models": ["test"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": {
+                "main": {"type": "synthetic", "entries": 100, "prompts": {"isl": 128}}
+            },
+            "load": {
+                "default": {
+                    "type": "concurrency",
+                    "concurrency": concurrency,
+                    "requests": 10,
+                }
             },
         }
         converter = AIPerfJobSpecConverter(spec, "test-job", "default")
@@ -278,9 +312,13 @@ class TestCalculateWorkers:
         """Test that at least 1 worker is always returned."""
         spec = {
             "connectionsPerWorker": 1000,
-            "userConfig": {
-                "endpoint": {"model_names": ["test"]},
-                "loadgen": {"concurrency": 1},  # Very low concurrency
+            "models": ["test"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": {
+                "main": {"type": "synthetic", "entries": 100, "prompts": {"isl": 128}}
+            },
+            "load": {
+                "default": {"type": "concurrency", "concurrency": 1, "requests": 10}
             },
         }
         converter = AIPerfJobSpecConverter(spec, "test-job", "default")

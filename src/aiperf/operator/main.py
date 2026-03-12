@@ -329,8 +329,8 @@ async def on_create(
 
         # Step 3: Convert spec to AIPerf configs
         converter = AIPerfJobSpecConverter(spec, name, namespace, job_id=job_id)
-        user_config = converter.to_user_config()
-        service_config = converter.to_service_config()
+        aiperf_config = converter.to_aiperf_config()
+        user_config, service_config = converter.to_legacy_configs()
         pod_customization = converter.to_pod_customization()
         worker_count = converter.calculate_workers()
         scheduling = converter.to_scheduling_config()
@@ -342,6 +342,7 @@ async def on_create(
             image_pull_policy=validated_spec.image_pull_policy,
             worker_replicas=worker_count,
             ttl_seconds=validated_spec.ttl_seconds_after_finished,
+            aiperf_config=aiperf_config,
             user_config=user_config,
             service_config=service_config,
             pod_customization=pod_customization,

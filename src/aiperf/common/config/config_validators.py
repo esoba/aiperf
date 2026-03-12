@@ -412,3 +412,12 @@ def parse_str_as_numeric_dict(
                 f"User Config: value for '{key}' must be numeric, got '{val}'"
             ) from e
     return output
+
+
+def validate_sequence_distribution(v: str | None) -> str | None:
+    """Validate sequence distribution format, returns original value if valid."""
+    if v is not None:
+        from aiperf.common.models.sequence_distribution import DistributionParser
+
+        DistributionParser.validate(v)
+    return v

@@ -25,8 +25,13 @@ def sample_body() -> dict[str, Any]:
         },
         "spec": {
             "image": "aiperf:test",
-            "userConfig": {
-                "endpoint": {"url": "http://localhost:8000"},
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": {
+                "main": {"type": "synthetic", "entries": 100, "prompts": {"isl": 128}}
+            },
+            "load": {
+                "default": {"type": "concurrency", "concurrency": 1, "requests": 10}
             },
         },
     }
@@ -41,9 +46,22 @@ def sample_body() -> dict[str, Any]:
 def minimal_aiperfjob_spec() -> dict[str, Any]:
     """Create a minimal AIPerfJob spec for testing."""
     return {
-        "userConfig": {
-            "endpoint": {
-                "model_names": ["test-model"],
+        "models": ["test-model"],
+        "endpoint": {
+            "urls": ["http://localhost:8000/v1/chat/completions"],
+        },
+        "datasets": {
+            "main": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128},
+            },
+        },
+        "load": {
+            "default": {
+                "type": "concurrency",
+                "concurrency": 1,
+                "requests": 10,
             },
         },
     }
@@ -56,15 +74,25 @@ def full_aiperfjob_spec() -> dict[str, Any]:
         "image": "aiperf:test",
         "imagePullPolicy": "Always",
         "connectionsPerWorker": 100,
-        "userConfig": {
-            "endpoint": {
-                "model_names": ["gpt-4"],
-                "urls": ["http://api.example.com"],
+        "models": ["meta-llama/Llama-3.1-8B-Instruct"],
+        "endpoint": {
+            "urls": ["http://api.example.com/v1/chat/completions"],
+            "type": "chat",
+            "streaming": True,
+        },
+        "datasets": {
+            "main": {
+                "type": "synthetic",
+                "entries": 1000,
+                "prompts": {"isl": {"mean": 512, "stddev": 50}, "osl": 128},
             },
-            "loadgen": {
+        },
+        "load": {
+            "profiling": {
+                "type": "concurrency",
+                "dataset": "main",
+                "requests": 1000,
                 "concurrency": 500,
-                "request_count": 1000,
-                "warmup_request_count": 50,
             },
         },
         "podTemplate": {
@@ -100,12 +128,22 @@ def aiperfjob_spec_high_concurrency() -> dict[str, Any]:
     """Create an AIPerfJob spec with high concurrency for worker scaling tests."""
     return {
         "connectionsPerWorker": 100,
-        "userConfig": {
-            "endpoint": {
-                "model_names": ["test-model"],
+        "models": ["test-model"],
+        "endpoint": {
+            "urls": ["http://localhost:8000/v1/chat/completions"],
+        },
+        "datasets": {
+            "main": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128},
             },
-            "loadgen": {
-                "concurrency": 1000,  # Should require 10 workers at 100 connections each
+        },
+        "load": {
+            "default": {
+                "type": "concurrency",
+                "concurrency": 1000,
+                "requests": 10000,
             },
         },
     }

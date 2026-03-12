@@ -1,0 +1,105 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Composed Dataset Benchmark
+# ==========================
+# Demonstrates AIPerf's unique composed dataset feature.
+# Combines file-based prompts with synthetic augmentation.
+#
+# Use case: Test KV cache with real prompts + synthetic system prompts
+#
+# Run: aiperf --config examples_v2/composed_dataset.yaml
+#
+# Note: Create a simple prompts.jsonl file first:
+# {"prompt": "What is machine learning?"}
+# {"prompt": "Explain neural networks"}
+# {"prompt": "How does backpropagation work?"}
+
+random_seed: 42
+
+models:
+  - meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  urls:
+    - http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 120.0
+
+datasets:
+  # Composed dataset: file prompts + synthetic prefix
+  kv_cache_composed:
+    type: composed
+    source:
+      type: file
+      path: ./data/prompts.jsonl  # Replace with your prompts file
+      format: single_turn
+      sampling: shuffle
+    augment:
+      # Add synthetic system prompt prefix
+      prefix:
+        length: 512
+        content_type: system_prompt
+        pool_size: 10  # 10 shared prefixes for cache testing
+        separator: "\n\n"
+      # Set output length
+      osl: {mean: 256, stddev: 50}
+      osl_mode: fill  # Only apply if record doesn't have OSL
+      # Pad to minimum count
+      pad_to_count: 1000
+      padding_prompts:
+        isl: {mean: 200, stddev: 40}
+        osl: {mean: 256, stddev: 50}
+    entries: 1000
+
+  # Composed with multimodal augmentation
+  multimodal_composed:
+    type: composed
+    source:
+      type: file
+      path: ./data/prompts.jsonl
+      format: single_turn
+      sampling: sequential
+    augment:
+      osl: {mean: 300, stddev: 60}
+      osl_mode: override  # Always use this OSL
+      images:
+        batch_size: 1
+        width: 512
+        height: 512
+        format: jpeg
+    entries: 500
+
+
+load:
+  # Test KV cache with composed dataset
+  kv_cache_test:
+    type: concurrency
+    dataset: kv_cache_composed
+    requests: 1000
+    concurrency: 32
+    grace_period: 60
+
+  # Test multimodal composed
+  multimodal_test:
+    type: poisson
+    dataset: multimodal_composed
+    requests: 500
+    concurrency: 16
+    rate: 10.0
+    seamless: true
+    grace_period: 60
+
+artifacts:
+  dir: ./artifacts/composed_dataset
+  console: table
+  summary: [json]
+  records: [jsonl, csv]
+
+server_metrics:
+  enabled: true
+  urls:
+    - http://localhost:8000/metrics
+  formats: [json, csv]

@@ -398,9 +398,12 @@ class TestHelmErrorHandling:
             "spec": {
                 "image": "aiperf:local",
                 "imagePullPolicy": "Never",
-                "userConfig": {
-                    "endpoint": {},  # Missing required fields
-                    "loadgen": {"concurrency": 5},
+                "endpoint": {},  # Missing required fields
+                "load": {
+                    "profiling": {
+                        "type": "concurrency",
+                        "concurrency": 5,
+                    },
                 },
             },
         }

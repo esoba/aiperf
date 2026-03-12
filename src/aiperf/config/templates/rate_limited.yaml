@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Rate-Limited Load (Poisson)
+# ===========================
+# Sends requests at a controlled rate using Poisson arrival pattern.
+# Useful for measuring latency at realistic production-like loads.
+#
+# Run: aiperf run examples_v2/rate_limited.yaml
+
+model: meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  type: chat
+  url: http://localhost:8000
+  streaming: true
+
+dataset:
+  type: synthetic
+  entries: 500
+  prompts:
+    isl: 512
+    osl: 128
+
+load:
+  type: poisson
+  rate: 10.0       # 10 requests per second
+  duration: 60     # Run for 60 seconds
+  concurrency: 50  # Max concurrent requests (backpressure limit)

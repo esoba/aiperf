@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Embeddings Endpoint Benchmark
+# =============================
+# Benchmarks embedding models for semantic search and retrieval.
+# Tests batch processing capabilities.
+#
+# Use case: Benchmark embedding services for RAG pipelines
+#
+# Run: aiperf --config examples_v2/embeddings.yaml
+
+random_seed: 42
+
+models:
+  - BAAI/bge-small-en-v1.5
+
+endpoint:
+  url: http://localhost:8000/v1/embeddings
+  type: embeddings
+  streaming: false  # Embeddings don't stream
+  timeout: 60.0
+
+datasets:
+  # Single text embedding
+  single_embed:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: {mean: 256, stddev: 50}
+      batch_size: 1
+
+  # Batch embedding (10 texts per request)
+  batch_embed:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: {mean: 128, stddev: 30}  # Per-text length
+      batch_size: 10  # 10 texts per request
+
+  # Large batch embedding
+  large_batch:
+    type: synthetic
+    entries: 200
+    prompts:
+      isl: {mean: 100, stddev: 20}
+      batch_size: 50  # 50 texts per request
+
+
+load:
+  # Single embedding throughput test
+  single_embed_test:
+    type: concurrency
+    dataset: single_embed
+    requests: 1000
+    concurrency: 32
+    grace_period: 30
+
+  # Batch embedding test
+  batch_embed_test:
+    type: concurrency
+    dataset: batch_embed
+    requests: 500
+    concurrency: 16
+    seamless: true
+    grace_period: 30
+
+  # Large batch test
+  large_batch_test:
+    type: concurrency
+    dataset: large_batch
+    requests: 200
+    concurrency: 8
+    seamless: true
+    grace_period: 30
+
+artifacts:
+  dir: ./artifacts/embeddings
+  console: table
+  summary: [json]
+  records: [jsonl, csv]

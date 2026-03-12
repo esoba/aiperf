@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Latency Test with Controlled Request Rate
+# ==========================================
+# Measures latency characteristics (TTFT, ITL, E2E) at a controlled QPS.
+# Uses Poisson arrival pattern for realistic traffic simulation.
+#
+# Use case: Measure P50/P90/P99 latencies at production-like request rates
+#
+# Run: aiperf --config examples_v2/latency_test.yaml
+
+random_seed: 42
+
+models:
+  - meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  urls:
+    - http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 600.0
+
+datasets:
+  latency_test:
+    type: synthetic
+    entries: 3000
+    prompts:
+      isl: {mean: 256, stddev: 50}
+      osl: {mean: 128, stddev: 25}
+
+
+load:
+  latency_measurement:
+    type: poisson
+    duration: 120  # 2 minutes
+    rate: 20.0  # 20 requests per second
+    concurrency: 100  # Upper limit to prevent queue buildup
+    grace_period: 60
+
+artifacts:
+  dir: ./artifacts/latency_test
+  console: table
+  summary: [json]
+  records: [jsonl, csv]
+  slice_duration: 30  # 30-second time windows for trend analysis

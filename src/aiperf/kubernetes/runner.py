@@ -25,6 +25,7 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.kube_config import KubeOptions
 from aiperf.common.config.zmq_config import ZMQDualBindConfig
 from aiperf.common.environment import Environment
+from aiperf.config.config import AIPerfConfig
 from aiperf.kubernetes.console import print_deployment_summary
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import (
@@ -290,18 +291,26 @@ def _calculate_worker_pods(
     return num_pods, workers_per_pod
 
 
-def _generate_benchmark_name(user_config: UserConfig) -> str:
-    """Generate a descriptive benchmark name matching artifact directory naming.
+def _generate_benchmark_name(config: AIPerfConfig) -> str:
+    """Generate a descriptive benchmark name from AIPerfConfig.
 
-    Uses the same model, service kind, and stimulus components as the
-    artifact directory to produce a human-readable name for the benchmark.
+    Uses model names and endpoint type to produce a human-readable name.
     """
-    names = [
-        user_config._get_artifact_model_name(),
-        user_config._get_artifact_service_kind(),
-        user_config._get_artifact_stimulus(),
-    ]
-    return "-".join(names)
+    parts = []
+    model_names = config.get_model_names()
+    if model_names:
+        # Use the first model name, sanitized for k8s
+        name = model_names[0].split("/")[-1].lower()
+        name = name.replace("_", "-").replace(".", "-")
+        parts.append(name[:40])
+    if config.endpoint.type:
+        parts.append(str(config.endpoint.type))
+    # Add phase type from first non-excluded phase
+    for phase in config.load.values():
+        if not phase.exclude:
+            parts.append(str(phase.type))
+            break
+    return "-".join(parts) if parts else "benchmark"
 
 
 async def run_kubernetes_deployment(
@@ -310,14 +319,16 @@ async def run_kubernetes_deployment(
     kube_options: KubeOptions,
     *,
     dry_run: bool = False,
+    aiperf_config: AIPerfConfig,
 ) -> tuple[str, str]:
     """Run AIPerf benchmark in Kubernetes mode.
 
     Args:
-        user_config: User configuration for the benchmark.
-        service_config: Service configuration.
+        user_config: User configuration for the benchmark (derived from AIPerfConfig).
+        service_config: Service configuration (derived from AIPerfConfig).
         kube_options: Kubernetes-specific deployment options.
         dry_run: If True, output YAML manifests instead of applying to cluster.
+        aiperf_config: AIPerfConfig v2 (primary configuration).
 
     Returns:
         Tuple of (job_id, namespace) for the deployed benchmark.
@@ -327,20 +338,17 @@ async def run_kubernetes_deployment(
     job_id = uuid.uuid4().hex[:8]
     namespace = kube_options.namespace or f"aiperf-{job_id}"
 
-    # Auto-populate name from config when not explicitly provided
-    name = kube_options.name or _generate_benchmark_name(user_config)
+    name = kube_options.name or _generate_benchmark_name(aiperf_config)
 
     # Set service_run_type for Kubernetes mode
-    # Must add to model_fields_set so it's serialized (exclude_unset=True in ConfigMap)
     service_config.service_run_type = ServiceRunType.KUBERNETES
     service_config.model_fields_set.add("service_run_type")
 
-    # Always disable UI in Kubernetes pods (UI runs locally via attach mode)
-    # The user's ui_type config is used by the CLI to determine attach mode
+    # Always disable UI in Kubernetes pods
     service_config.ui_type = UIType.NONE
     service_config.model_fields_set.add("ui_type")
 
-    # Override artifact directory to writable /results volume (readOnlyRootFilesystem)
+    # Override artifact directory to writable /results volume
     user_config.output.artifact_directory = Path("/results")
     user_config.output.model_fields_set.add("artifact_directory")
     user_config.model_fields_set.add("output")
@@ -364,18 +372,15 @@ async def run_kubernetes_deployment(
     service_config.workers.model_fields_set.add("max")
     service_config.model_fields_set.add("workers")
 
-    # Align record processor expectation with actual per-pod spawning.
-    # Pods calculate: max(1, workers_per_pod // PROCESSOR_SCALE_FACTOR)
-    # Controller calculates globally: total_workers // PROCESSOR_SCALE_FACTOR
-    # These can differ, so set the exact count the pods will actually spawn.
+    # Align record processor expectation with actual per-pod spawning
     rp_per_pod = max(1, workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR)
     service_config.record_processor_service_count = rp_per_pod * num_pods
     service_config.model_fields_set.add("record_processor_service_count")
 
-    # Build endpoint URL for annotations
     endpoint_url = user_config.endpoint.url if user_config.endpoint.urls else None
+    model_names = aiperf_config.get_model_names()
 
-    # Create the deployment specification with the same job_id
+    # Create the deployment specification
     deployment = KubernetesDeployment(
         job_id=job_id,
         namespace=kube_options.namespace,
@@ -384,17 +389,18 @@ async def run_kubernetes_deployment(
         worker_replicas=num_pods,
         workers_per_pod=workers_per_pod,
         ttl_seconds=kube_options.ttl_seconds,
+        aiperf_config=aiperf_config,
         user_config=user_config,
         service_config=service_config,
         pod_customization=_kube_options_to_pod_customization(kube_options),
         queue_name=kube_options.queue_name,
         priority_class=kube_options.priority_class,
         name=name,
-        model_names=user_config.endpoint.model_names,
+        model_names=model_names,
         endpoint_url=endpoint_url,
     )
 
-    # Print deployment summary to console (use stderr when dry_run to avoid polluting YAML output)
+    # Print deployment summary
     print_deployment_summary(
         job_id=job_id,
         namespace=namespace,
@@ -404,7 +410,7 @@ async def run_kubernetes_deployment(
         workers_per_pod=workers_per_pod,
         ttl_seconds=kube_options.ttl_seconds,
         endpoint_url=endpoint_url,
-        model_names=user_config.endpoint.model_names,
+        model_names=model_names,
         to_stderr=dry_run,
         name=name,
     )
@@ -413,7 +419,6 @@ async def run_kubernetes_deployment(
     manifests = deployment.get_all_manifests()
 
     if dry_run:
-        # Output YAML to stdout
         _output_manifests_yaml(manifests)
         return (job_id, namespace)
 

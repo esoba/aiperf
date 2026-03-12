@@ -13,25 +13,33 @@ kind: AIPerfJob
 metadata:
   name: qwen3-vl-agg-benchmark
 spec:
-  userConfig:
-    endpoint:
-      model_names:
-        - Qwen/Qwen3-VL-30B-A3B-Instruct-FP8
-      urls:
-        - http://qwen3-vl-agg-frontend:8000
-      streaming: true
-    loadgen:
+  models:
+    - Qwen/Qwen3-VL-30B-A3B-Instruct-FP8
+  endpoint:
+    urls:
+      - http://qwen3-vl-agg-frontend:8000
+    streaming: true
+    extra:
+      max_tokens: 150
+      min_tokens: 150
+      ignore_eos: true
+  datasets:
+    main:
+      type: file
+      path: /perf-cache/datasets/qwen3_vl_1000req_1img_pool200.jsonl
+      format: single_turn
+  load:
+    warmup:
+      type: concurrency
+      dataset: main
+      exclude: true
       concurrency: 64
-      request_count: 1000
-      warmup_request_count: 3
-      arrival_pattern: constant
-    input:
-      file: /perf-cache/datasets/qwen3_vl_1000req_1img_pool200.jsonl
-      custom_dataset_type: single_turn
-      extra:
-        max_tokens: 150
-        min_tokens: 150
-        ignore_eos: true
+      requests: 3
+    profiling:
+      type: concurrency
+      dataset: main
+      concurrency: 64
+      requests: 1000
   podTemplate:
     volumes:
       - name: perf-cache

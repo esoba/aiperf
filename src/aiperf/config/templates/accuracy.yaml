@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Accuracy Benchmarking
+# =====================
+# Evaluates model accuracy on standard benchmarks (MMLU, AIME, etc.)
+# alongside performance profiling. Measures both how fast and how
+# correct a deployed model is.
+#
+# Use case: Validate model quality after quantization or deployment
+#
+# Run: aiperf --config examples_v2/accuracy.yaml
+
+model: meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  url: http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+
+datasets:
+  main:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: {mean: 512, stddev: 50}
+      osl: {mean: 256, stddev: 50}
+
+load:
+  profiling:
+    type: concurrency
+    concurrency: 8
+    requests: 500
+
+accuracy:
+  benchmark: mmlu        # Standard benchmark (mmlu, aime, hellaswag, etc.)
+  n_shots: 5             # 5-shot evaluation
+  enable_cot: false      # Disable chain-of-thought for MMLU
+
+artifacts:
+  dir: ./artifacts/accuracy
+  console: table
+  summary: [json]

@@ -78,6 +78,13 @@ class CommAddress(CaseInsensitiveStrEnum):
     """Address for direct DEALER/ROUTER control channel communication with the controller."""
 
 
+class CommandResponseStatus(CaseInsensitiveStrEnum):
+    ACKNOWLEDGED = "acknowledged"
+    FAILURE = "failure"
+    SUCCESS = "success"
+    UNHANDLED = "unhandled"  # The command was received but not handled by any hook
+
+
 class CommandType(CaseInsensitiveStrEnum):
     PROCESS_RECORDS = "process_records"
     PROFILE_CANCEL = "profile_cancel"
@@ -89,6 +96,19 @@ class CommandType(CaseInsensitiveStrEnum):
     SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
+
+
+class CommunicationType(CaseInsensitiveStrEnum):
+    """Defines the inter-process communication mechanism."""
+
+    IPC = "ipc"
+    """Unix domain sockets (local only). Lower latency, requires shared filesystem."""
+
+    TCP = "tcp"
+    """TCP sockets (network-capable). Works across machines, slightly higher latency."""
+
+    DUAL = "dual"
+    """Dual-bind (IPC + TCP). For Kubernetes: local services use IPC, remote workers use TCP."""
 
 
 class ConnectionReuseStrategy(CaseInsensitiveStrEnum):
@@ -104,6 +124,38 @@ class ConnectionReuseStrategy(CaseInsensitiveStrEnum):
     """Connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing)"""
 
 
+class ConsoleFormat(CaseInsensitiveStrEnum):
+    """Defines the format for console output during benchmarks."""
+
+    TABLE = "table"
+    """Rich formatted tables with statistics."""
+
+    JSON = "json"
+    """Machine-readable JSON output."""
+
+    MINIMAL = "minimal"
+    """Minimal progress output only."""
+
+
+class ContentType(CaseInsensitiveStrEnum):
+    """Defines the semantic type for synthetic text content."""
+
+    RANDOM_TOKENS = "random_tokens"
+    """Generate random token sequences."""
+
+    SYSTEM_PROMPT = "system_prompt"
+    """Generate system prompt style content."""
+
+    CONTEXT = "context"
+    """Generate contextual information."""
+
+    INSTRUCTION = "instruction"
+    """Generate instruction-style content."""
+
+    QUESTION = "question"
+    """Generate question-style content."""
+
+
 class CreditPhase(CaseInsensitiveStrEnum):
     """The type of credit phase. This is used to identify which phase of the
     benchmark the credit is being used in, for tracking and reporting purposes."""
@@ -115,6 +167,51 @@ class CreditPhase(CaseInsensitiveStrEnum):
     PROFILING = "profiling"
     """The credit phase while profiling is active. This is the primary phase of the
     benchmark, and what is used to calculate the final results."""
+
+
+class DatasetFormat(CaseInsensitiveStrEnum):
+    """Defines the format of file-based datasets."""
+
+    SINGLE_TURN = "single_turn"
+    """Simple prompt-response pairs."""
+
+    MULTI_TURN = "multi_turn"
+    """Conversational data with multiple turns."""
+
+    MOONCAKE_TRACE = "mooncake_trace"
+    """Mooncake production trace format."""
+
+    RANDOM_POOL = "random_pool"
+    """Treat file as a pool for random sampling."""
+
+
+class DatasetType(CaseInsensitiveStrEnum):
+    """Defines the source type for benchmark datasets."""
+
+    SYNTHETIC = "synthetic"
+    """Generate synthetic prompts programmatically."""
+
+    FILE = "file"
+    """Load prompts from a local file."""
+
+    PUBLIC = "public"
+    """Use a well-known public dataset."""
+
+    COMPOSED = "composed"
+    """Combine file-based data with synthetic augmentation."""
+
+
+class ExportFormat(CaseInsensitiveStrEnum):
+    """Defines the file format for record-level exports."""
+
+    JSON = "json"
+    """JSON format."""
+
+    JSONL = "jsonl"
+    """JSON Lines format (one JSON object per line)."""
+
+    CSV = "csv"
+    """Comma-separated values format."""
 
 
 class ExportLevel(CaseInsensitiveStrEnum):
@@ -135,6 +232,19 @@ class GPUTelemetryMode(CaseInsensitiveStrEnum):
 
     SUMMARY = "summary"
     REALTIME_DASHBOARD = "realtime_dashboard"
+
+
+class GpuTelemetryType(CaseInsensitiveStrEnum):
+    """Defines the type of GPU telemetry source."""
+
+    DASHBOARD = "dashboard"
+    """Built-in dashboard metrics collection."""
+
+    DCGM = "dcgm"
+    """NVIDIA DCGM (Data Center GPU Manager) integration."""
+
+    CSV = "csv"
+    """Export GPU metrics to CSV file."""
 
 
 class ImageFormat(CaseInsensitiveStrEnum):
@@ -243,6 +353,19 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
 
     RANDOM = "random"
     """Randomly select a model for each prompt using uniform distribution."""
+
+    WEIGHTED = "weighted"
+    """Select models based on configured weights. Each model's weight determines its selection probability."""
+
+
+class OslMode(CaseInsensitiveStrEnum):
+    """Defines how output sequence length is handled in composed datasets."""
+
+    FILL = "fill"
+    """Only apply OSL if the source record lacks it."""
+
+    OVERRIDE = "override"
+    """Always use OSL from augmentation config."""
 
 
 class PrometheusMetricType(CaseInsensitiveStrEnum):
@@ -370,6 +493,26 @@ class SSEFieldType(CaseInsensitiveStrEnum):
     ID = "id"
     RETRY = "retry"
     COMMENT = "comment"
+
+
+class SummaryFormat(CaseInsensitiveStrEnum):
+    """Defines the file format for summary exports."""
+
+    JSON = "json"
+    """JSON format for summaries."""
+
+    YAML = "yaml"
+    """YAML format for summaries."""
+
+
+class SweepType(CaseInsensitiveStrEnum):
+    """Defines the sweep strategy for parameter exploration."""
+
+    GRID = "grid"
+    """All combinations of variable values (Cartesian product)."""
+
+    SCENARIOS = "scenarios"
+    """Hand-picked configurations merged with base."""
 
 
 class SystemState(CaseInsensitiveStrEnum):

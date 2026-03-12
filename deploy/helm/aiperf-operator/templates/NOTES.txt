@@ -10,14 +10,26 @@ AIPerf Operator has been installed!
    metadata:
      name: my-benchmark
    spec:
-     userConfig:
-       endpoint:
-         url: http://your-inference-server:8000
-         model_names: [your-model]
-         type: openai
-       loadgen:
+     image: nvcr.io/nvidia/aiperf:latest
+     models:
+       - your-model
+     endpoint:
+       urls:
+         - http://your-inference-server:8000/v1/chat/completions
+       type: chat
+       streaming: true
+     datasets:
+       main:
+         type: synthetic
+         entries: 100
+         prompts:
+           isl: 128
+           osl: 128
+     load:
+       profiling:
+         type: concurrency
          concurrency: 10
-         request_count: 100
+         requests: 100
    EOF
 
 3. Monitor the benchmark:

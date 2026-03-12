@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Multi-URL Load Balancing Test
+# =============================
+# Distributes requests across multiple server replicas.
+# Tests load balancing and aggregate cluster performance.
+#
+# Use case: Benchmark a multi-replica inference deployment
+#
+# Run: aiperf --config examples_v2/multi_url_load_balancing.yaml
+
+random_seed: 42
+
+models:
+  - meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  # Multiple server URLs
+  urls:
+    - http://server1:8000/v1/chat/completions
+    - http://server2:8000/v1/chat/completions
+    - http://server3:8000/v1/chat/completions
+    - http://server4:8000/v1/chat/completions
+  url_strategy: round_robin  # Cycle through URLs
+  type: chat
+  streaming: true
+  timeout: 120.0
+  connection_reuse: pooled  # Share connections
+
+datasets:
+  load_test:
+    type: synthetic
+    entries: 10000
+    prompts:
+      isl: {mean: 512, stddev: 100}
+      osl: {mean: 256, stddev: 50}
+
+
+load:
+  warmup:
+    type: concurrency
+    exclude: true
+    requests: 200  # 50 per server
+    concurrency: 16
+
+  cluster_throughput:
+    type: concurrency
+    duration: 300
+    concurrency: 256  # 64 per server
+    concurrency_ramp: 60  # Ramp over 60 seconds
+    grace_period: 120
+
+artifacts:
+  dir: ./artifacts/multi_url
+  console: table
+  summary: [json]
+  records: [jsonl, csv]
+
+# Scrape metrics from all servers
+server_metrics:
+  enabled: true
+  urls:
+    - http://server1:8000/metrics
+    - http://server2:8000/metrics
+    - http://server3:8000/metrics
+    - http://server4:8000/metrics
+  formats: [json, csv]

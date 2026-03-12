@@ -47,55 +47,74 @@ def _discover_recipes() -> list[Path]:
 def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
     """Adapt a recipe for the mock-server test environment.
 
-    Rewrites endpoint, tokenizer, loadgen, and strips PVC/secret references
+    Rewrites endpoint, datasets, load, and strips PVC/secret references
     so the recipe can run against the in-cluster mock server.
+
+    Handles both legacy userConfig format (migrates inline) and new
+    inline AIPerfConfig format.
     """
     doc = copy.deepcopy(doc)
     spec = doc["spec"]
-    uc = spec["userConfig"]
 
-    # -- endpoint --
-    ep = uc["endpoint"]
+    # Migrate legacy userConfig to inline fields if present
+    if "userConfig" in spec:
+        uc = spec.pop("userConfig")
+        # Move endpoint fields inline
+        ep = uc.get("endpoint", {})
+        spec["endpoint"] = {
+            "urls": ep.get("urls", []),
+            "type": ep.get("type", "chat"),
+        }
+        if ep.get("streaming"):
+            spec["endpoint"]["streaming"] = True
+        spec["models"] = ep.get("model_names", [])
+        # Carry forward tokenizer
+        if "tokenizer" in uc:
+            spec["tokenizer"] = uc["tokenizer"]
+
+    # -- endpoint: point at mock server --
+    ep = spec.get("endpoint", {})
     ep["urls"] = [MOCK_SERVER_URL]
-    ep["model_names"] = [MOCK_MODEL]
     ep.pop("custom_endpoint", None)
+    spec["endpoint"] = ep
+
+    # -- models --
+    spec["models"] = [MOCK_MODEL]
 
     # -- tokenizer --
-    uc["tokenizer"] = {"name": MOCK_TOKENIZER}
+    spec["tokenizer"] = {"name": MOCK_TOKENIZER}
 
-    # -- loadgen (small counts) --
-    uc["loadgen"] = {
-        "concurrency": TEST_CONCURRENCY,
-        "request_count": TEST_REQUEST_COUNT,
-        "warmup_request_count": TEST_WARMUP,
+    # -- datasets: synthetic with small prompts --
+    spec["datasets"] = {
+        "main": {
+            "type": "synthetic",
+            "entries": max(TEST_REQUEST_COUNT, 100),
+            "prompts": {
+                "isl": 32,
+                "osl": 16,
+            },
+            "extra": {
+                "max_tokens": 16,
+                "min_tokens": 16,
+            },
+        },
     }
 
-    # -- input: replace file-based datasets with synthetic prompts --
-    inp = uc.get("input", {})
-    inp.pop("file", None)
-    inp.pop("custom_dataset_type", None)
-    inp.pop("fixed_schedule", None)
-    inp.pop("goodput", None)
-    if "prompt" not in inp:
-        inp["prompt"] = {
-            "input_tokens": {"mean": 32, "stddev": 0},
-            "output_tokens": {"mean": 16, "stddev": 0},
-        }
-    else:
-        inp["prompt"]["input_tokens"] = {"mean": 32, "stddev": 0}
-        inp["prompt"]["output_tokens"] = {"mean": 16, "stddev": 0}
-
-    extra = inp.get("extra", {})
-    extra["max_tokens"] = 16
-    extra["min_tokens"] = 16
-    inp["extra"] = extra
-    uc["input"] = inp
+    # -- load (small counts) --
+    spec["load"] = {
+        "profiling": {
+            "type": "concurrency",
+            "concurrency": TEST_CONCURRENCY,
+            "requests": TEST_REQUEST_COUNT,
+            "warmup": {"requests": TEST_WARMUP},
+        },
+    }
 
     # -- remove server_metrics (real endpoints won't exist) --
-    uc.pop("server_metrics", None)
+    spec.pop("server_metrics", None)
 
-    # -- output: drop export_level to keep test fast --
-    uc.pop("output", None)
+    # -- remove artifacts/output to keep test fast --
+    spec.pop("artifacts", None)
 
     # -- image --
     spec["image"] = image

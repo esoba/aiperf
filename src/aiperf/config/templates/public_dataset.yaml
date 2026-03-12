@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Public Dataset Benchmark
+# ========================
+# Uses the ShareGPT public dataset for realistic conversation testing.
+# ShareGPT contains real multi-turn conversations from ChatGPT users.
+#
+# Use case: Benchmark with realistic, diverse conversation data
+#
+# Run: aiperf --config examples_v2/public_dataset.yaml
+#
+# Note: ShareGPT dataset is automatically downloaded from HuggingFace
+
+random_seed: 42
+
+models:
+  - meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  urls:
+    - http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 180.0
+
+datasets:
+  sharegpt:
+    type: public
+    name: sharegpt
+    entries: 1000  # Use 1000 conversations from the dataset
+
+
+load:
+  warmup:
+    type: concurrency
+    exclude: true
+    requests: 50
+    concurrency: 8
+
+  sharegpt_test:
+    type: concurrency
+    requests: 1000
+    concurrency: 32
+    seamless: true
+    grace_period: 120  # Long grace for multi-turn
+
+artifacts:
+  dir: ./artifacts/public_dataset
+  console: table
+  summary: [json]
+  records: [jsonl, csv]

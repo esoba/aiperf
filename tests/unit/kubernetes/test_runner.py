@@ -397,7 +397,7 @@ class TestRunKubernetesDeployment:
 
     @pytest.mark.asyncio
     async def test_dry_run_outputs_yaml(
-        self, sample_user_config, fresh_service_config, capsys
+        self, sample_user_config, fresh_service_config, sample_aiperf_config, capsys
     ) -> None:
         """Test dry run mode outputs YAML manifests."""
 
@@ -411,6 +411,7 @@ class TestRunKubernetesDeployment:
             sample_user_config,
             fresh_service_config,
             kube_options,
+            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -426,7 +427,7 @@ class TestRunKubernetesDeployment:
 
     @pytest.mark.asyncio
     async def test_dry_run_generates_namespace_when_not_specified(
-        self, sample_user_config, fresh_service_config, capsys
+        self, sample_user_config, fresh_service_config, sample_aiperf_config, capsys
     ) -> None:
         """Test dry run auto-generates namespace from job_id."""
 
@@ -440,6 +441,7 @@ class TestRunKubernetesDeployment:
             sample_user_config,
             fresh_service_config,
             kube_options,
+            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -451,7 +453,7 @@ class TestRunKubernetesDeployment:
 
     @pytest.mark.asyncio
     async def test_apply_mode_creates_resources(
-        self, sample_user_config, fresh_service_config
+        self, sample_user_config, fresh_service_config, sample_aiperf_config
     ) -> None:
         """Test apply mode creates Kubernetes resources."""
 
@@ -494,6 +496,7 @@ class TestRunKubernetesDeployment:
                 sample_user_config,
                 fresh_service_config,
                 kube_options,
+                aiperf_config=sample_aiperf_config,
                 dry_run=False,
             )
 
@@ -504,7 +507,7 @@ class TestRunKubernetesDeployment:
 
     @pytest.mark.asyncio
     async def test_worker_scaling_single_pod(
-        self, sample_user_config, fresh_service_config
+        self, sample_user_config, fresh_service_config, sample_aiperf_config
     ) -> None:
         """Test that few workers results in single pod."""
 
@@ -518,6 +521,7 @@ class TestRunKubernetesDeployment:
             sample_user_config,
             fresh_service_config,
             kube_options,
+            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -526,7 +530,7 @@ class TestRunKubernetesDeployment:
 
     @pytest.mark.asyncio
     async def test_worker_scaling_multiple_pods(
-        self, sample_user_config, fresh_service_config
+        self, sample_user_config, fresh_service_config, sample_aiperf_config
     ) -> None:
         """Test that many workers results in multiple pods."""
 
@@ -540,6 +544,7 @@ class TestRunKubernetesDeployment:
             sample_user_config,
             fresh_service_config,
             kube_options,
+            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -1030,7 +1035,7 @@ class TestRunKubernetesDeploymentAdvanced:
 
     @pytest.mark.asyncio
     async def test_preserves_existing_workers_per_pod(
-        self, sample_user_config, fresh_service_config
+        self, sample_user_config, fresh_service_config, sample_aiperf_config
     ) -> None:
         """Test that existing workers_per_pod config is respected."""
 
@@ -1048,6 +1053,7 @@ class TestRunKubernetesDeploymentAdvanced:
             sample_user_config,
             fresh_service_config,
             kube_options,
+            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -1056,7 +1062,7 @@ class TestRunKubernetesDeploymentAdvanced:
 
     @pytest.mark.asyncio
     async def test_sets_api_config_for_kubernetes(
-        self, sample_user_config, fresh_service_config
+        self, sample_user_config, fresh_service_config, sample_aiperf_config
     ) -> None:
         """Test that API port and host are set correctly for Kubernetes."""
 
@@ -1070,6 +1076,7 @@ class TestRunKubernetesDeploymentAdvanced:
             sample_user_config,
             fresh_service_config,
             kube_options,
+            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -1079,7 +1086,7 @@ class TestRunKubernetesDeploymentAdvanced:
 
     @pytest.mark.asyncio
     async def test_sets_dataset_api_url(
-        self, sample_user_config, fresh_service_config
+        self, sample_user_config, fresh_service_config, sample_aiperf_config
     ) -> None:
         """Test that dataset API URL is constructed correctly."""
 
@@ -1093,6 +1100,7 @@ class TestRunKubernetesDeploymentAdvanced:
             sample_user_config,
             fresh_service_config,
             kube_options,
+            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -1103,7 +1111,7 @@ class TestRunKubernetesDeploymentAdvanced:
 
     @pytest.mark.asyncio
     async def test_apply_with_kubeconfig(
-        self, sample_user_config, fresh_service_config
+        self, sample_user_config, fresh_service_config, sample_aiperf_config
     ) -> None:
         """Test apply mode with custom kubeconfig path."""
 
@@ -1140,6 +1148,7 @@ class TestRunKubernetesDeploymentAdvanced:
                 sample_user_config,
                 fresh_service_config,
                 kube_options,
+                aiperf_config=sample_aiperf_config,
                 dry_run=False,
             )
 
@@ -1150,7 +1159,7 @@ class TestRunKubernetesDeploymentAdvanced:
 
     @pytest.mark.asyncio
     async def test_worker_scaling_exact_divisible(
-        self, sample_user_config, fresh_service_config
+        self, sample_user_config, fresh_service_config, sample_aiperf_config
     ) -> None:
         """Test worker scaling when workers divide evenly into pods."""
 
@@ -1167,6 +1176,7 @@ class TestRunKubernetesDeploymentAdvanced:
             sample_user_config,
             fresh_service_config,
             kube_options,
+            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -1175,7 +1185,7 @@ class TestRunKubernetesDeploymentAdvanced:
 
     @pytest.mark.asyncio
     async def test_sets_zmq_dual_config(
-        self, sample_user_config, fresh_service_config
+        self, sample_user_config, fresh_service_config, sample_aiperf_config
     ) -> None:
         """Test that ZMQ dual-bind config is set correctly."""
 
@@ -1189,6 +1199,7 @@ class TestRunKubernetesDeploymentAdvanced:
             sample_user_config,
             fresh_service_config,
             kube_options,
+            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -1201,7 +1212,7 @@ class TestRunKubernetesDeploymentAdvanced:
 
     @pytest.mark.asyncio
     async def test_sets_service_run_type_and_ui_type(
-        self, sample_user_config, fresh_service_config
+        self, sample_user_config, fresh_service_config, sample_aiperf_config
     ) -> None:
         """Test that service_run_type and ui_type are set for Kubernetes."""
         kube_options = KubeOptions(
@@ -1214,6 +1225,7 @@ class TestRunKubernetesDeploymentAdvanced:
             sample_user_config,
             fresh_service_config,
             kube_options,
+            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 

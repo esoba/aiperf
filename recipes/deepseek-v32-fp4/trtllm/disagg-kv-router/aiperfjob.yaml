@@ -14,30 +14,36 @@ kind: AIPerfJob
 metadata:
   name: disagg-kv-dsv32-nvfp4-bench
 spec:
-  userConfig:
-    endpoint:
-      model_names:
-        - nvidia/DeepSeek-V3.2-NVFP4
-      urls:
-        - http://disagg-kv-dsv32-nvfp4-frontend:8000
-      streaming: true
-      timeout_seconds: 1000
-    tokenizer:
-      name: nvidia/DeepSeek-V3.2-NVFP4
-    loadgen:
-      warmup_request_count: 10
-      warmup_concurrency: 4
-    input:
-      file: /model-cache/traces/conversation_trace_synth_16.00x1+10.00_speedup1_maxisl110000.jsonl
-      custom_dataset_type: mooncake_trace
-      fixed_schedule: true
+  models:
+    - nvidia/DeepSeek-V3.2-NVFP4
+  endpoint:
+    urls:
+      - http://disagg-kv-dsv32-nvfp4-frontend:8000
+    streaming: true
+    timeout: 1000
+  datasets:
+    main:
+      type: file
+      path: /model-cache/traces/conversation_trace_synth_16.00x1+10.00_speedup1_maxisl110000.jsonl
+      format: mooncake_trace
       random_seed: 42
-      goodput:
-        time_to_first_token: 20000
-        inter_token_latency: 50
-    output:
-      export_level: records
-    server_metrics:
+  slos:
+    time_to_first_token: 20000
+    inter_token_latency: 50
+  load:
+    warmup:
+      type: concurrency
+      dataset: main
+      exclude: true
+      concurrency: 4
+      requests: 10
+    profiling:
+      type: fixed_schedule
+      dataset: main
+  artifacts:
+    records: [jsonl]
+  server_metrics:
+    urls:
       - http://disagg-kv-dsv32-nvfp4-dec-0-dec-wkr:9090/metrics
       - http://disagg-kv-dsv32-nvfp4-prefill-0:9090/metrics
   podTemplate:

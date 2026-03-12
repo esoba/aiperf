@@ -10,6 +10,7 @@ import kr8s
 import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
+from aiperf.config.config import AIPerfConfig
 from aiperf.kubernetes.client import AIPerfKubeClient
 from aiperf.kubernetes.jobset import PodCustomization, SecretMount
 from aiperf.plugin.enums import CommunicationBackend, ServiceRunType
@@ -134,6 +135,19 @@ def sample_succeeded_pod(sample_pod) -> dict[str, Any]:
 # =============================================================================
 # Config Fixtures
 # =============================================================================
+
+
+@pytest.fixture
+def sample_aiperf_config():
+    """Create a minimal AIPerfConfig for testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {"type": "synthetic", "entries": 100, "prompts": {"isl": 128}}
+        },
+        load={"default": {"type": "concurrency", "concurrency": 1, "requests": 10}},
+    )
 
 
 @pytest.fixture

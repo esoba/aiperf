@@ -10,10 +10,12 @@ import re
 import uuid
 from typing import Any, ClassVar
 
-from pydantic import Field, field_validator
+from pydantic import Field, SkipValidation, field_validator
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.config.config import AIPerfConfig
+from aiperf.config.reverse_converter import convert_to_legacy_configs
 from aiperf.kubernetes.constants import Annotations, Labels
 from aiperf.kubernetes.enums import ImagePullPolicy
 from aiperf.kubernetes.jobset import JobSetSpec, PodCustomization
@@ -105,34 +107,39 @@ class ConfigMapSpec(AIPerfBaseModel):
         }
 
     @classmethod
-    def from_configs(
+    def from_aiperf_config(
         cls,
         name: str,
         namespace: str,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        config: AIPerfConfig,
         job_id: str,
     ) -> "ConfigMapSpec":
-        """Create a ConfigMapSpec from user and service configs.
+        """Create a ConfigMapSpec from AIPerfConfig.
+
+        Stores the AIPerfConfig as the primary config and generates legacy
+        UserConfig/ServiceConfig via the reverse converter for backward
+        compatibility with services.
 
         Args:
             name: ConfigMap name.
             namespace: Kubernetes namespace.
-            user_config: User configuration.
-            service_config: Service configuration.
+            config: AIPerfConfig configuration.
             job_id: Unique benchmark job ID.
 
         Returns:
             ConfigMapSpec instance.
         """
+        import orjson
+
+        user_config, service_config = convert_to_legacy_configs(config)
         return cls(
             name=name,
             namespace=namespace,
             data={
-                # Use exclude_unset=True to avoid serializing default values that
-                # trigger validation errors (e.g., benchmark_grace_period requires
-                # duration-based benchmarking). CRD userConfig should use actual
-                # field names (e.g., `urls` not `url`) to ensure proper tracking.
+                "aiperf_config.json": orjson.dumps(
+                    config.model_dump(mode="json", exclude_none=True),
+                    option=orjson.OPT_INDENT_2,
+                ).decode(),
                 "user_config.json": user_config.to_json_str(
                     indent=True, exclude_unset=True, exclude_none=True
                 ),
@@ -287,8 +294,15 @@ class KubernetesDeployment(AIPerfBaseModel):
     ttl_seconds: int | None = Field(
         default=300, description="TTL after finished (seconds)"
     )
-    user_config: UserConfig = Field(description="User configuration")
-    service_config: ServiceConfig = Field(description="Service configuration")
+    aiperf_config: AIPerfConfig = Field(
+        description="AIPerf configuration (primary)",
+    )
+    user_config: SkipValidation[UserConfig] = Field(
+        description="User configuration (derived from AIPerfConfig for service compatibility)",
+    )
+    service_config: SkipValidation[ServiceConfig] = Field(
+        description="Service configuration (derived from AIPerfConfig for service compatibility)",
+    )
     pod_customization: PodCustomization = Field(
         default_factory=PodCustomization,
         description="Pod customization options",
@@ -361,11 +375,10 @@ class KubernetesDeployment(AIPerfBaseModel):
 
     def get_configmap_spec(self) -> ConfigMapSpec:
         """Get the ConfigMap spec."""
-        spec = ConfigMapSpec.from_configs(
+        spec = ConfigMapSpec.from_aiperf_config(
             name=self.configmap_name,
             namespace=self.effective_namespace,
-            user_config=self.user_config,
-            service_config=self.service_config,
+            config=self.aiperf_config,
             job_id=self.job_id,
         )
         if self.name:

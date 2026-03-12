@@ -18,14 +18,13 @@ async def validate(
     *,
     strict: Annotated[bool, Parameter(name=["-s", "--strict"])] = False,
 ) -> None:
-    """Validate AIPerfJob YAML files against the CRD schema and UserConfig model.
+    """Validate AIPerfJob YAML files against the CRD schema and AIPerfConfig model.
 
     Performs comprehensive validation including:
     - YAML parsing and structure verification
-    - Required fields: apiVersion, kind, metadata.name, spec.userConfig
+    - Required fields: apiVersion, kind, metadata.name, spec (with AIPerfConfig fields)
     - Kubernetes resource name validation (RFC 1123)
-    - UserConfig Pydantic model validation via AIPerfJobSpecConverter
-    - ServiceConfig generation validation
+    - AIPerfConfig validation via AIPerfJobSpecConverter
     - PodCustomization extraction validation
     - Worker count calculation (>= 1)
     - Unknown spec field detection (warning or error with --strict)

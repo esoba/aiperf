@@ -3,41 +3,55 @@
 """Convert AIPerfJob CRD spec to AIPerf configuration objects.
 
 This module provides the translation layer between Kubernetes-native AIPerfJob
-custom resource specs and AIPerf's internal UserConfig/ServiceConfig models.
+custom resource specs and AIPerf's AIPerfConfig model. Legacy UserConfig/ServiceConfig
+are produced via the reverse converter for backward compatibility with services.
 """
 
 import copy
 import math
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.zmq_config import ZMQDualBindConfig
-from aiperf.common.enums import AIPerfLogLevel
-from aiperf.kubernetes.environment import K8sEnvironment
+from aiperf.config.config import AIPerfConfig
+from aiperf.config.reverse_converter import convert_to_legacy_configs
 from aiperf.kubernetes.jobset import PodCustomization, SecretMount
-from aiperf.plugin.enums import ServiceRunType, UIType
 
 # Default connections per worker for auto-scaling calculation
 DEFAULT_CONNECTIONS_PER_WORKER = 500
+
+# AIPerfConfig fields that can appear in the CRD spec
+CONFIG_FIELDS = {
+    "models",
+    "endpoint",
+    "datasets",
+    "load",
+    "artifacts",
+    "slos",
+    "tokenizer",
+    "gpu_telemetry",
+    "server_metrics",
+    "runtime",
+    "logging",
+    "multi_run",
+    "accuracy",
+    "random_seed",
+}
 
 
 @dataclass(slots=True)
 class AIPerfJobSpecConverter:
     """Converts AIPerfJob CRD spec to AIPerf configuration objects.
 
-    This class translates the Kubernetes-native AIPerfJob spec into
-    UserConfig and ServiceConfig objects that AIPerf services expect.
-
-    The CRD spec.userConfig maps directly to UserConfig schema, so we
-    use Pydantic's model_validate() for direct validation. This ensures
-    exclude_unset works correctly since only fields in the YAML are set.
+    The CRD spec directly maps to AIPerfConfig schema. The spec fields
+    (models, endpoint, datasets, load, etc.) are passed to AIPerfConfig
+    for validation. Legacy UserConfig/ServiceConfig are produced via
+    the reverse converter for backward compatibility.
 
     Example:
         >>> converter = AIPerfJobSpecConverter(spec, "my-job", "default")
-        >>> user_config = converter.to_user_config()
-        >>> service_config = converter.to_service_config()
+        >>> config = converter.to_aiperf_config()
+        >>> user_config, service_config = converter.to_legacy_configs()
 
     Attributes:
         spec: The AIPerfJob CR spec dict.
@@ -56,93 +70,40 @@ class AIPerfJobSpecConverter:
         if self.job_id is None:
             self.job_id = self.name
 
-    def to_user_config(self) -> UserConfig:
-        """Convert AIPerfJob spec to UserConfig.
+    def to_aiperf_config(self) -> AIPerfConfig:
+        """Convert AIPerfJob spec to AIPerfConfig.
 
-        The spec.userConfig is passed directly to UserConfig.model_validate(),
-        which means only fields present in the YAML are set on the model.
-        This ensures exclude_unset=True works correctly when serializing.
+        The CRD spec contains the AIPerfConfig fields directly (models,
+        endpoint, datasets, load, etc.). We extract them and validate
+        via AIPerfConfig.model_validate().
 
         Returns:
-            UserConfig populated from the AIPerfJob spec.
+            AIPerfConfig populated from the AIPerfJob spec.
         """
-        user_config_dict = copy.deepcopy(self.spec.get("userConfig", {}))
+        config_dict = copy.deepcopy(self._get_config_dict())
 
         # Set cli_command for traceability
-        user_config_dict.setdefault(
+        config_dict.setdefault("artifacts", {})
+        config_dict["artifacts"].setdefault(
             "cli_command", f"kubectl apply -f aiperfjob/{self.name}"
         )
 
         # Set output directory for results
-        user_config_dict.setdefault("output", {})
-        user_config_dict["output"].setdefault("artifact_directory", "/results")
+        config_dict["artifacts"].setdefault("dir", "/results")
 
-        return UserConfig.model_validate(user_config_dict)
+        return AIPerfConfig.model_validate(config_dict)
 
-    def to_service_config(self) -> ServiceConfig:
-        """Convert AIPerfJob spec to ServiceConfig for Kubernetes deployment.
+    def to_legacy_configs(self) -> tuple[UserConfig, ServiceConfig]:
+        """Convert AIPerfJob spec to legacy UserConfig and ServiceConfig.
+
+        Uses the reverse converter to bridge AIPerfConfig to the legacy
+        config objects that services still expect.
 
         Returns:
-            ServiceConfig configured for Kubernetes with ZMQ dual-bind.
-
-        The ZMQDualBindConfig enables:
-        - Controller pod services: use IPC (fast, same pod communication)
-        - Worker pods: use TCP to connect to controller (via AIPERF_K8S_ZMQ_CONTROLLER_HOST env var)
-
-        The controller_host is NOT set here - it's read from the AIPERF_K8S_ZMQ_CONTROLLER_HOST
-        environment variable at runtime by ServiceConfig. This allows the same config file
-        to be used by both controller and worker pods.
-
-        Setting service_run_type=KUBERNETES tells SystemController to:
-        - Spawn control-plane services (dataset_manager, timing_manager, etc.) as subprocesses
-        - Treat workers and record processors as external Kubernetes pods managed by JobSet
-
-        This enables the control-plane to run as a single container that loads, runs,
-        and fails as a single unit.
+            Tuple of (UserConfig, ServiceConfig).
         """
-        # Create dual-bind config for Kubernetes deployment
-        # controller_host=None means controller mode (IPC)
-        # Workers will have AIPERF_K8S_ZMQ_CONTROLLER_HOST env var set by the JobSet,
-        # which ServiceConfig reads to switch to TCP mode
-        #
-        # ipc_path uses K8sEnvironment.ZMQ.IPC_PATH (default: /aiperf/ipc) because
-        # all containers in the controller pod share the 'ipc' emptyDir volume mounted
-        # at this path. This allows IPC socket files to be shared between containers.
-        #
-        zmq_config = ZMQDualBindConfig(
-            ipc_path=Path(K8sEnvironment.ZMQ.IPC_PATH), tcp_host="0.0.0.0"
-        )
-
-        # Build controller DNS for dataset API URL
-        # Workers download datasets via HTTP from the API service on the controller pod
-        # JobSet name is "aiperf-{job_id}" (see resources.py:jobset_name)
-        # DNS format: {pod-name}.{headless-service}.{namespace}.svc.cluster.local
-        api_port = K8sEnvironment.PORTS.API_SERVICE
-        jobset_name = f"aiperf-{self.job_id}"
-        controller_dns = f"{jobset_name}-controller-0-0.{jobset_name}.{self.namespace}.svc.cluster.local"
-        dataset_api_base_url = f"http://{controller_dns}:{api_port}/api/dataset"
-
-        # Use model_construct() to bypass ServiceConfig's nested ZMQDualBindConfig
-        # validation (which would try to mkdir the ipc_path locally).
-        # Explicitly set _fields_set so exclude_unset=True works during serialization.
-        return ServiceConfig.model_construct(
-            _fields_set={
-                "zmq_dual",
-                "ui_type",
-                "service_run_type",
-                "api_port",
-                "api_host",
-                "dataset_api_base_url",
-                "log_level",
-            },
-            zmq_dual=zmq_config,
-            ui_type=UIType.SIMPLE,
-            service_run_type=ServiceRunType.KUBERNETES,
-            api_port=api_port,
-            api_host="0.0.0.0",  # Bind to all interfaces for pod networking
-            dataset_api_base_url=dataset_api_base_url,
-            log_level=AIPerfLogLevel.INFO,  # Production default; override via service config
-        )
+        config = self.to_aiperf_config()
+        return convert_to_legacy_configs(config)
 
     def to_pod_customization(self) -> PodCustomization:
         """Convert podTemplate spec to PodCustomization.
@@ -195,16 +156,29 @@ class AIPerfJobSpecConverter:
         Returns:
             Number of worker pods needed.
         """
-        # Get concurrency from userConfig.loadgen
-        user_config = self.spec.get("userConfig", {})
-        loadgen = user_config.get("loadgen", {})
-        concurrency = loadgen.get("concurrency", 1)
+        concurrency = 1
+        config = self.to_aiperf_config()
+        for phase in config.load.values():
+            if not phase.exclude and phase.concurrency is not None:
+                concurrency = phase.concurrency
+                break
 
         connections_per_worker = self.spec.get(
             "connectionsPerWorker", DEFAULT_CONNECTIONS_PER_WORKER
         )
 
         return max(1, math.ceil(concurrency / connections_per_worker))
+
+    def _get_config_dict(self) -> dict[str, Any]:
+        """Extract the AIPerfConfig-compatible dict from the CRD spec.
+
+        The CRD spec contains AIPerfConfig fields directly at the top level.
+        Non-config fields (image, podTemplate, scheduling, etc.) are excluded.
+
+        Returns:
+            Dict suitable for AIPerfConfig.model_validate().
+        """
+        return {k: v for k, v in self.spec.items() if k in CONFIG_FIELDS}
 
     def _convert_env_vars(self, env_list: list[dict[str, Any]]) -> dict[str, str]:
         """Convert Kubernetes env list to direct env vars dict.

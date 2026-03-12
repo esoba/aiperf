@@ -16,6 +16,7 @@ import kopf
 import pytest
 from pytest import param
 
+from aiperf.kubernetes.resources import KubernetesDeployment
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.main import (
     _build_phase_progress,
@@ -451,7 +452,7 @@ class TestOnCreateHandler:
         from aiperf.operator.main import on_create
 
         body = {"metadata": {"name": "test-job", "namespace": "default"}}
-        spec = {"userConfig": {}}  # Missing required fields
+        spec = {"endpoint": {}}  # Missing required fields
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
@@ -551,6 +552,58 @@ class TestOnCreateHandler:
             )
 
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_sets_aiperf_config_on_deployment(
+        self,
+        mock_all_events: None,
+        full_aiperfjob_spec: dict[str, Any],
+    ) -> None:
+        """Verify spec passes aiperf_config to KubernetesDeployment."""
+        from aiperf.operator.main import on_create
+
+        body = {"metadata": {"name": "test-job", "namespace": "default"}}
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+
+        mock_api = AsyncMock()
+        mock_configmap = AsyncMock()
+        mock_jobset = AsyncMock()
+
+        captured_deployment = {}
+
+        original_init = KubernetesDeployment.__init__
+
+        def capture_init(self, **kwargs):
+            captured_deployment.update(kwargs)
+            original_init(self, **kwargs)
+
+        with (
+            mock_patch(
+                "aiperf.operator.main._get_api",
+                new_callable=AsyncMock,
+                return_value=mock_api,
+            ),
+            mock_patch(
+                "aiperf.operator.main._check_endpoint_health",
+                new_callable=AsyncMock,
+                return_value=MagicMock(reachable=True, error=""),
+            ),
+            mock_patch("aiperf.operator.main.ConfigMap", return_value=mock_configmap),
+            mock_patch("aiperf.operator.main.AsyncJobSet", return_value=mock_jobset),
+            mock_patch.object(KubernetesDeployment, "__init__", capture_init),
+        ):
+            result = await on_create(
+                body=body,
+                spec=full_aiperfjob_spec,
+                name="test-job",
+                namespace="default",
+                uid="test-uid",
+                patch=kopf_patch,
+            )
+
+        assert result is not None
+        assert captured_deployment.get("aiperf_config") is not None
 
 
 class TestOnDeleteHandler:

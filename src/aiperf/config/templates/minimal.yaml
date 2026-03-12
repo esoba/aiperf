@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Minimal Configuration
+# =====================
+# Absolute bare minimum using all shorthand forms.
+#
+# Run: aiperf run examples_v2/minimal.yaml
+
+model: meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  url: http://localhost:8000
+
+dataset:
+  type: synthetic
+  entries: 100
+  prompts:
+    isl: 512
+    osl: 128
+
+load:
+  type: concurrency
+  concurrency: 8
+  requests: 100

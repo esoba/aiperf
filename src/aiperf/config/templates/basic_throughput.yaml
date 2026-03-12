@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+#
+# Basic Throughput Test
+# =====================
+# Measures maximum throughput by sending requests as fast as possible
+# with controlled concurrency. Uses concurrency mode (dispatch immediately when
+# a concurrency slot opens - no rate limiting).
+#
+# Use case: Find maximum tokens/sec the server can sustain
+#
+# Run: aiperf --config examples_v2/basic_throughput.yaml
+
+random_seed: 42
+
+models:
+  - meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  urls:
+    - http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 600.0
+
+datasets:
+  main:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: 512
+      osl: 128
+
+
+load:
+  throughput_test:
+    type: concurrency
+    requests: 1000
+    concurrency: 64
+
+artifacts:
+  dir: ./artifacts/throughput_test
+  console: table
+  summary: [json]
+  records: [jsonl, csv]

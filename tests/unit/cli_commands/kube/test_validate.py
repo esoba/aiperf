@@ -3,11 +3,11 @@
 """Tests for aiperf.kubernetes.validate module.
 
 Focuses on:
-- YAML structure validation: apiVersion, kind, metadata.name, spec.userConfig
+- YAML structure validation: apiVersion, kind, metadata.name, spec with inline AIPerfConfig fields
 - Kubernetes name validation: length, pattern
 - Unknown spec field detection: warning vs strict error
-- UserConfig validation via AIPerfJobSpecConverter
-- ServiceConfig, PodCustomization, worker count validation
+- AIPerfConfig validation via AIPerfJobSpecConverter
+- PodCustomization, worker count validation
 - File-level error handling: missing, unreadable, invalid YAML
 - Multi-file validation with pass/fail counts
 - CLI entrypoint integration
@@ -25,26 +25,37 @@ from pytest import param
 from aiperf.kubernetes.validate import (
     KNOWN_SPEC_FIELDS,
     ValidationResult,
+    validate_aiperf_config,
     validate_file,
     validate_files,
     validate_k8s_name,
     validate_unknown_spec_fields,
-    validate_user_config,
     validate_yaml_structure,
 )
 
 
 def _minimal_doc() -> dict:
-    """Return a minimal valid AIPerfJob document."""
+    """Return a minimal valid AIPerfJob document with inline AIPerfConfig fields."""
     return {
         "apiVersion": "aiperf.nvidia.com/v1alpha1",
         "kind": "AIPerfJob",
         "metadata": {"name": "test-job"},
         "spec": {
-            "userConfig": {
-                "endpoint": {
-                    "model_names": ["test-model"],
-                    "urls": ["http://test:8000"],
+            "image": "nvcr.io/nvidia/aiperf:latest",
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": {
+                "main": {
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128},
+                },
+            },
+            "load": {
+                "default": {
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 10,
                 },
             },
         },
@@ -161,12 +172,12 @@ class TestValidateYamlStructure:
         result = ValidationResult(path=Path("test.yaml"))
         assert validate_yaml_structure(doc, result) is False
 
-    def test_missing_user_config_returns_false(self) -> None:
+    def test_missing_config_fields_returns_false(self) -> None:
         doc = _minimal_doc()
-        del doc["spec"]["userConfig"]
+        doc["spec"] = {"image": "nvcr.io/nvidia/aiperf:latest"}
         result = ValidationResult(path=Path("test.yaml"))
         assert validate_yaml_structure(doc, result) is False
-        assert any("userConfig" in e for e in result.errors)
+        assert any("AIPerfConfig fields" in e for e in result.errors)
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +240,7 @@ class TestValidateUnknownSpecFields:
         assert not result.errors
 
     def test_unknown_field_warning(self) -> None:
-        spec = {"userConfig": {}, "bogusField": "value"}
+        spec = {"models": ["m"], "bogusField": "value"}
         result = ValidationResult(path=Path("test.yaml"))
         validate_unknown_spec_fields(spec, result, strict=False)
         assert len(result.warnings) == 1
@@ -237,7 +248,7 @@ class TestValidateUnknownSpecFields:
         assert not result.errors
 
     def test_unknown_field_strict_error(self) -> None:
-        spec = {"userConfig": {}, "bogusField": "value"}
+        spec = {"models": ["m"], "bogusField": "value"}
         result = ValidationResult(path=Path("test.yaml"))
         validate_unknown_spec_fields(spec, result, strict=True)
         assert len(result.errors) == 1
@@ -245,7 +256,7 @@ class TestValidateUnknownSpecFields:
         assert not result.warnings
 
     def test_multiple_unknown_fields(self) -> None:
-        spec = {"userConfig": {}, "foo": 1, "bar": 2}
+        spec = {"models": ["m"], "foo": 1, "bar": 2}
         result = ValidationResult(path=Path("test.yaml"))
         validate_unknown_spec_fields(spec, result, strict=False)
         assert len(result.warnings) == 1
@@ -254,43 +265,43 @@ class TestValidateUnknownSpecFields:
 
 
 # ---------------------------------------------------------------------------
-# validate_user_config
+# validate_aiperf_config
 # ---------------------------------------------------------------------------
 
 
-class TestValidateUserConfig:
+class TestValidateAIPerfConfig:
     def test_valid_config(self) -> None:
         doc = _minimal_doc()
         result = ValidationResult(path=Path("test.yaml"))
-        validate_user_config(doc["spec"], "test-job", result)
+        validate_aiperf_config(doc["spec"], "test-job", result)
         assert not result.errors
 
     def test_empty_model_names(self) -> None:
         doc = _minimal_doc()
-        doc["spec"]["userConfig"]["endpoint"]["model_names"] = []
+        doc["spec"]["models"] = []
         result = ValidationResult(path=Path("test.yaml"))
-        validate_user_config(doc["spec"], "test-job", result)
-        assert any("model_names" in e for e in result.errors)
+        validate_aiperf_config(doc["spec"], "test-job", result)
+        assert any("model" in e.lower() for e in result.errors)
 
     def test_empty_urls(self) -> None:
         doc = _minimal_doc()
-        doc["spec"]["userConfig"]["endpoint"]["urls"] = []
+        doc["spec"]["endpoint"]["urls"] = []
         result = ValidationResult(path=Path("test.yaml"))
-        validate_user_config(doc["spec"], "test-job", result)
-        assert any("urls" in e for e in result.errors)
+        validate_aiperf_config(doc["spec"], "test-job", result)
+        assert any("url" in e.lower() for e in result.errors)
 
     def test_invalid_url_scheme(self) -> None:
         doc = _minimal_doc()
-        doc["spec"]["userConfig"]["endpoint"]["urls"] = ["ftp://bad:8000"]
+        doc["spec"]["endpoint"]["urls"] = ["ftp://bad:8000"]
         result = ValidationResult(path=Path("test.yaml"))
-        validate_user_config(doc["spec"], "test-job", result)
+        validate_aiperf_config(doc["spec"], "test-job", result)
         assert any("http://" in e for e in result.errors)
 
     def test_pydantic_validation_error(self) -> None:
-        spec = {"userConfig": {"endpoint": {"model_names": 123}}}
+        spec = {"models": 123, "endpoint": {"urls": ["http://test:8000"]}}
         result = ValidationResult(path=Path("test.yaml"))
-        validate_user_config(spec, "test-job", result)
-        assert any("UserConfig validation failed" in e for e in result.errors)
+        validate_aiperf_config(spec, "test-job", result)
+        assert any("validation failed" in e.lower() for e in result.errors)
 
 
 # ---------------------------------------------------------------------------
@@ -358,43 +369,26 @@ class TestValidateFile:
         result = validate_file(path)
         assert result.passed
 
-    def test_complex_recipe_with_goodput(self, tmp_path: Path) -> None:
-        """Validate a trace-replay recipe with goodput dict."""
+    def test_recipe_with_slos(self, tmp_path: Path) -> None:
+        """Validate a spec with SLOs."""
         doc = _minimal_doc()
-        doc["spec"]["userConfig"]["input"] = {
-            "file": "/perf-cache/traces/trace.jsonl",
-            "custom_dataset_type": "mooncake_trace",
-            "fixed_schedule": True,
-            "goodput": {
-                "time_to_first_token": 2000,
-                "inter_token_latency": 25,
-            },
-        }
-        path = _write_yaml(tmp_path / "aiperfjob.yaml", doc)
-        result = validate_file(path)
-        assert result.passed
-
-    def test_recipe_with_extra_inputs(self, tmp_path: Path) -> None:
-        """Validate a recipe with extra inputs as dict."""
-        doc = _minimal_doc()
-        doc["spec"]["userConfig"]["input"] = {
-            "extra": {
-                "max_tokens": 1024,
-                "temperature": 0.0,
-                "ignore_eos": True,
-            },
+        doc["spec"]["slos"] = {
+            "time_to_first_token": 2000,
+            "inter_token_latency": 25,
         }
         path = _write_yaml(tmp_path / "aiperfjob.yaml", doc)
         result = validate_file(path)
         assert result.passed
 
     def test_recipe_with_server_metrics(self, tmp_path: Path) -> None:
-        """Validate a recipe with server_metrics list."""
+        """Validate a spec with server_metrics."""
         doc = _minimal_doc()
-        doc["spec"]["userConfig"]["server_metrics"] = [
-            "http://svc-1:9090/metrics",
-            "http://svc-2:9090/metrics",
-        ]
+        doc["spec"]["server_metrics"] = {
+            "urls": [
+                "http://svc-1:9090/metrics",
+                "http://svc-2:9090/metrics",
+            ],
+        }
         path = _write_yaml(tmp_path / "aiperfjob.yaml", doc)
         result = validate_file(path)
         assert result.passed
@@ -424,7 +418,8 @@ class TestValidateFiles:
     async def test_mixed_pass_fail(self, tmp_path: Path) -> None:
         good = _write_yaml(tmp_path / "good.yaml", _minimal_doc())
         bad_doc = _minimal_doc()
-        del bad_doc["spec"]["userConfig"]
+        # Remove all config fields so structure validation fails
+        bad_doc["spec"] = {"image": "nvcr.io/nvidia/aiperf:latest"}
         bad = _write_yaml(tmp_path / "bad.yaml", bad_doc)
 
         with patch("aiperf.kubernetes.validate.kube_console"):

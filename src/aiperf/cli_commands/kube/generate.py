@@ -6,17 +6,16 @@ from __future__ import annotations
 
 from cyclopts import App
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.kube_config import KubeOptions
+from aiperf.config.cli_builder import CLIModel
 
 app = App(name="generate")
 
 
 @app.default
 async def generate(
-    user_config: UserConfig,
+    cli: CLIModel,
     kube_options: KubeOptions,
-    service_config: ServiceConfig | None = None,
 ) -> None:
     """Generate Kubernetes YAML manifests for an AIPerf benchmark.
 
@@ -28,20 +27,25 @@ async def generate(
         aiperf kube generate --model Qwen/Qwen3-0.6B --url localhost:8000 --image aiperf:latest
 
         # Generate and save to file
-        aiperf kube generate --user-config benchmark.yaml --image aiperf:latest > k8s-deployment.yaml
+        aiperf kube generate --model Qwen/Qwen3-0.6B --url localhost:8000 --image aiperf:latest > k8s-deployment.yaml
 
     Args:
-        user_config: User configuration for the benchmark (same as 'aiperf profile').
+        cli: Benchmark configuration (parsed from CLI flags).
         kube_options: Kubernetes-specific deployment options.
-        service_config: Service configuration options (optional).
     """
     from aiperf import cli_utils
 
     with cli_utils.exit_on_error(title="Error Generating Kubernetes Manifests"):
-        from aiperf.common.config import load_service_config
+        from aiperf.config.cli_builder import build_aiperf_config
+        from aiperf.config.reverse_converter import convert_to_legacy_configs
         from aiperf.kubernetes import runner
 
-        service_config = service_config or load_service_config()
+        aiperf_config = build_aiperf_config(cli)
+        user_config, service_config = convert_to_legacy_configs(aiperf_config)
         await runner.run_kubernetes_deployment(
-            user_config, service_config, kube_options, dry_run=True
+            user_config,
+            service_config,
+            kube_options,
+            dry_run=True,
+            aiperf_config=aiperf_config,
         )

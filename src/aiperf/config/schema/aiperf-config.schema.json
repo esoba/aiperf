@@ -1,0 +1,2676 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nvidia.github.io/aiperf/schemas/aiperf-config.schema.json",
+  "$defs": {
+    "AIPerfLogLevel": {
+      "description": "Logging levels for AIPerf output verbosity.",
+      "enum": [
+        "TRACE",
+        "DEBUG",
+        "INFO",
+        "NOTICE",
+        "WARNING",
+        "SUCCESS",
+        "ERROR",
+        "CRITICAL"
+      ],
+      "title": "AIPerfLogLevel",
+      "type": "string"
+    },
+    "AccuracyConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for accuracy benchmarking mode.\n\nWhen benchmark is set, enables accuracy evaluation alongside\nperformance profiling using standard benchmarks (MMLU, AIME, etc.).",
+      "properties": {
+        "benchmark": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode.",
+          "title": "Benchmark"
+        },
+        "tasks": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects). If not set, all tasks are included.",
+          "title": "Tasks"
+        },
+        "n_shots": {
+          "default": 0,
+          "description": "Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation. Maximum 8.",
+          "maximum": 8,
+          "minimum": 0,
+          "title": "N Shots",
+          "type": "integer"
+        },
+        "enable_cot": {
+          "default": false,
+          "description": "Enable chain-of-thought prompting for accuracy evaluation.",
+          "title": "Enable Cot",
+          "type": "boolean"
+        },
+        "grader": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution).",
+          "title": "Grader"
+        },
+        "system_prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific system prompt.",
+          "title": "System Prompt"
+        },
+        "verbose": {
+          "default": false,
+          "description": "Enable verbose output for accuracy evaluation, showing per-problem grading details.",
+          "title": "Verbose",
+          "type": "boolean"
+        }
+      },
+      "title": "AccuracyConfig",
+      "type": "object"
+    },
+    "ArtifactsConfig": {
+      "additionalProperties": false,
+      "description": "Artifacts configuration for benchmark output.\n\nControls where and how benchmark results are exported.\nUses flat structure with format arrays instead of nested export configs.",
+      "properties": {
+        "dir": {
+          "default": "artifacts",
+          "description": "Output directory for all benchmark artifacts. Created if it doesn't exist.",
+          "format": "path",
+          "title": "Dir",
+          "type": "string"
+        },
+        "prefix": {
+          "default": "profile",
+          "description": "Filename prefix for all exported files. Example: 'my_run' produces 'my_run_summary.json', 'my_run_records.jsonl'.",
+          "title": "Prefix",
+          "type": "string"
+        },
+        "console": {
+          "$ref": "#/$defs/ConsoleFormat",
+          "default": "table",
+          "description": "Console output format for results display. table: rich formatted tables, json: machine-readable, minimal: progress only."
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "json",
+                  "yaml"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "const": false,
+              "type": "boolean"
+            }
+          ],
+          "description": "Summary export formats. Options: json, yaml. Set to false to disable.",
+          "title": "Summary"
+        },
+        "records": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "jsonl",
+                  "csv"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "const": false,
+              "type": "boolean"
+            }
+          ],
+          "default": false,
+          "description": "Per-request records export formats. Options: jsonl, csv. Set to false to disable.",
+          "title": "Records"
+        },
+        "raw": {
+          "default": false,
+          "description": "Export raw request/response payloads as JSONL.",
+          "title": "Raw",
+          "type": "boolean"
+        },
+        "trace": {
+          "default": false,
+          "description": "Export HTTP trace data for debugging.",
+          "title": "Trace",
+          "type": "boolean"
+        },
+        "slice_duration": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.",
+          "title": "Slice Duration"
+        },
+        "show_trace_timing": {
+          "default": false,
+          "description": "Display HTTP trace timing metrics in console output. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration.",
+          "title": "Show Trace Timing",
+          "type": "boolean"
+        },
+        "cli_command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "CLI command used to run the benchmark. Populated automatically when running via CLI.",
+          "title": "Cli Command"
+        },
+        "benchmark_id": {
+          "description": "Unique identifier for this benchmark run. Used to correlate artifacts across export formats. Auto-generated if not provided.",
+          "title": "Benchmark Id",
+          "type": "string"
+        }
+      },
+      "title": "ArtifactsConfig",
+      "type": "object"
+    },
+    "AudioConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for synthetic audio generation in multimodal datasets.\n\nControls the generation of synthetic audio for speech-to-text\nand audio-language model benchmarking. Generated audio is random\nnoise with specified sample rate, bit depth, and format.",
+      "properties": {
+        "batch_size": {
+          "default": 0,
+          "description": "Number of audio inputs to include in each multimodal request. Supported with chat endpoint type for multimodal models. Set to 0 to disable audio inputs.",
+          "minimum": 0,
+          "title": "Batch Size",
+          "type": "integer"
+        },
+        "length": {
+          "$ref": "#/$defs/MeanStddev",
+          "description": "Audio duration in seconds. Can be a fixed value or {mean, stddev} distribution. Used when batch_size > 0 for multimodal benchmarking."
+        },
+        "format": {
+          "$ref": "#/$defs/AudioFormat",
+          "default": "wav",
+          "description": "File format for generated audio files. wav: uncompressed PCM (larger files). mp3: compressed (smaller files). Format affects file size in multimodal requests but not audio characteristics."
+        },
+        "sample_rates": {
+          "description": "List of audio sample rates in kHz to randomly select from. Common values: 8.0 (telephony), 16.0 (speech), 44.1 (CD quality), 48.0 (professional). Specify multiple values for mixed-quality testing.",
+          "items": {
+            "type": "number"
+          },
+          "title": "Sample Rates",
+          "type": "array"
+        },
+        "depths": {
+          "description": "List of audio bit depths in bits to randomly select from. Each audio file is assigned a random depth from this list. Common values: 8 (low quality), 16 (CD quality), 24 (professional), 32 (high-end). Specify multiple values for mixed-quality testing.",
+          "items": {
+            "type": "integer"
+          },
+          "title": "Depths",
+          "type": "array"
+        },
+        "channels": {
+          "default": 1,
+          "description": "Number of audio channels. 1 = mono (single channel), 2 = stereo (left/right channels). Stereo doubles file size. Most speech models use mono.",
+          "maximum": 2,
+          "minimum": 1,
+          "title": "Channels",
+          "type": "integer"
+        }
+      },
+      "title": "AudioConfig",
+      "type": "object"
+    },
+    "AudioFormat": {
+      "description": "Audio file formats for synthetic audio generation.",
+      "enum": [
+        "wav",
+        "mp3"
+      ],
+      "title": "AudioFormat",
+      "type": "string"
+    },
+    "AugmentConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for augmenting file datasets with synthetic content.\n\nThis is a unique AIPerf feature enabling composed datasets where\nfile-based prompts are augmented with synthetic prefixes, suffixes,\noutput length specifications, multimodal content, and padding.",
+      "properties": {
+        "prefix": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AugmentPrefixConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Configuration for prepending synthetic prefix to prompts. Common use case: adding system prompts for KV cache testing."
+        },
+        "suffix": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AugmentTextConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Configuration for appending synthetic suffix to prompts."
+        },
+        "osl": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeanStddev"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Output sequence length to apply to augmented records. Can be a fixed integer or {mean, stddev} distribution. Behavior depends on osl_mode setting."
+        },
+        "osl_mode": {
+          "$ref": "#/$defs/OslMode",
+          "default": "fill",
+          "description": "How to apply OSL to records. fill: only apply if the record lacks an existing OSL value. override: always replace existing OSL."
+        },
+        "output_distribution": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/SequenceDistributionEntry"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Output length probability distribution. When specified, overrides the osl field. Each entry specifies {isl (ignored), osl, probability}. Probabilities must sum to 100.",
+          "title": "Output Distribution"
+        },
+        "images": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Add synthetic images to augmented requests for multimodal testing."
+        },
+        "audio": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudioConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Add synthetic audio to augmented requests for multimodal testing."
+        },
+        "video": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Add synthetic video to augmented requests for multimodal testing."
+        },
+        "pad_to_count": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Extend dataset to this number of entries. If the source file has fewer entries, synthetic padding entries are added using the padding_prompts configuration.",
+          "title": "Pad To Count"
+        },
+        "padding_prompts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PromptConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Prompt configuration for synthetic padding entries. Only used when pad_to_count exceeds source file size. Specifies ISL/OSL for generated padding records."
+        }
+      },
+      "title": "AugmentConfig",
+      "type": "object"
+    },
+    "AugmentPrefixConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for prepending synthetic prefix to dataset records.\n\nExtends AugmentTextConfig with a pool_size option for KV cache testing.",
+      "properties": {
+        "length": {
+          "$ref": "#/$defs/MeanStddev",
+          "description": "Token length for the augmented text. Can be a fixed integer or {mean, stddev} distribution."
+        },
+        "content_type": {
+          "$ref": "#/$defs/ContentType",
+          "default": "random_tokens",
+          "description": "Semantic type of generated content. random_tokens: synthetic text. system_prompt: instruction-style text. context: background information."
+        },
+        "separator": {
+          "default": "\n\n",
+          "description": "Text inserted between augmented text and original prompt.",
+          "title": "Separator",
+          "type": "string"
+        },
+        "pool_size": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of distinct prefixes in the shared pool. null means generate a unique prefix per record. Use a small pool for high cache hit rate testing.",
+          "title": "Pool Size"
+        }
+      },
+      "required": [
+        "length"
+      ],
+      "title": "AugmentPrefixConfig",
+      "type": "object"
+    },
+    "AugmentTextConfig": {
+      "additionalProperties": false,
+      "description": "Base configuration for augmenting dataset records with synthetic text.\n\nUsed in composed datasets to add synthetic content (prefix or suffix)\nto existing file-based data.",
+      "properties": {
+        "length": {
+          "$ref": "#/$defs/MeanStddev",
+          "description": "Token length for the augmented text. Can be a fixed integer or {mean, stddev} distribution."
+        },
+        "content_type": {
+          "$ref": "#/$defs/ContentType",
+          "default": "random_tokens",
+          "description": "Semantic type of generated content. random_tokens: synthetic text. system_prompt: instruction-style text. context: background information."
+        },
+        "separator": {
+          "default": "\n\n",
+          "description": "Text inserted between augmented text and original prompt.",
+          "title": "Separator",
+          "type": "string"
+        }
+      },
+      "required": [
+        "length"
+      ],
+      "title": "AugmentTextConfig",
+      "type": "object"
+    },
+    "CancellationConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for request cancellation testing.\n\nEnables testing server behavior when clients cancel requests mid-flight.",
+      "properties": {
+        "rate": {
+          "description": "Percentage of requests to cancel (0-100). 10.0 means 10%% of requests will be cancelled.",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "title": "Rate",
+          "type": "number"
+        },
+        "delay": {
+          "default": 0.0,
+          "description": "Seconds to wait after sending before cancelling. 0.0 means cancel immediately after send.",
+          "minimum": 0.0,
+          "title": "Delay",
+          "type": "number"
+        }
+      },
+      "required": [
+        "rate"
+      ],
+      "title": "CancellationConfig",
+      "type": "object"
+    },
+    "ComposedDataset": {
+      "additionalProperties": false,
+      "description": "Composed dataset configuration (unique to AIPerf).\n\nCombines file-based data with synthetic augmentation.\nThis enables advanced scenarios like:\n- Adding system prompts to existing queries\n- Testing KV cache with file-based prompts\n- Adding multimodal content to text datasets\n- Extending small datasets with padding",
+      "properties": {
+        "type": {
+          "const": "composed",
+          "default": "composed",
+          "description": "Dataset type discriminator. Must be 'composed'.",
+          "title": "Type",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/FileSourceConfig",
+          "description": "The base file dataset to augment."
+        },
+        "augment": {
+          "$ref": "#/$defs/AugmentConfig",
+          "description": "Augmentation configuration specifying prefixes, suffixes, OSL, multimodal content, and padding for the source data."
+        },
+        "entries": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Final dataset size after augmentation. If source has fewer entries and pad_to_count is set in augment, synthetic padding entries are generated to reach this count.",
+          "title": "Entries"
+        },
+        "random_seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Random seed for deterministic augmentation. Overrides global random_seed for this dataset.",
+          "title": "Random Seed"
+        }
+      },
+      "required": [
+        "source",
+        "augment"
+      ],
+      "title": "ComposedDataset",
+      "type": "object"
+    },
+    "ConnectionReuseStrategy": {
+      "description": "Transport connection reuse strategy. Controls how and when connections are reused across requests.",
+      "enum": [
+        "pooled",
+        "never",
+        "sticky-user-sessions"
+      ],
+      "title": "ConnectionReuseStrategy",
+      "type": "string"
+    },
+    "ConsoleFormat": {
+      "description": "Defines the format for console output during benchmarks.",
+      "enum": [
+        "table",
+        "json",
+        "minimal"
+      ],
+      "title": "ConsoleFormat",
+      "type": "string"
+    },
+    "ContentType": {
+      "description": "Defines the semantic type for synthetic text content.",
+      "enum": [
+        "random_tokens",
+        "system_prompt",
+        "context",
+        "instruction",
+        "question"
+      ],
+      "title": "ContentType",
+      "type": "string"
+    },
+    "DatasetFormat": {
+      "description": "Defines the format of file-based datasets.",
+      "enum": [
+        "single_turn",
+        "multi_turn",
+        "mooncake_trace",
+        "random_pool"
+      ],
+      "title": "DatasetFormat",
+      "type": "string"
+    },
+    "DatasetSamplingStrategy": {
+      "enum": [
+        "random",
+        "sequential",
+        "shuffle"
+      ],
+      "title": "DatasetSamplingStrategy",
+      "type": "string"
+    },
+    "DualBindCommunicationConfig": {
+      "additionalProperties": false,
+      "description": "Dual-bind (IPC + TCP) communication configuration.\n\nFor Kubernetes deployments where controller services connect via IPC\n(co-located in same pod) and worker pods connect via TCP.\n\nWhen controller_host is None, services use IPC (local mode).\nWhen controller_host is set, services use TCP to that host (remote mode).",
+      "properties": {
+        "type": {
+          "const": "dual",
+          "description": "Communication type. Must be 'dual'.",
+          "title": "Type",
+          "type": "string"
+        },
+        "ipc_path": {
+          "default": "/tmp/aiperf",
+          "description": "Directory for IPC socket files (local services).",
+          "title": "Ipc Path",
+          "type": "string"
+        },
+        "tcp_host": {
+          "default": "0.0.0.0",
+          "description": "TCP bind host for proxies. Use 0.0.0.0 to listen on all interfaces.",
+          "title": "Tcp Host",
+          "type": "string"
+        },
+        "controller_host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Controller host for remote TCP connections. When set, services connect via TCP to this host instead of IPC. In Kubernetes, set via JobSet DNS (e.g., controller.namespace.svc).",
+          "title": "Controller Host"
+        },
+        "records_port": {
+          "default": 5557,
+          "description": "Port for records push/pull communication.",
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Records Port",
+          "type": "integer"
+        },
+        "credit_router_port": {
+          "default": 5564,
+          "description": "Port for credit router (ROUTER-DEALER).",
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Credit Router Port",
+          "type": "integer"
+        },
+        "event_bus_proxy": {
+          "$ref": "#/$defs/TcpProxyConfig",
+          "description": "Event bus proxy ports (XPUB/XSUB)."
+        },
+        "dataset_manager_proxy": {
+          "$ref": "#/$defs/TcpProxyConfig",
+          "description": "Dataset manager proxy ports (DEALER/ROUTER)."
+        },
+        "raw_inference_proxy": {
+          "$ref": "#/$defs/TcpProxyConfig",
+          "description": "Raw inference proxy ports (PUSH/PULL)."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "DualBindCommunicationConfig",
+      "type": "object"
+    },
+    "EndpointConfig": {
+      "additionalProperties": false,
+      "description": "Endpoint configuration for connecting to inference servers.\n\nThis section configures how AIPerf connects to and communicates\nwith the target inference server(s). It supports multiple URLs\nfor load-balanced deployments and various API types.",
+      "properties": {
+        "urls": {
+          "description": "List of server URLs to benchmark. Requests distributed according to url_strategy. Example: ['http://localhost:8000/v1/chat/completions']",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Urls",
+          "type": "array"
+        },
+        "url_strategy": {
+          "$ref": "#/$defs/URLSelectionStrategy",
+          "default": "round_robin",
+          "description": "Strategy for distributing requests across multiple URLs. round_robin cycles through URLs in order."
+        },
+        "type": {
+          "$ref": "#/$defs/EndpointType",
+          "default": "chat",
+          "description": "API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format."
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override default endpoint path. Use for servers with non-standard API paths. Example: '/custom/v2/generate'",
+          "title": "Path"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "API authentication key. Supports environment variable substitution: ${OPENAI_API_KEY}. Can also use ${VAR:default} syntax for defaults.",
+          "title": "Api Key"
+        },
+        "timeout": {
+          "default": 600.0,
+          "description": "Request timeout in seconds. Requests exceeding this duration are marked as failed. Should exceed expected max response time.",
+          "exclusiveMinimum": 0.0,
+          "title": "Timeout",
+          "type": "number"
+        },
+        "streaming": {
+          "default": false,
+          "description": "Enable streaming (Server-Sent Events) responses. Required for accurate TTFT (time to first token) measurement. Server must support streaming for this to work.",
+          "title": "Streaming",
+          "type": "boolean"
+        },
+        "transport": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TransportType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "HTTP transport protocol (http/https). Auto-detected from URL scheme if not specified. Explicit setting overrides auto-detection."
+        },
+        "connection_reuse": {
+          "$ref": "#/$defs/ConnectionReuseStrategy",
+          "default": "pooled",
+          "description": "HTTP connection management strategy. pooled: shared connection pool (fastest), never: new connection per request (includes TCP overhead), sticky_sessions: dedicated connection per session."
+        },
+        "use_legacy_max_tokens": {
+          "default": false,
+          "description": "Use 'max_tokens' field instead of 'max_completion_tokens'. Enable for compatibility with older OpenAI API versions.",
+          "title": "Use Legacy Max Tokens",
+          "type": "boolean"
+        },
+        "use_server_token_count": {
+          "default": false,
+          "description": "Use server-reported token counts from response usage field. When true, trusts usage.prompt_tokens and usage.completion_tokens. When false, counts tokens locally using configured tokenizer.",
+          "title": "Use Server Token Count",
+          "type": "boolean"
+        },
+        "template": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TemplateConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Custom template configuration for template endpoint type. Only used when type='template'. Defines request body format and response parsing."
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Custom HTTP headers to include in all requests. Useful for authentication, tracing, or routing. Values support environment variable substitution.",
+          "title": "Headers",
+          "type": "object"
+        },
+        "download_video_content": {
+          "default": false,
+          "description": "For video generation endpoints, download the video content after generation completes. When enabled, request latency includes the video download time. When disabled, only generation time is measured.",
+          "title": "Download Video Content",
+          "type": "boolean"
+        },
+        "extra": {
+          "additionalProperties": true,
+          "description": "Additional fields to include in request body. Merged into every request. Common fields: temperature, top_p, top_k, stop.",
+          "title": "Extra",
+          "type": "object"
+        },
+        "url": {
+          "type": "string",
+          "description": "Shorthand for 'urls' (single endpoint URL)."
+        }
+      },
+      "required": [],
+      "title": "EndpointConfig",
+      "type": "object"
+    },
+    "EndpointType": {
+      "enum": [
+        "chat",
+        "cohere_rankings",
+        "completions",
+        "chat_embeddings",
+        "embeddings",
+        "hf_tei_rankings",
+        "huggingface_generate",
+        "image_generation",
+        "video_generation",
+        "image_retrieval",
+        "nim_embeddings",
+        "nim_rankings",
+        "solido_rag",
+        "template"
+      ],
+      "title": "EndpointType",
+      "type": "string"
+    },
+    "FileDataset": {
+      "additionalProperties": false,
+      "description": "File-based dataset configuration.\n\nLoads prompts from a local file in various formats.\nSupports trace replay and custom sampling strategies.",
+      "properties": {
+        "type": {
+          "const": "file",
+          "description": "Dataset type discriminator. Must be 'file'.",
+          "title": "Type",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to file or directory containing benchmark dataset. Can be absolute or relative. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, directories for random_pool.",
+          "format": "path",
+          "title": "Path",
+          "type": "string"
+        },
+        "format": {
+          "$ref": "#/$defs/DatasetFormat",
+          "default": "single_turn",
+          "description": "Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace: timestamped trace files for replay. random_pool: directory of reusable prompts."
+        },
+        "sampling": {
+          "$ref": "#/$defs/DatasetSamplingStrategy",
+          "default": "sequential",
+          "description": "Strategy for selecting entries from dataset during benchmarking. sequential: iterate in order, wrapping to start after end. random: randomly sample with replacement (entries may repeat). shuffle: random permutation without replacement, re-shuffling after exhaustion."
+        },
+        "synthesis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SynthesisConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Trace synthesis/transformation configuration. Allows scaling timestamps and token lengths before replay. Only used with mooncake_trace format."
+        },
+        "entries": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Limit number of records to use from file. If not specified, uses all records in the file.",
+          "title": "Entries"
+        },
+        "random_seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Random seed for deterministic sampling. When set, makes random/shuffle sampling reproducible across runs. Overrides global random_seed for this dataset.",
+          "title": "Random Seed"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "title": "FileDataset",
+      "type": "object"
+    },
+    "FileSourceConfig": {
+      "additionalProperties": false,
+      "description": "File source configuration for composed datasets.\n\nSimplified file dataset specification used within composed\ndataset source field.",
+      "properties": {
+        "type": {
+          "const": "file",
+          "description": "Source type. Must be 'file' for composed datasets.",
+          "title": "Type",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to the source file. Can be absolute or relative.",
+          "format": "path",
+          "title": "Path",
+          "type": "string"
+        },
+        "format": {
+          "$ref": "#/$defs/DatasetFormat",
+          "default": "single_turn",
+          "description": "Dataset file format determining parsing logic. single_turn: JSONL with single exchanges. multi_turn: JSONL with conversation history. mooncake_trace: timestamped trace files."
+        },
+        "sampling": {
+          "$ref": "#/$defs/DatasetSamplingStrategy",
+          "default": "sequential",
+          "description": "Strategy for selecting entries from the source file. sequential: iterate in order. random: randomly sample with replacement. shuffle: random permutation without replacement."
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "title": "FileSourceConfig",
+      "type": "object"
+    },
+    "GpuTelemetryConfig": {
+      "additionalProperties": false,
+      "description": "GPU telemetry configuration for DCGM metrics collection.\n\nCollects GPU metrics (power, utilization, temperature, memory usage)\nfrom NVIDIA DCGM exporter endpoints.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9400/metrics\"\n      \u2192 GpuTelemetryConfig(enabled=True, urls=[\"http://localhost:9400/metrics\"])\n    - Singular url field: {url: \"...\"}\n      \u2192 GpuTelemetryConfig(urls=[\"...\"])",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Enable GPU telemetry collection. Set to false to disable.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "urls": {
+          "description": "DCGM exporter endpoint URLs. Example: http://localhost:9400/metrics",
+          "items": {
+            "type": "string"
+          },
+          "title": "Urls",
+          "type": "array"
+        },
+        "metrics_file": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path to CSV file with pre-recorded GPU metrics. Alternative to live DCGM collection.",
+          "title": "Metrics File"
+        }
+      },
+      "title": "GpuTelemetryConfig",
+      "type": "object"
+    },
+    "ImageConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for synthetic image generation in multimodal datasets.\n\nControls the generation of synthetic images for vision-language\nmodel benchmarking. Images are generated by randomly sampling and\nresizing source images to specified dimensions.",
+      "properties": {
+        "batch_size": {
+          "default": 0,
+          "description": "Number of images to include in each multimodal request. Supported with chat endpoint type for vision-language models. Set to 0 to disable image inputs. Higher batch sizes test multi-image understanding and increase request payload size.",
+          "minimum": 0,
+          "title": "Batch Size",
+          "type": "integer"
+        },
+        "width": {
+          "$ref": "#/$defs/MeanStddev",
+          "description": "Image width in pixels. Can be a fixed integer or {mean, stddev} distribution. Combined with height to determine image dimensions and file sizes for multimodal benchmarking."
+        },
+        "height": {
+          "$ref": "#/$defs/MeanStddev",
+          "description": "Image height in pixels. Can be a fixed integer or {mean, stddev} distribution. Used when batch_size > 0 for multimodal vision benchmarking."
+        },
+        "format": {
+          "$ref": "#/$defs/ImageFormat",
+          "default": "jpeg",
+          "description": "Image file format for generated images. png: lossless compression (larger files, best quality). jpeg: lossy compression (smaller files, good quality). random: randomly select between PNG and JPEG per image. Format affects file size in multimodal requests and encoding overhead."
+        }
+      },
+      "title": "ImageConfig",
+      "type": "object"
+    },
+    "ImageFormat": {
+      "description": "Image file formats for synthetic image generation.",
+      "enum": [
+        "png",
+        "jpeg",
+        "random"
+      ],
+      "title": "ImageFormat",
+      "type": "string"
+    },
+    "IpcCommunicationConfig": {
+      "additionalProperties": false,
+      "description": "IPC (Unix socket) communication configuration.\n\nFor single-machine deployments with lowest latency.\nUses Unix domain sockets for all inter-service communication.",
+      "properties": {
+        "type": {
+          "const": "ipc",
+          "description": "Communication type. Must be 'ipc'.",
+          "title": "Type",
+          "type": "string"
+        },
+        "path": {
+          "default": "/tmp/aiperf",
+          "description": "Directory for IPC socket files. AIPerf creates multiple socket files in this directory.",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "IpcCommunicationConfig",
+      "type": "object"
+    },
+    "LoggingConfig": {
+      "additionalProperties": false,
+      "description": "Logging configuration for verbosity and debug settings.",
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/AIPerfLogLevel",
+          "default": "INFO",
+          "description": "Global logging verbosity level. trace: most verbose, error: least verbose."
+        },
+        "config": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Raw Python logging.dictConfig configuration. Overrides all other logging settings when provided.",
+          "title": "Config"
+        }
+      },
+      "title": "LoggingConfig",
+      "type": "object"
+    },
+    "MeanStddev": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Represents a statistical distribution with mean and standard deviation.\n\nThis is the fundamental building block for specifying token lengths,\ndimensions, and other quantities that can have natural variation.\n\nThe distribution is assumed to be normal (Gaussian). Values are sampled\nand then clamped to valid ranges (e.g., positive integers for token counts).\n\nAttributes:\n    mean: The average/expected value.\n        For token counts, this is the target number of tokens.\n        For dimensions, this is the target size in pixels.\n\n    stddev: The standard deviation (spread) of the distribution.\n        A value of 0 means fixed/deterministic values.\n        Higher values produce more variation between samples.\n\nInput Forms (all normalized to MeanStddev):\n    - Integer: 512 \u2192 MeanStddev(mean=512.0, stddev=0.0)\n    - Float: 512.5 \u2192 MeanStddev(mean=512.5, stddev=0.0)\n    - Dict: {mean: 512, stddev: 50} \u2192 MeanStddev(mean=512.0, stddev=50.0)\n\nYAML Representations:\n    # Shorthand (stddev defaults to 0):\n    isl: 512\n\n    # Explicit:\n    isl:\n      mean: 512\n      stddev: 50",
+          "examples": [
+            {
+              "mean": 512,
+              "stddev": 0
+            },
+            {
+              "mean": 550,
+              "stddev": 50
+            }
+          ],
+          "properties": {
+            "mean": {
+              "description": "The mean (average) value of the distribution. For token counts, represents the target number of tokens.",
+              "title": "Mean",
+              "type": "number"
+            },
+            "stddev": {
+              "default": 0.0,
+              "description": "The standard deviation of the distribution. A value of 0 means deterministic (no variation). Higher values produce more spread in sampled values.",
+              "minimum": 0.0,
+              "title": "Stddev",
+              "type": "number"
+            }
+          },
+          "required": [
+            "mean"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "MeanStddev",
+      "description": "Represents a statistical distribution with mean and standard deviation.\n\nThis is the fundamental building block for specifying token lengths,\ndimensions, and other quantities that can have natural variation.\n\nThe distribution is assumed to be normal (Gaussian). Values are sampled\nand then clamped to valid ranges (e.g., positive integers for token counts).\n\nAttributes:\n    mean: The average/expected value.\n        For token counts, this is the target number of tokens.\n        For dimensions, this is the target size in pixels.\n\n    stddev: The standard deviation (spread) of the distribution.\n        A value of 0 means fixed/deterministic values.\n        Higher values produce more variation between samples.\n\nInput Forms (all normalized to MeanStddev):\n    - Integer: 512 \u2192 MeanStddev(mean=512.0, stddev=0.0)\n    - Float: 512.5 \u2192 MeanStddev(mean=512.5, stddev=0.0)\n    - Dict: {mean: 512, stddev: 50} \u2192 MeanStddev(mean=512.0, stddev=50.0)\n\nYAML Representations:\n    # Shorthand (stddev defaults to 0):\n    isl: 512\n\n    # Explicit:\n    isl:\n      mean: 512\n      stddev: 50"
+    },
+    "ModelItem": {
+      "additionalProperties": false,
+      "description": "Configuration for a single model in advanced models configuration.\n\nUsed when the models section uses the advanced format with\nexplicit items, weights, and per-model settings.",
+      "properties": {
+        "name": {
+          "description": "Model name or identifier as known to the inference server.",
+          "title": "Name",
+          "type": "string"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Selection weight for weighted strategy (0.0-1.0). Weights are normalized across all models. Example: weight=0.7 means ~70%% of requests to this model.",
+          "title": "Weight"
+        },
+        "lora": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "LoRA adapter name to load with this model. Server must support dynamic LoRA adapter loading.",
+          "title": "Lora"
+        },
+        "modalities": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "List of input modalities this model supports. Used with modality_aware selection strategy. Valid values: 'text', 'image', 'audio', 'video'.",
+          "title": "Modalities"
+        },
+        "tokenizer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokenizerOverride"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-model tokenizer override. Use when this model requires a different tokenizer than global config."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ModelItem",
+      "type": "object"
+    },
+    "ModelSelectionStrategy": {
+      "description": "Strategy for selecting the model to use for the request.",
+      "enum": [
+        "round_robin",
+        "random",
+        "weighted"
+      ],
+      "title": "ModelSelectionStrategy",
+      "type": "string"
+    },
+    "ModelsAdvanced": {
+      "additionalProperties": false,
+      "description": "Advanced models configuration with selection strategy and item details.\n\nUse this format when you need weighted routing, LoRA adapters,\nmodality-aware selection, or per-model tokenizer overrides.",
+      "properties": {
+        "strategy": {
+          "$ref": "#/$defs/ModelSelectionStrategy",
+          "default": "round_robin",
+          "description": "Strategy for selecting models when multiple are configured. round_robin cycles through models, random selects randomly, weighted uses configured weights, modality_aware routes by input type."
+        },
+        "items": {
+          "description": "List of model configurations. At least one model required.",
+          "items": {
+            "$ref": "#/$defs/ModelItem"
+          },
+          "minItems": 1,
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "ModelsAdvanced",
+      "type": "object"
+    },
+    "MultiRunConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for multi-run benchmarking with statistical reporting.\n\nWhen num_runs > 1, AIPerf executes multiple benchmark runs and computes\naggregate statistics (mean, std, confidence intervals) across runs.",
+      "properties": {
+        "num_runs": {
+          "default": 1,
+          "description": "Number of profile runs to execute for confidence reporting. When 1, runs a single benchmark. When >1, computes aggregate statistics across runs.",
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Num Runs",
+          "type": "integer"
+        },
+        "cooldown_seconds": {
+          "default": 0.0,
+          "description": "Cooldown duration in seconds between profile runs. Allows the system to stabilize between runs.",
+          "minimum": 0,
+          "title": "Cooldown Seconds",
+          "type": "number"
+        },
+        "confidence_level": {
+          "default": 0.95,
+          "description": "Confidence level for computing confidence intervals (0-1). Common values: 0.90 (90%%), 0.95 (95%%), 0.99 (99%%).",
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "title": "Confidence Level",
+          "type": "number"
+        },
+        "disable_warmup_after_first": {
+          "default": true,
+          "description": "Disable warmup for runs after the first. When true, only the first run includes warmup for steady-state measurement.",
+          "title": "Disable Warmup After First",
+          "type": "boolean"
+        },
+        "set_consistent_seed": {
+          "default": true,
+          "description": "Automatically set random seed for consistent workloads across runs. When true, sets random_seed=42 if not specified, ensuring identical workloads for valid statistical comparison.",
+          "title": "Set Consistent Seed",
+          "type": "boolean"
+        }
+      },
+      "title": "MultiRunConfig",
+      "type": "object"
+    },
+    "OslMode": {
+      "description": "Defines how output sequence length is handled in composed datasets.",
+      "enum": [
+        "fill",
+        "override"
+      ],
+      "title": "OslMode",
+      "type": "string"
+    },
+    "PhaseConfig": {
+      "additionalProperties": false,
+      "description": "Unified phase configuration with type-based load generation.\n\nThe `type` field determines the load generation strategy and which\nfields are required/relevant:\n\n**concurrency**: Dispatch immediately when concurrency slot opens.\n    - Primary control: `concurrency`\n    - No rate limiting, pure concurrency-based throughput\n\n**poisson/gamma/constant**: Rate-controlled request generation.\n    - Primary control: `rate` (required)\n    - `concurrency` acts as a cap on in-flight requests\n    - `smoothness` only used with gamma type\n\n**user_centric**: Simulate N concurrent users sharing a global rate.\n    - Required: `users` and `rate`\n    - Requests distributed across simulated users\n\n**fixed_schedule**: Replay requests at predetermined timestamps.\n    - Timestamps from trace dataset\n    - `auto_offset`, `start_offset`, `end_offset` control replay",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/PhaseType",
+          "description": "Load generation type. concurrency: concurrency-controlled immediate dispatch, poisson/gamma/constant: rate-controlled with arrival distribution, user_centric: N users sharing global rate, fixed_schedule: replay from timestamps."
+        },
+        "dataset": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
+          "title": "Dataset"
+        },
+        "exclude": {
+          "default": false,
+          "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
+          "title": "Exclude",
+          "type": "boolean"
+        },
+        "requests": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Stop after this many requests sent (must be >= 1).",
+          "title": "Requests"
+        },
+        "duration": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'.",
+          "gt": 0,
+          "title": "Duration"
+        },
+        "sessions": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Stop after this many sessions completed (must be >= 1).",
+          "title": "Sessions"
+        },
+        "concurrency": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.",
+          "title": "Concurrency"
+        },
+        "concurrency_ramp": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$"
+            },
+            {
+              "$ref": "#/$defs/RampConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+        },
+        "prefill_concurrency": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
+          "title": "Prefill Concurrency"
+        },
+        "prefill_ramp": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$"
+            },
+            {
+              "$ref": "#/$defs/RampConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}."
+        },
+        "rate": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Target request rate in requests per second (must be > 0). Required for poisson/gamma/constant types. For user_centric: global rate shared across all users.",
+          "title": "Rate"
+        },
+        "rate_ramp": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$"
+            },
+            {
+              "$ref": "#/$defs/RampConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Ramp rate from lower value. Can be number (seconds) or {duration, strategy}."
+        },
+        "smoothness": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Gamma distribution shape parameter (must be > 0). Only used with type='gamma'. 1.0 = Poisson, <1 = bursty, >1 = regular.",
+          "title": "Smoothness"
+        },
+        "users": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of simulated concurrent users (must be >= 1). Required for user_centric type. Requests distributed across users to achieve global rate.",
+          "title": "Users"
+        },
+        "auto_offset": {
+          "default": true,
+          "description": "Normalize trace timestamps to start at 0. Subtracts minimum timestamp from all entries. Only used with type='fixed_schedule'.",
+          "title": "Auto Offset",
+          "type": "boolean"
+        },
+        "start_offset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter out trace requests before this timestamp in ms (must be >= 0). Only used with type='fixed_schedule'.",
+          "title": "Start Offset"
+        },
+        "end_offset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Filter out trace requests after this timestamp in ms (must be >= 0). Only used with type='fixed_schedule'.",
+          "title": "End Offset"
+        },
+        "grace_period": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Seconds to wait for in-flight requests at phase end (must be >= 0). Supports: 30, '30s', '2m'.",
+          "ge": 0,
+          "title": "Grace Period"
+        },
+        "cancellation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CancellationConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request cancellation testing configuration."
+        },
+        "seamless": {
+          "default": false,
+          "description": "Start this phase immediately when previous phase stops, without waiting for in-flight requests to complete. Cannot be True for the first phase.",
+          "title": "Seamless",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PhaseConfig",
+      "type": "object"
+    },
+    "PhaseType": {
+      "description": "Load generation strategy for a benchmark phase.",
+      "enum": [
+        "concurrency",
+        "constant",
+        "gamma",
+        "poisson",
+        "fixed_schedule",
+        "user_centric"
+      ],
+      "title": "PhaseType",
+      "type": "string"
+    },
+    "PrefixPromptConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for prefix prompts (KV cache testing).\n\nPrefix prompts allow testing KV cache efficiency by generating\nrequests that share common prefixes. This simulates scenarios\nlike system prompts or shared context that can be cached.\n\nNote: pool_size/length are mutually exclusive with shared_system_length\nand user_context_length.",
+      "properties": {
+        "pool_size": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of distinct prefix prompts to generate for KV cache testing. Each prefix is prepended to user prompts, simulating cached context scenarios. Prefixes are randomly selected from pool per request. Mutually exclusive with shared_system_length/user_context_length.",
+          "title": "Pool Size"
+        },
+        "length": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Token length for each prefix prompt in the pool. Only used when pool_size is set. Note: due to prefix and user prompts being concatenated, the final prompt token count may be off by one. Mutually exclusive with shared_system_length/user_context_length.",
+          "title": "Length"
+        },
+        "shared_system_length": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Length of shared system prompt in tokens. This prompt is identical across all sessions and appears as a system message. First part of a two-part prefix structure with high cache hit rate expected. Mutually exclusive with pool_size/length.",
+          "title": "Shared System Length"
+        },
+        "user_context_length": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Length of per-session user context prompt in tokens. Each dataset entry gets a unique user context prompt. Second part of two-part prefix structure with lower cache hit rate expected. Mutually exclusive with pool_size/length.",
+          "title": "User Context Length"
+        }
+      },
+      "title": "PrefixPromptConfig",
+      "type": "object"
+    },
+    "PromptConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for prompt/token specifications in synthetic datasets.\n\nThis is the core configuration for controlling input sequence length (ISL)\nand output sequence length (OSL) in synthetic data generation.",
+      "properties": {
+        "isl": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeanStddev"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Input sequence length in tokens. Can be a fixed integer (e.g., 512) or distribution {mean: 512, stddev: 50}. AIPerf generates prompts with lengths following a normal distribution around the mean (\u00b1stddev). Ignored when sequence_distribution is specified."
+        },
+        "osl": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeanStddev"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Output sequence length (max tokens to request via max_completion_tokens). Can be a fixed integer or distribution {mean, stddev}. Controls response length for synthetic datasets. When not set, the model determines output length. Ignored when sequence_distribution is specified."
+        },
+        "block_size": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Token block size for hash-based prompt caching in mooncake_trace datasets. When hash_ids are provided in trace entries, prompts are divided into blocks of this size. Each hash_id maps to a cached block, enabling simulation of KV-cache sharing patterns from production workloads. Total prompt length = (num_hash_ids - 1) * block_size + final_block_size.",
+          "title": "Block Size"
+        },
+        "batch_size": {
+          "default": 1,
+          "description": "Number of text inputs to include in each request for batch processing endpoints. Supported by embeddings and rankings endpoint types where models can process multiple inputs simultaneously. Set to 1 for single-input requests. Not applicable to chat or completions endpoints.",
+          "minimum": 1,
+          "title": "Batch Size",
+          "type": "integer"
+        },
+        "sequence_distribution": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/SequenceDistributionEntry"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Each entry specifies {isl, osl, probability}. Probabilities are percentages (0-100) and must sum to 100. When specified, requests are sampled from this distribution instead of using isl/osl fields.",
+          "title": "Sequence Distribution"
+        }
+      },
+      "title": "PromptConfig",
+      "type": "object"
+    },
+    "PublicDataset": {
+      "additionalProperties": false,
+      "description": "Public dataset configuration.\n\nUses well-known public benchmarking datasets that are\nautomatically downloaded and processed by AIPerf.",
+      "properties": {
+        "type": {
+          "const": "public",
+          "description": "Dataset type discriminator. Must be 'public'.",
+          "title": "Type",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/PublicDatasetType",
+          "description": "Pre-configured public dataset to download and use for benchmarking. AIPerf automatically downloads and parses these datasets. "
+        },
+        "entries": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Limit number of records to use from the dataset. If not specified, uses all available records.",
+          "title": "Entries"
+        },
+        "random_seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Random seed for deterministic sampling from the dataset. Overrides global random_seed for this dataset.",
+          "title": "Random Seed"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ],
+      "title": "PublicDataset",
+      "type": "object"
+    },
+    "PublicDatasetType": {
+      "description": "Public datasets available for benchmarking.",
+      "enum": [
+        "sharegpt"
+      ],
+      "title": "PublicDatasetType",
+      "type": "string"
+    },
+    "RampConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for gradual value ramping.\n\nControls how a value (concurrency, rate, etc.) transitions from\nstart to target over time.",
+      "properties": {
+        "duration": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$"
+            }
+          ],
+          "description": "Seconds to ramp from start to target value."
+        },
+        "strategy": {
+          "$ref": "#/$defs/RampType",
+          "default": "linear",
+          "description": "Ramp curve shape: linear (constant rate), exponential (slow start, fast finish), poisson (stochastic with guaranteed completion)."
+        }
+      },
+      "required": [
+        "duration"
+      ],
+      "title": "RampConfig",
+      "type": "object"
+    },
+    "RampType": {
+      "enum": [
+        "exponential",
+        "linear",
+        "poisson"
+      ],
+      "title": "RampType",
+      "type": "string"
+    },
+    "RankingsConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for rankings/reranking endpoint datasets.\n\nControls the generation of query-passage pairs for benchmarking\nreranking and ranking models. Each request contains one query\nand multiple passages to rank.",
+      "properties": {
+        "passages": {
+          "$ref": "#/$defs/MeanStddev",
+          "description": "Number of passages per ranking request. Can be a fixed integer or {mean, stddev} distribution. Higher values test ranking at scale but increase request payload size and processing time."
+        },
+        "passage_tokens": {
+          "$ref": "#/$defs/MeanStddev",
+          "description": "Token length for each passage in ranking requests. Can be a fixed integer or {mean, stddev} distribution. Passages are synthetically generated text. Longer passages increase input processing demands and request size."
+        },
+        "query_tokens": {
+          "$ref": "#/$defs/MeanStddev",
+          "description": "Token length for the query text in ranking requests. Can be a fixed integer or {mean, stddev} distribution. Each ranking request contains one query and multiple passages."
+        }
+      },
+      "title": "RankingsConfig",
+      "type": "object"
+    },
+    "RuntimeConfig": {
+      "additionalProperties": false,
+      "description": "Runtime configuration for benchmark execution.",
+      "properties": {
+        "ui": {
+          "$ref": "#/$defs/UIType",
+          "default": "dashboard",
+          "description": "User interface mode. dashboard: rich interactive UI, simple: text progress, none: silent operation."
+        },
+        "workers": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum worker processes. null = auto-detect based on CPU cores.",
+          "title": "Workers"
+        },
+        "record_processors": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of parallel record processors. null = auto-detect based on CPU cores.",
+          "title": "Record Processors"
+        },
+        "communication": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "dual": "#/$defs/DualBindCommunicationConfig",
+                  "ipc": "#/$defs/IpcCommunicationConfig",
+                  "tcp": "#/$defs/TcpCommunicationConfig"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/IpcCommunicationConfig"
+                },
+                {
+                  "$ref": "#/$defs/TcpCommunicationConfig"
+                },
+                {
+                  "$ref": "#/$defs/DualBindCommunicationConfig"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Inter-process communication configuration. Defaults to IPC for single-machine operation.",
+          "title": "Communication"
+        }
+      },
+      "title": "RuntimeConfig",
+      "type": "object"
+    },
+    "SequenceDistributionEntry": {
+      "additionalProperties": false,
+      "description": "Defines a single entry in an ISL/OSL probability distribution.\n\nAIPerf uniquely supports multi-modal token length distributions,\nallowing you to specify different ISL/OSL combinations with\ntheir relative frequencies. This enables realistic workload\nmodeling where different request types have different sizes.\n\nAttributes:\n    isl: Input sequence length for this distribution bucket.\n        Can be a fixed value or a distribution itself.\n\n    isl_stddev: Standard deviation for ISL (shorthand).\n        If provided, creates a distribution around isl mean.\n        Mutually exclusive with isl being a MeanStddev.\n\n    osl: Output sequence length for this distribution bucket.\n        Can be a fixed value or a distribution itself.\n\n    osl_stddev: Standard deviation for OSL (shorthand).\n        If provided, creates a distribution around osl mean.\n        Mutually exclusive with osl being a MeanStddev.\n\n    probability: Relative probability weight (0-100).\n        Weights are normalized across all entries.\n        A weight of 40 means 40% of requests will use this bucket.\n\nExamples:\n    Production traffic simulation:\n        >>> entries = [\n        ...     SequenceDistributionEntry(isl=128, osl=64, probability=40),\n        ...     SequenceDistributionEntry(isl=512, osl=256, probability=35),\n        ...     SequenceDistributionEntry(isl=2048, osl=512, probability=20),\n        ...     SequenceDistributionEntry(isl=8192, osl=1024, probability=5),\n        ... ]\n\nYAML Representation:\n    sequence_distribution:\n      - {isl: 128, osl: 64, probability: 40}\n      - {isl: 512, osl: 256, probability: 35}\n      - {isl: 2048, osl: 512, probability: 20}\n      - {isl: 8192, osl: 1024, probability: 5}\n\n    # With variance:\n      - {isl: 128, isl_stddev: 20, osl: 64, osl_stddev: 10, probability: 40}",
+      "examples": [
+        {
+          "isl": 128,
+          "osl": 64,
+          "probability": 40
+        },
+        {
+          "isl": 512,
+          "isl_stddev": 50,
+          "osl": 256,
+          "osl_stddev": 25,
+          "probability": 35
+        }
+      ],
+      "properties": {
+        "isl": {
+          "$ref": "#/$defs/MeanStddev",
+          "description": "Input sequence length (tokens). Can be a fixed integer or a {mean, stddev} distribution."
+        },
+        "isl_stddev": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Shorthand for ISL standard deviation. If provided when isl is an integer, creates a distribution. Cannot be used when isl is already a {mean, stddev} dict.",
+          "title": "Isl Stddev"
+        },
+        "osl": {
+          "$ref": "#/$defs/MeanStddev",
+          "description": "Output sequence length (tokens). Can be a fixed integer or a {mean, stddev} distribution."
+        },
+        "osl_stddev": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Shorthand for OSL standard deviation. If provided when osl is an integer, creates a distribution. Cannot be used when osl is already a {mean, stddev} dict.",
+          "title": "Osl Stddev"
+        },
+        "probability": {
+          "description": "Relative probability weight for this distribution bucket (0-100). Weights are normalized across all entries. Example: probability=40 means 40%% of requests use this ISL/OSL.",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "title": "Probability",
+          "type": "number"
+        }
+      },
+      "required": [
+        "isl",
+        "osl",
+        "probability"
+      ],
+      "title": "SequenceDistributionEntry",
+      "type": "object"
+    },
+    "ServerMetricsConfig": {
+      "additionalProperties": false,
+      "description": "Server metrics configuration for Prometheus scraping.\n\nCollects server-side operational metrics (queue depth, KV cache utilization,\nbatch sizes, GPU memory) from Prometheus endpoints exposed by inference servers\nlike vLLM, TensorRT-LLM, or Triton.\n\nAccepts shorthand forms:\n    - String URL: \"http://localhost:9090/metrics\"\n      \u2192 ServerMetricsConfig(enabled=True, urls=[\"http://localhost:9090/metrics\"])\n    - Singular url field: {url: \"...\"}\n      \u2192 ServerMetricsConfig(urls=[\"...\"])",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Enable Prometheus metrics scraping. Set to false to disable.",
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "urls": {
+          "description": "Prometheus metrics endpoint URLs to scrape. Typically the /metrics endpoint on inference servers.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Urls",
+          "type": "array"
+        },
+        "formats": {
+          "description": "Export formats for scraped metrics. Options: json, csv, parquet, jsonl.",
+          "items": {
+            "$ref": "#/$defs/ServerMetricsFormat"
+          },
+          "title": "Formats",
+          "type": "array"
+        }
+      },
+      "title": "ServerMetricsConfig",
+      "type": "object"
+    },
+    "ServerMetricsFormat": {
+      "description": "Format options for server metrics export.\n\nControls which output files are generated for server metrics data.\nDefault selection is JSON + CSV (JSONL excluded to avoid large files).",
+      "enum": [
+        "json",
+        "csv",
+        "jsonl",
+        "parquet"
+      ],
+      "title": "ServerMetricsFormat",
+      "type": "string"
+    },
+    "SynthesisConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for trace synthesis/transformation.\n\nUsed with mooncake_trace format to transform production trace\ndata before replay. Allows scaling timestamps, token lengths,\nand radix tree structure.",
+      "properties": {
+        "speedup_ratio": {
+          "default": 1.0,
+          "description": "Multiplier for timestamp scaling in synthesized traces. 1.0 = real-time, 2.0 = 2x faster, 0.5 = 2x slower.",
+          "exclusiveMinimum": 0.0,
+          "title": "Speedup Ratio",
+          "type": "number"
+        },
+        "prefix_len_multiplier": {
+          "default": 1.0,
+          "description": "Multiplier for core prefix branch lengths in the radix tree. 1.5 means prefix branches are 50%% longer.",
+          "exclusiveMinimum": 0.0,
+          "title": "Prefix Len Multiplier",
+          "type": "number"
+        },
+        "prefix_root_multiplier": {
+          "default": 1,
+          "description": "Number of independent radix trees to distribute traces across. Higher values increase prefix diversity.",
+          "minimum": 1,
+          "title": "Prefix Root Multiplier",
+          "type": "integer"
+        },
+        "prompt_len_multiplier": {
+          "default": 1.0,
+          "description": "Multiplier for leaf path (unique prompt) lengths. 2.0 means prompts are 2x longer.",
+          "exclusiveMinimum": 0.0,
+          "title": "Prompt Len Multiplier",
+          "type": "number"
+        },
+        "max_isl": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum input sequence length filter. Traces with input_length > max_isl are skipped entirely.",
+          "title": "Max Isl"
+        },
+        "max_osl": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum output sequence length cap. Traces with output_length > max_osl are capped to this value (not filtered).",
+          "title": "Max Osl"
+        }
+      },
+      "title": "SynthesisConfig",
+      "type": "object"
+    },
+    "SyntheticDataset": {
+      "additionalProperties": false,
+      "description": "Synthetic dataset configuration.\n\nGenerates prompts programmatically based on token length\nspecifications. Ideal for controlled experiments.",
+      "properties": {
+        "type": {
+          "const": "synthetic",
+          "description": "Dataset type discriminator. Must be 'synthetic'.",
+          "title": "Type",
+          "type": "string"
+        },
+        "entries": {
+          "default": 100,
+          "description": "Total number of unique entries to generate for the dataset. Each entry represents a unique prompt with sampled ISL/OSL. Entries are reused across conversations and turns according to the sampling strategy. Higher values provide more diversity.",
+          "minimum": 1,
+          "title": "Entries",
+          "type": "integer"
+        },
+        "random_seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Random seed for deterministic dataset generation. When set, makes synthetic prompts, sampling, and other random operations reproducible across runs. Essential for A/B testing and debugging. Overrides global random_seed for this dataset.",
+          "title": "Random Seed"
+        },
+        "prompts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PromptConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Prompt/token length configuration specifying ISL, OSL, sequence distributions, and batch processing settings."
+        },
+        "prefix_prompts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrefixPromptConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Shared prefix configuration for KV cache testing. Generates prefix prompts that are prepended to user prompts, simulating cached context scenarios."
+        },
+        "turns": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeanStddev"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of request-response turns per conversation. Can be a fixed integer or {mean, stddev} distribution. Each turn consists of a user message and model response. Set to 1 for single-turn interactions. Multi-turn conversations enable testing of context retention and conversation history handling."
+        },
+        "turn_delay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeanStddev"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Delay in milliseconds between consecutive turns within a multi-turn conversation. Can be a fixed value or {mean, stddev} distribution. Simulates user think time between receiving a response and sending the next message. Only applies when turns > 1. Set to 0 for back-to-back turns."
+        },
+        "turn_delay_ratio": {
+          "default": 1.0,
+          "description": "Multiplier for scaling all turn delays. Applied after mean/stddev calculation: actual_delay = calculated_delay * ratio. Values < 1 speed up conversations, > 1 slow them down. Set to 0 to eliminate delays entirely.",
+          "exclusiveMinimum": 0.0,
+          "title": "Turn Delay Ratio",
+          "type": "number"
+        },
+        "images": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Synthetic image configuration for multimodal vision-language testing."
+        },
+        "audio": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudioConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Synthetic audio configuration for multimodal speech/audio testing."
+        },
+        "video": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Synthetic video configuration for multimodal video understanding testing."
+        },
+        "rankings": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RankingsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rankings/reranking configuration for generating query-passage pairs. Only relevant for rankings endpoint types."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "SyntheticDataset",
+      "type": "object"
+    },
+    "TcpCommunicationConfig": {
+      "additionalProperties": false,
+      "description": "TCP socket communication configuration.\n\nFor distributed deployments across machines.\nProvides detailed port configuration for all ZMQ proxies.",
+      "properties": {
+        "type": {
+          "const": "tcp",
+          "description": "Communication type. Must be 'tcp'.",
+          "title": "Type",
+          "type": "string"
+        },
+        "host": {
+          "default": "127.0.0.1",
+          "description": "Host address for TCP communication. Use 0.0.0.0 to listen on all interfaces.",
+          "title": "Host",
+          "type": "string"
+        },
+        "records_port": {
+          "default": 5557,
+          "description": "Port for records push/pull communication.",
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Records Port",
+          "type": "integer"
+        },
+        "credit_router_port": {
+          "default": 5564,
+          "description": "Port for credit router (ROUTER-DEALER).",
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Credit Router Port",
+          "type": "integer"
+        },
+        "event_bus_proxy": {
+          "$ref": "#/$defs/TcpProxyConfig",
+          "description": "Event bus proxy ports (XPUB/XSUB)."
+        },
+        "dataset_manager_proxy": {
+          "$ref": "#/$defs/TcpProxyConfig",
+          "description": "Dataset manager proxy ports (DEALER/ROUTER)."
+        },
+        "raw_inference_proxy": {
+          "$ref": "#/$defs/TcpProxyConfig",
+          "description": "Raw inference proxy ports (PUSH/PULL)."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "TcpCommunicationConfig",
+      "type": "object"
+    },
+    "TcpProxyConfig": {
+      "additionalProperties": false,
+      "description": "TCP proxy port configuration for a single ZMQ proxy.",
+      "properties": {
+        "frontend_port": {
+          "description": "TCP port for proxy frontend.",
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Frontend Port",
+          "type": "integer"
+        },
+        "backend_port": {
+          "description": "TCP port for proxy backend.",
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Backend Port",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "frontend_port",
+        "backend_port"
+      ],
+      "title": "TcpProxyConfig",
+      "type": "object"
+    },
+    "TemplateConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for custom template-based endpoints.\n\nWhen endpoint type is \"template\", this configures how requests\nare formatted and responses are parsed.",
+      "properties": {
+        "body": {
+          "description": "Jinja2 template string for request body. Variables: {{prompt}}, {{max_tokens}}, {{model}}, {{messages}}, etc.",
+          "title": "Body",
+          "type": "string"
+        },
+        "response_field": {
+          "default": "text",
+          "description": "JSON path to extract response text from API response. Use dot notation for nested fields: 'choices.0.message.content'.",
+          "title": "Response Field",
+          "type": "string"
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "title": "TemplateConfig",
+      "type": "object"
+    },
+    "TokenizerConfig": {
+      "additionalProperties": false,
+      "description": "Tokenizer configuration for token counting and prompt generation.\n\nAIPerf uses a HuggingFace tokenizer for accurate token counting,\nwhich is essential for ISL/OSL enforcement and metrics calculation.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "HuggingFace tokenizer identifier or local filesystem path. Should match the model's tokenizer for accurate token counts. Example: 'meta-llama/Llama-3.1-8B-Instruct'",
+          "title": "Name"
+        },
+        "revision": {
+          "default": "main",
+          "description": "Model revision to use: branch name, tag, or commit hash. Use for version pinning to ensure reproducibility.",
+          "title": "Revision",
+          "type": "string"
+        },
+        "trust_remote_code": {
+          "default": false,
+          "description": "Allow execution of custom tokenizer code from the repository. Required for some models but poses security risk. Only enable for trusted sources.",
+          "title": "Trust Remote Code",
+          "type": "boolean"
+        }
+      },
+      "title": "TokenizerConfig",
+      "type": "object"
+    },
+    "TokenizerOverride": {
+      "additionalProperties": false,
+      "description": "Per-model tokenizer override configuration.\n\nAllows specifying a different tokenizer for a specific model,\nuseful when models require specialized tokenization.",
+      "properties": {
+        "name": {
+          "description": "HuggingFace tokenizer identifier or local filesystem path.",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "TokenizerOverride",
+      "type": "object"
+    },
+    "TransportType": {
+      "enum": [
+        "http"
+      ],
+      "title": "TransportType",
+      "type": "string"
+    },
+    "UIType": {
+      "enum": [
+        "dashboard",
+        "none",
+        "simple"
+      ],
+      "title": "UIType",
+      "type": "string"
+    },
+    "URLSelectionStrategy": {
+      "enum": [
+        "round_robin"
+      ],
+      "title": "URLSelectionStrategy",
+      "type": "string"
+    },
+    "VideoConfig": {
+      "additionalProperties": false,
+      "description": "Configuration for synthetic video generation in multimodal datasets.\n\nControls the generation of synthetic videos for video understanding\nmodel benchmarking. Requires FFmpeg for video generation.",
+      "properties": {
+        "batch_size": {
+          "default": 0,
+          "description": "Number of video files to include in each multimodal request. Supported with chat endpoint type for video understanding models. Set to 0 to disable video inputs. Higher batch sizes significantly increase request payload size.",
+          "minimum": 0,
+          "title": "Batch Size",
+          "type": "integer"
+        },
+        "duration": {
+          "default": 1.0,
+          "description": "Duration in seconds for each generated video clip. Combined with fps, determines total frame count (frames = duration * fps). Longer durations increase file size and processing time. Typical values: 1-10 seconds for testing.",
+          "exclusiveMinimum": 0.0,
+          "title": "Duration",
+          "type": "number"
+        },
+        "fps": {
+          "default": 4,
+          "description": "Frames per second for generated video. Higher FPS creates smoother video but increases frame count and file size. Common values: 4 (minimal, recommended for Cosmos models), 24 (cinematic), 30 (standard), 60 (high frame rate). Total frames = duration * fps.",
+          "minimum": 1,
+          "title": "Fps",
+          "type": "integer"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Video frame width in pixels. Determines video resolution and file size. Common values: 640 (SD), 1280 (HD), 1920 (Full HD). If not specified, uses codec/format defaults.",
+          "title": "Width"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Video frame height in pixels. Combined with width determines aspect ratio and total pixel count per frame. Common values: 480 (SD), 720 (HD), 1080 (Full HD). If not specified, uses codec/format defaults.",
+          "title": "Height"
+        },
+        "format": {
+          "$ref": "#/$defs/VideoFormat",
+          "default": "webm",
+          "description": "Container format for generated video files. webm: VP9 codec, BSD-licensed, recommended for open-source workflows. mp4: H.264/H.265, widely compatible. avi: legacy, larger files. mkv: Matroska, flexible container. Format affects compatibility, file size, and encoding options."
+        },
+        "codec": {
+          "default": "libvpx-vp9",
+          "description": "Video codec for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), libx264 (CPU, GPL, widely compatible), libx265 (CPU, GPL, smaller files), h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). Any FFmpeg-supported codec can be used.",
+          "title": "Codec",
+          "type": "string"
+        },
+        "synth_type": {
+          "$ref": "#/$defs/VideoSynthType",
+          "default": "moving_shapes",
+          "description": "Algorithm for generating synthetic video content. Different types produce different visual patterns for testing. Content doesn't affect semantic meaning but may impact encoding efficiency and file size."
+        }
+      },
+      "title": "VideoConfig",
+      "type": "object"
+    },
+    "VideoFormat": {
+      "description": "Video container formats for synthetic video generation.",
+      "enum": [
+        "mp4",
+        "webm"
+      ],
+      "title": "VideoFormat",
+      "type": "string"
+    },
+    "VideoSynthType": {
+      "enum": [
+        "moving_shapes",
+        "grid_clock",
+        "noise"
+      ],
+      "title": "VideoSynthType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Complete configuration schema for AIPerf LLM benchmarking tool",
+  "examples": [
+    {
+      "datasets": {
+        "main": {
+          "entries": 1000,
+          "prompts": {
+            "isl": 512,
+            "osl": 128
+          },
+          "type": "synthetic"
+        }
+      },
+      "endpoint": {
+        "streaming": true,
+        "type": "chat",
+        "urls": [
+          "http://localhost:8000/v1/chat/completions"
+        ]
+      },
+      "load": {
+        "concurrency": 8,
+        "dataset": "main",
+        "requests": 100,
+        "type": "concurrency"
+      },
+      "models": [
+        "meta-llama/Llama-3.1-8B-Instruct"
+      ]
+    }
+  ],
+  "properties": {
+    "models": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "$ref": "#/$defs/ModelsAdvanced"
+        }
+      ],
+      "description": "Model configuration. Accepts a single model name string, a list of model names, or an advanced configuration with strategy and weighted items. All forms are normalized to ModelsAdvanced."
+    },
+    "endpoint": {
+      "$ref": "#/$defs/EndpointConfig",
+      "description": "Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication, timeout, and connection settings."
+    },
+    "datasets": {
+      "additionalProperties": {
+        "discriminator": {
+          "mapping": {
+            "composed": "#/$defs/ComposedDataset",
+            "file": "#/$defs/FileDataset",
+            "public": "#/$defs/PublicDataset",
+            "synthetic": "#/$defs/SyntheticDataset"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SyntheticDataset"
+          },
+          {
+            "$ref": "#/$defs/FileDataset"
+          },
+          {
+            "$ref": "#/$defs/PublicDataset"
+          },
+          {
+            "$ref": "#/$defs/ComposedDataset"
+          }
+        ]
+      },
+      "description": "Named dataset configurations. Keys are dataset names that can be referenced in phases. Values are dataset configs (synthetic, file, public, or composed with source+augment).",
+      "minProperties": 1,
+      "title": "Datasets",
+      "type": "object"
+    },
+    "load": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PhaseConfig"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/PhaseConfig"
+          },
+          "description": "Benchmark load configuration. Can be a single load config (with 'type' key) or named phases (dict of phase configs). Single config is normalized to {'default': config}. Order is preserved (Python 3.7+) for execution sequence.",
+          "minProperties": 1,
+          "title": "Load",
+          "type": "object"
+        }
+      ],
+      "description": "Benchmark load configuration. Can be a single load config (with 'type' key) or named phases (dict of phase configs). Single config is normalized to {'default': config}. Order is preserved (Python 3.7+) for execution sequence."
+    },
+    "artifacts": {
+      "$ref": "#/$defs/ArtifactsConfig",
+      "description": "Artifacts configuration for benchmark output. Controls output directory, console format, and export formats."
+    },
+    "slos": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "SLO (Service Level Objectives) configuration as a generic dict. Maps metric names to threshold values. A request is counted as good only if it meets ALL specified thresholds.",
+      "title": "Slos"
+    },
+    "tokenizer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TokenizerConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Tokenizer configuration for token counting. Used for ISL/OSL enforcement and accurate metrics. If not specified, uses the first model name."
+    },
+    "gpu_telemetry": {
+      "$ref": "#/$defs/GpuTelemetryConfig",
+      "description": "GPU telemetry configuration for DCGM metrics collection. Collects GPU metrics (power, utilization, temperature) from DCGM endpoints. Enabled by default. Set enabled: false to disable."
+    },
+    "server_metrics": {
+      "$ref": "#/$defs/ServerMetricsConfig",
+      "description": "Server metrics configuration for Prometheus scraping. Collects operational metrics (queue depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled: false to disable."
+    },
+    "runtime": {
+      "$ref": "#/$defs/RuntimeConfig",
+      "description": "Runtime configuration for worker processes and inter-process communication."
+    },
+    "logging": {
+      "$ref": "#/$defs/LoggingConfig",
+      "description": "Logging configuration for verbosity and debug settings. Supports per-service overrides and raw Python logging.dictConfig."
+    },
+    "multi_run": {
+      "$ref": "#/$defs/MultiRunConfig",
+      "description": "Multi-run benchmarking configuration for statistical reporting. When num_runs > 1, executes multiple runs and computes aggregate statistics."
+    },
+    "accuracy": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AccuracyConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Accuracy benchmarking configuration. When set, enables accuracy evaluation alongside performance profiling."
+    },
+    "random_seed": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Global random seed for reproducibility. Can be overridden per-dataset. If not set, uses system entropy.",
+      "title": "Random Seed"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "$ref": "#/$defs/ModelsAdvanced"
+        }
+      ],
+      "description": "Shorthand for 'models' (singular model name)."
+    },
+    "dataset": {
+      "discriminator": {
+        "mapping": {
+          "composed": "#/$defs/ComposedDataset",
+          "file": "#/$defs/FileDataset",
+          "public": "#/$defs/PublicDataset",
+          "synthetic": "#/$defs/SyntheticDataset"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SyntheticDataset"
+        },
+        {
+          "$ref": "#/$defs/FileDataset"
+        },
+        {
+          "$ref": "#/$defs/PublicDataset"
+        },
+        {
+          "$ref": "#/$defs/ComposedDataset"
+        }
+      ],
+      "description": "Shorthand for 'datasets'. Becomes the 'default' dataset."
+    }
+  },
+  "required": [
+    "endpoint",
+    "load"
+  ],
+  "title": "AIPerf Configuration Schema v2.0",
+  "type": "object"
+}

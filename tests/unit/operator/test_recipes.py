@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Validate all AIPerfJob recipe YAML files against the CRD schema and UserConfig model."""
+"""Validate all AIPerfJob recipe YAML files against the CRD schema and AIPerfConfig model."""
 
 from pathlib import Path
 
 import pytest
 import yaml
 
-from aiperf.operator.spec_converter import AIPerfJobSpecConverter
+from aiperf.operator.spec_converter import CONFIG_FIELDS, AIPerfJobSpecConverter
 
 RECIPES_DIR = Path(__file__).parents[3] / "recipes"
 
@@ -31,36 +31,41 @@ class TestRecipeValidation:
     """Validate each recipe YAML against the AIPerfJob CRD schema."""
 
     def test_yaml_structure(self, recipe_path: Path) -> None:
-        """Verify required YAML structure: apiVersion, kind, metadata.name, spec.userConfig."""
+        """Verify required YAML structure: apiVersion, kind, metadata.name, spec with config fields."""
         doc = yaml.safe_load(recipe_path.read_text())
         assert doc["apiVersion"] == "aiperf.nvidia.com/v1alpha1"
         assert doc["kind"] == "AIPerfJob"
         assert "name" in doc["metadata"]
-        assert "userConfig" in doc["spec"]
+        spec = doc["spec"]
+        has_config_field = any(k in CONFIG_FIELDS for k in spec)
+        assert has_config_field, (
+            f"spec must contain at least one AIPerfConfig field from {CONFIG_FIELDS}"
+        )
 
-    def test_user_config_validates(self, recipe_path: Path) -> None:
-        """Verify spec.userConfig passes UserConfig.model_validate()."""
+    def test_aiperf_config_validates(self, recipe_path: Path) -> None:
+        """Verify spec converts to a valid AIPerfConfig."""
         doc = yaml.safe_load(recipe_path.read_text())
         spec = doc["spec"]
         name = doc["metadata"]["name"]
 
         converter = AIPerfJobSpecConverter(spec=spec, name=name, namespace="default")
-        user_config = converter.to_user_config()
+        config = converter.to_aiperf_config()
 
-        assert user_config.endpoint.model_names
-        assert user_config.endpoint.urls
-        for url in user_config.endpoint.urls:
+        assert config.models
+        assert config.endpoint.urls
+        for url in config.endpoint.urls:
             assert url.startswith("http://") or url.startswith("https://")
 
-    def test_service_config_validates(self, recipe_path: Path) -> None:
-        """Verify spec converts to valid ServiceConfig."""
+    def test_legacy_configs_validate(self, recipe_path: Path) -> None:
+        """Verify spec converts to valid legacy UserConfig and ServiceConfig."""
         doc = yaml.safe_load(recipe_path.read_text())
         spec = doc["spec"]
         name = doc["metadata"]["name"]
 
         converter = AIPerfJobSpecConverter(spec=spec, name=name, namespace="default")
-        service_config = converter.to_service_config()
+        user_config, service_config = converter.to_legacy_configs()
 
+        assert user_config is not None
         assert service_config is not None
 
     def test_pod_customization(self, recipe_path: Path) -> None:
@@ -102,10 +107,9 @@ class TestRecipeValidation:
         doc = yaml.safe_load(recipe_path.read_text())
         spec = doc["spec"]
 
-        known_fields = {
+        known_fields = CONFIG_FIELDS | {
             "image",
             "imagePullPolicy",
-            "userConfig",
             "connectionsPerWorker",
             "timeoutSeconds",
             "ttlSecondsAfterFinished",

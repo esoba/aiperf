@@ -199,8 +199,13 @@ class TestAIPerfJobSpec:
         """Create a valid spec dict."""
         return {
             "image": "aiperf:latest",
-            "userConfig": {
-                "endpoint": {"url": "http://localhost:8000"},
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": {
+                "main": {"type": "synthetic", "entries": 100, "prompts": {"isl": 128}}
+            },
+            "load": {
+                "default": {"type": "concurrency", "concurrency": 1, "requests": 10}
             },
         }
 
@@ -220,8 +225,17 @@ class TestAIPerfJobSpec:
                 "ttlSecondsAfterFinished": 3600,
                 "resultsTtlDays": 30,
                 "cancel": True,
-                "userConfig": {
-                    "endpoint": {"url": "http://localhost:8000"},
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+                "datasets": {
+                    "main": {
+                        "type": "synthetic",
+                        "entries": 100,
+                        "prompts": {"isl": 128},
+                    }
+                },
+                "load": {
+                    "default": {"type": "concurrency", "concurrency": 1, "requests": 10}
                 },
             }
         )
@@ -244,7 +258,22 @@ class TestAIPerfJobSpec:
             AIPerfJobSpec.from_crd_spec(
                 {
                     "image": image,
-                    "userConfig": {"endpoint": {"url": "http://localhost:8000"}},
+                    "models": ["m"],
+                    "endpoint": {"urls": ["http://localhost:8000"]},
+                    "datasets": {
+                        "main": {
+                            "type": "synthetic",
+                            "entries": 1,
+                            "prompts": {"isl": 1},
+                        }
+                    },
+                    "load": {
+                        "default": {
+                            "type": "concurrency",
+                            "concurrency": 1,
+                            "requests": 1,
+                        }
+                    },
                 }
             )
         assert "Image is required" in str(exc_info.value)
@@ -263,91 +292,102 @@ class TestAIPerfJobSpec:
                 {
                     "image": "aiperf:latest",
                     "imagePullPolicy": policy,
-                    "userConfig": {"endpoint": {"url": "http://localhost:8000"}},
+                    "models": ["m"],
+                    "endpoint": {"urls": ["http://localhost:8000"]},
+                    "datasets": {
+                        "main": {
+                            "type": "synthetic",
+                            "entries": 1,
+                            "prompts": {"isl": 1},
+                        }
+                    },
+                    "load": {
+                        "default": {
+                            "type": "concurrency",
+                            "concurrency": 1,
+                            "requests": 1,
+                        }
+                    },
                 }
             )
         assert "image_pull_policy" in str(exc_info.value)
 
-    def test_rejects_empty_user_config(self) -> None:
-        """Verify rejects empty userConfig."""
+    def test_rejects_empty_config(self) -> None:
+        """Verify rejects spec with no AIPerfConfig fields."""
         with pytest.raises(ValidationError) as exc_info:
             AIPerfJobSpec.from_crd_spec(
                 {
                     "image": "aiperf:latest",
-                    "userConfig": {},
                 }
             )
-        # Empty dict is truthy but has no endpoint
-        assert "userConfig is required" in str(exc_info.value)
+        assert "AIPerfConfig fields are required" in str(exc_info.value)
 
-    def test_rejects_missing_endpoint_url(self) -> None:
-        """Verify rejects missing endpoint URL."""
+    def test_rejects_missing_endpoint_urls(self) -> None:
+        """Verify rejects missing endpoint urls."""
         with pytest.raises(ValidationError) as exc_info:
             AIPerfJobSpec.from_crd_spec(
                 {
                     "image": "aiperf:latest",
-                    "userConfig": {"endpoint": {}},
+                    "models": ["test-model"],
+                    "endpoint": {},
+                    "datasets": {
+                        "main": {
+                            "type": "synthetic",
+                            "entries": 1,
+                            "prompts": {"isl": 1},
+                        }
+                    },
+                    "load": {
+                        "default": {
+                            "type": "concurrency",
+                            "concurrency": 1,
+                            "requests": 1,
+                        }
+                    },
                 }
             )
-        assert "userConfig.endpoint.url is required" in str(exc_info.value)
+        assert "endpoint.urls is required" in str(exc_info.value)
 
     def test_accepts_urls_array(self) -> None:
-        """Verify accepts urls array instead of url."""
+        """Verify accepts urls array with multiple entries."""
         spec = AIPerfJobSpec.from_crd_spec(
             {
                 "image": "aiperf:latest",
-                "userConfig": {
-                    "endpoint": {
-                        "urls": ["http://localhost:8000", "http://localhost:8001"]
-                    },
+                "models": ["test-model"],
+                "endpoint": {
+                    "urls": ["http://localhost:8000", "http://localhost:8001"]
+                },
+                "datasets": {
+                    "main": {"type": "synthetic", "entries": 1, "prompts": {"isl": 1}}
+                },
+                "load": {
+                    "default": {"type": "concurrency", "concurrency": 1, "requests": 1}
                 },
             }
         )
         assert spec.get_endpoint_url() == "http://localhost:8000"
 
-    def test_get_endpoint_url_from_url(self, valid_spec: dict[str, Any]) -> None:
-        """Verify get_endpoint_url extracts URL."""
+    def test_get_endpoint_url_from_urls(self, valid_spec: dict[str, Any]) -> None:
+        """Verify get_endpoint_url extracts first URL from urls array."""
         spec = AIPerfJobSpec.from_crd_spec(valid_spec)
-        assert spec.get_endpoint_url() == "http://localhost:8000"
+        assert spec.get_endpoint_url() == "http://localhost:8000/v1/chat/completions"
 
     def test_get_endpoint_url_from_urls_array(self) -> None:
         """Verify get_endpoint_url extracts first URL from array."""
         spec = AIPerfJobSpec.from_crd_spec(
             {
                 "image": "aiperf:latest",
-                "userConfig": {
-                    "endpoint": {"urls": ["http://first:8000", "http://second:8000"]},
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://first:8000", "http://second:8000"]},
+                "datasets": {
+                    "main": {"type": "synthetic", "entries": 1, "prompts": {"isl": 1}}
+                },
+                "load": {
+                    "default": {"type": "concurrency", "concurrency": 1, "requests": 1}
                 },
             }
         )
         assert spec.get_endpoint_url() == "http://first:8000"
-
-    def test_get_endpoint_url_prefers_url_over_urls(self) -> None:
-        """Verify get_endpoint_url prefers url over urls array."""
-        spec = AIPerfJobSpec.from_crd_spec(
-            {
-                "image": "aiperf:latest",
-                "userConfig": {
-                    "endpoint": {
-                        "url": "http://primary:8000",
-                        "urls": ["http://backup:8000"],
-                    },
-                },
-            }
-        )
-        assert spec.get_endpoint_url() == "http://primary:8000"
-
-    def test_get_endpoint_url_with_empty_urls(self) -> None:
-        """Verify handles empty urls array gracefully."""
-        spec = AIPerfJobSpec.from_crd_spec(
-            {
-                "image": "aiperf:latest",
-                "userConfig": {
-                    "endpoint": {"url": "http://localhost:8000", "urls": []},
-                },
-            }
-        )
-        assert spec.get_endpoint_url() == "http://localhost:8000"
 
     @pytest.mark.parametrize(
         "pull_policy",
@@ -363,7 +403,14 @@ class TestAIPerfJobSpec:
             {
                 "image": "aiperf:latest",
                 "imagePullPolicy": pull_policy,
-                "userConfig": {"endpoint": {"url": "http://localhost:8000"}},
+                "models": ["m"],
+                "endpoint": {"urls": ["http://localhost:8000"]},
+                "datasets": {
+                    "main": {"type": "synthetic", "entries": 1, "prompts": {"isl": 1}}
+                },
+                "load": {
+                    "default": {"type": "concurrency", "concurrency": 1, "requests": 1}
+                },
             }
         )
         assert spec.image_pull_policy == pull_policy

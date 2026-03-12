@@ -6,43 +6,47 @@ kind: AIPerfJob
 metadata:
   name: gpt-oss-120b-disagg-bench
 spec:
-  userConfig:
-    endpoint:
-      model_names:
-        - openai/gpt-oss-120b
-      urls:
-        - http://gpt-oss-disagg-frontend:8000
-      type: chat
-      custom_endpoint: /v1/chat/completions
-      streaming: true
-    tokenizer:
-      name: /model-cache/hub/models--openai--gpt-oss-120b/snapshots/b5c939de8f754692c1647ca79fbf85e8c1e70f8a
-    loadgen:
-      concurrency: 1536
-      request_count: 15360
-      warmup_request_count: 1536
-    input:
-      prompt:
-        input_tokens:
-          mean: 8192
-          stddev: 0
-        output_tokens:
-          mean: 1024
-          stddev: 0
-      extra:
-        max_tokens: 1024
-        min_tokens: 1024
+  models:
+    - openai/gpt-oss-120b
+  endpoint:
+    urls:
+      - http://gpt-oss-disagg-frontend:8000
+    type: chat
+    path: /v1/chat/completions
+    streaming: true
+    extra:
+      max_tokens: 1024
+      min_tokens: 1024
+      ignore_eos: true
+      repetition_penalty: 1.0
+      temperature: 0.0
+      nvext:
         ignore_eos: true
-        repetition_penalty: 1.0
-        temperature: 0.0
-        nvext:
-          ignore_eos: true
-      headers:
-        Authorization: "Bearer NOT USED"
-        Accept: text/event-stream
+    headers:
+      Authorization: "Bearer NOT USED"
+      Accept: text/event-stream
+  tokenizer:
+    name: /model-cache/hub/models--openai--gpt-oss-120b/snapshots/b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+  datasets:
+    main:
+      type: synthetic
+      entries: 12800
       random_seed: 100
-      conversation:
-        num_dataset_entries: 12800
+      prompts:
+        isl: {mean: 8192, stddev: 0}
+        osl: {mean: 1024, stddev: 0}
+  load:
+    warmup:
+      type: concurrency
+      dataset: main
+      exclude: true
+      concurrency: 1536
+      requests: 1536
+    profiling:
+      type: concurrency
+      dataset: main
+      concurrency: 1536
+      requests: 15360
   podTemplate:
     imagePullSecrets:
       - nvcrimagepullsecret

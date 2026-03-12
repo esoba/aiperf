@@ -241,7 +241,10 @@ class AIPerfJobSpec(AIPerfBaseModel):
     image_pull_policy: ImagePullPolicy | None = Field(
         default=None, description="Image pull policy"
     )
-    user_config: dict[str, Any] = Field(description="AIPerf user configuration")
+    config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="AIPerfConfig fields extracted from the CRD spec",
+    )
     timeout_seconds: float = Field(
         default=0, ge=0, description="Job timeout in seconds (0 = no timeout)"
     )
@@ -262,22 +265,25 @@ class AIPerfJobSpec(AIPerfBaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_user_config(self) -> AIPerfJobSpec:
-        """Validate user_config has required fields."""
-        uc = self.user_config
-        if not uc:
-            raise ValueError("userConfig is required")
+    def validate_config(self) -> AIPerfJobSpec:
+        """Validate config has required AIPerfConfig fields."""
+        cfg = self.config
+        if not cfg:
+            raise ValueError(
+                "AIPerfConfig fields are required (models, endpoint, datasets, load)"
+            )
 
-        # Check endpoint configuration
-        endpoint = uc.get("endpoint", {})
-        if not endpoint.get("url") and not endpoint.get("urls"):
-            raise ValueError("userConfig.endpoint.url is required")
+        endpoint = cfg.get("endpoint", {})
+        if not endpoint.get("urls"):
+            raise ValueError("endpoint.urls is required")
 
         return self
 
     @classmethod
     def from_crd_spec(cls, spec: dict[str, Any]) -> AIPerfJobSpec:
         """Create from CRD spec dict.
+
+        Extracts AIPerfConfig fields from the inline spec.
 
         Args:
             spec: Raw spec from Kubernetes CRD.
@@ -288,10 +294,14 @@ class AIPerfJobSpec(AIPerfBaseModel):
         Raises:
             ValueError: If validation fails.
         """
+        from aiperf.operator.spec_converter import CONFIG_FIELDS
+
+        config = {k: v for k, v in spec.items() if k in CONFIG_FIELDS}
+
         return cls(
             image=spec.get("image", "nvcr.io/nvidia/aiperf:latest"),
             image_pull_policy=spec.get("imagePullPolicy"),
-            user_config=spec.get("userConfig", {}),
+            config=config,
             timeout_seconds=spec.get("timeoutSeconds", 0),
             ttl_seconds_after_finished=spec.get("ttlSecondsAfterFinished"),
             results_ttl_days=spec.get("resultsTtlDays"),
@@ -299,6 +309,6 @@ class AIPerfJobSpec(AIPerfBaseModel):
         )
 
     def get_endpoint_url(self) -> str | None:
-        """Extract primary endpoint URL from user_config."""
-        endpoint = self.user_config.get("endpoint", {})
-        return endpoint.get("url") or (endpoint.get("urls") or [None])[0]
+        """Extract primary endpoint URL from config."""
+        endpoint = self.config.get("endpoint", {})
+        return (endpoint.get("urls") or [None])[0]

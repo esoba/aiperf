@@ -19,6 +19,7 @@ from aiperf.cli_commands.kube.profile import profile
 from aiperf.cli_commands.kube.results import results
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.kube_config import KubeManageOptions, KubeOptions
+from aiperf.config.cli_builder import CLIModel
 from aiperf.kubernetes.cli_helpers import resolve_job_id_and_namespace
 from aiperf.kubernetes.console import LastBenchmarkInfo
 from aiperf.kubernetes.models import JobSetInfo
@@ -696,54 +697,70 @@ class TestPreflightCommand:
 class TestProfileCommand:
     """Tests for the kube profile command."""
 
-    async def test_profile_calls_runner(self) -> None:
-        """Test profile calls run_kubernetes_deployment with correct args."""
+    @pytest.fixture
+    def _mock_config_conversion(self):
+        """Mock build_aiperf_config and convert_to_legacy_configs."""
         user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        kube_options = KubeOptions(image="aiperf:latest", workers=10)
         service_config = ServiceConfig()
+        with (
+            patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build,
+            patch(
+                "aiperf.config.reverse_converter.convert_to_legacy_configs"
+            ) as mock_convert,
+        ):
+            mock_aiperf_config = MagicMock()
+            mock_aiperf_config.endpoint.urls = [
+                "http://localhost:8000/v1/chat/completions"
+            ]
+            mock_build.return_value = mock_aiperf_config
+            mock_convert.return_value = (user_config, service_config)
+            yield mock_build, mock_convert, user_config, service_config
+
+    async def test_profile_calls_runner(self, _mock_config_conversion) -> None:
+        """Test profile calls run_kubernetes_deployment with correct args."""
+        _, _, user_config, service_config = _mock_config_conversion
+        cli = CLIModel(model_names=["test-model"])
+        kube_options = KubeOptions(image="aiperf:latest", workers=10)
 
         with patch("aiperf.kubernetes.runner.run_kubernetes_deployment") as mock_run:
             mock_run.return_value = ("test-job-id", "test-namespace")
 
             await profile(
-                user_config=user_config,
-                kube_options=kube_options,
-                service_config=service_config,
-                detach=True,  # Use detach mode to skip auto-attach workflow
-                skip_endpoint_check=True,  # Skip validation in tests
-                skip_preflight=True,
-            )
-
-            mock_run.assert_called_once_with(
-                user_config, service_config, kube_options, dry_run=False
-            )
-
-    async def test_profile_loads_default_service_config(self) -> None:
-        """Test profile loads default ServiceConfig when not provided."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        kube_options = KubeOptions(image="aiperf:latest")
-
-        with (
-            patch("aiperf.common.config.load_service_config") as mock_load,
-            patch("aiperf.kubernetes.runner.run_kubernetes_deployment") as mock_run,
-        ):
-            mock_load.return_value = ServiceConfig()
-            mock_run.return_value = ("test-job-id", "test-namespace")
-
-            await profile(
-                user_config=user_config,
+                cli=cli,
                 kube_options=kube_options,
                 detach=True,
                 skip_endpoint_check=True,
                 skip_preflight=True,
             )
 
-            mock_load.assert_called_once()
             mock_run.assert_called_once()
 
-    async def test_profile_with_kube_options(self) -> None:
+    async def test_profile_derives_configs_from_cli(
+        self, _mock_config_conversion
+    ) -> None:
+        """Test profile derives UserConfig/ServiceConfig via build_aiperf_config."""
+        mock_build, mock_convert, _, _ = _mock_config_conversion
+        cli = CLIModel(model_names=["test-model"])
+        kube_options = KubeOptions(image="aiperf:latest")
+
+        with patch("aiperf.kubernetes.runner.run_kubernetes_deployment") as mock_run:
+            mock_run.return_value = ("test-job-id", "test-namespace")
+
+            await profile(
+                cli=cli,
+                kube_options=kube_options,
+                detach=True,
+                skip_endpoint_check=True,
+                skip_preflight=True,
+            )
+
+            mock_build.assert_called_once_with(cli)
+            mock_convert.assert_called_once()
+            mock_run.assert_called_once()
+
+    async def test_profile_with_kube_options(self, _mock_config_conversion) -> None:
         """Test profile with custom KubeOptions."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        cli = CLIModel(model_names=["test-model"])
         kube_options = KubeOptions(
             image="aiperf:v2",
             namespace="benchmarks",
@@ -752,22 +769,21 @@ class TestProfileCommand:
             env_vars={"DEBUG": "true"},
             tolerations=[{"key": "nvidia.com/gpu", "operator": "Exists"}],
         )
-        service_config = ServiceConfig()
 
         with patch("aiperf.kubernetes.runner.run_kubernetes_deployment") as mock_run:
             mock_run.return_value = ("test-job-id", "benchmarks")
 
             await profile(
-                user_config=user_config,
+                cli=cli,
                 kube_options=kube_options,
-                service_config=service_config,
                 detach=True,
                 skip_endpoint_check=True,
                 skip_preflight=True,
             )
 
             mock_run.assert_called_once()
-            _, _, passed_kube_options, *_ = mock_run.call_args.args
+            call_kwargs = mock_run.call_args
+            passed_kube_options = call_kwargs.args[2]
             assert passed_kube_options.image == "aiperf:v2"
             assert passed_kube_options.namespace == "benchmarks"
             assert passed_kube_options.workers == 50
@@ -1005,40 +1021,56 @@ class TestResolveJobIdAndNamespace:
 class TestGenerateCommand:
     """Tests for the kube generate command."""
 
-    async def test_generate_calls_runner_with_dry_run(self) -> None:
-        """Test generate calls run_kubernetes_deployment with dry_run=True."""
+    @pytest.fixture
+    def _mock_config_conversion(self):
+        """Mock build_aiperf_config and convert_to_legacy_configs."""
         user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        kube_options = KubeOptions(image="aiperf:latest", workers=10)
         service_config = ServiceConfig()
+        with (
+            patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build,
+            patch(
+                "aiperf.config.reverse_converter.convert_to_legacy_configs"
+            ) as mock_convert,
+        ):
+            mock_aiperf_config = MagicMock()
+            mock_aiperf_config.endpoint.urls = [
+                "http://localhost:8000/v1/chat/completions"
+            ]
+            mock_build.return_value = mock_aiperf_config
+            mock_convert.return_value = (user_config, service_config)
+            yield mock_build, mock_convert, user_config, service_config
+
+    async def test_generate_calls_runner_with_dry_run(
+        self, _mock_config_conversion
+    ) -> None:
+        """Test generate calls run_kubernetes_deployment with dry_run=True."""
+        cli = CLIModel(model_names=["test-model"])
+        kube_options = KubeOptions(image="aiperf:latest", workers=10)
 
         with patch("aiperf.kubernetes.runner.run_kubernetes_deployment") as mock_run:
             mock_run.return_value = ("test-job-id", "test-namespace")
 
-            await generate(
-                user_config=user_config,
-                kube_options=kube_options,
-                service_config=service_config,
-            )
+            await generate(cli=cli, kube_options=kube_options)
 
-            mock_run.assert_called_once_with(
-                user_config, service_config, kube_options, dry_run=True
-            )
+            mock_run.assert_called_once()
+            call_kwargs = mock_run.call_args
+            assert call_kwargs.kwargs.get("dry_run") is True
 
-    async def test_generate_loads_default_service_config(self) -> None:
-        """Test generate loads default ServiceConfig when not provided."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+    async def test_generate_derives_configs_from_cli(
+        self, _mock_config_conversion
+    ) -> None:
+        """Test generate derives configs via build_aiperf_config."""
+        mock_build, mock_convert, _, _ = _mock_config_conversion
+        cli = CLIModel(model_names=["test-model"])
         kube_options = KubeOptions(image="aiperf:latest")
 
-        with (
-            patch("aiperf.common.config.load_service_config") as mock_load,
-            patch("aiperf.kubernetes.runner.run_kubernetes_deployment") as mock_run,
-        ):
-            mock_load.return_value = ServiceConfig()
+        with patch("aiperf.kubernetes.runner.run_kubernetes_deployment") as mock_run:
             mock_run.return_value = ("test-job-id", "test-namespace")
 
-            await generate(user_config=user_config, kube_options=kube_options)
+            await generate(cli=cli, kube_options=kube_options)
 
-            mock_load.assert_called_once()
+            mock_build.assert_called_once_with(cli)
+            mock_convert.assert_called_once()
             mock_run.assert_called_once()
 
 
@@ -1218,15 +1250,32 @@ class TestDeleteCommandWithNamespace:
 class TestProfileCommandAdditional:
     """Additional tests for the kube profile command."""
 
+    @pytest.fixture
+    def _mock_config_conversion(self):
+        """Mock build_aiperf_config and convert_to_legacy_configs."""
+        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        service_config = ServiceConfig()
+        with (
+            patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build,
+            patch(
+                "aiperf.config.reverse_converter.convert_to_legacy_configs"
+            ) as mock_convert,
+        ):
+            mock_aiperf_config = MagicMock()
+            mock_aiperf_config.endpoint.urls = [
+                "http://localhost:8000/v1/chat/completions"
+            ]
+            mock_build.return_value = mock_aiperf_config
+            mock_convert.return_value = (user_config, service_config)
+            yield mock_build, mock_convert, user_config, service_config
+
     async def test_profile_non_interactive_auto_detach(
-        self, capsys, monkeypatch
+        self, _mock_config_conversion, capsys, monkeypatch
     ) -> None:
         """Test profile auto-detaches in non-interactive environment."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        cli = CLIModel(model_names=["test-model"])
         kube_options = KubeOptions(image="aiperf:latest")
-        service_config = ServiceConfig()
 
-        # Mock sys.stdout.isatty() to return False (non-interactive)
         mock_stdout = MagicMock(spec=StringIO)
         mock_stdout.isatty.return_value = False
         monkeypatch.setattr(sys, "stdout", mock_stdout)
@@ -1235,20 +1284,18 @@ class TestProfileCommandAdditional:
             mock_run.return_value = ("test-job-id", "test-namespace")
 
             await profile(
-                user_config=user_config,
+                cli=cli,
                 kube_options=kube_options,
-                service_config=service_config,
                 skip_endpoint_check=True,
                 skip_preflight=True,
             )
 
             mock_run.assert_called_once()
 
-    async def test_profile_saves_last_benchmark(self) -> None:
+    async def test_profile_saves_last_benchmark(self, _mock_config_conversion) -> None:
         """Test profile saves last benchmark info after deployment."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        cli = CLIModel(model_names=["test-model"])
         kube_options = KubeOptions(image="aiperf:latest")
-        service_config = ServiceConfig()
 
         with (
             patch("aiperf.kubernetes.runner.run_kubernetes_deployment") as mock_run,
@@ -1257,9 +1304,8 @@ class TestProfileCommandAdditional:
             mock_run.return_value = ("deployed-job-id", "deployed-namespace")
 
             await profile(
-                user_config=user_config,
+                cli=cli,
                 kube_options=kube_options,
-                service_config=service_config,
                 detach=True,
                 skip_endpoint_check=True,
                 skip_preflight=True,
@@ -1503,13 +1549,32 @@ class TestAttachCommandAdditional:
 class TestProfilePreflight:
     """Tests for the auto-preflight in kube profile command."""
 
-    async def test_profile_runs_preflight_before_deploy(self) -> None:
-        """Test profile runs preflight checks before deployment (passing)."""
+    @pytest.fixture
+    def _mock_config_conversion(self):
+        """Mock build_aiperf_config and convert_to_legacy_configs."""
         user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        kube_options = KubeOptions(image="aiperf:latest")
         service_config = ServiceConfig()
+        with (
+            patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build,
+            patch(
+                "aiperf.config.reverse_converter.convert_to_legacy_configs"
+            ) as mock_convert,
+        ):
+            mock_aiperf_config = MagicMock()
+            mock_aiperf_config.endpoint.urls = [
+                "http://localhost:8000/v1/chat/completions"
+            ]
+            mock_build.return_value = mock_aiperf_config
+            mock_convert.return_value = (user_config, service_config)
+            yield mock_build, mock_convert, user_config, service_config
 
-        # Mock PreflightChecker to return passing results
+    async def test_profile_runs_preflight_before_deploy(
+        self, _mock_config_conversion
+    ) -> None:
+        """Test profile runs preflight checks before deployment (passing)."""
+        cli = CLIModel(model_names=["test-model"])
+        kube_options = KubeOptions(image="aiperf:latest")
+
         passing_results = PreflightResults()
         passing_results.add(
             CheckResult(
@@ -1533,22 +1598,21 @@ class TestProfilePreflight:
             mock_run.return_value = ("test-job-id", "test-namespace")
 
             await profile(
-                user_config=user_config,
+                cli=cli,
                 kube_options=kube_options,
-                service_config=service_config,
                 detach=True,
                 skip_endpoint_check=True,
             )
 
-            # Both preflight and deploy should have been called
             mock_checker_cls.return_value.run_quick_checks.assert_called_once()
             mock_run.assert_called_once()
 
-    async def test_profile_preflight_failure_blocks_deploy(self, capsys) -> None:
+    async def test_profile_preflight_failure_blocks_deploy(
+        self, _mock_config_conversion, capsys
+    ) -> None:
         """Test profile exits when preflight fails."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        cli = CLIModel(model_names=["test-model"])
         kube_options = KubeOptions(image="aiperf:latest")
-        service_config = ServiceConfig()
 
         failing_results = PreflightResults()
         failing_results.add(
@@ -1575,9 +1639,8 @@ class TestProfilePreflight:
             )
 
             await profile(
-                user_config=user_config,
+                cli=cli,
                 kube_options=kube_options,
-                service_config=service_config,
                 detach=True,
                 skip_endpoint_check=True,
             )
@@ -1588,11 +1651,12 @@ class TestProfilePreflight:
         assert "JobSet CRD" in captured.out
         assert "--skip-preflight" in captured.out
 
-    async def test_profile_skip_preflight_bypasses_checks(self) -> None:
+    async def test_profile_skip_preflight_bypasses_checks(
+        self, _mock_config_conversion
+    ) -> None:
         """Test --skip-preflight flag bypasses preflight checks."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        cli = CLIModel(model_names=["test-model"])
         kube_options = KubeOptions(image="aiperf:latest")
-        service_config = ServiceConfig()
 
         with (
             patch("aiperf.kubernetes.preflight.PreflightChecker") as mock_checker_cls,
@@ -1601,9 +1665,8 @@ class TestProfilePreflight:
             mock_run.return_value = ("test-job-id", "test-namespace")
 
             await profile(
-                user_config=user_config,
+                cli=cli,
                 kube_options=kube_options,
-                service_config=service_config,
                 detach=True,
                 skip_endpoint_check=True,
                 skip_preflight=True,

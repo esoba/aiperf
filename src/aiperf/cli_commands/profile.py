@@ -4,16 +4,13 @@
 
 from cyclopts import App
 
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.config.cli_builder import CLIModel
 
 app = App(name="profile")
 
 
 @app.default
-def profile(
-    user_config: UserConfig,
-    service_config: ServiceConfig | None = None,
-) -> None:
+def profile(cli: CLIModel) -> None:
     """Run the Profile subcommand.
 
     Benchmark generative AI models and measure performance metrics including throughput,
@@ -42,14 +39,25 @@ def profile(
         aiperf profile --model your_model --url localhost:8000 --goodput "request_latency:250 inter_token_latency:10"
 
     Args:
-        user_config: User configuration for the benchmark
-        service_config: Service configuration options
+        cli: Benchmark configuration (parsed from CLI flags).
     """
     from aiperf.cli_utils import exit_on_error
 
     with exit_on_error(title="Error Running AIPerf System"):
         from aiperf.cli_runner import run_system_controller
-        from aiperf.common.config.loader import load_service_config
+        from aiperf.config.cli_builder import build_aiperf_config
+        from aiperf.config.reverse_converter import convert_to_legacy_configs
 
-        service_config = service_config or load_service_config()
+        aiperf_config = build_aiperf_config(cli)
+        user_config, service_config = convert_to_legacy_configs(aiperf_config)
+
+        # Auto-detect UI type when not explicitly set by user
+        if "ui_type" not in cli.model_fields_set:
+            import sys
+
+            from aiperf.plugin.enums import UIType
+
+            if not sys.stdout.isatty():
+                service_config.ui_type = UIType.NONE
+
         run_system_controller(user_config, service_config)
