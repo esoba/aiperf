@@ -64,6 +64,9 @@ from aiperf.gpu_telemetry.protocols import (
 )
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ResultsProcessorType, UIType
+from aiperf.post_processors.energy_efficiency_processor import (
+    compute as compute_energy_efficiency,
+)
 from aiperf.post_processors.protocols import ResultsProcessorProtocol
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_tracker import RecordsTracker
@@ -615,14 +618,34 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self.error(f"Exception processing results: {result!r}")
                 error_results.append(ErrorDetails.from_exception(result))
 
+        # Derive energy efficiency metrics from inference results and GPU telemetry
         phase_stats = self._records_tracker.create_stats_for_phase(phase)
+        start_ns = phase_stats.start_ns or time.time_ns()
+        end_ns = phase_stats.requests_end_ns or time.time_ns()
+        try:
+            telemetry_export = (
+                self._gpu_telemetry_accumulator.export_results(
+                    start_ns=phase_stats.start_ns,
+                )
+                if self._gpu_telemetry_accumulator
+                else None
+            )
+            energy_results = compute_energy_efficiency(
+                inference_results=records_results,
+                telemetry=telemetry_export,
+                benchmark_duration_ns=end_ns - start_ns,
+            )
+            records_results.extend(energy_results)
+        except Exception as e:
+            self.debug(f"Energy efficiency computation skipped: {e!r}")
+
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=records_results,
                 timeslice_metric_results=timeslice_metric_results,
                 completed=len(records_results),
-                start_ns=phase_stats.start_ns or time.time_ns(),
-                end_ns=phase_stats.requests_end_ns or time.time_ns(),
+                start_ns=start_ns,
+                end_ns=end_ns,
                 error_summary=self._error_tracker.get_error_summary_for_phase(phase),
                 was_cancelled=cancelled,
             ),

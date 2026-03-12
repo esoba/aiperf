@@ -149,6 +149,56 @@ class PromptGenerator(BaseGenerator):
             lambda: f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
         )
 
+    def generate_token_ids(
+        self,
+        mean: int | None = None,
+        stddev: int | None = None,
+        hash_ids: list[int] | None = None,
+    ) -> list[int]:
+        """Generate pre-tokenized token IDs without decoding to text.
+
+        Same logic as ``generate()`` but skips the decode step and filters
+        EOS tokens to prevent engines from truncating the input early.
+
+        Args:
+            mean: The mean of the normal distribution.
+            stddev: The standard deviation of the normal distribution.
+            hash_ids: A list of hash indices used for token reuse.
+
+        Returns:
+            A list of token IDs with EOS tokens replaced.
+        """
+        if hash_ids:
+            tokens = self._build_token_sequence(
+                mean, hash_ids, self.config.input_tokens.block_size
+            )
+        else:
+            num_tokens = self.calculate_num_tokens(mean, stddev)
+            tokens = self._sample_tokens(num_tokens)
+
+        return self._filter_eos_tokens(tokens)
+
+    def _filter_eos_tokens(self, tokens: list[int]) -> list[int]:
+        """Replace EOS tokens to prevent engines from truncating the input.
+
+        Engines treat EOS as a stop signal in the input. Replace each
+        occurrence with ``(eos_id + 1) % vocab_size`` so the token count
+        stays the same without triggering early termination.
+
+        Args:
+            tokens: Raw token IDs that may contain EOS tokens.
+
+        Returns:
+            Token IDs with EOS tokens replaced.
+        """
+        eos_id = self.tokenizer.eos_token_id
+        if eos_id is None:
+            return tokens
+
+        vocab_size = self.tokenizer._tokenizer.vocab_size
+        replacement = (eos_id + 1) % vocab_size
+        return [replacement if t == eos_id else t for t in tokens]
+
     def generate(
         self,
         mean: int | None = None,

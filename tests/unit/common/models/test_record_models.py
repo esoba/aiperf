@@ -3,10 +3,12 @@
 
 import pytest
 from pydantic import BaseModel, Field, SerializeAsAny
+from pytest import param
 
 from aiperf.common.enums import SSEFieldType
 from aiperf.common.models import MetricResult, ProfileResults, SSEMessage
 from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.common.models.record_models import InEngineResponse
 
 
 class TestProfileResults:
@@ -240,3 +242,128 @@ class TestMetricResultToJsonResult:
         assert json_result.min == 10.0
         assert json_result.max == 300.0
         assert json_result.std == 25.0
+
+
+# ============================================================
+# InEngineResponse — Speculative Decoding Fields
+# ============================================================
+
+
+class TestInEngineResponseSpecDecodeFields:
+    """Verify InEngineResponse dataclass with decode_iterations/max_draft_len."""
+
+    def test_construct_with_spec_decode_fields(self) -> None:
+        response = InEngineResponse(
+            perf_ns=1000,
+            text="Hello",
+            input_tokens=10,
+            output_tokens=5,
+            decode_iterations=3,
+            max_draft_len=5,
+        )
+        assert response.decode_iterations == 3
+        assert response.max_draft_len == 5
+
+    def test_defaults_to_none(self) -> None:
+        response = InEngineResponse(
+            perf_ns=1000,
+            text="Hello",
+            input_tokens=10,
+            output_tokens=5,
+        )
+        assert response.decode_iterations is None
+        assert response.max_draft_len is None
+
+    def test_serialization_round_trip_with_spec_decode(self) -> None:
+        """Verify spec decode fields survive Pydantic serialization when nested in a model."""
+        from dataclasses import asdict
+
+        original = InEngineResponse(
+            perf_ns=1000,
+            text="Hello",
+            input_tokens=10,
+            output_tokens=5,
+            decode_iterations=7,
+            max_draft_len=3,
+            output_token_ids=[1, 2, 3, 4, 5],
+        )
+
+        data = asdict(original)
+        restored = InEngineResponse(**data)
+
+        assert restored.decode_iterations == 7
+        assert restored.max_draft_len == 3
+        assert restored.output_token_ids == [1, 2, 3, 4, 5]
+        assert restored.text == "Hello"
+        assert restored.input_tokens == 10
+        assert restored.output_tokens == 5
+
+    def test_serialization_round_trip_without_spec_decode(self) -> None:
+        """Verify None fields roundtrip correctly."""
+        from dataclasses import asdict
+
+        original = InEngineResponse(
+            perf_ns=1000,
+            text="Hello",
+            input_tokens=10,
+            output_tokens=5,
+        )
+
+        data = asdict(original)
+        restored = InEngineResponse(**data)
+
+        assert restored.decode_iterations is None
+        assert restored.max_draft_len is None
+        assert restored.output_token_ids is None
+
+    @pytest.mark.parametrize(
+        "decode_iterations,max_draft_len",
+        [
+            (0, 0),
+            (0, 5),
+            (100, 10),
+            param(0, None, id="zero-iters-no-draft"),
+            param(None, 5, id="no-iters-with-draft"),
+        ],
+    )  # fmt: skip
+    def test_boundary_values(
+        self, decode_iterations: int | None, max_draft_len: int | None
+    ) -> None:
+        response = InEngineResponse(
+            perf_ns=1000,
+            text="text",
+            input_tokens=10,
+            output_tokens=5,
+            decode_iterations=decode_iterations,
+            max_draft_len=max_draft_len,
+        )
+        assert response.decode_iterations == decode_iterations
+        assert response.max_draft_len == max_draft_len
+
+    def test_get_json_returns_none(self) -> None:
+        """InEngineResponse.get_json always returns None (no JSON round-trip)."""
+        response = InEngineResponse(
+            perf_ns=1000,
+            text="Hello",
+            input_tokens=10,
+            output_tokens=5,
+        )
+        assert response.get_json() is None
+
+    def test_get_text_returns_text(self) -> None:
+        response = InEngineResponse(
+            perf_ns=1000,
+            text="Generated text",
+            input_tokens=10,
+            output_tokens=5,
+        )
+        assert response.get_text() == "Generated text"
+
+    def test_get_raw_returns_text(self) -> None:
+        response = InEngineResponse(
+            perf_ns=1000,
+            text="Generated text",
+            input_tokens=10,
+            output_tokens=5,
+        )
+        assert response.get_raw() == "Generated text"

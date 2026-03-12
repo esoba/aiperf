@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.config import OutputConfig, UserConfig
+from aiperf.common.config import InputConfig, OutputConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
@@ -14,6 +14,7 @@ from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
+from aiperf.metrics.types.world_size_metric import WorldSizeMetric
 from aiperf.post_processors.timeslice_metric_results_processor import (
     TimesliceMetricResultsProcessor,
 )
@@ -373,3 +374,107 @@ class TestTimesliceMetricResultsProcessor:
             instances_map_0[RequestCountMetric.tag]
             is not instances_map_1[RequestCountMetric.tag]
         )
+
+
+# ============================================================
+# Pre-Seed & Skip Logic Tests (Timeslice)
+# ============================================================
+
+
+class TestTimesliceProcessorPreSeed:
+    """Verify world_size pre-seeding and skip logic in timeslice mode."""
+
+    @pytest.mark.asyncio
+    async def test_update_derived_metrics_pre_seeds_world_size_per_timeslice(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """world_size is pre-seeded into every timeslice's results dict."""
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
+        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        processor._instances_map[WorldSizeMetric.tag] = WorldSizeMetric()
+        processor.derive_funcs = {}
+
+        # Create two timeslices with some data
+        processor._timeslice_results[0]["base_metric"] = 10
+        processor._timeslice_results[1]["base_metric"] = 20
+
+        await processor.update_derived_metrics()
+
+        assert processor._timeslice_results[0][WorldSizeMetric.tag] == 1
+        assert processor._timeslice_results[1][WorldSizeMetric.tag] == 1
+
+    @pytest.mark.asyncio
+    async def test_update_derived_metrics_pre_seeds_custom_world_size_per_timeslice(
+        self, mock_metric_registry: Mock
+    ) -> None:
+        """Custom world_size (e.g., --world-size 8) is pre-seeded in all timeslices."""
+        from aiperf.common.config import EndpointConfig
+
+        config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type="completions",
+                streaming=False,
+            ),
+            input=InputConfig(world_size=8),
+            output=OutputConfig(slice_duration=1.0),
+        )
+        processor = TimesliceMetricResultsProcessor(config)
+        processor._instances_map[WorldSizeMetric.tag] = WorldSizeMetric()
+        processor.derive_funcs = {}
+
+        processor._timeslice_results[0]["base_metric"] = 10
+        processor._timeslice_results[5]["base_metric"] = 50
+
+        await processor.update_derived_metrics()
+
+        assert processor._timeslice_results[0][WorldSizeMetric.tag] == 8
+        assert processor._timeslice_results[5][WorldSizeMetric.tag] == 8
+
+    @pytest.mark.asyncio
+    async def test_pre_seeded_world_size_not_overwritten_in_timeslice(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """world_size derive func is skipped because the tag is already pre-seeded."""
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
+        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        processor._instances_map[WorldSizeMetric.tag] = WorldSizeMetric()
+
+        def world_size_derive(results_dict: MetricResultsDict) -> int:
+            return 999  # Should NOT be used
+
+        processor.derive_funcs = {WorldSizeMetric.tag: world_size_derive}
+        processor._timeslice_results[0]["base_metric"] = 42
+
+        await processor.update_derived_metrics()
+
+        # Pre-seeded value (1), not the derive func return (999)
+        assert processor._timeslice_results[0][WorldSizeMetric.tag] == 1
+
+    @pytest.mark.asyncio
+    async def test_skip_logic_only_affects_pre_seeded_tags(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Other derived metrics are still computed even when world_size is pre-seeded."""
+        mock_user_config.output = OutputConfig(slice_duration=1.0)
+        processor = TimesliceMetricResultsProcessor(mock_user_config)
+        processor._instances_map[WorldSizeMetric.tag] = WorldSizeMetric()
+
+        def throughput_derive(results_dict: MetricResultsDict) -> float:
+            return 42.0
+
+        def world_size_derive(results_dict: MetricResultsDict) -> int:
+            return 999
+
+        processor.derive_funcs = {
+            WorldSizeMetric.tag: world_size_derive,
+            RequestThroughputMetric.tag: throughput_derive,
+        }
+        processor._timeslice_results[0]["base_metric"] = 10
+
+        await processor.update_derived_metrics()
+
+        # world_size pre-seeded, NOT overwritten
+        assert processor._timeslice_results[0][WorldSizeMetric.tag] == 1
+        # throughput was computed normally
+        assert processor._timeslice_results[0][RequestThroughputMetric.tag] == 42.0

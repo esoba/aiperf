@@ -81,8 +81,16 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
         return self._timeslice_results[timeslice_index]
 
     async def update_derived_metrics(self) -> None:
+        from aiperf.metrics.types.world_size_metric import WorldSizeMetric
+
         for timeslice_results in self._timeslice_results.values():
+            # Pre-seed world_size so derived metrics can depend on it
+            if WorldSizeMetric.tag in self._instances_map:
+                timeslice_results[WorldSizeMetric.tag] = self._world_size
+
             for tag, derive_func in self.derive_funcs.items():
+                if tag in timeslice_results:
+                    continue
                 try:
                     timeslice_results[tag] = derive_func(timeslice_results)
                 except NoMetricValue as e:

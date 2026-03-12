@@ -43,6 +43,9 @@ class MetricResultsProcessor(BaseMetricsProcessor):
             if metric.type == MetricType.DERIVED
         }
 
+        # Store world_size from config for pre-seeding before derive loop
+        self._world_size: int = user_config.input.world_size
+
         # Create the results dict, which will be used to store the results of non-derived metrics,
         # and then be updated with the derived metrics.
         self._results: MetricResultsDict = MetricResultsDict()
@@ -130,8 +133,21 @@ class MetricResultsProcessor(BaseMetricsProcessor):
         return self._results
 
     async def update_derived_metrics(self) -> None:
-        """Computes the values for the derived metrics, and stores them in the results dict."""
+        """Computes the values for the derived metrics, and stores them in the results dict.
+
+        Pre-seeds world_size from user config before the derive loop so that
+        downstream metrics (e.g. per_gpu_output_token_throughput) can use it.
+        """
+        from aiperf.metrics.types.world_size_metric import WorldSizeMetric
+
+        # Pre-seed world_size so derived metrics can depend on it
+        if WorldSizeMetric.tag in self._instances_map:
+            self._results[WorldSizeMetric.tag] = self._world_size
+
         for tag, derive_func in self.derive_funcs.items():
+            # Skip metrics that have been pre-seeded
+            if tag in self._results:
+                continue
             try:
                 self._results[tag] = derive_func(self._results)
             except NoMetricValue as e:

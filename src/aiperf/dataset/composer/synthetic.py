@@ -140,16 +140,26 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             else self.config.input.prompt.input_tokens.stddev
         )
 
+        pre_tokenized = self.config.input.pre_tokenized
+
         for _ in range(self.config.input.prompt.batch_size):
-            # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
+            if pre_tokenized:
+                # Pre-tokenized path: store token IDs directly, use placeholder text
+                token_ids = self.prompt_generator.generate_token_ids(
+                    mean=isl, stddev=stddev
+                )
+                text.token_ids = token_ids
+                text.contents.append("<pre-tokenized>")
+            else:
+                # Standard path: generate decoded text
+                content = self.prompt_generator.generate(mean=isl, stddev=stddev)
 
-            # Add prefix prompt if this is the first turn and prefix is enabled
-            if is_first and self.prefix_prompt_enabled:
-                prefix = self.prompt_generator.get_random_prefix_prompt()
-                content = f"{prefix} {content}"
+                # Add prefix prompt if this is the first turn and prefix is enabled
+                if is_first and self.prefix_prompt_enabled:
+                    prefix = self.prompt_generator.get_random_prefix_prompt()
+                    content = f"{prefix} {content}"
 
-            text.contents.append(content)
+                text.contents.append(content)
 
         return text
 

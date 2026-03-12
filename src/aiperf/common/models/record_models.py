@@ -357,6 +357,15 @@ class InEngineResponse:
     finish_reason: str = "stop"
     """Engine finish reason."""
 
+    output_token_ids: list[int] | None = None
+    """Raw output token IDs. Set when preserve_token_ids engine param is enabled."""
+
+    decode_iterations: int | None = None
+    """Number of decode iterations (TRT-LLM speculative decoding)."""
+
+    max_draft_len: int | None = None
+    """Max draft tokens per decode step (speculative decoding config)."""
+
     def get_raw(self) -> Any | None:
         return self.text
 

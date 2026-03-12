@@ -142,6 +142,14 @@ def run_simple_metrics_pipeline(
                     metric_dict[metric.tag]
                 )
 
+    # Convert record metric lists to MetricArray for derived metrics that expect them.
+    # Only convert flat lists of scalars (not lists of lists like InterChunkLatency).
+    for key, value in metric_results.items():
+        if isinstance(value, list) and value and not isinstance(value[0], list):
+            arr = MetricArray()
+            arr.extend(value)
+            metric_results[key] = arr
+
     # STAGE 3: Compute all of the derived metrics
     for metric in metrics:
         if metric.type == MetricType.DERIVED:

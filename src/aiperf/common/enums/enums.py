@@ -337,6 +337,16 @@ class ServerMetricsFormat(CaseInsensitiveStrEnum):
     Includes cumulative deltas from reference point for counters and histograms."""
 
 
+class SequenceLengthDistributionType(CaseInsensitiveStrEnum):
+    """Distribution type for sampling input/output sequence lengths."""
+
+    NORMAL = "normal"
+    """Normal (Gaussian) distribution around the mean with standard deviation."""
+
+    UNIFORM = "uniform"
+    """Uniform distribution between min and max values (inclusive)."""
+
+
 class ServiceRegistrationStatus(CaseInsensitiveStrEnum):
     """Defines the various states a service can be in during registration with
     the SystemController."""

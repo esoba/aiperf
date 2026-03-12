@@ -770,3 +770,100 @@ class TestVLLMWarmupIterations:
             assert "warmup_iterations" not in kwargs
             assert transport._warmup_iterations == 5
             assert kwargs["tensor_parallel_size"] == 2
+
+
+# ============================================================
+# _warmup_single (vLLM Engine)
+# ============================================================
+
+
+class TestVLLMWarmupSingle:
+    """Verify _warmup_single calls vLLM engine with correct output kind."""
+
+    @pytest.mark.asyncio
+    async def test_warmup_streaming_uses_delta_output_kind(self) -> None:
+        """streaming=True uses DELTA RequestOutputKind."""
+        with _patch_vllm_modules():
+            from aiperf.transports.in_engine.vllm_transport import VLLMTransport
+
+            endpoint = _make_vllm_endpoint()
+            transport = VLLMTransport(model_endpoint=endpoint)
+
+            # Mock engine that yields one output then finishes
+            mock_output = MockRequestOutput(
+                outputs=[
+                    MockCompletionOutput(
+                        text="warm", token_ids=[1], finish_reason="stop"
+                    )
+                ],
+            )
+            transport._engine = MockAsyncEngine(outputs=[mock_output])
+
+            # Should not raise
+            await transport._warmup_single("test prompt", 4, streaming=True)
+
+    @pytest.mark.asyncio
+    async def test_warmup_non_streaming_uses_final_only(self) -> None:
+        """streaming=False uses FINAL_ONLY RequestOutputKind."""
+        with _patch_vllm_modules():
+            from aiperf.transports.in_engine.vllm_transport import VLLMTransport
+
+            endpoint = _make_vllm_endpoint()
+            transport = VLLMTransport(model_endpoint=endpoint)
+
+            mock_output = MockRequestOutput(
+                outputs=[
+                    MockCompletionOutput(
+                        text="warm", token_ids=[1], finish_reason="stop"
+                    )
+                ],
+            )
+            transport._engine = MockAsyncEngine(outputs=[mock_output])
+
+            await transport._warmup_single("test prompt", 4, streaming=False)
+
+    @pytest.mark.asyncio
+    async def test_warmup_single_consumes_all_engine_output(self) -> None:
+        """_warmup_single iterates through all engine output (no partial reads)."""
+        with _patch_vllm_modules():
+            from aiperf.transports.in_engine.vllm_transport import VLLMTransport
+
+            endpoint = _make_vllm_endpoint()
+            transport = VLLMTransport(model_endpoint=endpoint)
+
+            outputs = [
+                MockRequestOutput(
+                    outputs=[MockCompletionOutput(text=f"chunk{i}", token_ids=[i])],
+                )
+                for i in range(5)
+            ]
+            transport._engine = MockAsyncEngine(outputs=outputs)
+
+            # Should consume all 5 outputs without error
+            await transport._warmup_single("test prompt", 4, streaming=False)
+
+    @pytest.mark.asyncio
+    async def test_warmup_single_uses_request_id_prefix(self) -> None:
+        """_warmup_single generates a request_id starting with 'warmup-'."""
+        with _patch_vllm_modules():
+            from aiperf.transports.in_engine.vllm_transport import VLLMTransport
+
+            endpoint = _make_vllm_endpoint()
+            transport = VLLMTransport(model_endpoint=endpoint)
+
+            captured_request_ids: list[str] = []
+
+            class CapturingEngine:
+                async def generate(
+                    self, prompt: str, sampling_params: Any, request_id: str
+                ) -> Any:
+                    captured_request_ids.append(request_id)
+                    return
+                    yield  # make it an async generator
+
+            transport._engine = CapturingEngine()  # type: ignore[assignment]
+
+            await transport._warmup_single("test prompt", 4, streaming=False)
+
+            assert len(captured_request_ids) == 1
+            assert captured_request_ids[0].startswith("warmup-")

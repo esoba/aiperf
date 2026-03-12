@@ -63,7 +63,9 @@ class TestStickyCreditRouterFairLoadBalancing:
         assert len(router._sticky_sessions) == 1
         assert router._sticky_sessions["test-corr-id"] == "worker-A"
 
-    async def test_error_if_no_workers_available(self, service_config) -> None:
+    async def test_error_if_no_workers_available(
+        self, service_config, time_traveler_no_patch_sleep
+    ) -> None:
         router = StickyCreditRouter(
             service_config=service_config, service_id="test-router"
         )

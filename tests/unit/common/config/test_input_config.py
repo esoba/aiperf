@@ -5,6 +5,7 @@ from pathlib import PosixPath
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.config import (
     AudioConfig,
@@ -338,6 +339,40 @@ def test_synthesis_max_isl_requires_trace_dataset(dataset_type):
             )
 
         assert "require a trace dataset type" in str(exc.value)
+
+
+# ============================================================================
+# World Size Validation Tests
+# ============================================================================
+
+
+def test_input_config_world_size_default_is_one() -> None:
+    """Default world_size is 1 (single GPU)."""
+    config = InputConfig()
+    assert config.world_size == 1
+
+
+@pytest.mark.parametrize(
+    "world_size",
+    [1, 2, 4, 8, 64, 128],
+)  # fmt: skip
+def test_input_config_world_size_valid_values(world_size: int) -> None:
+    config = InputConfig(world_size=world_size)
+    assert config.world_size == world_size
+
+
+@pytest.mark.parametrize(
+    "world_size",
+    [
+        param(0, id="zero"),
+        param(-1, id="negative"),
+        param(-100, id="large-negative"),
+    ],
+)  # fmt: skip
+def test_input_config_world_size_rejects_invalid(world_size: int) -> None:
+    """world_size must be >= 1 (ge=1 constraint)."""
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        InputConfig(world_size=world_size)
 
 
 @pytest.mark.parametrize(

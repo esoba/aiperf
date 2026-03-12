@@ -192,7 +192,7 @@ For video generation endpoints, download the video content after generation comp
 #### `--engine-params` `<list>`
 
 Engine-specific parameters for in-engine transports (vllm://, sglang://, trtllm://). Specify as `key:value` pairs (e.g., `--engine-params gpu_memory_utilization:0.8 tensor_parallel_size:2`). These parameters are passed to the engine constructor (e.g., vLLM's LLM class) and are NOT included in the request payload. Use --extra-inputs for request payload parameters instead.
-<br>_Default: `[]`_
+<br/>_Default: `[]`_
 
 #### `--extra-inputs` `<list>`
 
@@ -255,6 +255,17 @@ Random seed for deterministic data generation. When set, makes synthetic prompts
 #### `--goodput` `<str>`
 
 Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric's display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
+
+#### `--pre-tokenized`
+
+Send pre-tokenized token IDs directly to in-engine transports (vllm://, sglang://, trtllm://), bypassing chat template application and text decoding. Reduces overhead for synthetic benchmarks by skipping the encode-decode-re-encode round-trip. Only effective with in-engine transports.
+<br/>_Flag (no value required)_
+
+#### `--world-size` `<int>`
+
+Number of GPUs (world size) used by the inference engine. Used to compute per-GPU metrics such as per-GPU output token throughput. Defaults to 1 (single GPU).
+<br/>_Constraints: ≥ 1_
+<br/>_Default: `1`_
 
 ### Audio Input
 
@@ -446,6 +457,27 @@ Number of text inputs to include in each request for batch processing endpoints.
 
 ### Input Sequence Length (ISL)
 
+#### `--prompt-input-tokens-distribution`, `--isl-distribution` `<str>`
+
+Distribution type for sampling input sequence lengths. 'normal' uses a Gaussian distribution around the mean with stddev. 'uniform' samples uniformly between min and max.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `normal` | _default_ | Normal (Gaussian) distribution around the mean with standard deviation. |
+| `uniform` |  | Uniform distribution between min and max values (inclusive). |
+
+#### `--prompt-input-tokens-min`, `--isl-min` `<int>`
+
+Minimum number of input tokens when using uniform distribution. Required when distribution is 'uniform'.
+<br/>_Constraints: ≥ 1_
+
+#### `--prompt-input-tokens-max`, `--isl-max` `<int>`
+
+Maximum number of input tokens when using uniform distribution. Required when distribution is 'uniform'.
+<br/>_Constraints: ≥ 1_
+
 #### `--prompt-input-tokens-mean`, `--synthetic-input-tokens-mean`, `--isl` `<int>`
 
 Mean number of tokens for synthetically generated input prompts. AIPerf generates prompts with lengths following a normal distribution around this mean (±`--prompt-input-tokens-stddev`). Applies only to synthetic datasets, not custom or public datasets.
@@ -467,6 +499,27 @@ Token block size for hash-based prompt caching in trace datasets (`mooncake_trac
 Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Format: `ISL,OSL:prob;ISL,OSL:prob` (semicolons separate pairs, probabilities are percentages 0-100 that must sum to 100). Supports optional stddev: `ISL|stddev,OSL|stddev:prob`. Examples: `128,64:25;512,128:50;1024,256:25` or with variance: `256|10,128|5:40;512|20,256|10:60`. Also supports bracket `[(256,128):40,(512,256):60]` and JSON formats.
 
 ### Output Sequence Length (OSL)
+
+#### `--prompt-output-tokens-distribution`, `--osl-distribution` `<str>`
+
+Distribution type for sampling output sequence lengths. 'normal' uses a Gaussian distribution around the mean with stddev. 'uniform' samples uniformly between min and max.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `normal` | _default_ | Normal (Gaussian) distribution around the mean with standard deviation. |
+| `uniform` |  | Uniform distribution between min and max values (inclusive). |
+
+#### `--prompt-output-tokens-min`, `--osl-min` `<int>`
+
+Minimum number of output tokens when using uniform distribution. Required when distribution is 'uniform'.
+<br/>_Constraints: ≥ 1_
+
+#### `--prompt-output-tokens-max`, `--osl-max` `<int>`
+
+Maximum number of output tokens when using uniform distribution. Required when distribution is 'uniform'.
+<br/>_Constraints: ≥ 1_
 
 #### `--prompt-output-tokens-mean`, `--output-tokens-mean`, `--osl` `<int>`
 
@@ -922,6 +975,7 @@ Directory path for ZMQ IPC (Inter-Process Communication) socket files. When usin
 #### `--workers-max`, `--max-workers` `<int>`
 
 Maximum number of workers to create. If not specified, the number of workers will be determined by the formula `min(concurrency, (num CPUs * 0.75) - 1)`, with a default max cap of 32. Any value provided will still be capped by the concurrency value (if specified), but not by the max cap.
+<br/>_Constraints: ≥ 1_
 
 ### Service
 

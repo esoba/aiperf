@@ -15,6 +15,7 @@ Includes:
 - StickyCreditRouter: Main router class
 """
 
+import asyncio
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
@@ -24,6 +25,7 @@ from typing import Protocol, runtime_checkable
 from aiperf.common.config import ServiceConfig
 from aiperf.common.config.zmq_config import ZMQDualBindConfig
 from aiperf.common.enums import CommAddress
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.protocols import StreamingRouterClientProtocol
 from aiperf.credit.messages import (
@@ -235,6 +237,11 @@ class StickyCreditRouter(CommunicationMixin):
         self._workers_cache: list[WorkerLoad] = []
         self._workers: dict[str, WorkerLoad] = {}
 
+        # Event set when at least one worker is registered. Credits wait on this
+        # instead of failing immediately — handles late-joining workers (e.g.,
+        # in-engine transports that need time to import heavy GPU libraries).
+        self._worker_available = asyncio.Event()
+
         # Map load level -> set of worker_ids at that load (O(1) add/remove)
         self._workers_by_load: dict[int, set[str]] = defaultdict(set)
         # Keep track of the minimum load to avoid recalculating it on every credit sent O(1) vs O(n)
@@ -260,12 +267,23 @@ class StickyCreditRouter(CommunicationMixin):
         """Determine the worker based on sticky sessions or least-loaded and send the credit to the worker.
 
         This method:
+        - Waits for at least one worker to register (handles late-joining workers)
         - Determines the worker based on sticky sessions or least-loaded
         - Updates the worker load and sticky sessions
         - Sends the credit to the worker
         """
         if not self._workers:
-            raise RuntimeError("No workers available for routing")
+            self.info("Waiting for workers to register before routing credits...")
+            try:
+                await asyncio.wait_for(
+                    self._worker_available.wait(),
+                    timeout=Environment.SERVICE.REGISTRATION_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    "No workers available — none registered within "
+                    f"{Environment.SERVICE.REGISTRATION_TIMEOUT}s timeout"
+                ) from None
 
         if not credit.x_correlation_id:
             raise RuntimeError("x_correlation_id must be set in Credit")
@@ -431,6 +449,7 @@ class StickyCreditRouter(CommunicationMixin):
             # so we can cheat and just set minimum load to 0 without recalculating.
             self._min_load = 0
             self._workers_by_load[0].add(worker_id)
+            self._worker_available.set()
 
     def _unregister_worker(self, worker_id: str) -> None:
         """Unregister worker. Sticky sessions are cleared and reassigned on next access."""

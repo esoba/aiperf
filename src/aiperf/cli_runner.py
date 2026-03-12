@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING
 from aiperf.cli_utils import raise_startup_error_and_exit
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
-from aiperf.plugin.enums import ServiceType, UIType
+from aiperf.plugin.enums import ServiceRunType, ServiceType, UIType
+
+_IN_ENGINE_URL_SCHEMES = ("vllm://", "sglang://", "trtllm://")
 
 if TYPE_CHECKING:
     from aiperf.common.aiperf_logger import AIPerfLogger
@@ -92,6 +94,13 @@ def _run_single_benchmark(
         from aiperf.common.logging import setup_rich_logging
 
         setup_rich_logging(user_config, service_config)
+
+    # Auto-select InProcessServiceManager for in-engine transports.
+    # This prevents WorkerManager from spawning a separate Worker process
+    # (the Worker is created in-process by TimingManager instead).
+    if any(url.startswith(_IN_ENGINE_URL_SCHEMES) for url in user_config.endpoint.urls):
+        service_config.service_run_type = ServiceRunType.IN_ENGINE
+        logger.info("In-engine transport detected — using InProcessServiceManager")
 
     # Create and start the system controller
     logger.info("Starting AIPerf System")

@@ -306,6 +306,25 @@ class RandomGenerator:
             return max(1, round(mean))
         return max(1, math.ceil(self.sample_positive_normal(mean, stddev)))
 
+    def sample_positive_uniform_integer(self, low: int, high: int) -> int:
+        """Sample a uniformly distributed integer in [low, high] (inclusive).
+
+        Args:
+            low: Lower bound (inclusive, must be >= 1)
+            high: Upper bound (inclusive, must be >= low)
+
+        Returns:
+            Random integer in [low, high]
+
+        Raises:
+            ValueError: If low < 1 or low > high
+        """
+        if low < 1:
+            raise ValueError(f"Lower bound ({low}) must be >= 1")
+        if low > high:
+            raise ValueError(f"Lower bound ({low}) must be <= upper bound ({high})")
+        return self._python_rng.randint(low, high)
+
     def expovariate(self, lambd: float) -> float:
         """Generate exponentially distributed random number.
 

@@ -25,6 +25,7 @@ from aiperf.common.models.dataset_models import (
     TurnMetadata,
     Video,
 )
+from aiperf.common.models.engine_telemetry_models import EngineIterationStats
 from aiperf.common.models.error_models import (
     ErrorDetails,
     ErrorDetailsCount,
@@ -164,6 +165,7 @@ __all__ = [
     "EmbeddingResponseData",
     "EndpointData",
     "EndpointInfo",
+    "EngineIterationStats",
     "ErrorDetails",
     "ErrorDetailsCount",
     "ExitErrorInfo",

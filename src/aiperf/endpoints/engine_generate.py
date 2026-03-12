@@ -59,6 +59,11 @@ class EngineGenerateEndpoint(ChatEndpoint):
             "stream": model_endpoint.endpoint.streaming,
         }
 
+        # Include pre-tokenized input IDs when available (from last turn's text)
+        last_turn = turns[-1]
+        if last_turn.texts and last_turn.texts[-1].token_ids is not None:
+            payload["input_ids"] = last_turn.texts[-1].token_ids
+
         self.trace(lambda: f"Formatted engine generate payload: {payload}")
         return payload
 
@@ -102,6 +107,12 @@ class EngineGenerateEndpoint(ChatEndpoint):
         if not isinstance(response, InEngineResponse):
             return super().parse_response(response)
 
+        metadata: dict[str, Any] = {}
+        if response.decode_iterations is not None:
+            metadata["decode_iterations"] = response.decode_iterations
+        if response.max_draft_len is not None:
+            metadata["max_draft_len"] = response.max_draft_len
+
         return ParsedResponse(
             perf_ns=response.perf_ns,
             data=TextResponseData(text=response.text),
@@ -112,6 +123,7 @@ class EngineGenerateEndpoint(ChatEndpoint):
                     "total_tokens": response.input_tokens + response.output_tokens,
                 }
             ),
+            metadata=metadata,
         )
 
 

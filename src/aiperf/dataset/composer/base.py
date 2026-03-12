@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
-from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.enums import ModelSelectionStrategy, SequenceLengthDistributionType
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.tokenizer import Tokenizer
@@ -88,11 +88,24 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             return self._turn_sequence_cache[turn_id]
 
         if self._seq_distribution is None:
-            seq_lengths = (
-                self.config.input.prompt.input_tokens.mean,
-                self.config.input.prompt.output_tokens.mean
-                or max(128, self.config.input.prompt.input_tokens.mean // 2),
-            )
+            input_cfg = self.config.input.prompt.input_tokens
+            output_cfg = self.config.input.prompt.output_tokens
+
+            if input_cfg.distribution == SequenceLengthDistributionType.UNIFORM:
+                isl = self._max_tokens_rng.sample_positive_uniform_integer(
+                    input_cfg.min, input_cfg.max
+                )
+            else:
+                isl = input_cfg.mean
+
+            if output_cfg.distribution == SequenceLengthDistributionType.UNIFORM:
+                osl = self._max_tokens_rng.sample_positive_uniform_integer(
+                    output_cfg.min, output_cfg.max
+                )
+            else:
+                osl = output_cfg.mean or max(128, input_cfg.mean // 2)
+
+            seq_lengths = (isl, osl)
         else:
             seq_lengths = self._seq_distribution.sample()
 
@@ -120,7 +133,14 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             turn.max_tokens = osl
         else:
             output_tokens_config = self.config.input.prompt.output_tokens
-            if output_tokens_config.mean is not None:
+            if (
+                output_tokens_config.distribution
+                == SequenceLengthDistributionType.UNIFORM
+            ):
+                turn.max_tokens = self._max_tokens_rng.sample_positive_uniform_integer(
+                    output_tokens_config.min, output_tokens_config.max
+                )
+            elif output_tokens_config.mean is not None:
                 stddev = output_tokens_config.stddev
                 turn.max_tokens = self._max_tokens_rng.sample_positive_normal_integer(
                     output_tokens_config.mean, stddev

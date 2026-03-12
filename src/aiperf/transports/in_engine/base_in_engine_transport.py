@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import multiprocessing
 import time
 from abc import abstractmethod
@@ -12,6 +13,7 @@ from urllib.parse import urlparse
 
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.models import (
+    EngineIterationStats,
     ErrorDetails,
     InEngineResponse,
     RequestInfo,
@@ -33,12 +35,27 @@ class BaseInEngineTransport(BaseTransport):
     ``_init_engine``, ``_start_engine``, ``_stop_engine``, and ``_generate``.
     """
 
+    _WARMUP_SEED_TEXT: str = "The quick brown fox jumps over the lazy dog. "
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._model_path: str = ""
         self._engine: Any = None  # Set by subclass in _start_engine
         self._first_token_perf_ns: int | None = None
         self._warmup_iterations: int = 0
+        self._warmup_input_tokens: int = 128
+        self._warmup_output_tokens: int = 4
+        self._preserve_token_ids: bool = False
+        self._output_token_ids: list[int] | None = None
+        self._decode_iterations: int | None = None
+        self._max_draft_len: int = 0
+        # Concurrency control
+        self._concurrency_semaphore: asyncio.Semaphore | None = None
+        # Telemetry
+        self._telemetry_enabled: bool = False
+        self._telemetry_interval_ms: int = 500
+        self._telemetry_log: list[EngineIterationStats] = []
+        self._telemetry_task: asyncio.Task[None] | None = None
 
     # ---- BaseTransport interface -----------------------------------------------
 
@@ -79,12 +96,14 @@ class BaseInEngineTransport(BaseTransport):
             await self._start_engine()
         finally:
             current_process.daemon = was_daemon
+        self._start_telemetry_loop()
         self.info("Engine loaded and ready for inference")
 
     @on_stop
     async def _on_stop_engine(self) -> None:
         """Stop engine during STOPPING phase."""
         self.info("Shutting down engine")
+        await self._stop_telemetry_loop()
         await self._stop_engine()
         self._engine = None
         self.info("Engine shutdown complete")
@@ -118,16 +137,35 @@ class BaseInEngineTransport(BaseTransport):
             messages = payload["messages"]
             sampling_params = payload.get("sampling_params", {})
             request_id = request_info.x_request_id
+            input_ids = payload.get("input_ids")
 
-            text, input_tokens, output_tokens, finish_reason = await self._generate(
+            generate_coro = self._generate(
                 messages=messages,
                 sampling_params=sampling_params,
                 request_id=request_id,
                 first_token_callback=first_token_callback,
+                input_ids=input_ids,
             )
+            if self._concurrency_semaphore is not None:
+                async with self._concurrency_semaphore:
+                    (
+                        text,
+                        input_tokens,
+                        output_tokens,
+                        finish_reason,
+                    ) = await generate_coro
+            else:
+                text, input_tokens, output_tokens, finish_reason = await generate_coro
 
             first_token_perf_ns = self._first_token_perf_ns
             self._first_token_perf_ns = None
+
+            # Capture token IDs and speculative decoding metadata (set by subclass in _generate)
+            output_token_ids = self._output_token_ids
+            self._output_token_ids = None
+            decode_iterations = self._decode_iterations
+            self._decode_iterations = None
+            max_draft_len = self._max_draft_len if self._max_draft_len > 0 else None
 
             now = time.perf_counter_ns()
             responses: list[InEngineResponse] = []
@@ -153,6 +191,9 @@ class BaseInEngineTransport(BaseTransport):
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     finish_reason=finish_reason,
+                    output_token_ids=output_token_ids,
+                    decode_iterations=decode_iterations,
+                    max_draft_len=max_draft_len,
                 )
             )
 
@@ -240,16 +281,115 @@ class BaseInEngineTransport(BaseTransport):
             return dict(self.model_endpoint.endpoint.engine_params)
         return {}
 
-    def _pop_warmup_iterations(self, params: dict[str, Any]) -> None:
-        """Extract ``warmup_iterations`` from engine params and store on self.
+    def _pop_warmup_config(self, params: dict[str, Any]) -> None:
+        """Extract warmup, telemetry, and concurrency parameters from engine params.
 
-        Pops the key from *params* so it is not passed to the engine constructor.
+        Pops ``concurrency``, ``warmup_iterations``, ``warmup_input_tokens``,
+        ``warmup_output_tokens``, ``telemetry``, and ``telemetry_interval_ms``
+        from *params* so they are not passed to the engine constructor.
+
+        When ``concurrency`` is a positive integer, creates an
+        ``asyncio.Semaphore`` that limits how many concurrent ``_generate()``
+        calls can run simultaneously (similar to trtllm-bench's LlmManager).
 
         Args:
-            params: Mutable dict of engine params (key is consumed if present)
+            params: Mutable dict of engine params (keys are consumed if present)
         """
+        if "concurrency" in params:
+            concurrency = int(params.pop("concurrency"))
+            if concurrency > 0:
+                self._concurrency_semaphore = asyncio.Semaphore(concurrency)
         if "warmup_iterations" in params:
             self._warmup_iterations = int(params.pop("warmup_iterations"))
+        if "warmup_input_tokens" in params:
+            self._warmup_input_tokens = int(params.pop("warmup_input_tokens"))
+        if "warmup_output_tokens" in params:
+            self._warmup_output_tokens = int(params.pop("warmup_output_tokens"))
+        if "preserve_token_ids" in params:
+            val = params.pop("preserve_token_ids")
+            self._preserve_token_ids = (
+                val
+                if isinstance(val, bool)
+                else str(val).lower() in ("true", "1", "yes")
+            )
+        if "telemetry" in params:
+            val = params.pop("telemetry")
+            self._telemetry_enabled = (
+                val
+                if isinstance(val, bool)
+                else str(val).lower() in ("true", "1", "yes")
+            )
+        if "telemetry_interval_ms" in params:
+            self._telemetry_interval_ms = int(params.pop("telemetry_interval_ms"))
+
+    # ---- Telemetry infrastructure ----------------------------------------------
+
+    async def _get_engine_stats(self) -> dict[str, Any] | None:
+        """Return engine-specific stats for the current iteration.
+
+        Override in subclasses to poll the engine's stats API. The returned
+        dict is stored in ``EngineIterationStats.raw`` and its recognised
+        keys (``batch_size``, ``num_tokens``, ``queue_depth``) are promoted
+        to top-level fields.
+
+        Returns:
+            Dict of engine stats, or None when stats are unavailable.
+        """
+        return None
+
+    def _start_telemetry_loop(self) -> None:
+        """Start the background telemetry polling task if telemetry is enabled."""
+        if not self._telemetry_enabled:
+            return
+        self.info(
+            f"Starting engine telemetry (interval={self._telemetry_interval_ms}ms)"
+        )
+        self._telemetry_task = asyncio.create_task(self._telemetry_loop())
+
+    async def _stop_telemetry_loop(self) -> None:
+        """Cancel and await the telemetry task if it is running."""
+        if self._telemetry_task is None:
+            return
+        self._telemetry_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._telemetry_task
+        self._telemetry_task = None
+        self.debug(
+            lambda: f"Telemetry stopped, {len(self._telemetry_log)} entries collected"
+        )
+
+    async def _telemetry_loop(self) -> None:
+        """Poll ``_get_engine_stats`` at the configured interval.
+
+        Appends an ``EngineIterationStats`` entry for each non-None response.
+        Runs until cancelled.
+        """
+        interval_s = self._telemetry_interval_ms / 1000.0
+        while True:
+            try:
+                raw = await self._get_engine_stats()
+                if raw is not None:
+                    entry = EngineIterationStats(
+                        timestamp_ns=time.time_ns(),
+                        batch_size=raw.get("batch_size"),
+                        num_tokens=raw.get("num_tokens"),
+                        queue_depth=raw.get("queue_depth"),
+                        raw=raw,
+                    )
+                    self._telemetry_log.append(entry)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                self.debug(lambda e=e: f"Telemetry poll error: {e!r}")
+            await asyncio.sleep(interval_s)
+
+    def get_telemetry_log(self) -> list[EngineIterationStats]:
+        """Return the accumulated telemetry entries for export.
+
+        Returns:
+            List of ``EngineIterationStats`` collected during the run.
+        """
+        return list(self._telemetry_log)
 
     # ---- Prompt formatting -----------------------------------------------------
 
@@ -297,6 +437,90 @@ class BaseInEngineTransport(BaseTransport):
         parts.append("<|assistant|>\n")
         return "\n".join(parts)
 
+    # ---- Warmup infrastructure --------------------------------------------------
+
+    def _generate_warmup_prompt(self, target_tokens: int) -> str:
+        """Generate a warmup prompt string targeting *target_tokens* input tokens.
+
+        Uses the engine tokenizer (via ``_get_tokenizer()``) to encode a seed
+        text, repeats the token IDs to reach the target length, then decodes
+        back to a string. Falls back to repeating the seed text when no
+        tokenizer is available.
+
+        Args:
+            target_tokens: Desired number of input tokens for the warmup prompt.
+
+        Returns:
+            A prompt string approximately *target_tokens* long.
+        """
+        seed = self._WARMUP_SEED_TEXT
+        tokenizer = self._get_tokenizer()
+
+        if (
+            tokenizer is not None
+            and hasattr(tokenizer, "encode")
+            and hasattr(tokenizer, "decode")
+        ):
+            token_ids = tokenizer.encode(seed)
+            if not token_ids:
+                return seed * max(1, target_tokens // len(seed.split()))
+
+            # Repeat token IDs to reach the target length
+            repeated: list[int] = []
+            while len(repeated) < target_tokens:
+                repeated.extend(token_ids)
+            repeated = repeated[:target_tokens]
+            return tokenizer.decode(repeated)
+
+        # Fallback: repeat seed text (rough approximation: ~1 token per word)
+        word_count = len(seed.split())
+        repeats = max(1, target_tokens // word_count)
+        return seed * repeats
+
+    async def _run_warmup(self) -> None:
+        """Run warmup iterations using realistic prompts matching endpoint config.
+
+        Generates a prompt with ``_warmup_input_tokens`` tokens and calls
+        ``_warmup_single`` for ``_warmup_iterations`` iterations, using the
+        endpoint's streaming setting to exercise the same code path as
+        real inference.
+        """
+        if self._warmup_iterations <= 0:
+            return
+
+        streaming = self.model_endpoint.endpoint.streaming
+        prompt = self._generate_warmup_prompt(self._warmup_input_tokens)
+        max_tokens = self._warmup_output_tokens
+
+        self.info(
+            f"Running {self._warmup_iterations} warmup iterations "
+            f"(input≈{self._warmup_input_tokens}tok, output={max_tokens}tok, "
+            f"streaming={streaming})"
+        )
+
+        for i in range(self._warmup_iterations):
+            await self._warmup_single(prompt, max_tokens, streaming=streaming)
+            self.debug(
+                lambda i=i: f"Warmup iteration {i + 1}/{self._warmup_iterations} complete"
+            )
+
+    @abstractmethod
+    async def _warmup_single(
+        self, prompt: str, max_tokens: int, *, streaming: bool
+    ) -> None:
+        """Run a single warmup inference call.
+
+        Subclasses implement this with engine-specific generation logic,
+        using the streaming path when *streaming* is True to exercise
+        the same code path as real requests.
+
+        Args:
+            prompt: Warmup prompt text.
+            max_tokens: Maximum tokens to generate.
+            streaming: Whether to use the streaming code path.
+        """
+        ...
+
     # ---- Abstract methods for subclasses ---------------------------------------
 
     @abstractmethod
@@ -334,6 +558,7 @@ class BaseInEngineTransport(BaseTransport):
         sampling_params: Any,
         request_id: str,
         first_token_callback: FirstTokenCallback | None = None,
+        input_ids: list[int] | None = None,
     ) -> tuple[str, int, int, str]:
         """Run generation on the engine.
 
@@ -342,6 +567,7 @@ class BaseInEngineTransport(BaseTransport):
             sampling_params: Engine-native sampling params (built by the endpoint)
             request_id: Unique request identifier
             first_token_callback: Optional TTFT callback for streaming
+            input_ids: Pre-tokenized input IDs (bypasses chat template when provided)
 
         Returns:
             Tuple of (generated_text, input_token_count, output_token_count, finish_reason)

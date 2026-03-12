@@ -113,21 +113,37 @@ class VLLMTransport(BaseInEngineTransport):
         ):
             pass
 
-        if self._warmup_iterations > 0:
-            self.info(f"Running {self._warmup_iterations} warmup iterations...")
-            for i in range(self._warmup_iterations):
-                async for _ in self._engine.generate(
-                    prompt="warmup",
-                    sampling_params=warmup_params,
-                    request_id=f"warmup-{i}",
-                ):
-                    pass
+        await self._run_warmup()
 
     async def _stop_engine(self) -> None:
         """Shutdown vLLM async engine and free GPU memory."""
         if self._engine is not None:
             self._engine.shutdown()
             self._engine = None
+
+    async def _warmup_single(
+        self, prompt: str, max_tokens: int, *, streaming: bool
+    ) -> None:
+        """Run a single vLLM warmup call matching the endpoint's streaming mode.
+
+        Args:
+            prompt: Warmup prompt text.
+            max_tokens: Maximum tokens to generate.
+            streaming: Use DELTA output kind when True, FINAL_ONLY when False.
+        """
+        from vllm import SamplingParams
+        from vllm.sampling_params import RequestOutputKind
+
+        output_kind = (
+            RequestOutputKind.DELTA if streaming else RequestOutputKind.FINAL_ONLY
+        )
+        params = SamplingParams(max_tokens=max_tokens, output_kind=output_kind)
+        async for _ in self._engine.generate(
+            prompt=prompt,
+            sampling_params=params,
+            request_id=f"warmup-{id(prompt)}",
+        ):
+            pass
 
     async def _generate(
         self,
@@ -136,6 +152,7 @@ class VLLMTransport(BaseInEngineTransport):
         sampling_params: Any,
         request_id: str,
         first_token_callback: FirstTokenCallback | None = None,
+        input_ids: list[int] | None = None,
     ) -> tuple[str, int, int, str]:
         """Generate a response using vLLM's async engine.
 
@@ -147,6 +164,7 @@ class VLLMTransport(BaseInEngineTransport):
             sampling_params: `vllm.SamplingParams` instance (built by endpoint)
             request_id: Unique request identifier
             first_token_callback: Optional TTFT callback for streaming
+            input_ids: Pre-tokenized input IDs (bypasses chat template when provided)
 
         Returns:
             Tuple of (generated_text, input_token_count, output_token_count, finish_reason)
@@ -154,7 +172,11 @@ class VLLMTransport(BaseInEngineTransport):
         from vllm import SamplingParams
         from vllm.sampling_params import RequestOutputKind
 
-        prompt = self._messages_to_prompt(messages)
+        # Pre-tokenized path: pass token IDs directly via prompt dict
+        if input_ids is not None:
+            prompt: str | dict[str, Any] = {"prompt_token_ids": input_ids}
+        else:
+            prompt = self._messages_to_prompt(messages)
         streaming = self.model_endpoint.endpoint.streaming
 
         if streaming:
@@ -168,7 +190,7 @@ class VLLMTransport(BaseInEngineTransport):
 
     async def _generate_final_only(
         self,
-        prompt: str,
+        prompt: str | dict[str, Any],
         sampling_params: Any,
         request_id: str,
         request_output_kind: Any,
@@ -197,6 +219,8 @@ class VLLMTransport(BaseInEngineTransport):
             if completion.finish_reason is not None
             else "stop"
         )
+        if self._preserve_token_ids:
+            self._output_token_ids = list(completion.token_ids)
         return (
             completion.text,
             len(prompt_token_ids),
@@ -206,7 +230,7 @@ class VLLMTransport(BaseInEngineTransport):
 
     async def _generate_streaming(
         self,
-        prompt: str,
+        prompt: str | dict[str, Any],
         sampling_params: Any,
         request_id: str,
         request_output_kind: Any,
@@ -249,6 +273,9 @@ class VLLMTransport(BaseInEngineTransport):
         if is_first_delta:
             raise RuntimeError(f"vLLM returned no output for request {request_id}")
 
+        if self._preserve_token_ids:
+            self._output_token_ids = total_output_token_ids
+
         return (
             "".join(text_parts),
             len(prompt_token_ids),
@@ -275,7 +302,7 @@ class VLLMTransport(BaseInEngineTransport):
             Dict of kwargs suitable for `vllm.LLM(model=..., **kwargs)`
         """
         params = self._get_raw_engine_params()
-        self._pop_warmup_iterations(params)
+        self._pop_warmup_config(params)
         kwargs: dict[str, Any] = {}
 
         for src_key, dst_key in _INT_ENGINE_PARAMS.items():

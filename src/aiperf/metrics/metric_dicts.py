@@ -185,6 +185,22 @@ class MetricArray(Generic[MetricValueTypeVarT]):
         """Return number of elements."""
         return len(self._array)
 
+    def __iter__(self):
+        """Iterate over the array values."""
+        return iter(self.data.tolist())
+
+    def __getitem__(self, index: int) -> MetricValueTypeVarT:
+        """Support subscript access (e.g. array[0])."""
+        return self.data[index]
+
+    def __eq__(self, other: object) -> bool:
+        """Compare with another MetricArray or list."""
+        if isinstance(other, MetricArray):
+            return np.array_equal(self.data, other.data)
+        if isinstance(other, list):
+            return self.data.tolist() == other
+        return NotImplemented
+
     def to_result(self, tag: MetricTagT, header: str, unit: str) -> MetricResult:
         """Compute metric stats with zero-copy"""
 

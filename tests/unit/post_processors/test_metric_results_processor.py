@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.config import UserConfig
+from aiperf.common.config import InputConfig, UserConfig
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
@@ -14,6 +14,7 @@ from aiperf.metrics.types.credit_drop_latency_metric import CreditDropLatencyMet
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
+from aiperf.metrics.types.world_size_metric import WorldSizeMetric
 from aiperf.post_processors.metric_results_processor import MetricResultsProcessor
 from tests.unit.post_processors.conftest import create_metric_records_message
 
@@ -421,3 +422,145 @@ class TestShouldIncludeInSummary:
             assert (
                 processor._should_include_in_summary(dual_flag_metric_cls.tag) is False
             )
+
+
+# ============================================================
+# Pre-Seed & Skip Logic Tests
+# ============================================================
+
+
+class TestMetricResultsProcessorPreSeed:
+    """Verify world_size pre-seeding and derived metric skip logic."""
+
+    @pytest.mark.asyncio
+    async def test_update_derived_metrics_pre_seeds_world_size(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """world_size is injected into results before derive loop runs."""
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._instances_map[WorldSizeMetric.tag] = WorldSizeMetric()
+        processor.derive_funcs = {}
+
+        await processor.update_derived_metrics()
+
+        assert WorldSizeMetric.tag in processor._results
+        assert processor._results[WorldSizeMetric.tag] == 1  # default
+
+    @pytest.mark.asyncio
+    async def test_update_derived_metrics_pre_seeds_custom_world_size(
+        self, mock_metric_registry: Mock
+    ) -> None:
+        """world_size from config (e.g., --world-size 4) is pre-seeded correctly."""
+        from aiperf.common.config import EndpointConfig
+
+        config = UserConfig(
+            endpoint=EndpointConfig(
+                model_names=["test-model"],
+                type="completions",
+                streaming=False,
+            ),
+            input=InputConfig(world_size=4),
+        )
+        processor = MetricResultsProcessor(config)
+        processor._instances_map[WorldSizeMetric.tag] = WorldSizeMetric()
+        processor.derive_funcs = {}
+
+        await processor.update_derived_metrics()
+
+        assert processor._results[WorldSizeMetric.tag] == 4
+
+    @pytest.mark.asyncio
+    async def test_pre_seeded_world_size_not_overwritten_by_derive_func(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """If world_size tag is already in results (pre-seeded), the derive func is skipped."""
+
+        # Create a derive_func for world_size that would return a different value
+        def world_size_derive(results_dict: MetricResultsDict) -> int:
+            return 999  # This should NOT be used
+
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._instances_map[WorldSizeMetric.tag] = WorldSizeMetric()
+        processor.derive_funcs = {WorldSizeMetric.tag: world_size_derive}
+
+        await processor.update_derived_metrics()
+
+        # world_size should be the pre-seeded value (1), not 999
+        assert processor._results[WorldSizeMetric.tag] == 1
+
+    @pytest.mark.asyncio
+    async def test_pre_seeded_tag_skipped_other_derived_still_computed(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Pre-seeded tags are skipped, but other derived metrics still run."""
+        call_count = 0
+
+        def throughput_derive(results_dict: MetricResultsDict) -> float:
+            nonlocal call_count
+            call_count += 1
+            return 42.0
+
+        def world_size_derive(results_dict: MetricResultsDict) -> int:
+            return 999  # Should be skipped
+
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._instances_map[WorldSizeMetric.tag] = WorldSizeMetric()
+        processor.derive_funcs = {
+            WorldSizeMetric.tag: world_size_derive,
+            RequestThroughputMetric.tag: throughput_derive,
+        }
+
+        await processor.update_derived_metrics()
+
+        # world_size pre-seeded, NOT overwritten
+        assert processor._results[WorldSizeMetric.tag] == 1
+        # throughput was computed normally
+        assert processor._results[RequestThroughputMetric.tag] == 42.0
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_world_size_available_to_downstream_derived_metrics(
+        self, mock_metric_registry: Mock, mock_user_config: UserConfig
+    ) -> None:
+        """Derived metrics that depend on world_size can read it from results."""
+        captured_world_size = None
+
+        def per_gpu_derive(results_dict: MetricResultsDict) -> float:
+            nonlocal captured_world_size
+            captured_world_size = results_dict.get(WorldSizeMetric.tag)
+            return 500.0
+
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._instances_map[WorldSizeMetric.tag] = WorldSizeMetric()
+        processor.derive_funcs = {"per_gpu_output_token_throughput": per_gpu_derive}
+
+        await processor.update_derived_metrics()
+
+        # The derive func should have seen world_size=1 in the results
+        assert captured_world_size == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "world_size",
+        [1, 2, 4, 8],
+    )  # fmt: skip
+    async def test_full_metrics_includes_pre_seeded_world_size(
+        self,
+        mock_metric_registry: Mock,
+        mock_user_config: UserConfig,
+        world_size: int,
+    ) -> None:
+        """full_metrics() includes the pre-seeded world_size value.
+
+        WorldSizeMetric is INTERNAL so it's filtered from summarize() output,
+        but it must still be computed for downstream derived metrics.
+        """
+        processor = MetricResultsProcessor(mock_user_config)
+        processor._world_size = world_size
+        processor.derive_funcs = {}
+        processor._instances_map[WorldSizeMetric.tag] = WorldSizeMetric()
+
+        results = await processor.full_metrics()
+
+        assert WorldSizeMetric.tag in results
+        assert results[WorldSizeMetric.tag] == world_size

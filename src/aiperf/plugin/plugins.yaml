@@ -182,6 +182,13 @@ service_manager:
       as a separate process with ZMQ IPC communication for high-performance local
       execution.
 
+  in_engine:
+    class: aiperf.controller.in_process_service_manager:InProcessServiceManager
+    description: |
+      In-engine service manager for in-process benchmarking. Extends multiprocessing
+      manager but skips Worker spawning since the Worker is owned by
+      InProcessCreditRouter inside TimingManager's process.
+
 # =============================================================================
 # Endpoints
 # =============================================================================

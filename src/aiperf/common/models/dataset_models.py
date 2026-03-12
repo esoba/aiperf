@@ -84,6 +84,11 @@ class Text(Media):
 
     media_type: ClassVar[MediaTypeT] = MediaType.TEXT
 
+    token_ids: list[int] | None = Field(
+        default=None,
+        description="Pre-tokenized input IDs for direct engine consumption.",
+    )
+
 
 class Image(Media):
     """Media that contains image data."""
@@ -187,7 +192,10 @@ class Turn(AIPerfBaseModel):
             if self.raw_messages is not None
             else None,
             raw_tools=list(self.raw_tools) if self.raw_tools is not None else None,
-            texts=[Text(name=t.name, contents=list(t.contents)) for t in self.texts],
+            texts=[
+                Text(name=t.name, contents=list(t.contents), token_ids=t.token_ids)
+                for t in self.texts
+            ],
             images=[
                 Image(
                     name=img.name,

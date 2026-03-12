@@ -15,6 +15,7 @@ from aiperf.common.config.config_defaults import (
     PromptDefaults,
 )
 from aiperf.common.config.groups import Groups
+from aiperf.common.enums import SequenceLengthDistributionType
 
 
 class InputTokensConfig(BaseConfig):
@@ -23,6 +24,68 @@ class InputTokensConfig(BaseConfig):
     """
 
     _CLI_GROUP = Groups.INPUT_SEQUENCE_LENGTH
+
+    @model_validator(mode="after")
+    def validate_uniform_distribution(self) -> Self:
+        """Validate that min and max are set when distribution is uniform."""
+        if self.distribution == SequenceLengthDistributionType.UNIFORM:
+            if self.min is None or self.max is None:
+                raise ValueError(
+                    "Both 'min' and 'max' must be set when distribution is 'uniform'."
+                )
+            if self.min > self.max:
+                raise ValueError(f"'min' ({self.min}) must be <= 'max' ({self.max}).")
+        return self
+
+    distribution: Annotated[
+        SequenceLengthDistributionType,
+        Field(
+            description="Distribution type for sampling input sequence lengths. "
+            "'normal' uses a Gaussian distribution around the mean with stddev. "
+            "'uniform' samples uniformly between min and max.",
+        ),
+        CLIParameter(
+            name=(
+                "--prompt-input-tokens-distribution",
+                "--isl-distribution",
+            ),
+            group=_CLI_GROUP,
+        ),
+    ] = SequenceLengthDistributionType.NORMAL
+
+    min: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Minimum number of input tokens when using uniform distribution. "
+            "Required when distribution is 'uniform'.",
+        ),
+        CLIParameter(
+            name=(
+                "--prompt-input-tokens-min",
+                "--isl-min",
+            ),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    max: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Maximum number of input tokens when using uniform distribution. "
+            "Required when distribution is 'uniform'.",
+        ),
+        CLIParameter(
+            name=(
+                "--prompt-input-tokens-max",
+                "--isl-max",
+            ),
+            group=_CLI_GROUP,
+        ),
+    ] = None
 
     mean: Annotated[
         int,
@@ -86,6 +149,68 @@ class OutputTokensConfig(BaseConfig):
     """
 
     _CLI_GROUP = Groups.OUTPUT_SEQUENCE_LENGTH
+
+    @model_validator(mode="after")
+    def validate_uniform_distribution(self) -> Self:
+        """Validate that min and max are set when distribution is uniform."""
+        if self.distribution == SequenceLengthDistributionType.UNIFORM:
+            if self.min is None or self.max is None:
+                raise ValueError(
+                    "Both 'min' and 'max' must be set when distribution is 'uniform'."
+                )
+            if self.min > self.max:
+                raise ValueError(f"'min' ({self.min}) must be <= 'max' ({self.max}).")
+        return self
+
+    distribution: Annotated[
+        SequenceLengthDistributionType,
+        Field(
+            description="Distribution type for sampling output sequence lengths. "
+            "'normal' uses a Gaussian distribution around the mean with stddev. "
+            "'uniform' samples uniformly between min and max.",
+        ),
+        CLIParameter(
+            name=(
+                "--prompt-output-tokens-distribution",
+                "--osl-distribution",
+            ),
+            group=_CLI_GROUP,
+        ),
+    ] = SequenceLengthDistributionType.NORMAL
+
+    min: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Minimum number of output tokens when using uniform distribution. "
+            "Required when distribution is 'uniform'.",
+        ),
+        CLIParameter(
+            name=(
+                "--prompt-output-tokens-min",
+                "--osl-min",
+            ),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    max: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Maximum number of output tokens when using uniform distribution. "
+            "Required when distribution is 'uniform'.",
+        ),
+        CLIParameter(
+            name=(
+                "--prompt-output-tokens-max",
+                "--osl-max",
+            ),
+            group=_CLI_GROUP,
+        ),
+    ] = None
 
     mean: Annotated[
         int | None,

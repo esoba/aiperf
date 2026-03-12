@@ -567,6 +567,29 @@ class UserConfig(BaseConfig):
 
         return self
 
+    _IN_ENGINE_URL_SCHEMES = ("vllm://", "sglang://", "trtllm://")
+
+    @model_validator(mode="after")
+    def _auto_enable_pynvml_for_in_engine(self) -> Self:
+        """Auto-enable pynvml GPU telemetry for in-engine transports.
+
+        In-engine transports (vllm://, sglang://, trtllm://) run the model
+        locally, so there is no DCGM endpoint to query. Automatically switch
+        to pynvml unless the user explicitly configured GPU telemetry.
+        """
+        if self.no_gpu_telemetry:
+            return self
+        if "gpu_telemetry" in self.model_fields_set:
+            return self
+        if any(
+            url.startswith(self._IN_ENGINE_URL_SCHEMES) for url in self.endpoint.urls
+        ):
+            self._gpu_telemetry_collector_type = GPUTelemetryCollectorType.PYNVML
+            _logger.info(
+                "In-engine transport detected — automatically using pynvml for GPU telemetry"
+            )
+        return self
+
     @property
     def gpu_telemetry_mode(self) -> GPUTelemetryMode:
         """Get the GPU telemetry display mode (parsed from gpu_telemetry list)."""

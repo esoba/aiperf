@@ -195,6 +195,8 @@ class GenericMetricUnit(BaseMetricUnit):
     RATIO = _unit("ratio")
     REQUESTS = _unit("requests")
     TOKENS = _unit("tokens")
+    TOKENS_PER_JOULE = _unit("tokens/J")
+    TOKENS_PER_SECOND_PER_WATT = _unit("tokens/sec/W")
     USER = _unit("user")
     USERS = _unit("users")
     VIDEO = _unit("video")
@@ -711,6 +713,9 @@ class MetricFlags(Flag):
 
     PRODUCES_VIDEO_ONLY = 1 << 16
     """Metrics that are only applicable when profiling an endpoint that produces video output."""
+
+    IN_ENGINE_SPEC_DECODE = 1 << 17
+    """Metrics that are only applicable when speculative decoding metadata is available (TRT-LLM in-engine transport)."""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""

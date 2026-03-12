@@ -354,6 +354,32 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.GOODPUT
 
+    pre_tokenized: Annotated[
+        bool,
+        Field(
+            description="Send pre-tokenized token IDs directly to in-engine transports (vllm://, sglang://, trtllm://), "
+            "bypassing chat template application and text decoding. Reduces overhead for synthetic benchmarks "
+            "by skipping the encode-decode-re-encode round-trip. Only effective with in-engine transports.",
+        ),
+        CLIParameter(
+            name=("--pre-tokenized",),
+            group=_CLI_GROUP,
+        ),
+    ] = False
+
+    world_size: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Number of GPUs (world size) used by the inference engine. Used to compute per-GPU metrics "
+            "such as per-GPU output token throughput. Defaults to 1 (single GPU).",
+        ),
+        CLIParameter(
+            name=("--world-size",),
+            group=_CLI_GROUP,
+        ),
+    ] = 1
+
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()
     video: VideoConfig = VideoConfig()

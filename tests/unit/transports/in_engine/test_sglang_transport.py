@@ -354,6 +354,98 @@ class TestSGLangWarmupIterations:
 
 
 # ============================================================
+# _warmup_single (SGLang Engine)
+# ============================================================
+
+
+class TestSGLangWarmupSingle:
+    """Verify _warmup_single calls SGLang engine in correct streaming mode."""
+
+    @pytest.mark.asyncio
+    async def test_warmup_non_streaming_calls_async_generate(self) -> None:
+        """streaming=False calls async_generate without stream=True."""
+        mock_sglang = _build_mock_sglang_module()
+        with patch.dict(sys.modules, {"sglang": mock_sglang}):
+            from aiperf.transports.in_engine.sglang_transport import SGLangTransport
+
+            endpoint = _make_sglang_endpoint()
+            transport = SGLangTransport(model_endpoint=endpoint)
+
+            mock_engine = MagicMock()
+            mock_engine.async_generate = AsyncMock(return_value={"text": "warm"})
+            transport._engine = mock_engine
+
+            await transport._warmup_single("test prompt", 4, streaming=False)
+
+            mock_engine.async_generate.assert_awaited_once()
+            call_kwargs = mock_engine.async_generate.call_args[1]
+            assert "stream" not in call_kwargs
+            assert call_kwargs["sampling_params"]["max_new_tokens"] == 4
+
+    @pytest.mark.asyncio
+    async def test_warmup_streaming_calls_async_generate_with_stream(self) -> None:
+        """streaming=True calls async_generate with stream=True and iterates."""
+        mock_sglang = _build_mock_sglang_module()
+        with patch.dict(sys.modules, {"sglang": mock_sglang}):
+            from aiperf.transports.in_engine.sglang_transport import SGLangTransport
+
+            endpoint = _make_sglang_endpoint()
+            transport = SGLangTransport(model_endpoint=endpoint)
+
+            # async_generate with stream=True returns a coroutine that yields an async gen
+            async def mock_async_gen() -> Any:
+                yield {"text": "warm", "meta_info": {}}
+
+            mock_engine = MagicMock()
+            mock_engine.async_generate = AsyncMock(return_value=mock_async_gen())
+            transport._engine = mock_engine
+
+            await transport._warmup_single("test prompt", 4, streaming=True)
+
+            mock_engine.async_generate.assert_awaited_once()
+            call_kwargs = mock_engine.async_generate.call_args[1]
+            assert call_kwargs["stream"] is True
+
+    @pytest.mark.asyncio
+    async def test_warmup_single_passes_max_new_tokens(self) -> None:
+        """_warmup_single passes max_new_tokens in sampling_params."""
+        mock_sglang = _build_mock_sglang_module()
+        with patch.dict(sys.modules, {"sglang": mock_sglang}):
+            from aiperf.transports.in_engine.sglang_transport import SGLangTransport
+
+            endpoint = _make_sglang_endpoint()
+            transport = SGLangTransport(model_endpoint=endpoint)
+
+            mock_engine = MagicMock()
+            mock_engine.async_generate = AsyncMock(return_value={"text": "warm"})
+            transport._engine = mock_engine
+
+            await transport._warmup_single("test prompt", 32, streaming=False)
+
+            call_kwargs = mock_engine.async_generate.call_args[1]
+            assert call_kwargs["sampling_params"] == {"max_new_tokens": 32}
+
+    @pytest.mark.asyncio
+    async def test_warmup_single_passes_prompt_text(self) -> None:
+        """_warmup_single passes the prompt string to async_generate."""
+        mock_sglang = _build_mock_sglang_module()
+        with patch.dict(sys.modules, {"sglang": mock_sglang}):
+            from aiperf.transports.in_engine.sglang_transport import SGLangTransport
+
+            endpoint = _make_sglang_endpoint()
+            transport = SGLangTransport(model_endpoint=endpoint)
+
+            mock_engine = MagicMock()
+            mock_engine.async_generate = AsyncMock(return_value={"text": "warm"})
+            transport._engine = mock_engine
+
+            await transport._warmup_single("my warmup prompt", 4, streaming=False)
+
+            call_kwargs = mock_engine.async_generate.call_args[1]
+            assert call_kwargs["prompt"] == "my warmup prompt"
+
+
+# ============================================================
 # finish_reason Normalization
 # ============================================================
 
