@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Lightweight operator image for development/testing
+FROM python:3.13-slim-bookworm
+
+# Install build dependencies for numpy and other packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+WORKDIR /app
+
+# Copy lockfile and project files first for better caching
+COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY src/ ./src/
+
+# Use uv sync for faster dependency resolution (uses lockfile)
+RUN uv sync --active --no-dev
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+
+# Run kopf operator
+ENTRYPOINT ["kopf", "run", "-m", "aiperf.operator.main", "--verbose", "--all-namespaces"]

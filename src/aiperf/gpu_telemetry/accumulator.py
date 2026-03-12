@@ -102,8 +102,14 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
     @background_task(interval=None, immediate=True)
     async def _report_realtime_telemetry_metrics_task(self) -> None:
         """Report GPU telemetry metrics - sleeps when disabled, resumes on command."""
-        if self.service_config.ui_type != UIType.DASHBOARD:
+        if (
+            self.service_config.ui_type != UIType.DASHBOARD
+            and not self.service_config.api_port
+        ):
             return
+
+        if self.service_config.api_port:
+            self.user_config.gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
 
         while not self.stop_requested:
             if (

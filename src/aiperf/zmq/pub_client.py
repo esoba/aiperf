@@ -6,9 +6,9 @@ import asyncio
 import zmq.asyncio
 
 from aiperf.common.exceptions import CommunicationError
-from aiperf.common.messages import Message, TargetedServiceMessage
+from aiperf.common.messages import Message
 from aiperf.zmq.zmq_base_client import BaseZMQClient
-from aiperf.zmq.zmq_defaults import TOPIC_DELIMITER, TOPIC_END
+from aiperf.zmq.zmq_defaults import TOPIC_END
 
 
 class ZMQPubClient(BaseZMQClient):
@@ -73,11 +73,16 @@ class ZMQPubClient(BaseZMQClient):
         await self._check_initialized()
 
         try:
-            topic = self._determine_topic(message)
+            topic = f"{message.message_type}{TOPIC_END}"
             message_json_bytes = message.to_json_bytes()
 
-            # Publish message
-            self.trace(lambda: f"Publishing message {topic=} {message_json_bytes=}")
+            # Log important notifications at INFO level for debugging
+            if "notification" in message.message_type.lower():
+                self.info(
+                    f"PUB client {self.client_id} publishing {message.message_type} to topic: {topic}"
+                )
+            else:
+                self.trace(lambda: f"Publishing message {topic=} {message_json_bytes=}")
             await self.socket.send_multipart([topic.encode(), message_json_bytes])
 
         except (asyncio.CancelledError, zmq.ContextTerminated):
@@ -90,16 +95,3 @@ class ZMQPubClient(BaseZMQClient):
             raise CommunicationError(
                 f"Failed to publish message {message.message_type}: {e}",
             ) from e
-
-    def _determine_topic(self, message: Message) -> str:
-        """Determine the topic based on the message."""
-        # For targeted messages such as commands, we can set the topic to a specific service by id or type
-        # Note that target_service_id always takes precedence over target_service_type
-
-        # NOTE: Keep in mind that subscriptions in ZMQ are prefix based wildcards, so the unique portion has to come first.
-        if isinstance(message, TargetedServiceMessage):
-            if message.target_service_id:
-                return f"{message.message_type}{TOPIC_DELIMITER}{message.target_service_id}{TOPIC_END}"
-            if message.target_service_type:
-                return f"{message.message_type}{TOPIC_DELIMITER}{message.target_service_type}{TOPIC_END}"
-        return f"{message.message_type}{TOPIC_END}"

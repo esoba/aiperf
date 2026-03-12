@@ -61,17 +61,24 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def extract_response_data(self, record: RequestRecord) -> list[ParsedResponse]:
         """Extract parsed data from record.
 
+        Frees each raw response after parsing to prevent the full raw list and
+        the full parsed list from coexisting in memory (critical when a single
+        streaming request produces 100K+ SSE chunks).
+
         Args:
             record: Request record containing responses to parse
 
         Returns:
             List of successfully parsed responses
         """
-        return [
-            parsed
-            for response in record.responses
-            if (parsed := self.parse_response(response))
-        ]
+        parsed: list[ParsedResponse] = []
+        responses = record.responses
+        for i, response in enumerate(responses):
+            result = self.parse_response(response)
+            if result:
+                parsed.append(result)
+            responses[i] = None  # type: ignore[assignment]
+        return parsed
 
     @staticmethod
     def make_text_response_data(text: str | None) -> TextResponseData | None:

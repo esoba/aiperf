@@ -28,6 +28,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.mixins.health_check_mixin import HealthCheckMixin
+from aiperf.plugin.enums import ServiceType
 
 # Process-level registry of active health servers to prevent duplicate binds.
 # Maps (host, port) -> service_id that owns it. When multiple services run in
@@ -79,8 +80,14 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
 
     @on_init
     async def _health_server_start(self) -> None:
-        """Start health server if enabled via environment."""
-        if not Environment.SERVICE.HEALTH_ENABLED:
+        """Start health server if enabled via environment or CLI --health-port."""
+        service_type = getattr(self, "service_type", None)
+        if service_type == ServiceType.API:
+            self.debug("Health server is disabled for API service. Skipping start.")
+            return
+
+        cli_port = getattr(self, "_health_port", None)
+        if cli_port is None and not Environment.SERVICE.HEALTH_ENABLED:
             self.debug("Health server is disabled. Skipping start.")
             return
 
@@ -90,7 +97,7 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
             return
 
         host = Environment.SERVICE.HEALTH_HOST
-        port = Environment.SERVICE.HEALTH_PORT
+        port = cli_port or Environment.SERVICE.HEALTH_PORT
         bind_key = (host, port)
 
         # Check if another service already owns this port in this process
@@ -133,7 +140,7 @@ class HealthServerMixin(HealthCheckMixin, AIPerfLifecycleMixin):
 
         # Unregister from process-level registry
         bind_key = self._health_server_bind_key
-        if bind_key in _active_health_servers:
+        if bind_key and bind_key in _active_health_servers:
             del _active_health_servers[bind_key]
 
         health_server.close()

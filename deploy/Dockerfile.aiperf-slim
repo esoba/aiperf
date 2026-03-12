@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Slim aiperf image for development/testing (no ffmpeg)
+FROM python:3.13-slim-bookworm
+
+# Install build dependencies for numpy and other packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+WORKDIR /app
+
+# Layer 1: Install dependencies only (cached unless pyproject.toml/uv.lock change)
+COPY pyproject.toml uv.lock ./
+RUN uv sync --active --no-dev --no-install-project
+
+# Layer 2: Copy project metadata + source and install the project itself
+COPY README.md LICENSE ./
+COPY src/ ./src/
+RUN uv sync --active --no-dev
+
+# Create directories for IPC sockets and artifacts
+RUN mkdir -p /aiperf/ipc /results && chmod 777 /aiperf/ipc /results
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+
+# Default entrypoint for aiperf CLI
+ENTRYPOINT ["aiperf"]

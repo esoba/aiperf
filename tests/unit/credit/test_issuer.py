@@ -70,10 +70,7 @@ def mock_lifecycle():
     """Mock phase lifecycle."""
     mock = MagicMock()
     mock.time_left_in_seconds = MagicMock(return_value=None)
-    mock.phase_start_ns = 0
-    # CreditIssuer uses these to calculate issued_at_ns timestamps
-    mock.started_at_ns = time.time_ns()
-    mock.started_at_perf_ns = time.perf_counter_ns()
+    mock.clock.now_ns = MagicMock(side_effect=time.time_ns)
     return mock
 
 

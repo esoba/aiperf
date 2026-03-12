@@ -643,6 +643,7 @@ class TestAioHttpTransportCancellation:
         await transport.stop()
 
     @pytest.mark.asyncio
+    @pytest.mark.looptime
     async def test_send_request_cancellation_with_short_delay(
         self, model_endpoint_non_streaming
     ):
@@ -678,6 +679,7 @@ class TestAioHttpTransportCancellation:
         await transport.stop()
 
     @pytest.mark.asyncio
+    @pytest.mark.looptime
     async def test_send_request_cancellation_record_has_timing(
         self, model_endpoint_non_streaming
     ):
@@ -717,6 +719,7 @@ class TestAioHttpTransportCancellation:
         await transport.stop()
 
     @pytest.mark.asyncio
+    @pytest.mark.looptime
     async def test_cancellation_error_details(self, model_endpoint_non_streaming):
         """Test that cancellation error has correct details."""
         transport = AioHttpTransport(model_endpoint=model_endpoint_non_streaming)
@@ -729,7 +732,7 @@ class TestAioHttpTransportCancellation:
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_session_class.side_effect = capture_session
 
-            # Test with 200ms cancellation delay
+            # Test with 200ms cancellation delay (resolved instantly via looptime)
             cancel_after_ns = 200_000_000  # 200ms = 0.2 seconds
             request_info = create_request_info(
                 model_endpoint_non_streaming, cancel_after_ns=cancel_after_ns

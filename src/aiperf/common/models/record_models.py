@@ -50,7 +50,7 @@ class MetricResult(JsonMetricResult):
         default=None,
         description="The total number of records used to calculate the metric",
     )
-    current: float | None = Field(
+    current: float | int | None = Field(
         default=None,
         description="The most recent value of the metric (used for realtime dashboard display only)",
     )
@@ -401,7 +401,6 @@ class SSEMessage:
             field_name, value = parts
 
             if field_name == "":
-                # Field name is empty, so this is a comment
                 field_name = SSEFieldType.COMMENT
 
             # Spec says strip only one leading space; we strip() all whitespace
@@ -551,7 +550,9 @@ class RequestRecord(AIPerfBaseModel):
     )
     timestamp_ns: int = Field(
         default_factory=time.time_ns,
-        description="The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).",
+        description="Monotonic wall-clock timestamp of the request in nanoseconds. "
+        "Overwritten by Worker with MonotonicClock.now_ns() for clock-offset consistency. "
+        "DO NOT USE FOR LATENCY CALCULATIONS.",
     )
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,
@@ -569,9 +570,6 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The HTTP status code of the response.",
     )
-    # TODO: Maybe we could improve this with subclassing the responses to allow for more specific types.
-    #       This would allow us to remove the SerializeAsAny and use a more specific type. Look at how we handle
-    #       the CommandMessage and CommandResponse classes for an example.
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
@@ -593,6 +591,12 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
+    )
+    clock_offset_ns: int | None = Field(
+        default=None,
+        description="Clock offset between worker and controller in nanoseconds, estimated via minimum offset filtering (worker_clock - controller_clock + transit). "
+        "Used for cross-machine timestamp alignment in Kubernetes deployments. "
+        "To convert worker timestamp to controller time: controller_time = timestamp_ns - clock_offset_ns.",
     )
     trace_data: SerializeAsAny[BaseTraceData] | None = Field(
         default=None,

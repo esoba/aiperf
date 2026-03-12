@@ -85,7 +85,7 @@ class TestServiceConfigCommValidation:
         """Should raise error when both TCP and IPC configs are provided."""
         with pytest.raises(
             ValueError,
-            match="Cannot use both ZMQ TCP and ZMQ IPC configuration at the same time",
+            match="Cannot use multiple ZMQ configurations at the same time",
         ):
             ServiceConfig(zmq_tcp=tcp_config, zmq_ipc=ipc_config)
 

@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Trace-replay benchmark for DeepSeek-V3.2 NVFP4 (agg-round-robin).
+# Replays requests from a Mooncake-format trace file at original timestamps.
+#
+# Prerequisites:
+#   - DGD deployed and in "normal" or "successful" state
+#   - model-cache PVC with trace file at /model-cache/traces/
+#
+---
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: agg-round-robin-dsv32-nvfp4-bench
+spec:
+  userConfig:
+    endpoint:
+      model_names:
+        - nvidia/DeepSeek-V3.2-NVFP4
+      urls:
+        - http://agg-round-robin-dsv32-nvfp4-frontend:8000
+      streaming: true
+      timeout_seconds: 1000
+    tokenizer:
+      name: nvidia/DeepSeek-V3.2-NVFP4
+    loadgen:
+      warmup_request_count: 10
+      warmup_concurrency: 4
+    input:
+      file: /model-cache/traces/conversation_trace_synth_16.00x1+10.00_speedup1_maxisl110000.jsonl
+      custom_dataset_type: mooncake_trace
+      fixed_schedule: true
+      random_seed: 42
+      goodput:
+        time_to_first_token: 20000
+        inter_token_latency: 50
+    output:
+      export_level: records
+    server_metrics:
+      - http://agg-round-robin-dsv32-nvfp4-dec-0-dec-wkr:9090/metrics
+      - http://agg-round-robin-dsv32-nvfp4-prefill-0:9090/metrics
+  podTemplate:
+    env:
+      - name: AIPERF_HTTP_CONNECTION_LIMIT
+        value: "200"
+      - name: AIPERF_HTTP_SO_RCVTIMEO
+        value: "120"
+    volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache
+    volumeMounts:
+      - name: model-cache
+        mountPath: /model-cache

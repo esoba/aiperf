@@ -1,0 +1,318 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+{{- if .Values.crd.install }}
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: aiperfjobs.aiperf.nvidia.com
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+spec:
+  group: aiperf.nvidia.com
+  names:
+    kind: AIPerfJob
+    listKind: AIPerfJobList
+    plural: aiperfjobs
+    singular: aiperfjob
+    shortNames:
+      - apj
+      - aiperf
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Stage
+          type: string
+          jsonPath: .status.currentPhase
+          description: Current benchmark stage (warmup, profiling)
+        - name: Progress
+          type: string
+          jsonPath: .status.phases.profiling.requestsCompleted
+          description: Requests completed in profiling phase
+        - name: QPS
+          type: number
+          jsonPath: .status.phases.profiling.requestsPerSecond
+          description: Requests per second in profiling phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - userConfig
+              properties:
+                # Container image
+                image:
+                  type: string
+                  description: AIPerf container image
+                  default: {{ .Values.defaults.image | quote }}
+                imagePullPolicy:
+                  type: string
+                  description: Image pull policy (Always, Never, IfNotPresent)
+                  enum:
+                    - Always
+                    - Never
+                    - IfNotPresent
+
+                # UserConfig - directly uses AIPerf's UserConfig schema
+                userConfig:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: |
+                    AIPerf UserConfig schema. Maps directly to aiperf's UserConfig model.
+                    Key fields:
+                    - endpoint: {url, model_names, type, streaming, custom_endpoint}
+                    - loadgen: {concurrency, request_count, request_rate, benchmark_duration}
+                    - tokenizer: {name}
+                    - input: {file, synthesis, conversation}
+                    - output: {artifact_directory}
+
+                # Worker scaling (operator-specific)
+                connectionsPerWorker:
+                  type: integer
+                  description: Connections per worker for auto-scaling calculation
+                  minimum: 1
+                  default: 500
+
+                # Job timeout in seconds (0 = no timeout)
+                timeoutSeconds:
+                  type: number
+                  description: Job timeout in seconds (0 = no timeout, overrides AIPERF_JOB_TIMEOUT_SECONDS)
+                  minimum: 0
+                  default: 0
+
+                # TTL for JobSet after completion
+                ttlSecondsAfterFinished:
+                  type: integer
+                  description: TTL in seconds for JobSet cleanup after completion
+                  minimum: 0
+
+                # Results TTL in days
+                resultsTtlDays:
+                  type: integer
+                  description: Days to retain result files before cleanup
+                  minimum: 1
+
+                # Cancellation flag
+                cancel:
+                  type: boolean
+                  description: Set to true to cancel a running benchmark
+
+                # Pod template customization (operator-specific)
+                podTemplate:
+                  type: object
+                  properties:
+                    nodeSelector:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Node selector labels
+                    tolerations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          key:
+                            type: string
+                          operator:
+                            type: string
+                            enum: [Exists, Equal]
+                          value:
+                            type: string
+                          effect:
+                            type: string
+                            enum: [NoSchedule, PreferNoSchedule, NoExecute]
+                          tolerationSeconds:
+                            type: integer
+                      description: Pod tolerations
+                    annotations:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Additional pod annotations
+                    labels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Additional pod labels
+                    imagePullSecrets:
+                      type: array
+                      items:
+                        type: string
+                      description: Image pull secret names
+                    serviceAccountName:
+                      type: string
+                      description: Service account name
+                    env:
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - name
+                        properties:
+                          name:
+                            type: string
+                          value:
+                            type: string
+                          valueFrom:
+                            type: object
+                            properties:
+                              secretKeyRef:
+                                type: object
+                                required:
+                                  - name
+                                  - key
+                                properties:
+                                  name:
+                                    type: string
+                                  key:
+                                    type: string
+                      description: Environment variables
+                    volumes:
+                      type: array
+                      items:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      description: Additional volumes
+                    volumeMounts:
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - name
+                          - mountPath
+                        properties:
+                          name:
+                            type: string
+                          mountPath:
+                            type: string
+                          subPath:
+                            type: string
+                          readOnly:
+                            type: boolean
+                      description: Volume mounts for containers
+
+                # Kueue gang-scheduling configuration
+                scheduling:
+                  type: object
+                  properties:
+                    queueName:
+                      type: string
+                      description: Kueue LocalQueue name for gang-scheduling admission
+                    priorityClass:
+                      type: string
+                      description: Kueue WorkloadPriorityClass for scheduling priority
+                  description: Kueue scheduling configuration for gang-scheduling
+
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  description: Generation of the spec that was last processed
+                phase:
+                  type: string
+                  description: Current job phase
+                  enum:
+                    - Pending
+                    - Queued
+                    - Initializing
+                    - Running
+                    - Completed
+                    - Failed
+                    - Cancelled
+                jobId:
+                  type: string
+                  description: Unique job identifier
+                startTime:
+                  type: string
+                  format: date-time
+                  description: Time when job started
+                completionTime:
+                  type: string
+                  format: date-time
+                  description: Time when job completed
+                jobSetName:
+                  type: string
+                  description: Name of the managed JobSet
+                error:
+                  type: string
+                  description: Error message if failed
+                workers:
+                  type: object
+                  properties:
+                    ready:
+                      type: integer
+                      description: Number of ready workers
+                    total:
+                      type: integer
+                      description: Total number of workers
+                phases:
+                  type: object
+                  description: Progress tracking for each benchmark phase (keyed by phase name)
+                  additionalProperties:
+                    type: object
+                    description: Phase progress stats
+                    x-kubernetes-preserve-unknown-fields: true
+                currentPhase:
+                  type: string
+                  description: Current benchmark phase (warmup, profiling, etc)
+                liveMetrics:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: Live metrics updated during benchmark run
+                serverMetrics:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: Server-side metrics from inference server Prometheus endpoint
+                results:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: Final benchmark results and metrics
+                resultsPath:
+                  type: string
+                  description: Path to stored results on operator PVC
+                liveSummary:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: Live summary metrics updated during benchmark run
+                summary:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: Final summary metrics after benchmark completion
+                resultsTtlDays:
+                  type: integer
+                  description: Days to retain result files before cleanup
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                  description: Detailed status conditions
+{{- end }}

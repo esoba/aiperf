@@ -115,29 +115,6 @@ class _CompressionSettings(BaseSettings):
     )
 
 
-class _ConfigSettings(BaseSettings):
-    """Configuration file paths for distributed deployments.
-
-    Controls paths to configuration files loaded by services running in containers.
-    These are primarily used by `aiperf service` when running in Kubernetes.
-    """
-
-    model_config = SettingsConfigDict(
-        env_prefix="AIPERF_CONFIG_",
-    )
-
-    SERVICE_FILE: Path | None = Field(
-        default=None,
-        description="Path to service configuration JSON/YAML file. "
-        "Default: /etc/aiperf/service_config.json in Kubernetes deployments.",
-    )
-    USER_FILE: Path | None = Field(
-        default=None,
-        description="Path to user configuration JSON/YAML file. "
-        "Default: /etc/aiperf/user_config.json in Kubernetes deployments.",
-    )
-
-
 class _DatasetSettings(BaseSettings):
     """Dataset loading and configuration.
 
@@ -161,6 +138,18 @@ class _DatasetSettings(BaseSettings):
         "Set to a shared filesystem path for Kubernetes mounted volumes. "
         "Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc "
         "creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/",
+    )
+    DOWNLOAD_MAX_RETRIES: int = Field(
+        ge=0,
+        le=20,
+        default=3,
+        description="Maximum number of retries for dataset download in Kubernetes worker pods",
+    )
+    DOWNLOAD_RETRY_DELAY: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=2.0,
+        description="Initial delay in seconds between dataset download retries (doubles each retry)",
     )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,
@@ -191,7 +180,24 @@ class _DeveloperSettings(BaseSettings):
     ENABLE_YAPPI: bool = Field(
         default=False,
         description="Enable yappi profiling (Yet Another Python Profiler) for performance analysis. "
-        "Requires 'pip install yappi snakeviz'",
+        "Requires 'uv add yappi snakeviz'",
+    )
+    MEMORY_PROFILE_ENABLED: bool = Field(
+        default=False,
+        description="Enable memory profiling using tracemalloc. "
+        "Logs memory usage and top allocators periodically.",
+    )
+    MEMORY_PROFILE_INTERVAL: float = Field(
+        ge=1.0,
+        le=3600.0,
+        default=10.0,
+        description="Interval in seconds between memory profile snapshots when profiling is enabled.",
+    )
+    MEMORY_PROFILE_TOP_N: int = Field(
+        ge=1,
+        le=100,
+        default=10,
+        description="Number of top memory allocators to log in each snapshot.",
     )
     MODE: bool = Field(
         default=False,
@@ -558,6 +564,29 @@ class _TimingSettings(BaseSettings):
     )
 
 
+class _ConfigSettings(BaseSettings):
+    """Configuration file paths for distributed deployments.
+
+    Controls paths to configuration files loaded by services running in containers.
+    These are primarily used by `aiperf service` when running in Kubernetes.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_CONFIG_",
+    )
+
+    SERVICE_FILE: Path | None = Field(
+        default=None,
+        description="Path to service configuration JSON/YAML file. "
+        "Default: /etc/aiperf/service_config.json in Kubernetes deployments.",
+    )
+    USER_FILE: Path | None = Field(
+        default=None,
+        description="Path to user configuration JSON/YAML file. "
+        "Default: /etc/aiperf/user_config.json in Kubernetes deployments.",
+    )
+
+
 class _ServiceSettings(BaseSettings):
     """Service lifecycle and inter-service communication configuration.
 
@@ -582,9 +611,9 @@ class _ServiceSettings(BaseSettings):
         description="Timeout in seconds for requests from req_clients to rep_clients",
     )
     CONNECTION_PROBE_INTERVAL: float = Field(
-        ge=0.1,
+        ge=0.01,
         le=600.0,
-        default=0.1,
+        default=0.01,
         description="Interval in seconds for connection probes while waiting for initial connection to the zmq message bus",
     )
     CONNECTION_PROBE_TIMEOUT: float = Field(
@@ -592,6 +621,12 @@ class _ServiceSettings(BaseSettings):
         le=100000.0,
         default=90.0,
         description="Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus",
+    )
+    CONNECTION_PROBE_RECONNECT_INTERVAL: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=10.0,
+        description="Interval in seconds between PUB/SUB socket recreation attempts during connection probe failures",
     )
     CREDIT_PROGRESS_REPORT_INTERVAL: float = Field(
         ge=1,
@@ -603,11 +638,43 @@ class _ServiceSettings(BaseSettings):
         default=False,
         description="Disable uvloop and use default asyncio event loop instead",
     )
+    MULTIPROCESSING_START_METHOD: Literal["spawn", "fork", "forkserver"] | None = Field(
+        default=None,
+        description="Multiprocessing start method. 'spawn' is safest (default on macOS/Windows), "
+        "'fork' is faster but unsafe with threads, 'forkserver' is a compromise. "
+        "None uses the platform default.",
+    )
     HEARTBEAT_INTERVAL: float = Field(
         ge=1.0,
         le=100000.0,
         default=5.0,
         description="Interval in seconds between heartbeat messages for component services",
+    )
+    HEARTBEAT_MISSED_THRESHOLD: int = Field(
+        ge=1,
+        le=100,
+        default=3,
+        description="Number of missed heartbeat intervals before a service is considered stale",
+    )
+    POD_FAILURE_ABORT_THRESHOLD_PERCENT: int = Field(
+        ge=0,
+        le=100,
+        default=100,
+        description="Percentage of worker pods that must fail before aborting the benchmark. "
+        "For example, 50 means abort when 50%+ of worker pods have failed. "
+        "Set to 100 to abort only when all workers are gone. Set to 0 to disable pod failure abort.",
+    )
+    PROCESS_MONITOR_INTERVAL: float = Field(
+        ge=0.1,
+        le=30.0,
+        default=0.5,
+        description="Interval in seconds between process liveness checks in MultiProcessServiceManager",
+    )
+    SHUTDOWN_PROPAGATION_DELAY: float = Field(
+        ge=0.0,
+        le=10.0,
+        default=0.5,
+        description="Delay in seconds after broadcasting shutdown command to allow message propagation before stopping services",
     )
     PROFILE_CONFIGURE_TIMEOUT: float = Field(
         ge=1.0,
@@ -627,17 +694,18 @@ class _ServiceSettings(BaseSettings):
         default=10.0,
         description="Timeout in seconds for profile cancel command",
     )
-    REGISTRATION_INTERVAL: float = Field(
+    RAW_RECORD_UPLOAD_TIMEOUT: float = Field(
         ge=1.0,
-        le=100000.0,
-        default=1.0,
-        description="Interval in seconds between registration attempts for component services",
+        le=600.0,
+        default=60.0,
+        description="Timeout in seconds to wait for worker pods to upload raw record files "
+        "to the controller API after benchmark completion.",
     )
-    REGISTRATION_MAX_ATTEMPTS: int = Field(
-        ge=1,
-        le=100000,
-        default=10,
-        description="Maximum number of registration attempts before giving up",
+    REGISTRATION_INTERVAL: float = Field(
+        ge=0.001,
+        le=100000.0,
+        default=0.1,
+        description="Interval in seconds between registration attempts for component services",
     )
     REGISTRATION_TIMEOUT: float = Field(
         ge=1.0,
@@ -677,6 +745,12 @@ class _ServiceSettings(BaseSettings):
         default=25.0,
         description="Warning threshold in milliseconds for event loop latency (default: 25ms). "
         "If the actual sleep duration exceeds the expected duration by this amount, a warning is logged.",
+    )
+    EVENT_LOOP_HEALTH_STACKTRACE: bool = Field(
+        default=False,
+        description="Enable watchdog thread that captures event loop thread stack traces when blocked. "
+        "A daemon thread pings the event loop and captures sys._current_frames() when it fails to "
+        "respond within the warning threshold. Adds minimal overhead (one thread per monitored service).",
     )
     # Health server settings for Kubernetes probes
     HEALTH_ENABLED: bool = Field(
@@ -825,6 +899,13 @@ class _WorkerSettings(BaseSettings):
         le=1000.0,
         default=0.5,
         description="Interval in seconds between worker status summary messages",
+    )
+    DEFAULT_WORKERS_PER_POD: int = Field(
+        ge=1,
+        le=100,
+        default=10,
+        description="Default number of worker subprocesses per Kubernetes worker pod. "
+        "Each pod downloads the dataset once and shares it across workers via mmap.",
     )
 
 
@@ -1055,4 +1136,4 @@ class _Environment(BaseSettings):
 
 
 # Global singleton instance
-Environment = _Environment()
+Environment: _Environment = _Environment()

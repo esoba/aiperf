@@ -20,6 +20,7 @@ from starlette.requests import HTTPConnection
 from starlette_compress import CompressMiddleware
 
 from aiperf import __version__ as aiperf_version
+from aiperf.api.dataset_mixin import DatasetMixin
 from aiperf.api.routers.base_router import BaseRouter
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
@@ -44,7 +45,7 @@ def get_service(conn: HTTPConnection) -> FastAPIService:
 ServiceDep = Annotated["FastAPIService", Depends(get_service)]
 
 
-class FastAPIService(BaseComponentService):
+class FastAPIService(DatasetMixin, BaseComponentService):
     """FastAPI-based API Service.
 
     Provides HTTP endpoints for metrics and status, plus WebSocket streaming
@@ -72,6 +73,10 @@ class FastAPIService(BaseComponentService):
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
         self._stop_task: asyncio.Task | None = None
+
+        from aiperf.api.routers.websocket import WebSocketManager
+
+        self.ws_manager = WebSocketManager()
 
         self._routers: dict[str, BaseRouter] = {}
         self._load_routers()

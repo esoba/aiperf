@@ -1,13 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import logging
 import multiprocessing
+import os
 import queue
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
+from typing import TypeAlias
 
 from rich.console import Console, ConsoleRenderable, Group
 from rich.highlighter import ReprHighlighter
@@ -23,8 +28,10 @@ from aiperf.common.utils import is_tty
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceType, UIType
 
+LogQueue: TypeAlias = multiprocessing.Queue
+
 _logger = AIPerfLogger(__name__)
-_global_log_queue: "multiprocessing.Queue | None" = None
+_global_log_queue: LogQueue | None = None
 _log_queue_lock = threading.Lock()
 
 _LOG_LEVEL_STYLES = {
@@ -57,7 +64,7 @@ def _create_basic_handler(level: str | int) -> logging.StreamHandler:
     return handler
 
 
-def get_global_log_queue() -> multiprocessing.Queue:
+def get_global_log_queue() -> LogQueue:
     """Get the global log queue. Will create a new queue if it doesn't exist.
 
     Thread-safe singleton pattern using double-checked locking.
@@ -66,7 +73,9 @@ def get_global_log_queue() -> multiprocessing.Queue:
     if _global_log_queue is None:
         with _log_queue_lock:
             if _global_log_queue is None:
-                _global_log_queue = multiprocessing.Queue(
+                from aiperf.common.subprocess_manager import get_mp_context
+
+                _global_log_queue = get_mp_context().Queue(
                     maxsize=Environment.LOGGING.QUEUE_MAXSIZE
                 )
     return _global_log_queue
@@ -117,8 +126,91 @@ def _is_service_in_types(service_id: str, service_types: set[ServiceType]) -> bo
     return False
 
 
+def _is_running_in_kubernetes() -> bool:
+    """Check if we're running inside a Kubernetes pod."""
+    return os.environ.get("KUBERNETES_SERVICE_HOST") is not None
+
+
+def _should_use_structured_logging() -> bool:
+    """Check if structured (JSON) logging should be used.
+
+    Returns True when AIPERF_STRUCTURED_LOGS env var is set.
+    """
+    return os.environ.get("AIPERF_STRUCTURED_LOGS") is not None
+
+
+def _should_use_plain_logging() -> bool:
+    """Determine if we should use plain text logging instead of Rich.
+
+    Returns True when:
+    - Running in Kubernetes (no TTY, log aggregation friendly)
+    - No TTY attached (CI/CD, piped output)
+    - AIPERF_PLAIN_LOGS env var is set
+
+    Note: Structured logging takes precedence if enabled.
+    """
+    import sys
+
+    if _should_use_structured_logging():
+        return False  # Structured logging takes precedence
+    if os.environ.get("AIPERF_PLAIN_LOGS"):
+        return True
+    if _is_running_in_kubernetes():
+        return True
+    return not sys.stdout.isatty()
+
+
+class StructuredLogHandler(logging.Handler):
+    """JSON structured logging handler for log aggregation systems.
+
+    Produces newline-delimited JSON (NDJSON) output compatible with:
+    - CloudWatch Logs Insights
+    - Elasticsearch/OpenSearch
+    - Loki
+    - Datadog
+    - Splunk
+
+    Enable by setting AIPERF_STRUCTURED_LOGS=1 environment variable.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit a log record as JSON."""
+        import orjson
+
+        try:
+            log_entry = {
+                "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+                "level": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
+                "source": {
+                    "file": record.filename,
+                    "line": record.lineno,
+                    "function": record.funcName,
+                },
+            }
+
+            # Add exception info if present
+            if record.exc_info and record.exc_info[0] is not None:
+                import traceback
+
+                log_entry["exception"] = {
+                    "type": record.exc_info[0].__name__,
+                    "message": str(record.exc_info[1]),
+                    "traceback": traceback.format_exception(*record.exc_info),
+                }
+
+            # Add extra fields if present (for custom context)
+            if hasattr(record, "extra"):
+                log_entry["extra"] = record.extra
+
+            print(orjson.dumps(log_entry).decode(), flush=True)
+        except Exception:
+            self.handleError(record)
+
+
 def setup_child_process_logging(
-    log_queue: "multiprocessing.Queue | None" = None,
+    log_queue: LogQueue | None = None,
     service_id: str | None = None,
     service_config: ServiceConfig | None = None,
     user_config: UserConfig | None = None,
@@ -166,6 +258,12 @@ def setup_child_process_logging(
         queue_handler = MultiProcessLogHandler(log_queue, service_id)
         queue_handler.setLevel(level)
         root_logger.addHandler(queue_handler)
+    elif _should_use_structured_logging():
+        # Structured JSON logging for log aggregation (CloudWatch, Loki, etc.)
+        # Enable with AIPERF_STRUCTURED_LOGS=1
+        structured_handler = StructuredLogHandler()
+        structured_handler.setLevel(level)
+        root_logger.addHandler(structured_handler)
     elif is_tty():
         # For TTY environments, set up custom rich logging to the console
         rich_handler = CustomRichHandler(
@@ -187,6 +285,11 @@ def setup_child_process_logging(
             user_config.output.artifact_directory / OutputDefaults.LOG_FOLDER, level
         )
         root_logger.addHandler(file_handler)
+
+
+def setup_subprocess_logging(level: str | int) -> None:
+    """Lightweight logging setup for ephemeral subprocesses (e.g. ProcessPoolExecutor workers)."""
+    logging.basicConfig(level=level, force=True)
 
 
 # TODO: Integrate with the subprocess logging instead of being separate
@@ -356,9 +459,7 @@ class CustomRichHandler(RichHandler):
 class MultiProcessLogHandler(RichHandler):
     """Custom logging handler that forwards log records to a multiprocessing queue."""
 
-    def __init__(
-        self, log_queue: multiprocessing.Queue, service_id: str | None = None
-    ) -> None:
+    def __init__(self, log_queue: LogQueue, service_id: str | None = None) -> None:
         super().__init__()
         self.log_queue = log_queue
         self.service_id = service_id

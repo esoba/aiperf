@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Single-turn benchmark for Qwen3-VL-30B with embedding cache.
+#
+# Prerequisites:
+#   - DGD deployed and in "normal" or "successful" state
+#   - perf-cache PVC with dataset at /perf-cache/datasets/qwen3_vl_1000req_1img_pool200.jsonl
+#
+---
+apiVersion: aiperf.nvidia.com/v1alpha1
+kind: AIPerfJob
+metadata:
+  name: qwen3-vl-agg-benchmark
+spec:
+  userConfig:
+    endpoint:
+      model_names:
+        - Qwen/Qwen3-VL-30B-A3B-Instruct-FP8
+      urls:
+        - http://qwen3-vl-agg-frontend:8000
+      streaming: true
+    loadgen:
+      concurrency: 64
+      request_count: 1000
+      warmup_request_count: 3
+      arrival_pattern: constant
+    input:
+      file: /perf-cache/datasets/qwen3_vl_1000req_1img_pool200.jsonl
+      custom_dataset_type: single_turn
+      extra:
+        max_tokens: 150
+        min_tokens: 150
+        ignore_eos: true
+  podTemplate:
+    volumes:
+      - name: perf-cache
+        persistentVolumeClaim:
+          claimName: perf-cache
+    volumeMounts:
+      - name: perf-cache
+        mountPath: /perf-cache

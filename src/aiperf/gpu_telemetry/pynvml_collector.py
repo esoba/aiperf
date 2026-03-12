@@ -71,7 +71,7 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         - Callback-based record delivery
 
     Requirements:
-        - pynvml package installed: `pip install nvidia-ml-py`
+        - pynvml package installed: `uv add nvidia-ml-py`
         - NVIDIA driver installed with NVML support
 
     Args:

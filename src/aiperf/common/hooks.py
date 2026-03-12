@@ -121,9 +121,18 @@ class Hook(BaseModel, Generic[HookParamsT]):
 
 
 class BackgroundTaskParams(BaseModel):
-    interval: float | Callable[[Any], float] | None = Field(default=None)
-    immediate: bool = Field(default=False)
-    stop_on_error: bool = Field(default=False)
+    interval: float | Callable[[Any], float] | None = Field(
+        default=None,
+        description="Seconds between executions, callable returning interval, or None for one-shot.",
+    )
+    immediate: bool = Field(
+        default=False,
+        description="Run immediately on start instead of waiting for first interval.",
+    )
+    stop_on_error: bool = Field(
+        default=False,
+        description="Stop the background task on any unhandled exception.",
+    )
 
 
 def _hook_decorator(hook_type: HookType, func: Callable) -> Callable:
@@ -458,22 +467,14 @@ def on_request(
 def on_command(
     *command_types: CommandTypeT | Callable[[SelfT], Iterable[CommandTypeT]],
 ) -> Callable:
-    """Decorator to specify that the function is a hook that should be called when a CommandMessage with the given
-    command type(s) is received from the message bus.
-    See :func:`aiperf.common.hooks._hook_decorator_for_message_types`.
+    """Decorator to register a handler for commands received on the DEALER/ROUTER control channel.
 
     Example:
     ```python
     class MyService(BaseComponentService):
         @on_command(CommandType.PROFILE_START)
-        def _on_profile_start(self, message: ProfileStartCommand) -> CommandResponse:
+        async def _on_profile_start(self, message: Command) -> None:
             pass
-    ```
-
-    The above is the equivalent to setting:
-    ```python
-    MyService._on_profile_start.__aiperf_hook_type__ = AIPerfHook.ON_COMMAND
-    MyService._on_profile_start.__aiperf_hook_params__ = (CommandType.PROFILE_START,)
     ```
     """
     return _hook_decorator_with_params(AIPerfHook.ON_COMMAND, command_types)

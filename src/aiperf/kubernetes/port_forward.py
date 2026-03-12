@@ -1,0 +1,440 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Reusable helper functions for Kubernetes CLI commands."""
+
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+
+import aiohttp
+import orjson
+
+from aiperf.kubernetes.console import print_info, print_warning
+
+# Port-forward configuration
+_PORT_FORWARD_TIMEOUT = 60.0  # seconds to wait for kubectl port-forward
+_API_INITIAL_DELAY = 0.5  # seconds before first API health check
+_API_RETRY_DELAY = 2.0  # seconds between port-forward restart attempts
+_API_MAX_RETRIES = 10  # max times to restart port-forward when API isn't ready
+_PROCESS_CLEANUP_TIMEOUT = 5.0  # seconds to wait for graceful termination
+
+# WebSocket reconnection parameters (exponential backoff)
+_WS_INITIAL_BACKOFF = 1.0  # seconds
+_WS_MAX_BACKOFF = 30.0  # seconds
+_WS_HEARTBEAT = 30  # seconds between WebSocket heartbeats
+
+
+@asynccontextmanager
+async def port_forward_to_controller(
+    namespace: str,
+    pod_name: str,
+    local_port: int = 0,
+    remote_port: int = 9090,
+    verify_api: bool = True,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> AsyncIterator[int]:
+    """Async context manager: start port-forward, yield actual port, cleanup on exit.
+
+    Args:
+        namespace: Kubernetes namespace.
+        pod_name: Controller pod name.
+        local_port: Local port to bind. 0 (default) picks an ephemeral port.
+        remote_port: Remote port on pod.
+        verify_api: If True, verify API responds before yielding.
+        kubeconfig: Path to kubeconfig file.
+        kube_context: Kubernetes context name.
+
+    Yields:
+        The actual local port number.
+    """
+    proc, actual_port = await start_port_forward(
+        namespace,
+        pod_name,
+        local_port,
+        remote_port,
+        verify_api=verify_api,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+    )
+    try:
+        yield actual_port
+    finally:
+        await cleanup_port_forward(proc)
+
+
+async def _start_port_forward_process(
+    namespace: str,
+    pod_name: str,
+    local_port: int,
+    remote_port: int,
+    timeout: float,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> tuple[asyncio.subprocess.Process, int]:
+    """Start kubectl port-forward subprocess and wait for the ready message.
+
+    Returns:
+        Tuple of (process handle, actual local port).
+
+    Raises:
+        RuntimeError: If port-forward fails to start or times out.
+    """
+    cmd = [
+        "kubectl",
+        "port-forward",
+        "-n",
+        namespace,
+        f"pod/{pod_name}",
+        f"{local_port}:{remote_port}",
+    ]
+    if kubeconfig:
+        cmd.extend(["--kubeconfig", kubeconfig])
+    if kube_context:
+        cmd.extend(["--context", kube_context])
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        actual_port = await asyncio.wait_for(
+            _wait_for_port_forward_ready(proc),
+            timeout=timeout,
+        )
+        if actual_port is None:
+            stderr = ""
+            if proc.stderr:
+                stderr = (await proc.stderr.read()).decode()
+            raise RuntimeError(
+                f"Port-forward exited unexpectedly: {stderr.strip() or 'no error output'}"
+            )
+    except asyncio.TimeoutError:
+        proc.terminate()
+        stderr = ""
+        if proc.stderr:
+            try:
+                raw = await asyncio.wait_for(proc.stderr.read(), timeout=2.0)
+                stderr = raw.decode().strip()
+            except asyncio.TimeoutError:
+                pass
+        detail = f" kubectl stderr: {stderr}" if stderr else ""
+        raise RuntimeError(
+            f"Port-forward did not become ready within {timeout}s.{detail}\n"
+            f"  Check that the pod is running: kubectl get pod {pod_name} -n {namespace}\n"
+            f"  Check that port {local_port} is not already in use"
+        ) from None
+
+    return proc, actual_port
+
+
+async def start_port_forward(
+    namespace: str,
+    pod_name: str,
+    local_port: int = 0,
+    remote_port: int = 9090,
+    timeout: float = _PORT_FORWARD_TIMEOUT,
+    verify_api: bool = True,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> tuple[asyncio.subprocess.Process, int]:
+    """Start kubectl port-forward and wait for it to be ready.
+
+    Uses asyncio subprocess and waits for kubectl's "Forwarding from" message,
+    then optionally verifies the API is actually responding. If the port-forward
+    process dies during API verification (common when the API isn't listening yet),
+    automatically restarts the port-forward and retries.
+
+    Args:
+        namespace: Kubernetes namespace
+        pod_name: Pod to forward to
+        local_port: Local port to bind. 0 (default) picks an ephemeral port.
+        remote_port: Remote port on pod
+        timeout: Max seconds to wait for port-forward and API to be ready
+        verify_api: If True, verify API responds before returning
+        kubeconfig: Path to kubeconfig file.
+        kube_context: Kubernetes context name.
+
+    Returns:
+        Tuple of (process handle, actual local port).
+
+    Raises:
+        RuntimeError: If port-forward fails to start or times out
+    """
+    start_time = asyncio.get_running_loop().time()
+
+    proc, actual_port = await _start_port_forward_process(
+        namespace,
+        pod_name,
+        local_port,
+        remote_port,
+        timeout=timeout,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+    )
+
+    # Optionally verify the API is actually responding (not just that kubectl is forwarding)
+    if verify_api:
+        for attempt in range(_API_MAX_RETRIES + 1):
+            elapsed = asyncio.get_running_loop().time() - start_time
+            remaining_timeout = max(timeout - elapsed, 10.0)
+            try:
+                await asyncio.wait_for(
+                    _wait_for_api_ready(actual_port, proc),
+                    timeout=remaining_timeout,
+                )
+                break
+            except RuntimeError:
+                # Port-forward process died (API not listening yet), restart it
+                await cleanup_port_forward(proc)
+                if attempt >= _API_MAX_RETRIES:
+                    raise RuntimeError(
+                        f"Port-forward failed after {_API_MAX_RETRIES} retries. "
+                        f"The API service may not be starting on port {remote_port}."
+                    ) from None
+                print_info(
+                    f"API not ready, restarting port-forward... "
+                    f"({attempt + 1}/{_API_MAX_RETRIES})"
+                )
+                await asyncio.sleep(_API_RETRY_DELAY)
+                proc, actual_port = await _start_port_forward_process(
+                    namespace,
+                    pod_name,
+                    local_port,
+                    remote_port,
+                    timeout=remaining_timeout,
+                    kubeconfig=kubeconfig,
+                    kube_context=kube_context,
+                )
+            except asyncio.TimeoutError:
+                print_warning("API health check timed out, continuing anyway...")
+                break
+
+    return proc, actual_port
+
+
+async def _wait_for_api_ready(
+    local_port: int,
+    proc: asyncio.subprocess.Process,
+    check_interval: float = 1.0,
+) -> None:
+    """Wait for the API service to respond to HTTP requests.
+
+    Args:
+        local_port: Local port to check
+        proc: The port-forward process to monitor
+        check_interval: Seconds between checks
+    """
+    from aiperf.transports.aiohttp_client import create_tcp_connector
+
+    url = f"http://127.0.0.1:{local_port}/health"
+
+    # Give kubectl a moment to establish the tunnel
+    await asyncio.sleep(_API_INITIAL_DELAY)
+
+    connector = create_tcp_connector()
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=5), connector=connector
+    ) as session:
+        while True:
+            # Check if port-forward process died
+            if proc.returncode is not None:
+                stderr = ""
+                if proc.stderr:
+                    stderr = (await proc.stderr.read()).decode()
+                raise RuntimeError(
+                    f"Port-forward process exited (code {proc.returncode}) while waiting for API. "
+                    f"stderr: {stderr.strip() or 'no output'}"
+                )
+
+            try:
+                async with session.get(url) as resp:
+                    if resp.status in (200, 404):
+                        # 200 = health endpoint exists, 404 = API running but no health endpoint
+                        return
+            except aiohttp.ClientError:
+                pass  # API not ready yet
+
+            await asyncio.sleep(check_interval)
+
+
+async def _wait_for_port_forward_ready(
+    proc: asyncio.subprocess.Process,
+) -> int | None:
+    """Wait for kubectl port-forward to output its ready message.
+
+    Args:
+        proc: The port-forward subprocess
+
+    Returns:
+        The actual local port number if ready, None if process exited.
+    """
+    import re
+
+    if proc.stdout is None:
+        return None
+
+    while True:
+        # Check if process has exited
+        if proc.returncode is not None:
+            return None
+
+        line = await proc.stdout.readline()
+        if not line:
+            # EOF - process likely exited
+            await asyncio.sleep(0.1)
+            if proc.returncode is not None:
+                return None
+            continue
+
+        line_str = line.decode().strip()
+        # kubectl outputs: "Forwarding from 127.0.0.1:<port> -> <port>"
+        match = re.search(r"Forwarding from 127\.0\.0\.1:(\d+)", line_str)
+        if match:
+            return int(match.group(1))
+
+
+async def stream_progress_from_api(
+    ws_url: str,
+    on_message: Callable[[dict], Awaitable[bool]],
+    message_types: list[str],
+    max_retries: int = 10,
+) -> None:
+    """Stream progress messages from API WebSocket with auto-reconnection.
+
+    Args:
+        ws_url: WebSocket URL (e.g., ws://localhost:9090/ws)
+        on_message: Async callback that receives message dict.
+                   Return True to stop streaming, False to continue.
+        message_types: List of message types to subscribe to
+        max_retries: Maximum reconnection attempts
+
+    Raises:
+        ConnectionError: If connection fails after all retries
+    """
+    from aiperf.transports.aiohttp_client import create_tcp_connector
+
+    retry_count = 0
+    backoff = _WS_INITIAL_BACKOFF
+    max_backoff = _WS_MAX_BACKOFF
+
+    while retry_count < max_retries:
+        try:
+            connector = create_tcp_connector()
+            async with (
+                aiohttp.ClientSession(connector=connector) as session,
+                session.ws_connect(ws_url, heartbeat=_WS_HEARTBEAT) as ws,
+            ):
+                # Subscribe to message types
+                await ws.send_json(
+                    {"type": "subscribe", "message_types": message_types}
+                )
+
+                # Wait for subscription confirmation
+                sub_msg = await ws.receive_json()
+                if sub_msg.get("type") == "subscribed":
+                    retry_count = 0  # Reset retry count on success
+
+                # Stream messages
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = orjson.loads(msg.data)
+
+                        # Call handler, stop if returns True
+                        should_stop = await on_message(data)
+                        if should_stop:
+                            return  # Graceful completion
+
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        break  # Reconnect
+
+                    elif msg.type == aiohttp.WSMsgType.CLOSED:
+                        return  # Server closed
+
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            retry_count += 1
+            if retry_count >= max_retries:
+                msg = (
+                    f"Failed to connect to API after {max_retries} attempts. "
+                    "The controller pod may not be running or "
+                    "API service may be unavailable."
+                )
+                raise ConnectionError(msg) from None
+
+            print_info(
+                f"Connection lost, retrying in {backoff:.1f}s... "
+                f"({retry_count}/{max_retries})"
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
+
+
+async def cleanup_port_forward(
+    process: asyncio.subprocess.Process,
+    timeout: float = _PROCESS_CLEANUP_TIMEOUT,
+) -> None:
+    """Gracefully terminate port-forward subprocess.
+
+    Args:
+        process: Port-forward asyncio subprocess handle
+        timeout: Seconds to wait for graceful termination
+    """
+    from aiperf.kubernetes.subproc import terminate_process
+
+    await terminate_process(process, timeout)
+
+
+def port_forward_with_status(
+    namespace: str,
+    pod_name: str,
+    local_port: int = 0,
+    *,
+    remote_port: int | None = None,
+    verify_api: bool = True,
+    kubeconfig: str | None = None,
+    kube_context: str | None = None,
+) -> contextlib.AbstractAsyncContextManager[int]:
+    """Port-forward with status logging and success message.
+
+    Wraps port_forward_to_controller with status feedback. Usage::
+
+        async with port_forward_with_status(ns, pod) as port:
+            url = f"http://localhost:{port}/..."
+
+    Args:
+        namespace: Kubernetes namespace.
+        pod_name: Controller pod name.
+        local_port: Local port to bind. 0 (default) picks an ephemeral port.
+        remote_port: Remote port on pod. Defaults to API_SERVICE port.
+        verify_api: If True, verify API responds before yielding.
+        kubeconfig: Path to kubeconfig file.
+        kube_context: Kubernetes context name.
+
+    Yields:
+        The actual local port number.
+    """
+    from aiperf.kubernetes.console import print_success, status_log
+    from aiperf.kubernetes.environment import K8sEnvironment
+
+    if remote_port is None:
+        remote_port = K8sEnvironment.PORTS.API_SERVICE
+
+    @contextlib.asynccontextmanager
+    async def _inner():
+        with status_log(f"Starting port-forward to {pod_name}..."):
+            async with port_forward_to_controller(
+                namespace,
+                pod_name,
+                local_port,
+                remote_port,
+                verify_api=verify_api,
+                kubeconfig=kubeconfig,
+                kube_context=kube_context,
+            ) as actual_port:
+                print_success(f"Port-forward ready on localhost:{actual_port}")
+                yield actual_port
+
+    return _inner()

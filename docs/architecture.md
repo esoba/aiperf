@@ -68,13 +68,13 @@ The Timing Manager controls and coordinates the timing of requests during benchm
 
 ### Worker Manager
 
-The Worker Manager orchestrates and manages the pool of worker processes that execute benchmarking tasks.
+The Worker Manager monitors the health and status of worker processes during benchmarking. Workers are spawned directly by the System Controller as part of required services.
 
 **Key Responsibilities:**
-- Coordinating with the system controller to spawn and shut down workers that send requests to the inference server
-- Monitoring worker status, progress, and resource usage
-- Handling worker lifecycle events, such as startup, shutdown, and error recovery
-- Managing worker pool size based on benchmarking requirements
+- Monitoring worker status, progress, and resource usage via `WorkerHealthMessage`
+- Tracking worker health states (HEALTHY, ERROR, HIGH_LOAD, IDLE, STALE)
+- Publishing worker status summaries to the message bus for the UI dashboard
+- Reporting per-worker process stats at profile completion
 
 ### Workers
 

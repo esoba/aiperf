@@ -10,25 +10,52 @@ from aiperf.plugin.enums import PluginType, ZMQProxyType
 
 
 class ProxyManager(AIPerfLifecycleMixin):
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
+    def __init__(
+        self,
+        service_config: ServiceConfig,
+        *,
+        enable_event_bus: bool = False,
+        enable_dataset_manager: bool = False,
+        enable_raw_inference: bool = False,
+        **kwargs,
+    ) -> None:
         super().__init__(service_config=service_config, **kwargs)
         self.service_config = service_config
+        self._enable_event_bus = enable_event_bus
+        self._enable_dataset_manager = enable_dataset_manager
+        self._enable_raw_inference = enable_raw_inference
 
     @on_init
     async def _initialize_proxies(self) -> None:
         comm_config = self.service_config.comm_config
-        XPubXSubClass = plugins.get_class(PluginType.ZMQ_PROXY, ZMQProxyType.XPUB_XSUB)
-        DealerRouterClass = plugins.get_class(
-            PluginType.ZMQ_PROXY, ZMQProxyType.DEALER_ROUTER
-        )
-        PushPullClass = plugins.get_class(PluginType.ZMQ_PROXY, ZMQProxyType.PUSH_PULL)
-        self.proxies = [
-            XPubXSubClass(zmq_proxy_config=comm_config.event_bus_proxy_config),
-            DealerRouterClass(
-                zmq_proxy_config=comm_config.dataset_manager_proxy_config
-            ),
-            PushPullClass(zmq_proxy_config=comm_config.raw_inference_proxy_config),
-        ]
+        self.proxies = []
+
+        if self._enable_event_bus:
+            XPubXSubClass = plugins.get_class(
+                PluginType.ZMQ_PROXY, ZMQProxyType.XPUB_XSUB
+            )
+            self.proxies.append(
+                XPubXSubClass(zmq_proxy_config=comm_config.event_bus_proxy_config)
+            )
+
+        if self._enable_dataset_manager:
+            DealerRouterClass = plugins.get_class(
+                PluginType.ZMQ_PROXY, ZMQProxyType.DEALER_ROUTER
+            )
+            self.proxies.append(
+                DealerRouterClass(
+                    zmq_proxy_config=comm_config.dataset_manager_proxy_config
+                )
+            )
+
+        if self._enable_raw_inference:
+            PushPullClass = plugins.get_class(
+                PluginType.ZMQ_PROXY, ZMQProxyType.PUSH_PULL
+            )
+            self.proxies.append(
+                PushPullClass(zmq_proxy_config=comm_config.raw_inference_proxy_config)
+            )
+
         for proxy in self.proxies:
             await proxy.initialize()
         self.debug("All proxies initialized successfully")

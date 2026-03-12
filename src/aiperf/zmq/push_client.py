@@ -106,3 +106,23 @@ class ZMQPushClient(BaseZMQClient):
         await self._check_initialized()
 
         await self._push_message(message)
+
+    async def push_raw(self, data: bytes) -> None:
+        """Push pre-serialized bytes to the socket.
+
+        Use this when serialization has already been done (e.g. in a thread pool)
+        to avoid blocking the event loop with model_dump + orjson on large messages.
+
+        Args:
+            data: Pre-serialized JSON bytes
+        """
+        await self._check_initialized()
+
+        try:
+            await self.socket.send(data)
+            if self.is_trace_enabled:
+                self.trace(f"Pushed raw data: {len(data)} bytes")
+        except (asyncio.CancelledError, zmq.ContextTerminated):
+            self.debug("Push client cancelled or context terminated")
+        except Exception as e:
+            raise CommunicationError(f"Failed to push raw data: {e}") from e

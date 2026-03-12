@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import multiprocessing
@@ -10,9 +12,12 @@ import signal
 import sys
 import uuid
 import warnings
+from typing import Any
 
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
+from aiperf.common.error_queue import ErrorQueue
+from aiperf.common.logging import LogQueue
 from aiperf.plugin.enums import ServiceType
 
 # Suppress ZMQ RuntimeWarning about dropped messages during shutdown.
@@ -25,14 +30,29 @@ warnings.filterwarnings(
 )
 
 
+def _enable_hf_offline_mode() -> None:
+    """Force HuggingFace libraries to use local cache only.
+
+    The parent process warms the disk cache before spawning children
+    (see ``tokenizer_validator._prefetch_tokenizers``). Setting these
+    env vars ensures child processes never hit the network, avoiding
+    the thundering-herd problem when many workers start concurrently.
+    """
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+
 def bootstrap_and_run_service(
     service_type: ServiceType,
     service_config: ServiceConfig | None = None,
     user_config: UserConfig | None = None,
     service_id: str | None = None,
-    log_queue: "multiprocessing.Queue | None" = None,
-    **kwargs,
-):
+    log_queue: LogQueue | None = None,
+    error_queue: ErrorQueue | None = None,
+    health_port: int | None = None,
+    api_port: int | None = None,
+    **kwargs: Any,
+) -> None:
     """Bootstrap the service and run it.
 
     This function will load the service configuration,
@@ -46,6 +66,10 @@ def bootstrap_and_run_service(
             will be loaded from the environment variables.
         log_queue: Optional multiprocessing queue for child process logging. If provided,
             the child process logging will be set up.
+        error_queue: Optional multiprocessing queue for reporting unhandled errors back
+            to the parent process.
+        health_port: HTTP port for health endpoints (/healthz, /readyz).
+        api_port: HTTP port for API endpoints (services that support it).
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
@@ -59,17 +83,28 @@ def bootstrap_and_run_service(
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
+        # Skip HF offline mode in Kubernetes pods: the parent process may not
+        # have warmed the cache (e.g. controller pod), so children need network
+        # access.  Worker pods prefetch via WorkerPodManager before spawning
+        # subprocesses, but the controller pod does not.
+        if not os.environ.get("AIPERF_JOB_ID"):
+            _enable_hf_offline_mode()
+
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
 
     ServiceClass = plugins.get_class(PluginType.SERVICE, service_type)
     service_metadata = plugins.get_service_metadata(service_type)
     if not service_id:
-        service_id = (
-            f"{service_type}_{uuid.uuid4().hex[:8]}"
-            if service_metadata.replicable
-            else str(service_type)
-        )
+        # Use AIPERF_POD_INDEX (set via Downward API from the JobSet job-index
+        # label) for deterministic pod-level IDs in Kubernetes.
+        pod_index = os.environ.get("AIPERF_POD_INDEX")
+        if pod_index is not None:
+            service_id = f"{service_type}_{pod_index}"
+        elif service_metadata.replicable:
+            service_id = f"{service_type}_{uuid.uuid4().hex[:8]}"
+        else:
+            service_id = str(service_type)
 
     # Load the service configuration
     if service_config is None:
@@ -122,6 +157,8 @@ def bootstrap_and_run_service(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+            health_port=health_port,
+            api_port=api_port,
             **kwargs,
         )
 
@@ -146,15 +183,25 @@ def bootstrap_and_run_service(
         rng.reset()
         rng.init(user_config.input.random_seed)
 
+        nonlocal has_errors
+
         try:
             await service.initialize()
             await service.start()
             await service.stopped_event.wait()
         except Exception as e:
             service.exception(f"Unhandled exception in service: {e}")
+        finally:
+            if error_queue is not None and service._exit_errors:
+                from aiperf.common.error_queue import report_errors
+
+                report_errors(error_queue, service._exit_errors)
+            has_errors = bool(service._exit_errors)
 
         if Environment.DEV.ENABLE_YAPPI:
             _stop_yappi_profiling(service.service_id, user_config)
+
+    has_errors = False
 
     with contextlib.suppress(asyncio.CancelledError):
         if not Environment.SERVICE.DISABLE_UVLOOP:
@@ -163,6 +210,9 @@ def bootstrap_and_run_service(
             uvloop.run(_run_service())
         else:
             asyncio.run(_run_service())
+
+    if has_errors and error_queue is None:
+        sys.exit(1)
 
 
 def _redirect_stdio_to_devnull() -> None:
@@ -210,7 +260,7 @@ def _start_yappi_profiling() -> None:
 
         raise AIPerfError(
             "yappi is not installed. Please install yappi to enable profiling. "
-            "You can install yappi with `pip install yappi`."
+            "You can install yappi with `uv add yappi`."
         ) from e
 
 

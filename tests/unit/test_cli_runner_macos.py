@@ -12,6 +12,16 @@ from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.plugin.enums import UIType
 
 
+@pytest.fixture(autouse=True)
+def _mock_tokenizer_validation():
+    """Prevent real HF network calls during CLI runner tests."""
+    with patch(
+        "aiperf.common.tokenizer_validator.validate_tokenizer_early",
+        return_value={"test-model": "test-model"},
+    ):
+        yield
+
+
 class TestMacOSTerminalFixes:
     """Test the macOS-specific terminal corruption fixes in cli_runner.py"""
 
@@ -47,7 +57,7 @@ class TestMacOSTerminalFixes:
             "spawn", force=True
         )
 
-    def test_spawn_method_not_set_on_linux(
+    def test_no_start_method_set_on_linux(
         self,
         service_config_dashboard: ServiceConfig,
         user_config: UserConfig,
@@ -55,15 +65,14 @@ class TestMacOSTerminalFixes:
         mock_multiprocessing_set_start_method: Mock,
         mock_bootstrap_and_run_service: Mock,
     ):
-        """Test that spawn method is NOT set on Linux."""
+        """Test that no start method override on Linux (uses platform default fork)."""
         from aiperf.cli_runner import run_system_controller
 
         run_system_controller(user_config, service_config_dashboard)
 
-        # Verify spawn method was NOT called on Linux
         mock_multiprocessing_set_start_method.assert_not_called()
 
-    def test_spawn_method_not_set_for_simple_ui(
+    def test_no_start_method_set_for_simple_ui_on_macos(
         self,
         service_config_simple: ServiceConfig,
         user_config: UserConfig,
@@ -71,12 +80,11 @@ class TestMacOSTerminalFixes:
         mock_multiprocessing_set_start_method: Mock,
         mock_bootstrap_and_run_service: Mock,
     ):
-        """Test that spawn method is NOT set when not using Dashboard UI on macOS."""
+        """Test that no start method override for non-dashboard UI on macOS."""
         from aiperf.cli_runner import run_system_controller
 
         run_system_controller(user_config, service_config_simple)
 
-        # Verify spawn method was NOT called for non-dashboard UI
         mock_multiprocessing_set_start_method.assert_not_called()
 
     @patch("fcntl.fcntl")

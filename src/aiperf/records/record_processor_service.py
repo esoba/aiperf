@@ -5,6 +5,7 @@ import traceback
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
@@ -12,7 +13,6 @@ from aiperf.common.hooks import on_command, on_pull_message
 from aiperf.common.messages import (
     InferenceResultsMessage,
     MetricRecordsMessage,
-    ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
@@ -44,6 +44,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         service_config: ServiceConfig,
         user_config: UserConfig,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config,
@@ -52,6 +53,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             pull_client_address=CommAddress.RAW_INFERENCE_PROXY_BACKEND,
             pull_client_bind=False,
             pull_client_max_concurrency=Environment.ZMQ.PULL_MAX_CONCURRENCY,
+            **kwargs,
         )
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
             CommAddress.RECORDS,
@@ -92,9 +94,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 raise
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the tokenizers."""
         await self.inference_result_parser.configure()
 

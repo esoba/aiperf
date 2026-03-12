@@ -20,7 +20,14 @@ from aiperf.common.config.config_defaults import (
     LoadGeneratorDefaults,
     ServerMetricsDefaults,
 )
-from aiperf.common.config.config_validators import coerce_value, parse_str_or_list
+from aiperf.common.config.config_validators import (
+    check_mutually_exclusive,
+    check_requires,
+    coerce_value,
+    is_field_set,
+    parse_str_or_list,
+    raise_if,
+)
 from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.config.groups import Groups
 from aiperf.common.config.input_config import InputConfig
@@ -59,7 +66,7 @@ def _is_localhost_url(url: str) -> bool:
 
 def _should_quote_arg(x: Any) -> bool:
     """Determine if the value should be quoted in the CLI command."""
-    return isinstance(x, str) and not x.startswith("-") and x not in ("profile")
+    return isinstance(x, str) and not x.startswith("-") and x not in ("profile",)
 
 
 class UserConfig(BaseConfig):
@@ -266,29 +273,24 @@ class UserConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_benchmark_mode(self) -> Self:
         """Validate benchmarking associated args are correctly set."""
-        if (
-            "benchmark_grace_period" in self.loadgen.model_fields_set
-            and self.loadgen.benchmark_duration is None
-        ):
-            raise ValueError(
-                "--benchmark-grace-period can only be used with "
-                "duration-based benchmarking (--benchmark-duration)."
-            )
-
+        check_requires(
+            self.loadgen,
+            "benchmark_grace_period",
+            "benchmark_duration",
+            error="--benchmark-grace-period can only be used with "
+            "duration-based benchmarking (--benchmark-duration).",
+        )
         return self
 
     @model_validator(mode="after")
     def validate_warmup_grace_period(self) -> Self:
         """Validate warmup grace period is only used when --warmup-duration is set."""
-        if (
-            "warmup_grace_period" in self.loadgen.model_fields_set
-            and self.loadgen.warmup_duration is None
-        ):
-            raise ValueError(
-                "--warmup-grace-period can only be used when --warmup-duration is set. "
-                "Set --warmup-duration."
-            )
-
+        check_requires(
+            self.loadgen,
+            "warmup_grace_period",
+            "warmup_duration",
+            error="--warmup-grace-period can only be used when --warmup-duration is set.",
+        )
         return self
 
     @model_validator(mode="after")
@@ -298,53 +300,46 @@ class UserConfig(BaseConfig):
         These options are only meaningful with specific configurations.
         Rather than silently ignoring them, we raise an error.
         """
-        # --num-users without --user-centric-rate
-        if (
-            "num_users" in self.loadgen.model_fields_set
-            and self.loadgen.user_centric_rate is None
-        ):
-            raise ValueError(
-                "--num-users can only be used with --user-centric-rate. "
-                "Either add --user-centric-rate or remove --num-users."
-            )
+        # --num-users requires --user-centric-rate
+        raise_if(
+            is_field_set(self.loadgen, "num_users"),
+            self.loadgen.user_centric_rate is None,
+            error="--num-users can only be used with --user-centric-rate. "
+            "Either add --user-centric-rate or remove --num-users.",
+        )
 
-        # --request-cancellation-delay without --request-cancellation-rate
-        if (
-            "request_cancellation_delay" in self.loadgen.model_fields_set
-            and self.loadgen.request_cancellation_rate is None
-        ):
-            raise ValueError(
-                "--request-cancellation-delay can only be used with --request-cancellation-rate. "
-                "Either add --request-cancellation-rate or remove --request-cancellation-delay."
-            )
+        # --request-cancellation-delay requires --request-cancellation-rate
+        raise_if(
+            is_field_set(self.loadgen, "request_cancellation_delay"),
+            self.loadgen.request_cancellation_rate is None,
+            error="--request-cancellation-delay can only be used with --request-cancellation-rate. "
+            "Either add --request-cancellation-rate or remove --request-cancellation-delay.",
+        )
 
-        # --fixed-schedule-* options without --fixed-schedule
-        fixed_schedule_enabled = self.input.fixed_schedule
-        fixed_schedule_options_set = []
+        # --fixed-schedule-* options require --fixed-schedule
+        fixed_schedule_fields = [
+            "fixed_schedule_auto_offset",
+            "fixed_schedule_start_offset",
+            "fixed_schedule_end_offset",
+        ]
+        set_fixed_schedule_options = [
+            f"--{f.replace('_', '-')}"
+            for f in fixed_schedule_fields
+            if is_field_set(self.input, f)
+        ]
+        raise_if(
+            len(set_fixed_schedule_options) > 0,
+            not self.input.fixed_schedule,
+            error=f"{', '.join(set_fixed_schedule_options)} can only be used with --fixed-schedule. "
+            "Either add --fixed-schedule or remove these options.",
+        )
 
-        if "fixed_schedule_auto_offset" in self.input.model_fields_set:
-            fixed_schedule_options_set.append("--fixed-schedule-auto-offset")
-        if "fixed_schedule_start_offset" in self.input.model_fields_set:
-            fixed_schedule_options_set.append("--fixed-schedule-start-offset")
-        if "fixed_schedule_end_offset" in self.input.model_fields_set:
-            fixed_schedule_options_set.append("--fixed-schedule-end-offset")
-
-        if fixed_schedule_options_set and not fixed_schedule_enabled:
-            options_str = ", ".join(fixed_schedule_options_set)
-            raise ValueError(
-                f"{options_str} can only be used with --fixed-schedule. "
-                "Either add --fixed-schedule or remove these options."
-            )
-
-        # --request-rate-ramp-duration without --request-rate
-        # Rate ramping only works with rate-based scheduling (not user-centric or fixed-schedule)
-        if (
-            "request_rate_ramp_duration" in self.loadgen.model_fields_set
-            and self.timing_mode != TimingMode.REQUEST_RATE
-        ):
-            raise ValueError(
-                "--request-rate-ramp-duration can only be used with --request-rate scheduling."
-            )
+        # --request-rate-ramp-duration requires request-rate scheduling mode
+        raise_if(
+            is_field_set(self.loadgen, "request_rate_ramp_duration"),
+            self.timing_mode != TimingMode.REQUEST_RATE,
+            error="--request-rate-ramp-duration can only be used with --request-rate scheduling.",
+        )
 
         return self
 
@@ -527,7 +522,7 @@ class UserConfig(BaseConfig):
                     import pynvml  # noqa: F401
                 except ImportError as e:
                     raise ValueError(
-                        "pynvml package not installed. Install with: pip install nvidia-ml-py"
+                        "pynvml package not installed. Install with: uv add nvidia-ml-py"
                     ) from e
             # Check for dashboard mode
             elif item in ["dashboard"]:
@@ -656,14 +651,12 @@ class UserConfig(BaseConfig):
         """
         from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 
-        if (
-            "no_server_metrics" in self.model_fields_set
-            and "server_metrics" in self.model_fields_set
-        ):
-            raise ValueError(
-                "Cannot use both --no-server-metrics and --server-metrics together. "
-                "Use only one or the other."
-            )
+        check_mutually_exclusive(
+            self,
+            "no_server_metrics",
+            "server_metrics",
+            error="Cannot use both --no-server-metrics and --server-metrics together.",
+        )
 
         urls: list[str] = []
 
@@ -761,24 +754,20 @@ class UserConfig(BaseConfig):
     def validate_multi_turn_options(self) -> Self:
         """Validate multi-turn options."""
         # Multi-turn validation: only one of request_count or num_sessions should be set
-        if (
-            self.loadgen.request_count is not None
-            and self.input.conversation.num is not None
-        ):
-            raise ValueError(
-                "Both a request-count and number of conversations are set. This can result in confusing output. "
-                "Use either --request-count or --conversation-num but not both."
-            )
+        raise_if(
+            self.loadgen.request_count is not None,
+            self.input.conversation.num is not None,
+            error="Both --request-count and --conversation-num are set. "
+            "Use either --request-count or --conversation-num but not both.",
+        )
 
         # Same validation for warmup options
-        if (
-            self.loadgen.warmup_request_count is not None
-            and self.loadgen.warmup_num_sessions is not None
-        ):
-            raise ValueError(
-                "Both --warmup-request-count and --num-warmup-sessions are set. "
-                "Use either --warmup-request-count or --num-warmup-sessions but not both."
-            )
+        raise_if(
+            self.loadgen.warmup_request_count is not None,
+            self.loadgen.warmup_num_sessions is not None,
+            error="Both --warmup-request-count and --num-warmup-sessions are set. "
+            "Use either --warmup-request-count or --num-warmup-sessions but not both.",
+        )
 
         return self
 
@@ -902,13 +891,13 @@ class UserConfig(BaseConfig):
             self.input.prompt.prefix_prompt.length > 0
             or self.input.prompt.prefix_prompt.pool_size > 0
         )
-
-        if has_context_prompts and has_legacy_prefix:
-            raise ValueError(
-                "Cannot use both `--shared-system-prompt-length`/`--user-context-prompt-length` "
-                "and `--prefix-prompt-length`/`--prefix-prompt-pool-size`. "
-                "These are mutually exclusive prompt configuration modes."
-            )
+        raise_if(
+            has_context_prompts,
+            has_legacy_prefix,
+            error="Cannot use both --shared-system-prompt-length/--user-context-prompt-length "
+            "and --prefix-prompt-length/--prefix-prompt-pool-size. "
+            "These are mutually exclusive prompt configuration modes.",
+        )
         return self
 
     @model_validator(mode="after")

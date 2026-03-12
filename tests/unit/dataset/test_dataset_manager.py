@@ -7,17 +7,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.config import EndpointConfig, InputConfig, ServiceConfig, UserConfig
+from aiperf.common.config import (
+    ConversationConfig,
+    EndpointConfig,
+    InputConfig,
+    ServiceConfig,
+    UserConfig,
+)
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.tokenizer_config import TokenizerConfig
-from aiperf.common.enums import PublicDatasetType
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType, PublicDatasetType
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationTurnRequestMessage,
     DatasetConfiguredNotification,
 )
-from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import (
@@ -50,7 +56,7 @@ def base_user_config():
     """Create a basic UserConfig for testing."""
     return UserConfig(
         endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(),
+        input=InputConfig(conversation=ConversationConfig(num_dataset_entries=1)),
     )
 
 
@@ -70,7 +76,7 @@ async def initialized_dataset_manager(mock_tokenizer, base_user_config):
 async def configured_dataset_manager(initialized_dataset_manager, base_user_config):
     """Create a fully configured DatasetManager ready for request handling."""
     await initialized_dataset_manager._profile_configure_command(
-        ProfileConfigureCommand(config=base_user_config, service_id="test_service")
+        Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
     )
     return initialized_dataset_manager
 
@@ -101,7 +107,7 @@ async def capture_published_messages(dataset_manager, user_config):
     dataset_manager.publish = AsyncMock(side_effect=mock_publish)
 
     await dataset_manager._profile_configure_command(
-        ProfileConfigureCommand(config=user_config, service_id="test_service")
+        Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
     )
 
     return published_messages
@@ -287,7 +293,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(config=user_config, service_id="test_service")
+            Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Verify the loader's recommended strategy was used (SEQUENTIAL for ShareGPT)
@@ -306,7 +312,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
         # This will use synthetic dataset generation
         user_config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(),
+            input=InputConfig(conversation=ConversationConfig(num_dataset_entries=1)),
         )
 
         service_config = ServiceConfig()
@@ -314,7 +320,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(config=user_config, service_id="test_service")
+            Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Synthetic composer sets its own default, which should be the same as InputDefaults
@@ -352,7 +358,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(config=user_config, service_id="test_service")
+            Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Verify the explicit strategy was preserved, not overwritten by loader's SEQUENTIAL
@@ -378,7 +384,7 @@ class TestDatasetManagerMemoryAndClient:
         assert dataset_manager._dataset_client is None
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(config=base_user_config, service_id="test_service")
+            Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # After configuration, client should be initialized
@@ -392,7 +398,7 @@ class TestDatasetManagerMemoryAndClient:
         """Test that in-memory dataset is freed after dataset client is initialized."""
         user_config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(num_dataset_entries=5),
+            input=InputConfig(conversation=ConversationConfig(num_dataset_entries=1)),
         )
         service_config = ServiceConfig()
         dataset_manager = DatasetManager(service_config, user_config)
@@ -401,7 +407,7 @@ class TestDatasetManagerMemoryAndClient:
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(config=user_config, service_id="test_service")
+            Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # After configuration, in-memory dataset should be empty
@@ -421,7 +427,7 @@ class TestDatasetManagerMemoryAndClient:
         assert not dataset_manager.dataset_configured.is_set()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(config=base_user_config, service_id="test_service")
+            Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # After configuration, event should be set
@@ -433,10 +439,12 @@ class TestDatasetManagerFallbackHandlers:
 
     @pytest.fixture
     async def dataset_manager_with_entries(self, mock_tokenizer):
-        """Create a configured dataset manager with multiple entries."""
+        """Create a configured dataset manager with minimal entries."""
         user_config = UserConfig(
             endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(num_dataset_entries=3),
+            input=InputConfig(
+                conversation=ConversationConfig(num_dataset_entries=1),
+            ),
         )
         service_config = ServiceConfig()
         dataset_manager = DatasetManager(service_config, user_config)
@@ -445,7 +453,7 @@ class TestDatasetManagerFallbackHandlers:
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(config=user_config, service_id="test_service")
+            Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         return dataset_manager
@@ -628,7 +636,7 @@ class TestDatasetManagerTokenizerSkip:
             DatasetManager, "_configure_tokenizer", new_callable=AsyncMock
         ) as mock_configure_tokenizer:
             await dataset_manager._profile_configure_command(
-                ProfileConfigureCommand(config=user_config, service_id="test_service")
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
             mock_configure_tokenizer.assert_not_called()
 
@@ -648,7 +656,7 @@ class TestDatasetManagerTokenizerSkip:
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(config=user_config, service_id="test_service")
+            Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         assert dataset_manager.tokenizer is not None

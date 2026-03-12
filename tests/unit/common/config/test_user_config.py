@@ -519,7 +519,7 @@ class TestLoadGeneratorValidation:
         """Test that both request_count and conversation num raises validation error."""
         with pytest.raises(
             ValueError,
-            match="Both a request-count and number of conversations are set",
+            match="Both --request-count and --conversation-num are set",
         ):
             make_config(
                 input_config=InputConfig(conversation=ConversationConfig(num=50)),

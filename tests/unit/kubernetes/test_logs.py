@@ -1,0 +1,283 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Unit tests for aiperf.kubernetes.logs module.
+
+Focuses on:
+- Pod log retrieval and file writing behavior
+- Handling of empty pod lists, failed commands, and empty stdout
+- Kubeconfig/context argument forwarding to kubectl
+"""
+
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from pytest import param
+
+from aiperf.kubernetes.logs import save_pod_logs
+from aiperf.kubernetes.subproc import CommandResult
+from tests.unit.kubernetes.conftest import make_kr8s_object
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def mock_client() -> MagicMock:
+    """Create a mock AIPerfKubeClient with get_pods and job_selector."""
+    client = MagicMock()
+    client.get_pods = AsyncMock(return_value=[])
+    client.job_selector = MagicMock(
+        return_value="app=aiperf,aiperf.nvidia.com/job-id=job-123"
+    )
+    return client
+
+
+@pytest.fixture
+def pods() -> list[MagicMock]:
+    """Create a list of mock pod objects with names."""
+    raw_a = {
+        "metadata": {"name": "aiperf-job-controller-0-0", "namespace": "default"},
+    }
+    raw_b = {
+        "metadata": {"name": "aiperf-job-worker-0-0", "namespace": "default"},
+    }
+    return [make_kr8s_object(raw_a), make_kr8s_object(raw_b)]
+
+
+# =============================================================================
+# Happy Path
+# =============================================================================
+
+
+class TestSavePodLogsHappyPath:
+    """Verify normal log saving operations."""
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_writes_log_files(
+        self, mock_client: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        mock_client.get_pods.return_value = pods
+        results = {
+            pods[0].name: CommandResult(
+                returncode=0, stdout="controller logs\n", stderr=""
+            ),
+            pods[1].name: CommandResult(
+                returncode=0, stdout="worker logs\n", stderr=""
+            ),
+        }
+
+        async def _fake_run(cmd: list[str]) -> CommandResult:
+            pod_name = cmd[4]
+            return results[pod_name]
+
+        with patch("aiperf.kubernetes.logs.run_command", side_effect=_fake_run):
+            await save_pod_logs("job-123", "default", tmp_path, mock_client)
+
+        logs_dir = tmp_path / "logs"
+        assert logs_dir.is_dir()
+        assert (
+            logs_dir / "aiperf-job-controller-0-0.log"
+        ).read_text() == "controller logs\n"
+        assert (logs_dir / "aiperf-job-worker-0-0.log").read_text() == "worker logs\n"
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_calls_kubectl_with_correct_args(
+        self, mock_client: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        mock_client.get_pods.return_value = [pods[0]]
+        mock_run = AsyncMock(
+            return_value=CommandResult(returncode=0, stdout="logs", stderr="")
+        )
+
+        with patch("aiperf.kubernetes.logs.run_command", mock_run):
+            await save_pod_logs("job-123", "my-ns", tmp_path, mock_client)
+
+        mock_run.assert_called_once_with(
+            ["kubectl", "logs", "-n", "my-ns", "aiperf-job-controller-0-0"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_creates_logs_subdirectory(
+        self, mock_client: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        mock_client.get_pods.return_value = [pods[0]]
+        mock_run = AsyncMock(
+            return_value=CommandResult(returncode=0, stdout="x", stderr="")
+        )
+
+        with patch("aiperf.kubernetes.logs.run_command", mock_run):
+            await save_pod_logs("job-123", "default", tmp_path, mock_client)
+
+        assert (tmp_path / "logs").is_dir()
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_passes_job_selector(
+        self, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        with patch("aiperf.kubernetes.logs.run_command", AsyncMock()):
+            await save_pod_logs("my-job", "ns", tmp_path, mock_client)
+
+        mock_client.job_selector.assert_called_once_with("my-job")
+        mock_client.get_pods.assert_called_once_with(
+            "ns", mock_client.job_selector.return_value
+        )
+
+
+# =============================================================================
+# Kubeconfig / Context Forwarding
+# =============================================================================
+
+
+class TestSavePodLogsKubeArgs:
+    """Verify kubeconfig and context arguments are forwarded to kubectl."""
+
+    @pytest.mark.parametrize(
+        "kubeconfig,kube_context,expected_extra_args",
+        [
+            (None, None, []),
+            ("/path/to/config", None, ["--kubeconfig", "/path/to/config"]),
+            (None, "my-ctx", ["--context", "my-ctx"]),
+            param(
+                "/cfg", "ctx",
+                ["--kubeconfig", "/cfg", "--context", "ctx"],
+                id="both-kubeconfig-and-context",
+            ),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_forwards_kube_args(
+        self,
+        mock_client: MagicMock,
+        pods: list[MagicMock],
+        tmp_path: Path,
+        kubeconfig: str | None,
+        kube_context: str | None,
+        expected_extra_args: list[str],
+    ) -> None:
+        mock_client.get_pods.return_value = [pods[0]]
+        mock_run = AsyncMock(
+            return_value=CommandResult(returncode=0, stdout="log", stderr="")
+        )
+
+        with patch("aiperf.kubernetes.logs.run_command", mock_run):
+            await save_pod_logs(
+                "job-123",
+                "default",
+                tmp_path,
+                mock_client,
+                kubeconfig=kubeconfig,
+                kube_context=kube_context,
+            )
+
+        expected_cmd = [
+            "kubectl",
+            "logs",
+            "-n",
+            "default",
+            pods[0].name,
+            *expected_extra_args,
+        ]
+        mock_run.assert_called_once_with(expected_cmd)
+
+
+# =============================================================================
+# Edge Cases
+# =============================================================================
+
+
+class TestSavePodLogsEdgeCases:
+    """Verify boundary conditions and special cases."""
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_no_pods_returns_early(
+        self, mock_client: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_client.get_pods.return_value = []
+
+        with patch("aiperf.kubernetes.logs.run_command") as mock_run:
+            await save_pod_logs("job-123", "default", tmp_path, mock_client)
+
+        mock_run.assert_not_called()
+        assert not (tmp_path / "logs").exists()
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_nonzero_returncode_skips_file(
+        self, mock_client: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        mock_client.get_pods.return_value = [pods[0]]
+        failed_result = CommandResult(returncode=1, stdout="", stderr="error")
+        mock_run = AsyncMock(return_value=failed_result)
+
+        with patch("aiperf.kubernetes.logs.run_command", mock_run):
+            await save_pod_logs("job-123", "default", tmp_path, mock_client)
+
+        logs_dir = tmp_path / "logs"
+        assert logs_dir.is_dir()
+        assert not (logs_dir / "aiperf-job-controller-0-0.log").exists()
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_empty_stdout_skips_file(
+        self, mock_client: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        mock_client.get_pods.return_value = [pods[0]]
+        empty_result = CommandResult(returncode=0, stdout="", stderr="")
+        mock_run = AsyncMock(return_value=empty_result)
+
+        with patch("aiperf.kubernetes.logs.run_command", mock_run):
+            await save_pod_logs("job-123", "default", tmp_path, mock_client)
+
+        logs_dir = tmp_path / "logs"
+        assert not (logs_dir / "aiperf-job-controller-0-0.log").exists()
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_nonzero_with_stdout_skips_file(
+        self, mock_client: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        """When returncode is nonzero, stdout content is not written even if present."""
+        mock_client.get_pods.return_value = [pods[0]]
+        result = CommandResult(returncode=1, stdout="partial output", stderr="error")
+        mock_run = AsyncMock(return_value=result)
+
+        with patch("aiperf.kubernetes.logs.run_command", mock_run):
+            await save_pod_logs("job-123", "default", tmp_path, mock_client)
+
+        assert not (tmp_path / "logs" / "aiperf-job-controller-0-0.log").exists()
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_mixed_success_and_failure(
+        self, mock_client: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        """First pod succeeds, second pod fails -- only first log is written."""
+        mock_client.get_pods.return_value = pods
+        results = [
+            CommandResult(returncode=0, stdout="good logs", stderr=""),
+            CommandResult(returncode=1, stdout="", stderr="failed"),
+        ]
+        mock_run = AsyncMock(side_effect=results)
+
+        with patch("aiperf.kubernetes.logs.run_command", mock_run):
+            await save_pod_logs("job-123", "default", tmp_path, mock_client)
+
+        logs_dir = tmp_path / "logs"
+        assert (logs_dir / "aiperf-job-controller-0-0.log").read_text() == "good logs"
+        assert not (logs_dir / "aiperf-job-worker-0-0.log").exists()
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_nested_output_dir(
+        self, mock_client: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        """logs_dir.mkdir(parents=True) creates intermediate directories."""
+        mock_client.get_pods.return_value = [pods[0]]
+        mock_run = AsyncMock(
+            return_value=CommandResult(returncode=0, stdout="data", stderr="")
+        )
+        deep_path = tmp_path / "a" / "b" / "c"
+
+        with patch("aiperf.kubernetes.logs.run_command", mock_run):
+            await save_pod_logs("job-123", "default", deep_path, mock_client)
+
+        assert (
+            deep_path / "logs" / "aiperf-job-controller-0-0.log"
+        ).read_text() == "data"

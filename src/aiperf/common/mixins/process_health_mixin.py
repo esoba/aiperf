@@ -4,6 +4,7 @@ import time
 
 import psutil
 
+from aiperf.common.memory_tracker import read_pss_self
 from aiperf.common.mixins.base_mixin import BaseMixin
 from aiperf.common.models import CPUTimes, CtxSwitches, ProcessHealth
 
@@ -46,3 +47,16 @@ class ProcessHealthMixin(BaseMixin):
             num_threads=self._process.num_threads(),
         )  # fmt: skip
         return self._process_health
+
+    def get_pss_memory(self) -> int | None:
+        """Read PSS (Proportional Set Size) for the current process.
+
+        PSS divides shared pages proportionally among processes that map them,
+        giving a more accurate memory footprint than RSS when mmap is used
+        (e.g. for the dataset). This is expensive to compute so should only
+        be called at start and end, not on every health check.
+
+        Returns:
+            PSS in bytes, or None if unavailable.
+        """
+        return read_pss_self()

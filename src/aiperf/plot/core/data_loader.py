@@ -1152,7 +1152,7 @@ class DataLoader(AIPerfLoggerMixin):
 
         except ImportError as e:
             raise DataLoadError(
-                "pyarrow is required to load Parquet files. Install with: pip install pyarrow",
+                "pyarrow is required to load Parquet files. Install with: uv add pyarrow",
                 path=str(parquet_path),
             ) from e
         except Exception as e:

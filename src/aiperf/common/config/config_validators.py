@@ -1,18 +1,141 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+"""Utility functions for validating and parsing configuration inputs.
+
+Includes:
+- Parsing utilities (strings, lists, dicts)
+- Validation helpers for Pydantic model validators
+"""
+
+from __future__ import annotations
+
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
 from aiperf.common.utils import load_json_str
 from aiperf.plugin.enums import ServiceType
 
-"""
-This module provides utility functions for validating and parsing configuration inputs.
-"""
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+
+# -----------------------------------------------------------------------------
+# Validation Helpers
+# -----------------------------------------------------------------------------
+
+
+def raise_if(*conditions: bool, error: str) -> None:
+    """Raise ValueError if ALL conditions are True.
+
+    Use this to consolidate conditional validation logic in model validators.
+
+    Args:
+        *conditions: Boolean conditions to check. Error is raised only if ALL are True.
+        error: Error message to raise.
+
+    Example:
+        # Instead of:
+        if "num_users" in self.model_fields_set and self.user_centric_rate is None:
+            raise ValueError("--num-users requires --user-centric-rate")
+
+        # Use:
+        raise_if(
+            is_field_set(self.loadgen, "num_users"),
+            self.user_centric_rate is None,
+            error="--num-users requires --user-centric-rate"
+        )
+    """
+    if all(conditions):
+        raise ValueError(error)
+
+
+def is_field_set(model: BaseModel, field_name: str) -> bool:
+    """Check if a field was explicitly set on a Pydantic model.
+
+    Args:
+        model: The Pydantic model instance.
+        field_name: The name of the field to check.
+
+    Returns:
+        True if the field is in model_fields_set, False otherwise.
+    """
+    return field_name in model.model_fields_set
+
+
+def are_fields_set(model: BaseModel, *field_names: str) -> bool:
+    """Check if ANY of the specified fields were explicitly set.
+
+    Args:
+        model: The Pydantic model instance.
+        *field_names: Field names to check.
+
+    Returns:
+        True if any field is in model_fields_set, False otherwise.
+    """
+    return any(f in model.model_fields_set for f in field_names)
+
+
+def check_mutually_exclusive(
+    model: BaseModel,
+    *field_names: str,
+    error: str | None = None,
+) -> None:
+    """Raise ValueError if more than one of the specified fields is set.
+
+    Args:
+        model: The Pydantic model instance.
+        *field_names: Field names that are mutually exclusive.
+        error: Custom error message. If None, generates a default message.
+
+    Example:
+        check_mutually_exclusive(
+            self,
+            "no_gpu_telemetry",
+            "gpu_telemetry",
+            error="Cannot use both --no-gpu-telemetry and --gpu-telemetry"
+        )
+    """
+    set_fields = [f for f in field_names if f in model.model_fields_set]
+    if len(set_fields) > 1:
+        if error is None:
+            options = ", ".join(f"--{f.replace('_', '-')}" for f in set_fields)
+            error = f"Cannot use {options} together. Use only one of these options."
+        raise ValueError(error)
+
+
+def check_requires(
+    model: BaseModel,
+    field: str,
+    required_field: str,
+    *,
+    error: str | None = None,
+) -> None:
+    """Raise ValueError if field is set but required_field is not.
+
+    Args:
+        model: The Pydantic model instance.
+        field: The field that has a requirement.
+        required_field: The field that must also be set.
+        error: Custom error message.
+
+    Example:
+        check_requires(
+            self.loadgen,
+            "num_users",
+            "user_centric_rate",
+            error="--num-users can only be used with --user-centric-rate"
+        )
+    """
+    if field in model.model_fields_set and required_field not in model.model_fields_set:
+        if error is None:
+            opt = f"--{field.replace('_', '-')}"
+            req = f"--{required_field.replace('_', '-')}"
+            error = f"{opt} can only be used with {req}."
+        raise ValueError(error)
 
 
 def parse_str_or_list(input: Any) -> list[Any] | None:
@@ -20,17 +143,17 @@ def parse_str_or_list(input: Any) -> list[Any] | None:
     Parses the input to ensure it is either a string, a list, or None. If the input is a string,
     it splits the string by commas and trims any whitespace around each element, returning
     the result as a list. If the input is already a list, it is returned as-is. If the input
-    is None, it is returned as-is. If the input is none of these, a ValueError is raised.
+    is None, returns None. If the input is any other type, a ValueError is raised.
     Args:
-        input (Any): The input to be parsed. Expected to be a string, a list, or None.
+        input (Any): The input to be parsed. Expected to be a string, list, or None.
     Returns:
-        list | None: A list of strings derived from the input, or None if input is None.
+        list | None: A list of strings derived from the input, or None.
     Raises:
-        ValueError: If the input is neither a string, a list, nor None.
+        ValueError: If the input is neither a string, list, nor None.
     """
     if input is None:
         return None
-    elif isinstance(input, str):
+    if isinstance(input, str):
         output = [item.strip() for item in input.split(",")]
     elif isinstance(input, list):
         # TODO: When using cyclopts, the values are already lists, so we have to split them by commas.
@@ -176,8 +299,8 @@ def print_str_or_list(input: Any) -> str:
     if isinstance(input, list):
         return ", ".join(map(str, input))
     elif isinstance(input, Enum):
-        return str(input.value).lower()
-    return input
+        return str(input).lower()
+    return str(input)
 
 
 def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
@@ -213,46 +336,58 @@ def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
     except ValueError as e:
         raise ValueError(f"User Config: {output} - all values must be numeric") from e
 
-    if not all(isinstance(x, (int | float)) and x > 0 for x in output):
+    if not all(isinstance(x, int | float) and x > 0 for x in output):
         raise ValueError(f"User Config: {output} - all values must be positive numbers")
 
     return output
 
 
-def parse_file(value: str | None) -> Path | None:
+def parse_file(value: str | Path | None) -> Path | None:
     """
     Parses the given string value and returns a Path object if the value represents
     a valid file or directory. Returns None if the input value is empty.
+
+    Absolute paths that don't exist locally are accepted without validation
+    to support Kubernetes deployments where files reside on PVC mounts.
+
     Args:
-        value (str): The string value to parse.
+        value: The string or Path value to parse.
     Returns:
-        Optional[Path]: A Path object if the value is valid, or None if the value is empty.
+        A Path object if the value is valid, or None if the value is empty.
     Raises:
-        ValueError: If the value is not a valid file or directory.
+        ValueError: If the value is not a valid file or directory and is a relative path.
     """
 
     if not value:
         return None
+    if isinstance(value, Path):
+        return value
     elif not isinstance(value, str):
         raise ValueError(f"Expected a string, but got {type(value).__name__}")
     else:
         path = Path(value)
-        if path.is_file() or path.is_dir():
+        if path.is_file() or path.is_dir() or path.is_absolute():
             return path
         else:
             raise ValueError(f"'{value}' is not a valid file or directory")
 
 
-def parse_str_as_numeric_dict(input_string: str | None) -> dict[str, float] | None:
+def parse_str_as_numeric_dict(
+    input_value: str | dict[str, float] | None,
+) -> dict[str, float] | None:
     """
     Parse a string of key:value pairs such as 'k:v x:y' into {k: v, x: y}.
+    Also accepts a dict directly (e.g., from YAML/JSON config).
     """
-    if input_string is None:
+    if input_value is None:
         return None
-    if not isinstance(input_string, str):
+    if isinstance(input_value, dict):
+        return {k: float(v) for k, v in input_value.items()}
+    if not isinstance(input_value, str):
         raise ValueError(
-            f"User Config: expected a string of space-separated 'key:value' pairs, got {type(input_string).__name__}"
+            f"User Config: expected a string of space-separated 'key:value' pairs or a dict, got {type(input_value).__name__}"
         )
+    input_string = input_value
 
     input_string = input_string.strip()
     if not input_string:

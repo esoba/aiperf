@@ -6,13 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
-from aiperf.common.enums import CommandType
-from aiperf.common.messages import ProfileConfigureCommand, ProfileStartCommand
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
-from aiperf.common.models import ErrorDetails
+from aiperf.common.models import CreditPhaseStats, ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
-from aiperf.plugin.enums import EndpointType
+from aiperf.credit.messages import CreditPhaseStartMessage
+from aiperf.plugin.enums import EndpointType, TimingMode
 from aiperf.server_metrics.manager import ServerMetricsManager
+from aiperf.timing.config import CreditPhaseConfig
 
 
 @pytest.fixture
@@ -116,7 +118,7 @@ class TestServerMetricsManagerInitialization:
             assert count == 1
 
 
-class TestProfileConfigureCommand:
+class TestProfileConfigure:
     """Test profile configuration and endpoint reachability checking."""
 
     @pytest.mark.asyncio
@@ -139,11 +141,7 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert len(manager._collectors) > 0
@@ -168,11 +166,7 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert len(manager._collectors) == 0
@@ -199,11 +193,7 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert "old_collector" not in manager._collectors
@@ -232,9 +222,7 @@ class TestProfileStartCommand:
         manager._collectors["http://localhost:8081/metrics"] = mock_collector
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_START)
         )
 
         mock_collector.start.assert_called_once()
@@ -266,9 +254,7 @@ class TestProfileStartCommand:
             "asyncio.create_task", side_effect=close_coroutine
         ) as mock_create_task:
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_START)
             )
 
             # Verify delayed shutdown was scheduled via asyncio.create_task
@@ -292,9 +278,7 @@ class TestProfileStartCommand:
         manager._collectors["http://localhost:8081/metrics"] = mock_collector
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_START)
         )
 
     @pytest.mark.asyncio
@@ -326,9 +310,7 @@ class TestProfileStartCommand:
             "asyncio.create_task", side_effect=close_coroutine
         ) as mock_create_task:
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_START)
             )
 
             # Verify delayed shutdown was scheduled via asyncio.create_task
@@ -433,20 +415,16 @@ class TestDisabledServerMetrics:
             user_config=user_config,
         )
 
-        manager.publish = AsyncMock()
+        manager.control_client = AsyncMock()
 
         await manager._profile_configure_command(
-            ProfileConfigureCommand(
-                service_id=manager.id,
-                command=CommandType.PROFILE_CONFIGURE,
-                config={},
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Should not create any collectors
         assert len(manager._collectors) == 0
-        # Should publish disabled status
-        manager.publish.assert_called_once()
+        # Should send disabled status via health check client
+        manager.control_client.send.assert_called_once()
 
 
 class TestExceptionHandling:
@@ -472,11 +450,7 @@ class TestExceptionHandling:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             # Should handle exception and not add collector
@@ -506,11 +480,7 @@ class TestExceptionHandling:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             # Collector should still be added despite baseline failure
@@ -545,9 +515,7 @@ class TestPartialStartup:
         }
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_START)
         )
 
         # Both should be called
@@ -565,8 +533,6 @@ class TestProfileCompleteAndCancel:
         user_config_with_endpoint: UserConfig,
     ):
         """Test that profile complete triggers final metrics scrape."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
             service_config=service_config,
             user_config=user_config_with_endpoint,
@@ -576,9 +542,7 @@ class TestProfileCompleteAndCancel:
         manager._collectors = {"endpoint1": mock_collector}
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         # Should call final scrape
@@ -593,8 +557,6 @@ class TestProfileCompleteAndCancel:
         user_config_with_endpoint: UserConfig,
     ):
         """Test that profile complete handles final scrape failures gracefully."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
             service_config=service_config,
             user_config=user_config_with_endpoint,
@@ -607,9 +569,7 @@ class TestProfileCompleteAndCancel:
         manager._collectors = {"endpoint1": mock_collector}
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         # Should still stop collector even if final scrape fails
@@ -622,8 +582,6 @@ class TestProfileCompleteAndCancel:
         user_config_with_endpoint: UserConfig,
     ):
         """Test that profile complete is idempotent when collectors already stopped."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
             service_config=service_config,
             user_config=user_config_with_endpoint,
@@ -633,9 +591,7 @@ class TestProfileCompleteAndCancel:
 
         # Should not raise exception
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_COMPLETE)
         )
 
     @pytest.mark.asyncio
@@ -645,8 +601,6 @@ class TestProfileCompleteAndCancel:
         user_config_with_endpoint: UserConfig,
     ):
         """Test that profile cancel stops all collectors."""
-        from aiperf.common.messages import ProfileCancelCommand
-
         manager = ServerMetricsManager(
             service_config=service_config,
             user_config=user_config_with_endpoint,
@@ -656,9 +610,7 @@ class TestProfileCompleteAndCancel:
         manager._collectors = {"endpoint1": mock_collector}
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="test", cmd=CommandType.PROFILE_CANCEL)
         )
 
         mock_collector.stop.assert_called_once()
@@ -834,7 +786,8 @@ class TestCallbackEdgeCases:
             user_config=user_config_with_endpoint,
         )
 
-        manager.publish = AsyncMock(side_effect=Exception("Publish failed"))
+        manager.control_client = AsyncMock()
+        manager.control_client.send = AsyncMock(side_effect=Exception("Publish failed"))
 
         # Should not raise exception
         await manager._send_server_metrics_status(
@@ -843,3 +796,110 @@ class TestCallbackEdgeCases:
             endpoints_configured=[],
             endpoints_reachable=[],
         )
+
+
+class TestCreditPhaseStart:
+    """Test boundary scrape at warmup→profiling phase transition."""
+
+    @staticmethod
+    def _make_phase_start_message(phase: CreditPhase) -> CreditPhaseStartMessage:
+        """Create a CreditPhaseStartMessage with real Pydantic models."""
+        return CreditPhaseStartMessage(
+            service_id="timing_manager",
+            stats=CreditPhaseStats(phase=phase),
+            config=CreditPhaseConfig(
+                phase=phase,
+                timing_mode=TimingMode.REQUEST_RATE,
+                total_expected_requests=100,
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_profiling_phase_triggers_boundary_scrape(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that PROFILING phase triggers scrape without stopping collectors."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        mock_collector = AsyncMock()
+        manager._collectors = {"endpoint1": mock_collector}
+
+        await manager._on_credit_phase_start(
+            self._make_phase_start_message(CreditPhase.PROFILING)
+        )
+
+        mock_collector.collect_and_process_metrics.assert_called_once()
+        mock_collector.stop.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_warmup_phase_does_not_trigger_scrape(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that WARMUP phase does not trigger a boundary scrape."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        mock_collector = AsyncMock()
+        manager._collectors = {"endpoint1": mock_collector}
+
+        await manager._on_credit_phase_start(
+            self._make_phase_start_message(CreditPhase.WARMUP)
+        )
+
+        mock_collector.collect_and_process_metrics.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_boundary_scrape_with_no_collectors(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that boundary scrape with empty collectors does not raise."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        manager._collectors = {}
+
+        await manager._on_credit_phase_start(
+            self._make_phase_start_message(CreditPhase.PROFILING)
+        )
+
+    @pytest.mark.asyncio
+    async def test_boundary_scrape_handles_collector_failure(
+        self,
+        service_config: ServiceConfig,
+        user_config_with_endpoint: UserConfig,
+    ):
+        """Test that one collector failure doesn't prevent scraping the other."""
+        manager = ServerMetricsManager(
+            service_config=service_config,
+            user_config=user_config_with_endpoint,
+        )
+
+        mock_collector_ok = AsyncMock()
+        mock_collector_fail = AsyncMock()
+        mock_collector_fail.collect_and_process_metrics.side_effect = Exception(
+            "Scrape failed"
+        )
+        manager._collectors = {
+            "endpoint_fail": mock_collector_fail,
+            "endpoint_ok": mock_collector_ok,
+        }
+
+        await manager._on_credit_phase_start(
+            self._make_phase_start_message(CreditPhase.PROFILING)
+        )
+
+        mock_collector_fail.collect_and_process_metrics.assert_called_once()
+        mock_collector_ok.collect_and_process_metrics.assert_called_once()

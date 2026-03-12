@@ -84,6 +84,7 @@ class TestServiceCommand:
             service_config=mock_load_service.return_value,
             user_config=mock_load_user.return_value,
             service_id="worker-1",
+            api_port=None,
         )
 
     def test_default_optional_arguments(

@@ -48,12 +48,20 @@ def _run_single_benchmark(
     import multiprocessing
     import platform
 
+    from aiperf.common.environment import Environment
+
     is_macos = platform.system() == "Darwin"
     using_dashboard = service_config.ui_type == UIType.DASHBOARD
 
-    # Force spawn method on macOS to prevent fork-related issues.
-    # This should already be the default, but we'll set it explicitly just in case.
-    if is_macos and using_dashboard:
+    # Set multiprocessing start method:
+    # - macOS + Dashboard: "spawn" prevents terminal corruption from inherited FDs
+    # - Env override takes precedence for all platforms.
+    if Environment.SERVICE.MULTIPROCESSING_START_METHOD:
+        with contextlib.suppress(RuntimeError):
+            multiprocessing.set_start_method(
+                Environment.SERVICE.MULTIPROCESSING_START_METHOD, force=True
+            )
+    elif is_macos and using_dashboard:
         with contextlib.suppress(RuntimeError):
             multiprocessing.set_start_method("spawn", force=True)
 
@@ -63,7 +71,12 @@ def _run_single_benchmark(
 
     logger = AIPerfLogger(__name__)
 
-    # Create log_queue before UI initialization to minimize FD inheritance issues.
+    # Create queues before UI initialization to minimize FD inheritance issues.
+    # Error queue is always created; log queue only for Dashboard UI.
+    from aiperf.common.error_queue import get_global_error_queue
+
+    get_global_error_queue()
+
     log_queue = None
     if using_dashboard:
         from aiperf.common.logging import get_global_log_queue

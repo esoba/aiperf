@@ -1,0 +1,107 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Operator image configuration
+image:
+  repository: nvcr.io/nvidia/aiperf
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Image pull secrets for private registries
+imagePullSecrets: []
+# - name: my-registry-secret
+
+# Override the name of the release
+nameOverride: ""
+fullnameOverride: ""
+
+# Operator deployment settings
+operator:
+  # Number of replicas (only 1 recommended for leader election)
+  replicas: 1
+
+  # Resource requests and limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Pod annotations
+  podAnnotations: {}
+
+  # Node selector
+  nodeSelector: {}
+
+  # Tolerations
+  tolerations: []
+
+  # Affinity rules
+  affinity: {}
+
+  # Environment variables for the operator
+  env:
+    # Interval between status checks (seconds)
+    monitorInterval: "10.0"
+    # Initial delay before first status check (seconds)
+    monitorInitialDelay: "5.0"
+    # Job timeout in seconds (0 = no timeout)
+    jobTimeoutSeconds: "0"
+    # Pod restart count threshold before emitting warning events
+    podRestartThreshold: "3"
+    # Results TTL in days
+    resultsTtlDays: "30"
+    # Max retries for fetching results from controller
+    resultsMaxRetries: "5"
+    # Delay between result fetch retries (seconds)
+    resultsRetryDelay: "2.0"
+    # Endpoint health check timeout (seconds)
+    endpointCheckTimeout: "10.0"
+
+# Results storage configuration
+storage:
+  # Enable persistent storage for benchmark results
+  enabled: true
+
+  # Storage size
+  size: 1Ti
+
+  # Storage class (empty = default)
+  storageClassName: ""
+
+  # Mount path in operator pod
+  mountPath: /data
+
+  # Access mode
+  accessMode: ReadWriteOnce
+
+# Service account configuration
+serviceAccount:
+  # Create a service account
+  create: true
+
+  # Name of the service account (auto-generated if empty)
+  name: ""
+
+  # Annotations for the service account
+  annotations: {}
+
+# RBAC configuration
+rbac:
+  # Create ClusterRole and ClusterRoleBinding
+  create: true
+
+# CRD configuration
+crd:
+  # Install the AIPerfJob CRD
+  install: true
+
+# Default settings for AIPerfJob resources
+defaults:
+  # Default image for benchmark jobs
+  image: nvcr.io/nvidia/aiperf:latest
+
+  # Default image pull policy
+  imagePullPolicy: IfNotPresent

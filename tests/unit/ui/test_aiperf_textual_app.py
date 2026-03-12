@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 from aiperf.common.enums import GPUTelemetryMode
-from aiperf.common.messages import StartRealtimeTelemetryCommand
 from aiperf.common.models import MetricResult
 from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
 
@@ -194,10 +193,7 @@ class TestAIPerfTextualAppActions:
             app.realtime_telemetry_dashboard.set_status_message.assert_called_once_with(
                 "Enabling live GPU telemetry..."
             )
-            mock_controller.publish.assert_called_once()
-
-            call_args = mock_controller.publish.call_args[0][0]
-            assert isinstance(call_args, StartRealtimeTelemetryCommand)
+            mock_controller.start_realtime_telemetry.assert_awaited_once()
 
 
 class TestAIPerfTextualAppProgressHandlers:

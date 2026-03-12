@@ -237,7 +237,14 @@ class TestHttpCommunication:
         collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         # Don't initialize - should create temporary session
-        with patch("aiohttp.ClientSession") as mock_session_class:
+        with (
+            patch(
+                "aiperf.transports.aiohttp_client.create_tcp_connector"
+            ) as mock_create,
+            patch("aiohttp.ClientSession") as mock_session_class,
+        ):
+            mock_connector = AsyncMock()
+            mock_create.return_value = mock_connector
             # Create mock response
             mock_response = MagicMock()
             mock_response.status = 200

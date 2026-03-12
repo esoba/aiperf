@@ -1,0 +1,915 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Pre-flight check system for Kubernetes deployments.
+
+This module provides comprehensive validation of Kubernetes cluster readiness
+before deploying AIPerf benchmarks.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
+
+from aiperf.kubernetes.console import logger
+from aiperf.kubernetes.environment import K8sEnvironment
+from aiperf.kubernetes.jobset import JOBSET_API, get_jobset_install_hint
+from aiperf.kubernetes.utils import (
+    format_cpu,
+    format_memory,
+    parse_cpu,
+    parse_memory_gib,
+)
+
+
+class CheckStatus(str, Enum):
+    """Status of a pre-flight check."""
+
+    PASS = "pass"
+    FAIL = "fail"
+    WARN = "warn"
+    SKIP = "skip"
+    INFO = "info"
+
+
+_STATUS_ICONS: dict[CheckStatus, str] = {
+    CheckStatus.PASS: "[green]✓[/green]",
+    CheckStatus.FAIL: "[red]✗[/red]",
+    CheckStatus.WARN: "[yellow]![/yellow]",
+    CheckStatus.SKIP: "[dim]⊘[/dim]",
+    CheckStatus.INFO: "[blue]ℹ[/blue]",
+}
+
+# Required RBAC permissions for AIPerf deployment: (verb, resource, api_group)
+_REQUIRED_RBAC_PERMISSIONS: list[tuple[str, str, str]] = [
+    ("create", "configmaps", ""),
+    ("get", "pods", ""),
+    ("get", "pods/log", ""),
+    ("create", "roles", "rbac.authorization.k8s.io"),
+    ("create", "rolebindings", "rbac.authorization.k8s.io"),
+    ("create", "jobsets", JOBSET_API.group),
+    ("get", "jobsets", JOBSET_API.group),
+    ("delete", "jobsets", JOBSET_API.group),
+]
+
+
+@dataclass
+class CheckResult:
+    """Result of a single pre-flight check."""
+
+    name: str
+    status: CheckStatus
+    message: str
+    details: list[str] = field(default_factory=list)
+    hints: list[str] = field(default_factory=list)
+    duration_ms: float | None = field(default=None)
+
+
+@dataclass
+class PreflightResults:
+    """Aggregated results of all pre-flight checks."""
+
+    checks: list[CheckResult] = field(default_factory=list)
+
+    @property
+    def passed(self) -> bool:
+        """Return True if no checks failed."""
+        return not any(c.status == CheckStatus.FAIL for c in self.checks)
+
+    @property
+    def has_warnings(self) -> bool:
+        """Return True if any checks have warnings."""
+        return any(c.status == CheckStatus.WARN for c in self.checks)
+
+    def add(self, result: CheckResult) -> None:
+        """Add a check result."""
+        self.checks.append(result)
+
+    def print_summary(self) -> None:
+        """Print a summary of all check results."""
+        logger.info("")
+        if self.passed:
+            if self.has_warnings:
+                logger.info(
+                    "[yellow bold]✓ Pre-flight checks passed with warnings[/yellow bold]"
+                )
+            else:
+                logger.info("[green bold]✓ All pre-flight checks passed![/green bold]")
+        else:
+            logger.error("[red bold]✗ Some pre-flight checks failed[/red bold]")
+
+        for check in self.checks:
+            icon = _STATUS_ICONS[check.status]
+            duration = (
+                f" [dim]({check.duration_ms:.0f}ms)[/dim]"
+                if check.duration_ms is not None
+                else ""
+            )
+            logger.info(f"  {icon} {check.name}{duration}")
+
+        logger.info("")
+        if self.passed:
+            logger.info("[dim]Your cluster is ready for AIPerf deployment.[/dim]")
+        else:
+            logger.info("[dim]Please resolve the issues above before deploying.[/dim]")
+
+
+def _format_duration(duration_ms: float | None) -> str:
+    """Format check duration for display, or empty string if None."""
+    return f" ({duration_ms:.0f}ms)" if duration_ms is not None else ""
+
+
+def _print_check_result(result: CheckResult, check_num: int, total: int) -> None:
+    """Log the result of a single check with verbose formatting."""
+    icon = _STATUS_ICONS[result.status]
+    duration = _format_duration(result.duration_ms)
+
+    logger.info("")
+    logger.info(f"[bold]\\[{check_num}/{total}] {result.name}{duration}[/bold]")
+    logger.info(f"  {icon} {result.message}")
+
+    for detail in result.details:
+        logger.info(f"    {detail}")
+
+    for hint in result.hints:
+        logger.info(f"    [dim]Hint: {hint}[/dim]")
+
+
+def _print_check_result_compact(result: CheckResult) -> None:
+    """Log a single check result in compact one-line format."""
+    icon = _STATUS_ICONS[result.status]
+    logger.info(
+        f"  {icon} {result.name}: {result.message}{_format_duration(result.duration_ms)}"
+    )
+
+
+class PreflightChecker:
+    """Runs pre-flight checks for Kubernetes deployment."""
+
+    def __init__(
+        self,
+        namespace: str,
+        kubeconfig: str | None = None,
+        kube_context: str | None = None,
+        image: str | None = None,
+        image_pull_secrets: list[str] | None = None,
+        secrets: list[str] | None = None,
+        endpoint_url: str | None = None,
+        workers: int = 1,
+    ):
+        """Initialize the preflight checker.
+
+        Args:
+            namespace: Kubernetes namespace to check.
+            kubeconfig: Path to kubeconfig file.
+            kube_context: Kubernetes context to use.
+            image: Container image to verify.
+            image_pull_secrets: Image pull secret names to verify.
+            secrets: Secret names to verify.
+            endpoint_url: LLM endpoint URL to test connectivity.
+            workers: Number of worker pods planned for deployment.
+        """
+        self.namespace = namespace
+        self.kubeconfig = kubeconfig
+        self.kube_context = kube_context
+        self.image = image
+        self.image_pull_secrets = image_pull_secrets or []
+        self.secrets = secrets or []
+        self.endpoint_url = endpoint_url
+        self.workers = workers
+
+        self._api: Any = None
+
+    async def _run_check(
+        self,
+        name: str,
+        check_fn: Callable[[], Awaitable[CheckResult]],
+        *,
+        show_status: bool = False,
+    ) -> CheckResult:
+        """Run a single check with timing and optional status logging.
+
+        Args:
+            name: Check name (used as fallback in error message).
+            check_fn: Async callable that returns a CheckResult.
+            show_status: Print a status message before the check runs.
+
+        Returns:
+            CheckResult with duration_ms populated.
+        """
+        start = time.perf_counter()
+        try:
+            if show_status:
+                logger.info(f"[cyan]... Checking {name}[/cyan]")
+            result = await check_fn()
+        except Exception as e:
+            result = CheckResult(
+                name=name,
+                status=CheckStatus.FAIL,
+                message=f"Check failed with error: {e}",
+            )
+        result.duration_ms = (time.perf_counter() - start) * 1000
+        return result
+
+    async def run_quick_checks(
+        self, *, show_progress: bool = False
+    ) -> PreflightResults:
+        """Run only critical pre-flight checks (connectivity, JobSet CRD, RBAC).
+
+        When endpoint_url is set, also checks endpoint connectivity as a 4th check.
+
+        Args:
+            show_progress: Print compact results inline as each check completes.
+
+        Returns:
+            PreflightResults (without printing unless show_progress=True).
+            Short-circuits on connectivity failure.
+        """
+        results = PreflightResults()
+
+        checks: list[tuple[str, Callable[[], Awaitable[CheckResult]]]] = [
+            ("Cluster Connectivity", self._check_cluster_connectivity),
+            ("JobSet CRD", self._check_jobset_crd),
+            ("RBAC Permissions", self._check_rbac_permissions),
+        ]
+        if self.endpoint_url:
+            checks.append(("Endpoint Connectivity", self._check_endpoint_connectivity))
+
+        for name, check_fn in checks:
+            result = await self._run_check(name, check_fn)
+            results.add(result)
+            if show_progress:
+                _print_check_result_compact(result)
+            if name == "Cluster Connectivity" and result.status == CheckStatus.FAIL:
+                return results
+
+        return results
+
+    async def run_all_checks(self) -> PreflightResults:
+        """Run all pre-flight checks and return results."""
+        results = PreflightResults()
+
+        checks: list[tuple[str, Callable[[], Awaitable[CheckResult]]]] = [
+            ("Cluster Connectivity", self._check_cluster_connectivity),
+            ("Kubernetes Version", self._check_kubernetes_version),
+            ("Namespace", self._check_namespace),
+            ("RBAC Permissions", self._check_rbac_permissions),
+            ("JobSet CRD", self._check_jobset_crd),
+            ("JobSet Controller", self._check_jobset_controller),
+            ("Resource Quotas", self._check_resource_quotas),
+            ("Node Resources", self._check_node_resources),
+            ("Secrets", self._check_secrets),
+            ("Image Pull", self._check_image),
+            ("Network Policies", self._check_network_policies),
+            ("DNS Resolution", self._check_dns),
+            ("Endpoint Connectivity", self._check_endpoint_connectivity),
+        ]
+
+        total = len(checks)
+        for i, (name, check_fn) in enumerate(checks, 1):
+            result = await self._run_check(name, check_fn, show_status=True)
+            results.add(result)
+            _print_check_result(result, i, total)
+
+            if name == "Cluster Connectivity" and result.status == CheckStatus.FAIL:
+                break
+
+        results.print_summary()
+        return results
+
+    async def _check_cluster_connectivity(self) -> CheckResult:
+        """Check if we can connect to the Kubernetes cluster."""
+        from aiperf.kubernetes.client import get_api
+
+        try:
+            self._api = await get_api(
+                kubeconfig=self.kubeconfig,
+                kube_context=self.kube_context,
+            )
+            await self._api.async_version()
+
+            return CheckResult(
+                name="Cluster Connectivity",
+                status=CheckStatus.PASS,
+                message="Connected to Kubernetes cluster",
+            )
+        except Exception as e:
+            return CheckResult(
+                name="Cluster Connectivity",
+                status=CheckStatus.FAIL,
+                message=f"Failed to connect: {e}",
+                hints=[
+                    "Check your kubeconfig (~/.kube/config) or KUBECONFIG env var",
+                    "Verify the cluster is running and accessible",
+                ],
+            )
+
+    async def _check_kubernetes_version(self) -> CheckResult:
+        """Check Kubernetes version compatibility."""
+        import re
+
+        try:
+            version = await self._api.async_version()
+            major_str = re.sub(r"[^0-9]", "", version.get("major", "0") or "0")
+            minor_str = re.sub(r"[^0-9]", "", version.get("minor", "0") or "0")
+            major = int(major_str) if major_str else 0
+            minor = int(minor_str) if minor_str else 0
+            git_version = version.get("gitVersion", "unknown")
+
+            if major >= 1 and minor >= 24:
+                return CheckResult(
+                    name="Kubernetes Version",
+                    status=CheckStatus.PASS,
+                    message=f"Kubernetes {git_version} (1.24+ required)",
+                )
+            else:
+                return CheckResult(
+                    name="Kubernetes Version",
+                    status=CheckStatus.FAIL,
+                    message=f"Kubernetes {git_version} is below minimum 1.24",
+                    hints=["Upgrade your Kubernetes cluster to version 1.24 or later"],
+                )
+        except Exception as e:
+            return CheckResult(
+                name="Kubernetes Version",
+                status=CheckStatus.WARN,
+                message=f"Could not determine version: {e}",
+            )
+
+    async def _check_access(self, verb: str, resource: str, group: str) -> bool:
+        """Check if current user has a specific RBAC permission.
+
+        Args:
+            verb: The Kubernetes verb (e.g. "create", "get", "delete").
+            resource: The resource type (e.g. "pods", "configmaps").
+            group: The API group (e.g. "rbac.authorization.k8s.io", or "" for core).
+
+        Returns:
+            True if the access is allowed.
+        """
+        resource_attrs: dict[str, str] = {
+            "verb": verb,
+            "resource": resource,
+            "namespace": self.namespace,
+        }
+        if group:
+            resource_attrs["group"] = group
+
+        body = {
+            "apiVersion": "authorization.k8s.io/v1",
+            "kind": "SelfSubjectAccessReview",
+            "spec": {"resourceAttributes": resource_attrs},
+        }
+
+        async with self._api.call_api(
+            "POST",
+            base="/apis/authorization.k8s.io",
+            version="v1",
+            url="selfsubjectaccessreviews",
+            json=body,
+        ) as resp:
+            result = resp.json()
+            return result.get("status", {}).get("allowed", False)
+
+    async def _check_namespace(self) -> CheckResult:
+        """Check if namespace exists or can be created."""
+        import kr8s
+        from kr8s.asyncio.objects import Namespace
+
+        try:
+            await Namespace.get(self.namespace, api=self._api)
+            return CheckResult(
+                name="Namespace",
+                status=CheckStatus.PASS,
+                message=f"Namespace '{self.namespace}' exists",
+            )
+        except kr8s.NotFoundError:
+            try:
+                allowed = await self._check_access("create", "namespaces", "")
+                if allowed:
+                    return CheckResult(
+                        name="Namespace",
+                        status=CheckStatus.PASS,
+                        message=f"Namespace '{self.namespace}' will be created",
+                    )
+                else:
+                    return CheckResult(
+                        name="Namespace",
+                        status=CheckStatus.FAIL,
+                        message=f"Namespace '{self.namespace}' does not exist",
+                        hints=[f"Ask an admin to create namespace '{self.namespace}'"],
+                    )
+            except Exception as perm_err:
+                return CheckResult(
+                    name="Namespace",
+                    status=CheckStatus.WARN,
+                    message=f"Namespace '{self.namespace}' does not exist, cannot verify create permission",
+                    details=[str(perm_err)],
+                )
+        except kr8s.ServerError as e:
+            status_code = e.response.status_code if e.response else "unknown"
+            return CheckResult(
+                name="Namespace",
+                status=CheckStatus.FAIL,
+                message=f"Error checking namespace: HTTP {status_code}",
+            )
+
+    async def _check_rbac_permissions(self) -> CheckResult:
+        """Check required RBAC permissions."""
+        missing = []
+        passed = []
+
+        for verb, resource, group in _REQUIRED_RBAC_PERMISSIONS:
+            try:
+                allowed = await self._check_access(verb, resource, group)
+                display = f"{group}/{resource}" if group else resource
+
+                if allowed:
+                    passed.append(f"{verb} {display}")
+                else:
+                    missing.append(f"{verb} {display}")
+            except Exception:
+                display = f"{group}/{resource}" if group else resource
+                missing.append(f"{verb} {display} (check failed)")
+
+        if missing:
+            return CheckResult(
+                name="RBAC Permissions",
+                status=CheckStatus.FAIL,
+                message=f"Missing {len(missing)} required permission(s)",
+                details=[f"  ✗ {p}" for p in missing],
+                hints=[
+                    "Contact your cluster admin to grant the required permissions",
+                    f"Permissions needed in namespace '{self.namespace}'",
+                ],
+            )
+        else:
+            return CheckResult(
+                name="RBAC Permissions",
+                status=CheckStatus.PASS,
+                message=f"All {len(passed)} required permissions granted",
+                details=[f"  ✓ {p}" for p in passed],
+            )
+
+    async def _check_jobset_crd(self) -> CheckResult:
+        """Check if JobSet CRD is installed."""
+        import kr8s
+
+        try:
+            async with self._api.call_api(
+                "GET",
+                base=f"/apis/{JOBSET_API.group}",
+                version=JOBSET_API.version,
+                url=JOBSET_API.plural,
+                params={"limit": "1"},
+            ) as resp:
+                resp.raise_for_status()
+            return CheckResult(
+                name="JobSet CRD",
+                status=CheckStatus.PASS,
+                message=f"JobSet CRD ({JOBSET_API.group}/{JOBSET_API.version}) installed",
+            )
+        except kr8s.NotFoundError:
+            return CheckResult(
+                name="JobSet CRD",
+                status=CheckStatus.FAIL,
+                message="JobSet CRD not found",
+                hints=[
+                    get_jobset_install_hint(),
+                    "Or run: aiperf kube setup",
+                ],
+            )
+        except kr8s.ServerError as e:
+            status_code = e.response.status_code if e.response else "unknown"
+            return CheckResult(
+                name="JobSet CRD",
+                status=CheckStatus.WARN,
+                message=f"Error checking JobSet CRD: HTTP {status_code}",
+            )
+
+    async def _find_deployment(
+        self, namespace: str, name_substring: str
+    ) -> tuple[bool, bool]:
+        """Check if a deployment matching name_substring exists and is ready.
+
+        Args:
+            namespace: Kubernetes namespace to search.
+            name_substring: Lowercase substring to match in deployment names.
+
+        Returns:
+            Tuple of (found, ready).
+        """
+        from kr8s.asyncio.objects import Deployment
+
+        deployments = [
+            d async for d in self._api.async_get(Deployment, namespace=namespace)
+        ]
+        for deploy in deployments:
+            if name_substring in deploy.name.lower():
+                ready_replicas = deploy.raw.get("status", {}).get("readyReplicas", 0)
+                return True, bool(ready_replicas and ready_replicas > 0)
+        return False, False
+
+    async def _check_jobset_controller(self) -> CheckResult:
+        """Check if JobSet controller is running."""
+        import kr8s
+
+        try:
+            controller_found, controller_ready = await self._find_deployment(
+                "jobset-system", "jobset"
+            )
+
+            if controller_ready:
+                return CheckResult(
+                    name="JobSet Controller",
+                    status=CheckStatus.PASS,
+                    message="JobSet controller is running",
+                )
+            elif controller_found:
+                return CheckResult(
+                    name="JobSet Controller",
+                    status=CheckStatus.WARN,
+                    message="JobSet controller found but not ready",
+                    hints=["Check 'kubectl get pods -n jobset-system' for issues"],
+                )
+            else:
+                return CheckResult(
+                    name="JobSet Controller",
+                    status=CheckStatus.FAIL,
+                    message="JobSet controller not found",
+                    hints=[
+                        "Install JobSet controller or ensure it's in 'jobset-system' namespace"
+                    ],
+                )
+        except kr8s.ServerError as e:
+            if e.response and e.response.status_code == 403:
+                return CheckResult(
+                    name="JobSet Controller",
+                    status=CheckStatus.SKIP,
+                    message="Cannot check jobset-system namespace (permission denied)",
+                )
+            status_code = e.response.status_code if e.response else "unknown"
+            return CheckResult(
+                name="JobSet Controller",
+                status=CheckStatus.WARN,
+                message=f"Could not verify controller: HTTP {status_code}",
+            )
+
+    async def _check_resource_quotas(self) -> CheckResult:
+        """Check resource quotas in the namespace."""
+        import kr8s
+        from kr8s.asyncio.objects import ResourceQuota
+
+        try:
+            quotas = [
+                q
+                async for q in self._api.async_get(
+                    ResourceQuota, namespace=self.namespace
+                )
+            ]
+
+            if not quotas:
+                return CheckResult(
+                    name="Resource Quotas",
+                    status=CheckStatus.PASS,
+                    message="No resource quotas configured",
+                )
+
+            details = []
+            for quota in quotas:
+                raw = quota.raw
+                name = raw["metadata"]["name"]
+                details.append(f"ResourceQuota '{name}':")
+                hard = raw.get("status", {}).get("hard", {})
+                used = raw.get("status", {}).get("used", {})
+                for resource, limit in hard.items():
+                    details.append(
+                        f"    {resource}: {used.get(resource, '0')} / {limit}"
+                    )
+
+            return CheckResult(
+                name="Resource Quotas",
+                status=CheckStatus.INFO,
+                message=f"Found {len(quotas)} resource quota(s)",
+                details=details,
+            )
+        except kr8s.ServerError as e:
+            status_code = e.response.status_code if e.response else "unknown"
+            return CheckResult(
+                name="Resource Quotas",
+                status=CheckStatus.WARN,
+                message=f"Error checking quotas: HTTP {status_code}",
+            )
+
+    async def _check_node_resources(self) -> CheckResult:
+        """Check if cluster has sufficient node resources."""
+        from kr8s.asyncio.objects import Node
+
+        try:
+            nodes = [n async for n in self._api.async_get(Node)]
+
+            if not nodes:
+                return CheckResult(
+                    name="Node Resources",
+                    status=CheckStatus.FAIL,
+                    message="No nodes found in cluster",
+                )
+
+            total_cpu = 0.0
+            total_memory = 0.0
+            ready_nodes = 0
+
+            for node in nodes:
+                raw = node.raw
+                conditions = raw.get("status", {}).get("conditions", [])
+                is_ready = any(
+                    c.get("type") == "Ready" and c.get("status") == "True"
+                    for c in conditions
+                )
+
+                allocatable = raw.get("status", {}).get("allocatable", {})
+                if is_ready and allocatable:
+                    ready_nodes += 1
+                    total_cpu += parse_cpu(allocatable.get("cpu", "0"))
+                    total_memory += parse_memory_gib(allocatable.get("memory", "0"))
+
+            ctrl_cpu = parse_cpu(K8sEnvironment.CONTROLLER.CPU_REQUEST)
+            ctrl_mem = parse_memory_gib(K8sEnvironment.CONTROLLER.MEMORY_REQUEST)
+            worker_cpu = parse_cpu(K8sEnvironment.WORKER.CPU_REQUEST)
+            worker_mem = parse_memory_gib(K8sEnvironment.WORKER.MEMORY_REQUEST)
+
+            required_cpu = ctrl_cpu + (worker_cpu * self.workers)
+            required_mem = ctrl_mem + (worker_mem * self.workers)
+
+            details = [
+                f"Cluster: {ready_nodes} ready nodes, "
+                f"{format_cpu(total_cpu)} CPU, {format_memory(total_memory)} memory",
+                f"Deployment estimate: {format_cpu(required_cpu)} CPU, "
+                f"{format_memory(required_mem)} memory ({self.workers} workers)",
+            ]
+
+            if required_cpu > total_cpu or required_mem > total_memory:
+                return CheckResult(
+                    name="Node Resources",
+                    status=CheckStatus.WARN,
+                    message="Cluster may not have enough resources",
+                    details=details,
+                    hints=["Consider reducing worker count or adding cluster capacity"],
+                )
+
+            return CheckResult(
+                name="Node Resources",
+                status=CheckStatus.PASS,
+                message=f"Cluster has sufficient resources ({ready_nodes} nodes)",
+                details=details,
+            )
+        except Exception as e:
+            return CheckResult(
+                name="Node Resources",
+                status=CheckStatus.WARN,
+                message=f"Could not check node resources: {e}",
+            )
+
+    async def _check_secrets(self) -> CheckResult:
+        """Check if required secrets exist."""
+        import kr8s
+        from kr8s.asyncio.objects import Secret
+
+        all_secrets = self.image_pull_secrets + self.secrets
+        if not all_secrets:
+            return CheckResult(
+                name="Secrets",
+                status=CheckStatus.SKIP,
+                message="No secrets specified to verify",
+                hints=[
+                    "Use --image-pull-secret or --secret to verify specific secrets"
+                ],
+            )
+
+        found = []
+        missing = []
+        permission_denied = []
+
+        for secret_name in all_secrets:
+            try:
+                await Secret.get(secret_name, namespace=self.namespace, api=self._api)
+                found.append(secret_name)
+            except kr8s.NotFoundError:
+                missing.append(secret_name)
+            except kr8s.ServerError as e:
+                if e.response and e.response.status_code == 403:
+                    permission_denied.append(secret_name)
+                else:
+                    status_code = e.response.status_code if e.response else "unknown"
+                    missing.append(f"{secret_name} (error: HTTP {status_code})")
+
+        details = []
+        if found:
+            details.extend([f"  ✓ {s}" for s in found])
+        if missing:
+            details.extend([f"  ✗ {s} (not found)" for s in missing])
+        if permission_denied:
+            details.extend([f"  ? {s} (permission denied)" for s in permission_denied])
+
+        if missing:
+            return CheckResult(
+                name="Secrets",
+                status=CheckStatus.FAIL,
+                message=f"{len(missing)} secret(s) not found",
+                details=details,
+                hints=["Create missing secrets with 'kubectl create secret ...'"],
+            )
+        elif permission_denied:
+            return CheckResult(
+                name="Secrets",
+                status=CheckStatus.WARN,
+                message=f"Cannot verify {len(permission_denied)} secret(s)",
+                details=details,
+            )
+        else:
+            return CheckResult(
+                name="Secrets",
+                status=CheckStatus.PASS,
+                message=f"All {len(found)} secret(s) verified",
+                details=details,
+            )
+
+    async def _check_image(self) -> CheckResult:
+        """Check image availability information."""
+        if not self.image:
+            return CheckResult(
+                name="Image Pull",
+                status=CheckStatus.SKIP,
+                message="No image specified to verify",
+                hints=["Use --image to check pull access"],
+            )
+
+        details = [f"Image: {self.image}"]
+
+        if self.image_pull_secrets:
+            details.append(f"Pull secrets: {', '.join(self.image_pull_secrets)}")
+
+        return CheckResult(
+            name="Image Pull",
+            status=CheckStatus.INFO,
+            message="Image specified (pull verification requires test pod)",
+            details=details,
+            hints=[
+                f"Verify manually: kubectl run test --image={self.image} "
+                "--rm -it --restart=Never -- echo ok"
+            ],
+        )
+
+    async def _check_network_policies(self) -> CheckResult:
+        """Check for restrictive network policies."""
+        import kr8s
+        from kr8s.asyncio.objects import NetworkPolicy
+
+        try:
+            policies = [
+                p
+                async for p in self._api.async_get(
+                    NetworkPolicy, namespace=self.namespace
+                )
+            ]
+
+            if not policies:
+                return CheckResult(
+                    name="Network Policies",
+                    status=CheckStatus.PASS,
+                    message="No network policies found (unrestricted)",
+                )
+
+            policy_names = [p.name for p in policies]
+
+            return CheckResult(
+                name="Network Policies",
+                status=CheckStatus.WARN,
+                message=f"Found {len(policies)} network policy(ies)",
+                details=[f"  Policies: {', '.join(policy_names)}"],
+                hints=[
+                    "Ensure policies allow pod-to-pod communication within the namespace",
+                    "AIPerf pods need to communicate via TCP on multiple ports",
+                ],
+            )
+        except kr8s.ServerError as e:
+            if e.response and e.response.status_code == 403:
+                return CheckResult(
+                    name="Network Policies",
+                    status=CheckStatus.SKIP,
+                    message="Cannot check network policies (permission denied)",
+                )
+            status_code = e.response.status_code if e.response else "unknown"
+            return CheckResult(
+                name="Network Policies",
+                status=CheckStatus.WARN,
+                message=f"Error checking network policies: HTTP {status_code}",
+            )
+
+    async def _check_dns(self) -> CheckResult:
+        """Check DNS resolution capability."""
+        try:
+            coredns_found, coredns_ready = await self._find_deployment(
+                "kube-system", "coredns"
+            )
+
+            if coredns_ready:
+                return CheckResult(
+                    name="DNS Resolution",
+                    status=CheckStatus.PASS,
+                    message="CoreDNS is running",
+                    details=[
+                        "Workers will resolve controller DNS name for ZMQ connections"
+                    ],
+                )
+            elif coredns_found:
+                return CheckResult(
+                    name="DNS Resolution",
+                    status=CheckStatus.WARN,
+                    message="CoreDNS found but may not be ready",
+                    hints=[
+                        "Check 'kubectl get pods -n kube-system -l k8s-app=kube-dns'"
+                    ],
+                )
+            else:
+                return CheckResult(
+                    name="DNS Resolution",
+                    status=CheckStatus.WARN,
+                    message="CoreDNS not found in kube-system",
+                    hints=["Verify your cluster has a working DNS service"],
+                )
+        except Exception as e:
+            return CheckResult(
+                name="DNS Resolution",
+                status=CheckStatus.WARN,
+                message=f"Could not verify DNS: {e}",
+            )
+
+    async def _check_endpoint_connectivity(self) -> CheckResult:
+        """Check if the LLM endpoint is potentially reachable."""
+        if not self.endpoint_url:
+            return CheckResult(
+                name="Endpoint Connectivity",
+                status=CheckStatus.SKIP,
+                message="No endpoint URL specified",
+                hints=["Use --endpoint to verify LLM endpoint connectivity"],
+            )
+
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self.endpoint_url)
+            host = parsed.hostname or "unknown"
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+            details = [
+                f"Endpoint: {self.endpoint_url}",
+                f"Host: {host}, Port: {port}",
+            ]
+
+            if ".svc" in host or ".svc.cluster.local" in host:
+                from kr8s.asyncio.objects import Service
+
+                try:
+                    parts = host.split(".")
+                    svc_name = parts[0]
+                    svc_ns = parts[1] if len(parts) > 1 else "default"
+
+                    await Service.get(svc_name, namespace=svc_ns, api=self._api)
+                    return CheckResult(
+                        name="Endpoint Connectivity",
+                        status=CheckStatus.PASS,
+                        message=f"Cluster service '{svc_name}' found in namespace '{svc_ns}'",
+                        details=details,
+                    )
+                except Exception:
+                    return CheckResult(
+                        name="Endpoint Connectivity",
+                        status=CheckStatus.FAIL,
+                        message=f"Cluster service not found: {host}",
+                        details=details,
+                        hints=[
+                            f"Verify the service exists: kubectl get svc -A | grep {parts[0]}"
+                        ],
+                    )
+
+            return CheckResult(
+                name="Endpoint Connectivity",
+                status=CheckStatus.INFO,
+                message="External endpoint specified (cannot verify from CLI)",
+                details=details,
+                hints=[
+                    "Endpoint connectivity will be verified during deployment",
+                    "Ensure cluster egress allows connections to this endpoint",
+                ],
+            )
+
+        except Exception as e:
+            return CheckResult(
+                name="Endpoint Connectivity",
+                status=CheckStatus.WARN,
+                message=f"Could not parse endpoint URL: {e}",
+            )

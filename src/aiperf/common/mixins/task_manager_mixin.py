@@ -53,6 +53,12 @@ class TaskManagerMixin(AIPerfLoggerMixin):
         for task in task_list:
             task.cancel()
 
+        _, pending = await asyncio.wait(task_list, timeout=timeout)
+        if pending:
+            self.debug(
+                f"{len(pending)} background task(s) did not finish within {timeout}s"
+            )
+
     def start_background_task(
         self,
         method: Callable,

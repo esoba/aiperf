@@ -14,7 +14,6 @@ Key responsibilities:
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 from aiperf.common.enums import CreditPhase
@@ -203,9 +202,7 @@ class CreditIssuer:
         cancel_after_ns = self._cancellation_policy.next_cancellation_delay_ns(
             turn, self._phase
         )
-        issued_at_ns = self._lifecycle.started_at_ns + (
-            time.perf_counter_ns() - self._lifecycle.started_at_perf_ns
-        )
+        issued_at_ns = self._lifecycle.clock.now_ns()
 
         # Get URL index from strategy (for multi-URL load balancing)
         # Only advance the round-robin on the first turn of a conversation.

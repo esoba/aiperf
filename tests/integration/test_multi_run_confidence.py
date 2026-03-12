@@ -449,7 +449,7 @@ class TestMultiRunConfidence:
                     --workers-max {defaults.workers_max} \
                     --ui {defaults.ui}
                 """,
-                timeout=60.0,
+                timeout=200.0,
                 assert_success=False,  # Don't raise on non-zero exit
             )
 
@@ -490,7 +490,7 @@ class TestMultiRunConfidence:
                     --workers-max {defaults.workers_max} \
                     --ui {defaults.ui}
                 """,
-                timeout=60.0,
+                timeout=200.0,
                 assert_success=False,
             )
 

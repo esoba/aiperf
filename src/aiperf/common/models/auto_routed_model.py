@@ -8,19 +8,6 @@ Faster than Pydantic's native discriminated unions through:
 - Automatic subclass registration via __init_subclass__
 - Supports both cascading and hierarchical discriminators
 
-Cascading discriminators (different field at each level):
-    class Message(AutoRoutedModel):
-        discriminator_field = "message_type"
-        message_type: str
-
-    class CommandMessage(Message):
-        discriminator_field = "command"  # NEW discriminator field
-        message_type: str = "command"
-        command: str
-
-    class SpawnWorkersCommand(CommandMessage):
-        command: str = "spawn_workers"
-
 Hierarchical discriminators (same field, multiple levels):
     class Animal(AutoRoutedModel):
         discriminator_field = "type"

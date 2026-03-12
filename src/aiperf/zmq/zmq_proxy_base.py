@@ -185,7 +185,9 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
                             lifecycle_id=self.proxy_id,
                         ) from exc
 
-            self.debug("Proxy Sockets Initialized Successfully")
+            self.info(
+                f"Proxy {self.proxy_id} initialized: frontend={self.config.frontend_address}, backend={self.config.backend_address}"
+            )
 
             if self.control_client:
                 self.debug(

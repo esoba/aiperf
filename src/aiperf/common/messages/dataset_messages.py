@@ -11,6 +11,7 @@ from aiperf.common.models import (
     Conversation,
     DatasetClientMetadata,
     DatasetMetadata,
+    MemoryMapClientMetadata,
     Turn,
 )
 from aiperf.common.types import MessageTypeT
@@ -89,3 +90,27 @@ class DatasetConfiguredNotification(BaseServiceMessage):
         if isinstance(v, dict):
             return DatasetClientMetadata.from_json(v)
         return v
+
+
+class DatasetDownloadedNotification(BaseServiceMessage):
+    """Notification sent by WorkerPodManager after dataset download completes.
+
+    In Kubernetes mode, WorkerPodManager downloads the dataset files once per pod.
+    This notification signals to Worker subprocesses that the dataset files are
+    ready for mmap access. Contains the same client_metadata format as
+    DatasetConfiguredNotification for consistency.
+    """
+
+    message_type: MessageTypeT = MessageType.DATASET_DOWNLOADED_NOTIFICATION
+
+    client_metadata: MemoryMapClientMetadata = Field(
+        ...,
+        description="Client metadata with file paths for workers to access downloaded dataset.",
+    )
+
+    success: bool = Field(
+        default=True, description="Whether the download completed successfully"
+    )
+    error_message: str | None = Field(
+        default=None, description="Error message if download failed"
+    )

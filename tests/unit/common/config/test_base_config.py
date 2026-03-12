@@ -1,12 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from enum import Enum
-
 from pydantic.fields import FieldInfo
 
 from aiperf.common.config import BaseConfig
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.plugin.extensible_enums import ExtensibleStrEnum
 
 
 class NestedConfig(AIPerfBaseModel):
@@ -78,17 +77,12 @@ def test_preprocess_value_enum():
     Test the `_preprocess_value` method of the `BaseConfig` class when handling
     an enumeration value.
 
-    This test defines a sample enumeration `SampleEnum` with two options,
-    `OPTION_A` and `OPTION_B`. It verifies that when an enumeration value
-    (`SampleEnum.OPTION_A`) is passed to `_preprocess_value`, the method
-    correctly processes it into a lowercase string representation of the
-    enumeration value's name.
-
-    Assertions:
-        - The processed value of `SampleEnum.OPTION_A` should be "optiona".
+    Uses a string-based enum (matching the project convention where all enums
+    extend ExtensibleStrEnum) to verify that str(enum) produces the value
+    directly, which is then lowercased.
     """
 
-    class SampleEnum(Enum):
+    class SampleEnum(ExtensibleStrEnum):
         OPTION_A = "OptionA"
         OPTION_B = "OptionB"
 

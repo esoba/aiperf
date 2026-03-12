@@ -5,18 +5,14 @@ import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommAddress, CommandType
+from aiperf.common.control_structs import Command, TelemetryStatus
+from aiperf.common.enums import CommAddress, CommandType, CreditPhase, MessageType
 from aiperf.common.environment import Environment
-from aiperf.common.hooks import on_command, on_init, on_stop
-from aiperf.common.messages import (
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    ProfileConfigureCommand,
-    TelemetryRecordsMessage,
-    TelemetryStatusMessage,
-)
+from aiperf.common.hooks import on_command, on_init, on_message, on_stop
+from aiperf.common.messages import TelemetryRecordsMessage
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
 from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
@@ -51,11 +47,13 @@ class GPUTelemetryManager(BaseComponentService):
         service_config: ServiceConfig,
         user_config: UserConfig,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+            **kwargs,
         )
 
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
@@ -64,6 +62,7 @@ class GPUTelemetryManager(BaseComponentService):
 
         self._collectors: dict[str, GPUTelemetryCollectorProtocol] = {}
         self._collector_id_to_url: dict[str, str] = {}
+        self._shutdown_task: asyncio.Task[None] | None = None
 
         self._telemetry_disabled = user_config.gpu_telemetry_disabled
         self._user_explicitly_configured_telemetry = (
@@ -150,9 +149,7 @@ class GPUTelemetryManager(BaseComponentService):
         pass
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the telemetry collectors but don't start them yet.
 
         Creates collector instances based on configured type (DCGM or PYNVML),
@@ -300,7 +297,7 @@ class GPUTelemetryManager(BaseComponentService):
         )
 
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, message) -> None:
+    async def _on_start_profiling(self, message: Command) -> None:
         """Start all telemetry collectors.
 
         Initializes and starts each configured collector.
@@ -334,10 +331,36 @@ class GPUTelemetryManager(BaseComponentService):
             self._shutdown_task = asyncio.create_task(self._delayed_shutdown())
             return
 
+    @on_message(MessageType.CREDIT_PHASE_START)
+    async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
+        """Force a boundary scrape when profiling phase starts.
+
+        Captures a clean post-warmup reference point for counter/histogram delta
+        calculations. Without this, the reference may be the pre-warmup baseline
+        from PROFILE_CONFIGURE, causing warmup activity to leak into profiling deltas.
+
+        Args:
+            message: Credit phase start message from TimingManager
+        """
+        if message.config.phase != CreditPhase.PROFILING:
+            return
+        if not self._collectors:
+            return
+
+        self.info("GPU Telemetry: Capturing boundary metrics at profiling start...")
+        for source_url, collector in list(self._collectors.items()):
+            try:
+                await collector.collect_and_process_metrics()
+                self.debug(
+                    lambda url=source_url: f"GPU Telemetry: Captured boundary state from {url}"
+                )
+            except Exception as e:
+                self.warning(
+                    f"GPU Telemetry: Failed to capture boundary state from {source_url}: {e}"
+                )
+
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Stop all telemetry collectors when profiling is cancelled.
 
         Called when user cancels profiling or an error occurs during profiling.
@@ -349,9 +372,7 @@ class GPUTelemetryManager(BaseComponentService):
         await self._stop_all_collectors()
 
     @on_command(CommandType.PROFILE_COMPLETE)
-    async def _handle_profile_complete_command(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _handle_profile_complete_command(self, message: Command) -> None:
         """Trigger final scrape when profiling completes.
 
         Ensures GPU telemetry captures final state for accurate counter deltas.
@@ -494,15 +515,14 @@ class GPUTelemetryManager(BaseComponentService):
             endpoints_reachable: List of DCGM endpoint URLs that are accessible
         """
         try:
-            status_message = TelemetryStatusMessage(
-                service_id=self.service_id,
-                enabled=enabled,
-                reason=reason,
-                endpoints_configured=endpoints_configured or [],
-                endpoints_reachable=endpoints_reachable or [],
+            await self.control_client.send(
+                TelemetryStatus(
+                    sid=self.service_id,
+                    enabled=enabled,
+                    reason=reason,
+                    endpoints_configured=tuple(endpoints_configured or []),
+                    endpoints_reachable=tuple(endpoints_reachable or []),
+                )
             )
-
-            await self.publish(status_message)
-
         except Exception as e:
             self.error(f"Failed to send telemetry status message: {e}")

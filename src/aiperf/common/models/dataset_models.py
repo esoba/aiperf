@@ -32,18 +32,19 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     """Client metadata for memory-mapped dataset access.
 
     Contains paths to mmap files that workers use for zero-copy,
-    O(1) conversation lookups.
+    O(1) conversation lookups. For Kubernetes deployments, also includes
+    paths to pre-compressed files for efficient network transfer.
     """
 
     client_type: DatasetClientStoreType = DatasetClientStoreType.MEMORY_MAP
 
     data_file_path: Path = Field(
         ...,
-        description="Path to the memory-mapped data file containing serialized conversations.",
+        description="Path to the data file. Points to dataset.dat (local) or dataset.dat.zst (k8s).",
     )
     index_file_path: Path = Field(
         ...,
-        description="Path to the memory-mapped index file for O(1) conversation lookups.",
+        description="Path to the index file. Points to index.dat (local) or index.dat.zst (k8s).",
     )
     conversation_count: int = Field(
         default=0,
@@ -51,20 +52,15 @@ class MemoryMapClientMetadata(DatasetClientMetadata):
     )
     total_size_bytes: int = Field(
         default=0,
-        description="Total size of the data file in bytes.",
+        description="Total uncompressed size of the data file in bytes.",
     )
-    # Pre-compressed files for Kubernetes HTTP transfer (optional)
-    compressed_data_file_path: Path | None = Field(
-        default=None,
-        description="Path to zstd-compressed data file for HTTP transfer (K8s only).",
-    )
-    compressed_index_file_path: Path | None = Field(
-        default=None,
-        description="Path to zstd-compressed index file for HTTP transfer (K8s only).",
+    compressed: bool = Field(
+        default=False,
+        description="Whether data/index files are zstd-compressed (k8s compress_only mode).",
     )
     compressed_size_bytes: int = Field(
         default=0,
-        description="Total size of the compressed data file in bytes.",
+        description="Size of the compressed data file in bytes. 0 when not compressed.",
     )
 
 

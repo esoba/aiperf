@@ -123,6 +123,15 @@ class TestRunSystemController:
 class TestRunSingleBenchmark:
     """Test the _run_single_benchmark function."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_tokenizer_validation(self):
+        """Prevent real HF network calls during single benchmark tests."""
+        with patch(
+            "aiperf.common.tokenizer_validator.validate_tokenizer_early",
+            return_value={"test-model": "test-model"},
+        ):
+            yield
+
     @pytest.fixture
     def service_config_simple(self) -> ServiceConfig:
         """Create a ServiceConfig with Simple UI type."""

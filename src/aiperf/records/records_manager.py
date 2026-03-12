@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
@@ -16,25 +20,31 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    MetricFlags,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
+from aiperf.common.hooks import (
+    background_task,
+    on_command,
+    on_message,
+    on_pull_message,
+)
+
+if TYPE_CHECKING:
+    from aiperf.common.models.export_models import JsonExportData
+
+from aiperf.common.control_structs import Command
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
     MetricRecordsData,
     MetricRecordsMessage,
-    ProcessRecordsCommand,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    RealtimeMetricsCommand,
     RealtimeMetricsMessage,
     RecordsProcessingStatsMessage,
     ServerMetricsRecordMessage,
-    StartRealtimeTelemetryCommand,
     TelemetryRecordsMessage,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -288,8 +298,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         # Trigger final server metrics scrape and wait for completion
         # This ensures final metrics are pushed before we export results
-        response = await self.send_command_and_wait_for_response(
-            ProfileCompleteCommand(service_id=self.service_id), timeout=10.0
+        response = await self.control_client.request(
+            Command(
+                cid=uuid.uuid4().hex,
+                cmd=CommandType.PROFILE_COMPLETE,
+            ),
+            timeout=10.0,
         )
 
         if isinstance(response, ErrorDetails):
@@ -461,17 +475,19 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     @on_command(CommandType.PROCESS_RECORDS)
     async def _on_process_records_command(
-        self, message: ProcessRecordsCommand
+        self, message: Command
     ) -> ProcessRecordsResult:
         """Handle the process records command by forwarding it to all of the results processors, and returning the results."""
         self.debug(lambda: f"Received process records command: {message}")
+        payload = orjson.loads(message.payload) if message.payload else {}
+        cancelled = payload.get("cancelled", False)
         return await self._process_results(
-            phase=CreditPhase.PROFILING, cancelled=message.cancelled
+            phase=CreditPhase.PROFILING, cancelled=cancelled
         )
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _on_profile_cancel_command(
-        self, message: ProfileCancelCommand
+        self, message: Command
     ) -> ProcessRecordsResult:
         """Handle the profile cancel command by processing current results.
 
@@ -487,9 +503,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     @background_task(interval=None, immediate=True)
     async def _report_realtime_inference_metrics_task(self) -> None:
-        """Report inference metrics at regular intervals (dashboard only)."""
+        """Report inference metrics at regular intervals."""
         if (
             self.service_config.ui_type != UIType.DASHBOARD
+            and not self.service_config.api_port
             and not Environment.UI.REALTIME_METRICS_ENABLED
         ):
             return
@@ -505,9 +522,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._report_realtime_metrics()
 
     @on_command(CommandType.START_REALTIME_TELEMETRY)
-    async def _on_start_realtime_telemetry_command(
-        self, message: StartRealtimeTelemetryCommand
-    ) -> None:
+    async def _on_start_realtime_telemetry_command(self, message: Command) -> None:
         """Handle command to start the realtime telemetry background task.
 
         This is called when the user dynamically enables the telemetry dashboard
@@ -522,20 +537,40 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
 
     @on_command(CommandType.REALTIME_METRICS)
-    async def _on_realtime_metrics_command(
-        self, message: RealtimeMetricsCommand
-    ) -> None:
+    async def _on_realtime_metrics_command(self, message: Command) -> None:
         """Handle a real-time metrics command."""
         await self._report_realtime_metrics()
 
     async def _report_realtime_metrics(self) -> None:
-        """Report inference metrics (used by command handler)."""
-        metrics = await self._generate_realtime_metrics()
-        if metrics:
+        """Report inference metrics (used by command handler).
+
+        Filters out hidden metrics (INTERNAL/EXPERIMENTAL) and converts all
+        metrics to display units before publishing. This ensures all consumers
+        receive consistent, pre-processed metrics.
+        """
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        raw_metrics = await self._generate_realtime_metrics()
+        if not raw_metrics:
+            return
+
+        # Filter hidden metrics and convert to display units
+        hidden_flags = MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
+        display_metrics = []
+        for m in raw_metrics:
+            try:
+                metric_cls = MetricRegistry.get_class(m.tag)
+                if metric_cls.flags.has_any_flags(hidden_flags):
+                    continue
+            except Exception:
+                pass
+            display_metrics.append(m)
+
+        if display_metrics:
             await self.publish(
                 RealtimeMetricsMessage(
                     service_id=self.service_id,
-                    metrics=metrics,
+                    metrics=display_metrics,
                 )
             )
 
@@ -629,6 +664,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             errors=error_results,
         )
         self.debug(lambda: f"Process records result: {result}")
+
         self.debug("Publishing ProcessRecordsResultMessage...")
         await self.publish(
             ProcessRecordsResultMessage(
@@ -776,6 +812,77 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug(
             "_publish_server_metrics_results: published ProcessServerMetricsResultMessage"
         )
+
+    def _generate_json_export_data(
+        self,
+        records: list[MetricResult],
+        profile_results: ProfileResults,
+    ) -> JsonExportData:
+        """Generate JsonExportData for ConfigMap publishing.
+
+        Args:
+            records: List of metric results from processing
+            profile_results: The profile results containing timing and error info
+
+        Returns:
+            JsonExportData ready for serialization to ConfigMap
+        """
+        from datetime import datetime
+        from importlib.metadata import version as get_version
+
+        from aiperf.common.models.export_models import JsonExportData
+
+        try:
+            aiperf_version = get_version("aiperf")
+        except Exception:
+            aiperf_version = "unknown"
+
+        # Calculate timestamps
+        start_time = (
+            datetime.fromtimestamp(profile_results.start_ns / NANOS_PER_SECOND)
+            if profile_results.start_ns
+            else None
+        )
+        end_time = (
+            datetime.fromtimestamp(profile_results.end_ns / NANOS_PER_SECOND)
+            if profile_results.end_ns
+            else None
+        )
+
+        # Get telemetry data if available
+        telemetry_data = None
+        if (
+            self._gpu_telemetry_accumulator
+            and not self.user_config.gpu_telemetry_disabled
+        ):
+            phase_stats = self._records_tracker.create_stats_for_phase(
+                CreditPhase.PROFILING
+            )
+            telemetry_data = self._gpu_telemetry_accumulator.export_results(
+                start_ns=phase_stats.start_ns or time.time_ns(),
+                end_ns=phase_stats.requests_end_ns or time.time_ns(),
+                error_summary=[],
+            )
+
+        # Create base export data
+        export_data = JsonExportData(
+            schema_version=JsonExportData.SCHEMA_VERSION,
+            aiperf_version=aiperf_version,
+            benchmark_id=self.user_config.benchmark_id,
+            input_config=self.user_config,
+            was_cancelled=profile_results.was_cancelled,
+            error_summary=profile_results.error_summary,
+            start_time=start_time,
+            end_time=end_time,
+            telemetry_data=telemetry_data,
+        )
+
+        # Add all metrics dynamically
+        for metric in records:
+            if metric.tag:
+                setattr(export_data, str(metric.tag), metric.to_json_result())
+
+        return export_data
 
 
 def main() -> None:

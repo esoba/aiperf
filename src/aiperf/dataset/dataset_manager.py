@@ -11,6 +11,7 @@ import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import OutputDefaults, ServiceConfig, UserConfig
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -26,7 +27,6 @@ from aiperf.common.messages import (
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
     DatasetConfiguredNotification,
-    ProfileConfigureCommand,
 )
 from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import (
@@ -108,11 +108,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             compress_only=self._compress_only,
         )
         self._dataset_client: DatasetClientStoreProtocol | None = None
+        self._rebroadcast_task: asyncio.Task | None = None
+
+    @on_command(CommandType.PROFILE_START)
+    async def _on_profile_start(self, message: Command) -> None:
+        """Stop rebroadcasting dataset notifications once profiling begins."""
+        if self._rebroadcast_task is not None:
+            self._rebroadcast_task.cancel()
+            self._rebroadcast_task = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the dataset."""
 
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
@@ -373,13 +379,26 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # Note: dataset_configured event is set in _configure_dataset_client_and_free_memory()
         # after the dataset client is initialized, to avoid a race condition where fallback
         # requests arrive before the client is ready.
-        await self.publish(
-            DatasetConfiguredNotification(
-                service_id=self.service_id,
-                metadata=self.dataset_metadata,
-                client_metadata=client_metadata,
-            )
+        notification = DatasetConfiguredNotification(
+            service_id=self.service_id,
+            metadata=self.dataset_metadata,
+            client_metadata=client_metadata,
         )
+        await self.publish(notification)
+        self._rebroadcast_task = asyncio.create_task(
+            self._rebroadcast_dataset_notification(notification)
+        )
+
+    async def _rebroadcast_dataset_notification(
+        self, notification: DatasetConfiguredNotification
+    ) -> None:
+        """Rebroadcast the dataset notification every second until profile_start."""
+        try:
+            while True:
+                await asyncio.sleep(1.0)
+                await self.publish(notification)
+        except asyncio.CancelledError:
+            pass
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(
@@ -478,6 +497,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     @on_stop
     async def _cleanup(self) -> None:
         """Clean up the backing store, dataset client, and associated mmap files."""
+        if self._rebroadcast_task is not None:
+            self._rebroadcast_task.cancel()
+            self._rebroadcast_task = None
         if self._dataset_client is not None:
             await self._dataset_client.stop()
             self.debug("Dataset client cleanup complete")

@@ -15,13 +15,13 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, TransportType
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
 
 
-def detect_transport_from_url(url: str) -> str:
+def detect_transport_from_url(url: str) -> TransportType:
     """Detect transport type from URL scheme.
 
     Looks up registered transports and matches their url_schemes metadata
@@ -31,7 +31,7 @@ def detect_transport_from_url(url: str) -> str:
         url: URL to detect transport for.
 
     Returns:
-        Transport plugin name (e.g., 'http').
+        TransportType enum member matching the URL scheme.
 
     Raises:
         ValueError: If no transport supports the URL scheme.
@@ -44,7 +44,7 @@ def detect_transport_from_url(url: str) -> str:
 
     for entry in plugins.list_entries(PluginType.TRANSPORT):
         if scheme in entry.metadata.get("url_schemes", []):
-            return entry.name
+            return TransportType(entry.name)
 
     raise ValueError(f"No transport found for URL scheme '{scheme}' in: {url}")
 

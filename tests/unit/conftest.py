@@ -8,6 +8,7 @@ and made available to test functions in the same directory and subdirectories.
 """
 
 import asyncio
+import logging
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from io import BytesIO
@@ -40,6 +41,9 @@ from aiperf.plugin.plugins import _PluginRegistry as PluginRegistry
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.time_traveler import TimeTraveler
 
+# Suppress plugin override messages that leak through xdist worker stdout
+logging.getLogger("aiperf.plugin.plugins").setLevel(logging.WARNING)
+
 # Shared test constants for request/response records
 DEFAULT_START_TIME_NS = 1_000_000
 DEFAULT_FIRST_RESPONSE_NS = 1_050_000
@@ -57,13 +61,15 @@ def no_sleep(monkeypatch, request):
     Tests using time_traveler (or time_traveler_no_patch_sleep) need looptime
     to handle asyncio.sleep for virtual time advancement, so we skip patching.
     """
-    # Check if test uses time_traveler fixtures (which need looptime to work)
+    # Check if test uses time_traveler fixtures or looptime marker
+    # (which need looptime to handle asyncio.sleep for virtual time advancement)
     fixture_names = request.fixturenames
-    uses_time_traveler = (
+    uses_virtual_time = (
         "time_traveler" in fixture_names
         or "time_traveler_no_patch_sleep" in fixture_names
+        or request.node.get_closest_marker("looptime") is not None
     )
-    if not uses_time_traveler:
+    if not uses_virtual_time:
         monkeypatch.setattr("asyncio.sleep", lambda delay: _REAL_SLEEP(0))
     yield
 
@@ -167,8 +173,14 @@ def fake_tokenizer():
 
 @pytest.fixture
 def skip_service_registration():
-    """Patch BaseComponentService._register_service_on_start to do nothing."""
-    with patch.object(BaseComponentService, "_register_service_on_start", AsyncMock()):
+    """Mock the DEALER control client and skip registration."""
+    with (
+        patch(
+            "aiperf.zmq.streaming_dealer_client.ZMQStreamingDealerClient",
+            return_value=AsyncMock(),
+        ),
+        patch.object(BaseComponentService, "_register_until_ack", AsyncMock()),
+    ):
         yield
 
 
@@ -296,6 +308,17 @@ def reset_singleton_factories():
     from aiperf.common.singleton import SingletonMeta
 
     SingletonMeta._instances.clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_service_registry():
+    """Reset the global ServiceRegistry singleton and service type caches between tests."""
+    yield
+    from aiperf.common.base_service import BaseService
+    from aiperf.common.service_registry import ServiceRegistry
+
+    ServiceRegistry.reset()
+    BaseService.reset_service_type_cache()
 
 
 @pytest.fixture

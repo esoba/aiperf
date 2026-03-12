@@ -40,6 +40,16 @@ from aiperf.common.config.image_config import (
     ImageWidthConfig,
 )
 from aiperf.common.config.input_config import InputConfig
+from aiperf.common.config.kube_config import (
+    KubeManageOptions,
+    KubeOptions,
+    SecretMountConfig,
+)
+from aiperf.common.config.loader import (
+    load_kube_options,
+    load_service_config,
+    load_user_config,
+)
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.prompt_config import (
@@ -97,6 +107,8 @@ __all__ = [
     "InputDefaults",
     "InputTokensConfig",
     "InputTokensDefaults",
+    "KubeManageOptions",
+    "KubeOptions",
     "LoadGeneratorConfig",
     "LoadGeneratorDefaults",
     "OutputConfig",
@@ -111,6 +123,7 @@ __all__ = [
     "RankingsDefaults",
     "RankingsPassagesConfig",
     "RankingsQueryConfig",
+    "SecretMountConfig",
     "ServerMetricsDefaults",
     "ServiceConfig",
     "ServiceDefaults",
@@ -135,4 +148,7 @@ __all__ = [
     "ZMQIPCProxyConfig",
     "ZMQTCPConfig",
     "ZMQTCPProxyConfig",
+    "load_kube_options",
+    "load_service_config",
+    "load_user_config",
 ]

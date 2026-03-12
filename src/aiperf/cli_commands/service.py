@@ -55,6 +55,13 @@ def service(
             "Falls back to AIPERF_SERVICE_HEALTH_PORT environment variable."
         ),
     ] = None,
+    api_port: Annotated[
+        int | None,
+        CLIParameter(
+            help="HTTP port for API endpoints (e.g., /api/dataset, /api/progress). "
+            "Only used by services that expose HTTP APIs."
+        ),
+    ] = None,
 ) -> None:
     """Run an AIPerf service in a single process.
 
@@ -75,12 +82,10 @@ def service(
         service_config = load_service_config(service_config_file)
 
         if health_host is not None:
-            # CLI argument takes precedence over environment variable
             Environment.SERVICE.HEALTH_ENABLED = True
             Environment.SERVICE.HEALTH_HOST = health_host
 
         if health_port is not None:
-            # CLI argument takes precedence over environment variable
             Environment.SERVICE.HEALTH_ENABLED = True
             Environment.SERVICE.HEALTH_PORT = health_port
 
@@ -89,4 +94,5 @@ def service(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+            api_port=api_port,
         )

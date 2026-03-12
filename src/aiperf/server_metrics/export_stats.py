@@ -29,6 +29,7 @@ from aiperf.common.models.server_metrics_models import (
 from aiperf.server_metrics.histogram_percentiles import (
     accumulate_bucket_statistics,
     compute_estimated_percentiles,
+    compute_prometheus_percentiles,
 )
 from aiperf.server_metrics.storage import HistogramTimeSeries, ScalarTimeSeries
 
@@ -45,6 +46,7 @@ def compute_stats(
     time_filter: TimeRangeFilter | None = None,
     labels: dict[str, str] | None = None,
     slice_duration: float | None = None,
+    fast_histogram_percentiles: bool = False,
 ) -> GaugeSeries | CounterSeries | HistogramSeries | None:
     """Compute statistics from a time series based on metric type.
 
@@ -60,6 +62,9 @@ def compute_stats(
         labels: Optional labels to attach to the output statistics (e.g., {"method": "GET", "status": "200"})
         slice_duration: Duration of each timeslice in seconds. If None, timeslices are not computed.
                         Timeslices provide time-series analysis of how metrics vary over the profiling period.
+        fast_histogram_percentiles: Algorithm selection for histogram percentile estimation.
+                                    True = Prometheus linear interpolation (~15-40% error, instant).
+                                    False = Polynomial histogram with learned means (~5% error, slower).
 
     Returns:
         Type-specific series statistics (GaugeSeries, CounterSeries, or HistogramSeries) with:
@@ -106,6 +111,7 @@ def compute_stats(
                 time_filter,
                 labels,
                 slice_duration,
+                fast_histogram_percentiles,
             )
         case _:
             raise ValueError(f"Unsupported metric type: {metric_type}")
@@ -684,6 +690,7 @@ def _compute_histogram_stats(
     time_filter: TimeRangeFilter | None,
     labels: dict[str, str] | None = None,
     slice_duration: float | None = None,
+    fast_histogram_percentiles: bool = False,
 ) -> HistogramSeries | None:
     """Compute histogram statistics from a HistogramTimeSeries.
 
@@ -691,7 +698,7 @@ def _compute_histogram_stats(
     - Count and count rate (observations per second)
     - Sum and sum rate (total value per second)
     - Average value per observation
-    - Estimated percentiles using polynomial histogram algorithm
+    - Estimated percentiles (P1-P99) from bucket data
     - Raw bucket data for downstream analysis
     - Timeslices over time (when slice_duration is specified)
 
@@ -701,6 +708,9 @@ def _compute_histogram_stats(
         labels: Optional labels to attach to the output statistics
         slice_duration: Duration of each timeslice in seconds. If None, timeslices
                         are not computed.
+        fast_histogram_percentiles: Algorithm selection for percentile estimation.
+                                    True = Prometheus linear interpolation (fast, ~15-40% error).
+                                    False = Polynomial histogram (accurate, ~5% error).
 
     Returns:
         HistogramSeriesStats with histogram statistics, or None if no data in range
@@ -802,23 +812,33 @@ def _compute_histogram_stats(
             f"Percentile estimates may be inaccurate."
         )
 
-    # Compute estimated percentiles
+    # Compute percentile estimates (P1-P99) from bucket distribution
     estimated = None
     if bucket_deltas:
-        start_idx = reference_idx if reference_idx is not None else 0
-        bucket_stats = accumulate_bucket_statistics(
-            time_series.sums,
-            time_series.counts,
-            time_series.bucket_les,
-            time_series.bucket_counts,
-            start_idx=start_idx,
-        )
-        estimated = compute_estimated_percentiles(
-            bucket_deltas=bucket_deltas,
-            bucket_stats=bucket_stats,
-            total_sum=sum_delta,
-            total_count=count_delta,
-        )
+        if fast_histogram_percentiles:
+            # Fast path: Standard Prometheus linear interpolation within buckets.
+            # Assumes uniform distribution - good for realtime display where speed matters.
+            estimated = compute_prometheus_percentiles(
+                bucket_cumulative=bucket_deltas,
+                total_count=count_delta,
+            )
+        else:
+            # Accurate path: Polynomial histogram algorithm with learned bucket means.
+            # Learns per-bucket distributions from scrape sequences for better estimates.
+            start_idx = reference_idx if reference_idx is not None else 0
+            bucket_stats = accumulate_bucket_statistics(
+                time_series.sums,
+                time_series.counts,
+                time_series.bucket_les,
+                time_series.bucket_counts,
+                start_idx=start_idx,
+            )
+            estimated = compute_estimated_percentiles(
+                bucket_deltas=bucket_deltas,
+                bucket_stats=bucket_stats,
+                total_sum=sum_delta,
+                total_count=count_delta,
+            )
 
     # Compute timeslices if slice_duration is specified
     timeslices: list[HistogramTimeslice] | None = None

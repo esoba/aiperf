@@ -127,8 +127,21 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             await self._set_state(final_state)
             self.debug(lambda: f"{self} is now {final_state.title()}")
             event.set()
+        except asyncio.CancelledError:
+            if transient_state == LifecycleState.STOPPING or self.stop_requested:
+                self.debug(
+                    f"Cancelled during {transient_state} for {self}, completing shutdown"
+                )
+                await self._set_state(LifecycleState.STOPPED)
+            else:
+                await self._fail(asyncio.CancelledError())
         except Exception as e:
             await self._fail(e)
+        finally:
+            # Ensure the event is always set so waiters (e.g. bootstrap) unblock.
+            # During stop transitions, CancelledError from task cancellation can
+            # bypass both the happy path and _fail, leaving the event unset.
+            event.set()
 
     async def initialize(self) -> None:
         """Initialize the lifecycle and run the @on_init hooks.
@@ -241,6 +254,13 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             )
             return
 
+        if self.state == LifecycleState.CREATED:
+            self.debug(
+                lambda: f"Ignoring stop request for {self} in state {self.state} "
+                "(never initialized)"
+            )
+            return
+
         self.stop_requested = True
         await self._execute_state_transition(
             LifecycleState.STOPPING,
@@ -330,10 +350,13 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
     async def _stop_children(self) -> None:
         """Stop all children. This is done via the @on_stop hook to ensure that the children
         are stopped along with the parent hooks, and not after the parent hooks, which would cause
-        a race condition.
+        a race condition. Errors are caught per-child to ensure all children get stopped.
         """
         for child in reversed(self._children):
-            await child.stop()
+            try:
+                await child.stop()
+            except (Exception, asyncio.CancelledError):
+                self.debug(f"Error stopping child {child}, continuing shutdown")
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__} (id={self.id})"

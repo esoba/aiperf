@@ -5,20 +5,15 @@ import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommAddress, CommandType
+from aiperf.common.control_structs import Command, ServerMetricsStatus
+from aiperf.common.enums import CommAddress, CommandType, CreditPhase, MessageType
 from aiperf.common.environment import Environment
-from aiperf.common.hooks import on_command, on_stop
-from aiperf.common.messages import (
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    ProfileConfigureCommand,
-    ProfileStartCommand,
-    ServerMetricsRecordMessage,
-    ServerMetricsStatusMessage,
-)
+from aiperf.common.hooks import on_command, on_message, on_stop
+from aiperf.common.messages import ServerMetricsRecordMessage
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.models import ErrorDetails, ServerMetricsRecord
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.credit.messages import CreditPhaseStartMessage
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 
 
@@ -47,11 +42,13 @@ class ServerMetricsManager(BaseComponentService):
         service_config: ServiceConfig,
         user_config: UserConfig,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
             service_config=service_config,
             user_config=user_config,
             service_id=service_id,
+            **kwargs,
         )
 
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
@@ -86,9 +83,7 @@ class ServerMetricsManager(BaseComponentService):
         self._shutdown_task: asyncio.Task[None] | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the server metrics collectors but don't start them yet.
 
         Creates ServerMetricsDataCollector instances for each configured endpoint,
@@ -170,7 +165,7 @@ class ServerMetricsManager(BaseComponentService):
         )
 
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, message: ProfileStartCommand) -> None:
+    async def _on_start_profiling(self, message: Command) -> None:
         """Start all server metrics collectors for profiling phase.
 
         Initializes and starts background collection tasks for each configured
@@ -217,10 +212,36 @@ class ServerMetricsManager(BaseComponentService):
                 f"Server Metrics: Started {started_count} collector(s) successfully"
             )
 
+    @on_message(MessageType.CREDIT_PHASE_START)
+    async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
+        """Force a boundary scrape when profiling phase starts.
+
+        Captures a clean post-warmup reference point for counter/histogram delta
+        calculations. Without this, the reference may be the pre-warmup baseline
+        from PROFILE_CONFIGURE, causing warmup activity to leak into profiling deltas.
+
+        Args:
+            message: Credit phase start message from TimingManager
+        """
+        if message.config.phase != CreditPhase.PROFILING:
+            return
+        if not self._collectors:
+            return
+
+        self.info("Server Metrics: Capturing boundary metrics at profiling start...")
+        for endpoint_url, collector in list(self._collectors.items()):
+            try:
+                await collector.collect_and_process_metrics()
+                self.debug(
+                    lambda url=endpoint_url: f"Server Metrics: Captured boundary state from {url}"
+                )
+            except Exception as e:
+                self.warning(
+                    f"Server Metrics: Failed to capture boundary state from {endpoint_url}: {e}"
+                )
+
     @on_command(CommandType.PROFILE_COMPLETE)
-    async def _handle_profile_complete_command(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _handle_profile_complete_command(self, message: Command) -> None:
         """Trigger final scrape when profiling completes.
 
         Performs one final metrics collection from all endpoints to capture
@@ -261,9 +282,7 @@ class ServerMetricsManager(BaseComponentService):
         await self._stop_all_collectors()
 
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Stop all server metrics collectors when profiling is cancelled.
 
         Called when user cancels profiling or an error occurs during profiling.
@@ -418,15 +437,14 @@ class ServerMetricsManager(BaseComponentService):
             endpoints_reachable: List of Prometheus endpoint URLs that are accessible
         """
         try:
-            status_message = ServerMetricsStatusMessage(
-                service_id=self.service_id,
-                enabled=enabled,
-                reason=reason,
-                endpoints_configured=endpoints_configured or [],
-                endpoints_reachable=endpoints_reachable or [],
+            await self.control_client.send(
+                ServerMetricsStatus(
+                    sid=self.service_id,
+                    enabled=enabled,
+                    reason=reason,
+                    endpoints_configured=tuple(endpoints_configured or []),
+                    endpoints_reachable=tuple(endpoints_reachable or []),
+                )
             )
-
-            await self.publish(status_message)
-
         except Exception as e:
             self.error(f"Failed to send server metrics status message: {e}")

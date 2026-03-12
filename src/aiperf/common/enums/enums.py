@@ -74,26 +74,21 @@ class CommAddress(CaseInsensitiveStrEnum):
     RAW_INFERENCE_PROXY_BACKEND = "raw_inference_proxy_backend"
     """Backend address for the InferenceParser to receive raw inference messages from Workers."""
 
+    CONTROL = "control"
+    """Address for direct DEALER/ROUTER control channel communication with the controller."""
+
 
 class CommandType(CaseInsensitiveStrEnum):
-    REALTIME_METRICS = "realtime_metrics"
     PROCESS_RECORDS = "process_records"
     PROFILE_CANCEL = "profile_cancel"
     PROFILE_COMPLETE = "profile_complete"
     PROFILE_CONFIGURE = "profile_configure"
     PROFILE_START = "profile_start"
-    REGISTER_SERVICE = "register_service"
+    REALTIME_METRICS = "realtime_metrics"
     SHUTDOWN = "shutdown"
     SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
-
-
-class CommandResponseStatus(CaseInsensitiveStrEnum):
-    ACKNOWLEDGED = "acknowledged"
-    FAILURE = "failure"
-    SUCCESS = "success"
-    UNHANDLED = "unhandled"  # The command was received but not handled by any hook
 
 
 class ConnectionReuseStrategy(CaseInsensitiveStrEnum):
@@ -199,9 +194,8 @@ class MessageType(CaseInsensitiveStrEnum):
     """
 
     ALL_RECORDS_RECEIVED = "all_records_received"
+    BENCHMARK_COMPLETE = "benchmark_complete"
     CANCEL_CREDITS = "cancel_credits"
-    COMMAND = "command"
-    COMMAND_RESPONSE = "command_response"
     CONNECTION_PROBE = "connection_probe"
     CONVERSATION_REQUEST = "conversation_request"
     CONVERSATION_RESPONSE = "conversation_response"
@@ -214,6 +208,7 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
     CREDITS_COMPLETE = "credits_complete"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
+    DATASET_DOWNLOADED_NOTIFICATION = "dataset_downloaded_notification"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
     INFERENCE_RESULTS = "inference_results"
@@ -225,8 +220,10 @@ class MessageType(CaseInsensitiveStrEnum):
     PROCESS_SERVER_METRICS_RESULT = "process_server_metrics_result"
     PROFILE_PROGRESS = "profile_progress"
     PROFILE_RESULTS = "profile_results"
+    MEMORY_REPORT = "memory_report"
     REALTIME_METRICS = "realtime_metrics"
     REALTIME_TELEMETRY_METRICS = "realtime_telemetry_metrics"
+    REALTIME_SERVER_METRICS = "realtime_server_metrics"
     REGISTRATION = "registration"
     SERVICE_ERROR = "service_error"
     STATUS = "status"

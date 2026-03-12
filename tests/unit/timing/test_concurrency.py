@@ -56,9 +56,10 @@ class TestDynamicConcurrencyLimit:
         assert lim.effective_slots == 0
 
     @pytest.mark.asyncio
+    @pytest.mark.looptime
     async def test_acquire_blocks_without_permits(self) -> None:
         with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(DynamicConcurrencyLimit(0).acquire(), timeout=0.05)
+            await asyncio.wait_for(DynamicConcurrencyLimit(0).acquire(), timeout=1)
 
     @pytest.mark.asyncio
     async def test_release_frees_permit(self) -> None:

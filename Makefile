@@ -24,7 +24,8 @@
 		add-copyright generate-cli-docs generate-env-vars-docs generate-plugin-enums \
 		generate-plugin-overloads check-plugin-overloads generate-plugin-schemas \
 		generate-all-plugin-files generate-all-docs test-stress stress-tests \
-		test-fern-docs internal-help help
+		test-fern-docs internal-help help \
+		benchmark-resources
 
 
 # Include user-defined environment variables
@@ -220,6 +221,11 @@ stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running stress tests with AIPerf Mock Server...$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'integration and stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server stress tests passed!$(reset)\n"
+
+benchmark-resources: #? run worker resource benchmarks for K8s sizing.
+	@printf "$(bold)$(blue)Running worker resource benchmarks...$(reset)\n"
+	$(activate_venv) && pytest tests/benchmarks/worker_resource/ -m 'benchmark' -v --tb=short --capture=no $(args)
+	@printf "$(bold)$(green)Worker resource benchmarks completed!$(reset)\n"
 
 integration-tests test-integration: #? run integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests with AIPerf Mock Server...$(reset)\n"

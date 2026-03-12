@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """
-Simple test for WorkerManager max workers functionality.
+Tests for WorkerManager health monitoring and worker scaling calculations.
 """
 
 import time
@@ -16,6 +16,7 @@ from aiperf.common.enums import WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.messages import WorkerHealthMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
+from aiperf.workers.scaling import calculate_worker_count
 from aiperf.workers.worker_manager import WorkerManager, WorkerStatusInfo
 
 DEFAULT_MEMORY = 1024 * 1024 * 100
@@ -30,16 +31,13 @@ def worker_manager() -> WorkerManager:
         endpoint=EndpointConfig(model_names=["test-model"]),
         loadgen=LoadGeneratorConfig(concurrency=10),
     )
-    with patch(
-        "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=8
-    ):
-        manager = WorkerManager(
-            service_config=service_config,
-            user_config=user_config,
-            service_id="test-worker-manager",
-        )
-        manager.warning = MagicMock()
-        return manager
+    manager = WorkerManager(
+        service_config=service_config,
+        user_config=user_config,
+        service_id="test-worker-manager",
+    )
+    manager.warning = MagicMock()
+    return manager
 
 
 @pytest.fixture
@@ -80,8 +78,8 @@ def create_health_message(
     )
 
 
-class TestMaxWorkers:
-    """Test the max workers calculation logic in WorkerManager."""
+class TestCalculateWorkerCount:
+    """Test the calculate_worker_count function in aiperf.workers.scaling."""
 
     @pytest.mark.parametrize(
         "cpus,concurrency,max_workers,expected",
@@ -106,10 +104,9 @@ class TestMaxWorkers:
     def test_max_workers_combinations(self, cpus, concurrency, max_workers, expected):
         """Test max workers calculation with different CPU counts, concurrency, and max_workers settings."""
         with patch(
-            "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=cpus
+            "aiperf.workers.scaling.multiprocessing.cpu_count", return_value=cpus
         ):
             service_config = ServiceConfig(workers=WorkersConfig(max=max_workers))
-            # Set request_count to be >= concurrency to avoid validation error
             request_count = max(concurrency or 10, 10)
             user_config = UserConfig(
                 endpoint=EndpointConfig(model_names=["test-model"]),
@@ -118,13 +115,8 @@ class TestMaxWorkers:
                 ),
             )
 
-            worker_manager = WorkerManager(
-                service_config=service_config,
-                user_config=user_config,
-                service_id="test-worker-manager",
-            )
-
-            assert worker_manager.max_workers == expected
+            result = calculate_worker_count(user_config, service_config)
+            assert result == expected
 
     @pytest.mark.parametrize(
         "cpus,request_rate,max_workers,expected",
@@ -145,7 +137,7 @@ class TestMaxWorkers:
     ):
         """Test max workers calculation with request_rate mode where concurrency is 0/None."""
         with patch(
-            "aiperf.workers.worker_manager.multiprocessing.cpu_count", return_value=cpus
+            "aiperf.workers.scaling.multiprocessing.cpu_count", return_value=cpus
         ):
             service_config = ServiceConfig(workers=WorkersConfig(max=max_workers))
             user_config = UserConfig(
@@ -153,13 +145,8 @@ class TestMaxWorkers:
                 loadgen=LoadGeneratorConfig(request_rate=request_rate),
             )
 
-            worker_manager = WorkerManager(
-                service_config=service_config,
-                user_config=user_config,
-                service_id="test-worker-manager",
-            )
-
-            assert worker_manager.max_workers == expected
+            result = calculate_worker_count(user_config, service_config)
+            assert result == expected
 
 
 class TestHighCPUWarning:
@@ -229,8 +216,6 @@ class TestHighCPUWarning:
         assert worker_info.status == WorkerStatus.HIGH_LOAD
         assert worker_manager.warning.call_count == 1
 
-        # Simulate time passing by manually updating the worker_info timestamp
-        # (the actual implementation uses time.time_ns() internally)
         worker_manager._update_worker_status(
             worker_info,
             create_health_message(cpu_usage=92.0, uptime=102.0, total=12, completed=6),

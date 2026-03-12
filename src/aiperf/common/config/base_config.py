@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import io
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
+import orjson
 from pydantic import BaseModel
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
@@ -16,6 +17,83 @@ class BaseConfig(BaseModel):
     """
     Base configuration class for all configurations.
     """
+
+    def to_json(
+        self,
+        indent: bool = False,
+        exclude_unset: bool = False,
+        exclude_none: bool = False,
+    ) -> bytes:
+        """Serialize the config to JSON bytes.
+
+        Args:
+            indent: Whether to pretty-print with indentation.
+            exclude_unset: Whether to exclude fields that weren't explicitly set.
+                Use this for Kubernetes ConfigMaps to avoid validation issues
+                when loading the config back.
+            exclude_none: Whether to exclude fields with None values.
+
+        Returns:
+            JSON bytes representation of the config.
+        """
+        opts = orjson.OPT_SERIALIZE_NUMPY
+        if indent:
+            opts |= orjson.OPT_INDENT_2
+        return orjson.dumps(
+            self.model_dump(
+                mode="json", exclude_unset=exclude_unset, exclude_none=exclude_none
+            ),
+            option=opts,
+        )
+
+    def to_json_str(
+        self,
+        indent: bool = False,
+        exclude_unset: bool = False,
+        exclude_none: bool = False,
+    ) -> str:
+        """Serialize the config to a JSON string.
+
+        Args:
+            indent: Whether to pretty-print with indentation.
+            exclude_unset: Whether to exclude fields that weren't explicitly set.
+                Use this for Kubernetes ConfigMaps to avoid validation issues
+                when loading the config back.
+            exclude_none: Whether to exclude fields with None values.
+
+        Returns:
+            JSON string representation of the config.
+        """
+        return self.to_json(
+            indent=indent, exclude_unset=exclude_unset, exclude_none=exclude_none
+        ).decode("utf-8")
+
+    @classmethod
+    def from_json(cls, data: bytes | str) -> Self:
+        """Deserialize a config from JSON.
+
+        Args:
+            data: JSON bytes or string.
+
+        Returns:
+            Config instance.
+        """
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        return cls.model_validate(orjson.loads(data))
+
+    @classmethod
+    def from_json_file(cls, path: Path) -> Self:
+        """Load a config from a JSON file.
+
+        Args:
+            path: Path to the JSON file.
+
+        Returns:
+            Config instance.
+        """
+        with open(path, "rb") as f:
+            return cls.from_json(f.read())
 
     def serialize_to_yaml(self, verbose: bool = False, indent: int = 4) -> str:
         """
@@ -113,6 +191,8 @@ class BaseConfig(BaseModel):
 
             return commented_map
 
+        return data
+
     @staticmethod
     def _should_add_field_to_template(field: Any) -> bool:
         # Check if the field should be added to the template based on json_schema_extra
@@ -126,11 +206,12 @@ class BaseConfig(BaseModel):
 
     @staticmethod
     def _is_a_nested_config(field: Any, value: Any) -> bool:
-        return (
-            isinstance(value, dict)
-            and field
-            and issubclass(field.annotation, BaseModel)
-        )
+        if not isinstance(value, dict) or not field:
+            return False
+        try:
+            return issubclass(field.annotation, BaseModel)
+        except TypeError:
+            return False
 
     @staticmethod
     def _preprocess_value(value: Any) -> Any:
@@ -139,7 +220,7 @@ class BaseConfig(BaseModel):
         """
 
         if isinstance(value, Enum):
-            return str(value.value).lower()
+            return str(value).lower()
         elif isinstance(value, Path):
             return str(value)
         else:

@@ -13,6 +13,7 @@ from aiperf.common.config.groups import Groups
 from aiperf.common.config.worker_config import WorkersConfig
 from aiperf.common.config.zmq_config import (
     BaseZMQCommunicationConfig,
+    ZMQDualBindConfig,
     ZMQIPCConfig,
     ZMQTCPConfig,
 )
@@ -55,20 +56,49 @@ class ServiceConfig(BaseConfig):
 
     @model_validator(mode="after")
     def validate_comm_config(self) -> Self:
-        """Initialize the comm_config based on the zmq_tcp or zmq_ipc config."""
+        """Initialize the comm_config based on the zmq_tcp, zmq_ipc, or zmq_dual config.
+
+        For zmq_dual (Kubernetes deployments):
+        - Reads AIPERF_K8S_ZMQ_CONTROLLER_HOST env var to set controller_host
+        - If env var is set: worker mode (connect via TCP to controller)
+        - If env var is not set: controller mode (use IPC for local services)
+        """
         _logger.debug(
-            f"Validating comm_config: tcp: {self.zmq_tcp}, ipc: {self.zmq_ipc}"
+            f"Validating comm_config: tcp: {self.zmq_tcp}, ipc: {self.zmq_ipc}, dual: {self.zmq_dual}"
         )
-        if self.zmq_tcp is not None and self.zmq_ipc is not None:
+
+        # Count how many ZMQ configs are set
+        configs_set = sum(
+            1 for cfg in [self.zmq_tcp, self.zmq_ipc, self.zmq_dual] if cfg is not None
+        )
+        if configs_set > 1:
             raise ValueError(
-                "Cannot use both ZMQ TCP and ZMQ IPC configuration at the same time"
+                "Cannot use multiple ZMQ configurations at the same time. "
+                "Choose one of: zmq_tcp, zmq_ipc, or zmq_dual"
             )
-        elif self.zmq_tcp is not None:
+
+        if self.zmq_tcp is not None:
             _logger.info("Using ZMQ TCP configuration")
             self._comm_config = self.zmq_tcp
         elif self.zmq_ipc is not None:
             _logger.info("Using ZMQ IPC configuration")
             self._comm_config = self.zmq_ipc
+        elif self.zmq_dual is not None:
+            # For dual-bind mode, check for controller host from environment
+            # Lazy import to avoid circular dependency (kubernetes package imports common.config)
+            from aiperf.kubernetes.environment import K8sEnvironment
+
+            controller_host = K8sEnvironment.ZMQ.CONTROLLER_HOST
+            if controller_host:
+                _logger.info(
+                    f"Using ZMQ dual-bind configuration (worker mode, connecting to {controller_host})"
+                )
+                self.zmq_dual.controller_host = controller_host
+            else:
+                _logger.info(
+                    "Using ZMQ dual-bind configuration (controller mode, using IPC)"
+                )
+            self._comm_config = self.zmq_dual
         else:
             _logger.info("Using default ZMQ IPC configuration")
             self._comm_config = ZMQIPCConfig()
@@ -77,7 +107,7 @@ class ServiceConfig(BaseConfig):
     service_run_type: Annotated[
         ServiceRunType,
         Field(
-            description="Type of service run (process, k8s)",
+            description="Type of service run (multiprocessing, kubernetes)",
         ),
         DisableCLI(reason="Only single support for now"),
     ] = ServiceDefaults.SERVICE_RUN_TYPE
@@ -87,6 +117,7 @@ class ServiceConfig(BaseConfig):
         Field(
             description="ZMQ TCP configuration",
         ),
+        DisableCLI(reason="Use config file for ZMQ settings"),
     ] = None
 
     zmq_ipc: Annotated[
@@ -94,6 +125,17 @@ class ServiceConfig(BaseConfig):
         Field(
             description="ZMQ IPC configuration",
         ),
+        DisableCLI(reason="Use config file for ZMQ settings"),
+    ] = None
+
+    zmq_dual: Annotated[
+        ZMQDualBindConfig | None,
+        Field(
+            description="ZMQ dual-bind configuration for Kubernetes. Proxies bind to both IPC "
+            "(for co-located controller services) and TCP (for remote workers). Workers set "
+            "AIPERF_K8S_ZMQ_CONTROLLER_HOST env var to connect via TCP.",
+        ),
+        DisableCLI(reason="Use config file for ZMQ settings"),
     ] = None
 
     workers: Annotated[
@@ -192,6 +234,53 @@ class ServiceConfig(BaseConfig):
             name="--api-host",
             group=_CLI_GROUP,
         ),
+    ] = None
+
+    dataset_api_base_url: Annotated[
+        str | None,
+        Field(
+            description="Base URL for dataset API endpoints (for Kubernetes workers to download datasets). "
+            "Example: http://controller-0-0.jobset.namespace:9090/api/dataset",
+        ),
+        DisableCLI(reason="Set via environment variable in Kubernetes mode"),
+    ] = None
+
+    workers_per_pod: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=100,
+            description="Number of worker subprocesses per Kubernetes worker pod. "
+            "Each pod downloads the dataset once and shares it across workers via mmap. "
+            "Higher values reduce network overhead but increase per-pod resource requirements.",
+        ),
+        CLIParameter(
+            name="--workers-per-pod",
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    record_processors_per_pod: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=100,
+            description="Number of record processor subprocesses per Kubernetes worker pod. "
+            "If not specified, defaults to max(1, workers_per_pod / 4).",
+        ),
+        CLIParameter(
+            name="--record-processors-per-pod",
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    cors_origins: Annotated[
+        list[str] | None,
+        Field(
+            description="List of allowed CORS origins for the API server. "
+            "If not specified, uses AIPERF_API_SERVER_CORS_ORIGINS environment variable.",
+        ),
+        DisableCLI(reason="Set via environment variable"),
     ] = None
 
     @model_validator(mode="after")

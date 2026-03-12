@@ -1,0 +1,124 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aiperf-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.operator.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "aiperf-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aiperf-operator.selectorLabels" . | nindent 8 }}
+      {{- with .Values.operator.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "aiperf-operator.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: operator
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - kopf
+        - run
+        - -m
+        - aiperf.operator.main
+        - --verbose
+        - --all-namespaces
+        - --liveness=http://0.0.0.0:8080/healthz
+        ports:
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: AIPERF_OPERATOR_MONITOR_INTERVAL
+          value: {{ .Values.operator.env.monitorInterval | quote }}
+        - name: AIPERF_OPERATOR_MONITOR_INITIAL_DELAY
+          value: {{ .Values.operator.env.monitorInitialDelay | quote }}
+        - name: AIPERF_RESULTS_DIR
+          value: {{ .Values.storage.mountPath | quote }}
+        - name: AIPERF_DEFAULT_IMAGE
+          value: {{ .Values.defaults.image | quote }}
+        - name: AIPERF_JOB_TIMEOUT_SECONDS
+          value: {{ .Values.operator.env.jobTimeoutSeconds | quote }}
+        - name: AIPERF_POD_RESTART_THRESHOLD
+          value: {{ .Values.operator.env.podRestartThreshold | quote }}
+        - name: AIPERF_RESULTS_TTL_DAYS
+          value: {{ .Values.operator.env.resultsTtlDays | quote }}
+        - name: AIPERF_RESULTS_MAX_RETRIES
+          value: {{ .Values.operator.env.resultsMaxRetries | quote }}
+        - name: AIPERF_RESULTS_RETRY_DELAY
+          value: {{ .Values.operator.env.resultsRetryDelay | quote }}
+        - name: AIPERF_ENDPOINT_CHECK_TIMEOUT
+          value: {{ .Values.operator.env.endpointCheckTimeout | quote }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+        resources:
+          {{- toYaml .Values.operator.resources | nindent 10 }}
+        {{- if .Values.storage.enabled }}
+        volumeMounts:
+        - name: results
+          mountPath: {{ .Values.storage.mountPath | quote }}
+        {{- end }}
+      {{- if .Values.storage.enabled }}
+      volumes:
+      - name: results
+        persistentVolumeClaim:
+          claimName: {{ include "aiperf-operator.fullname" . }}-results
+      {{- end }}
+      {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

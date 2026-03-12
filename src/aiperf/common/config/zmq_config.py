@@ -87,6 +87,11 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
     def credit_router_address(self) -> str:
         """Get the credit router address for bidirectional ROUTER-DEALER credit routing."""
 
+    @property
+    @abstractmethod
+    def control_address(self) -> str:
+        """Get the control channel address for direct DEALER/ROUTER communication."""
+
     def get_address(self, address_type: CommAddress) -> str:
         """Get the actual address based on the address type."""
         host = self._remote_host
@@ -103,6 +108,8 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
                 return self.raw_inference_proxy_config.resolve_frontend(host)
             case CommAddress.RAW_INFERENCE_PROXY_BACKEND:
                 return self.raw_inference_proxy_config.resolve_backend(host)
+            case CommAddress.CONTROL:
+                return self.control_address
             case CommAddress.CREDIT_ROUTER:
                 return self.credit_router_address
             case CommAddress.RECORDS:
@@ -227,6 +234,10 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     credit_router_port: Annotated[int, DisableCLI()] = Field(
         default=5564, description="Port for credit router (ROUTER-DEALER streaming)"
     )
+    control_port: Annotated[int, DisableCLI()] = Field(
+        default=5667,
+        description="Port for control channel ROUTER (direct DEALER/ROUTER)",
+    )
     dataset_manager_proxy_config: Annotated[  # type: ignore
         ZMQTCPProxyConfig, DisableCLI()
     ] = Field(
@@ -264,6 +275,11 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     def credit_router_address(self) -> str:
         """Get the credit router address for streaming ROUTER-DEALER."""
         return f"tcp://{self.host}:{self.credit_router_port}"
+
+    @property
+    def control_address(self) -> str:
+        """Get the control channel address for direct DEALER/ROUTER."""
+        return f"tcp://{self.host}:{self.control_port}"
 
 
 class ZMQIPCConfig(BaseZMQCommunicationConfig):
@@ -333,6 +349,13 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
             raise ValueError("Path is required for IPC transport")
         return f"ipc://{self.path / 'credit_router.ipc'}"
 
+    @property
+    def control_address(self) -> str:
+        """Get the control channel address for direct DEALER/ROUTER."""
+        if not self.path:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / 'control.ipc'}"
+
 
 class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
     """Configuration for dual-bind proxy (IPC + TCP).
@@ -354,6 +377,12 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
     tcp_frontend_port: int = Field(default=15555, description="TCP port for frontend")
     tcp_backend_port: int = Field(default=15556, description="TCP port for backend")
 
+    # IPC-only mode: suppress TCP bind addresses (for pod-local proxies)
+    ipc_only: bool = Field(
+        default=False,
+        description="When True, suppress TCP bind addresses so the proxy only binds IPC.",
+    )
+
     # Control/capture (optional, IPC only)
     enable_control: bool = Field(default=False, description="Enable control socket")
     enable_capture: bool = Field(default=False, description="Enable capture socket")
@@ -371,8 +400,8 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
     def _resolve(
         self, remote_host: str | None, tcp_port: int, ipc_endpoint: str
     ) -> str:
-        """Resolve address: TCP with remote_host if set, otherwise IPC."""
-        if remote_host:
+        """Resolve address: IPC when ipc_only or no remote_host, otherwise TCP."""
+        if not self.ipc_only and remote_host:
             return f"tcp://{remote_host}:{tcp_port}"
         return self._ipc_addr(ipc_endpoint)
 
@@ -396,7 +425,9 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
 
     @property
     def additional_frontend_bind_address(self) -> str | None:
-        """TCP frontend address for dual-bind proxy binding."""
+        """TCP frontend address for dual-bind proxy binding. None when ipc_only."""
+        if self.ipc_only:
+            return None
         return self.frontend_tcp_address
 
     @property
@@ -411,7 +442,9 @@ class ZMQDualBindProxyConfig(BaseZMQProxyConfig):
 
     @property
     def additional_backend_bind_address(self) -> str | None:
-        """TCP backend address for dual-bind proxy binding."""
+        """TCP backend address for dual-bind proxy binding. None when ipc_only."""
+        if self.ipc_only:
+            return None
         return self.backend_tcp_address
 
     @property
@@ -488,6 +521,10 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         default=5564,
         description="TCP port for credit router communication with remote workers.",
     )
+    control_tcp_port: int = Field(
+        default=5667,
+        description="TCP port for control channel ROUTER communication with remote workers.",
+    )
 
     event_bus_proxy_config: ZMQDualBindProxyConfig = Field(  # type: ignore
         default=ZMQDualBindProxyConfig(
@@ -510,8 +547,9 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
             name="raw_inference_proxy",
             tcp_frontend_port=5665,
             tcp_backend_port=5666,
+            ipc_only=True,
         ),
-        description="Raw inference proxy configuration (PUSH/PULL).",
+        description="Raw inference proxy configuration (PUSH/PULL). IPC-only so raw results never leave the pod.",
     )
 
     def _ipc_addr(self, name: str) -> str:
@@ -538,6 +576,18 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
     def credit_router_tcp_bind_address(self) -> str:
         """Get TCP bind address for credit router dual binding (controller-side)."""
         return f"tcp://{self.tcp_host}:{self.credit_router_tcp_port}"
+
+    @property
+    def control_address(self) -> str:
+        """Get control channel address based on deployment mode."""
+        if self.controller_host:
+            return f"tcp://{self.controller_host}:{self.control_tcp_port}"
+        return self._ipc_addr("control")
+
+    @property
+    def control_tcp_bind_address(self) -> str:
+        """Get TCP bind address for control channel dual binding (controller-side)."""
+        return f"tcp://{self.tcp_host}:{self.control_tcp_port}"
 
     @property
     def records_push_pull_tcp_bind_address(self) -> str:

@@ -34,10 +34,10 @@ class RealtimeMetricsTable(Widget):
     }
     """
 
-    STATS_FIELDS = ["avg", "min", "max", "p99", "p90", "p50", "std"]
+    STATS_FIELDS: list[str] = ["avg", "min", "max", "p99", "p90", "p50", "std"]
     COLUMNS = ["Metric", *STATS_FIELDS]
 
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
+    def __init__(self, service_config: ServiceConfig | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.service_config = service_config
         self.data_table: NonFocusableDataTable | None = None
@@ -193,7 +193,7 @@ class RealtimeMetricsDashboard(Container, MaximizableWidget):
     }
     """
 
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
+    def __init__(self, service_config: ServiceConfig | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.service_config = service_config
         self.metrics_table: RealtimeMetricsTable | None = None

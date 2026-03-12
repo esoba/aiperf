@@ -4,12 +4,18 @@
 from typing import Any
 
 import pytest
+from pydantic import BaseModel, Field
 
 from aiperf.common.config.config_validators import (
+    are_fields_set,
+    check_mutually_exclusive,
+    check_requires,
     coerce_value,
+    is_field_set,
     parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list_of_positive_values,
+    raise_if,
 )
 
 
@@ -362,3 +368,139 @@ class TestParseStrOrListOfPositiveValues:
     def test_parse_str_as_numeric_dict_error_param(self, error_message, pattern):
         with pytest.raises(ValueError, match=pattern):
             parse_str_as_numeric_dict(error_message)
+
+
+# =============================================================================
+# Validation Helper Tests
+# =============================================================================
+
+
+class _SampleModel(BaseModel):
+    """Sample model for testing validation helpers."""
+
+    field_a: str | None = Field(default=None, description="Field A")
+    field_b: str | None = Field(default=None, description="Field B")
+    field_c: int | None = Field(default=None, description="Field C")
+
+
+class TestRaiseIf:
+    """Tests for the raise_if helper function."""
+
+    def test_raises_when_all_conditions_true(self):
+        """Test that ValueError is raised when all conditions are True."""
+        with pytest.raises(ValueError, match="test error"):
+            raise_if(True, True, error="test error")
+
+    def test_does_not_raise_when_any_condition_false(self):
+        """Test that no error is raised when any condition is False."""
+        raise_if(True, False, error="should not raise")
+        raise_if(False, True, error="should not raise")
+        raise_if(False, False, error="should not raise")
+
+    def test_single_condition_true(self):
+        """Test single condition that is True."""
+        with pytest.raises(ValueError, match="single condition"):
+            raise_if(True, error="single condition")
+
+    def test_single_condition_false(self):
+        """Test single condition that is False."""
+        raise_if(False, error="should not raise")
+
+    def test_multiple_conditions_all_true(self):
+        """Test multiple conditions all True."""
+        with pytest.raises(ValueError):
+            raise_if(True, True, True, error="all true")
+
+
+class TestIsFieldSet:
+    """Tests for the is_field_set helper function."""
+
+    def test_field_explicitly_set(self):
+        """Test that is_field_set returns True for explicitly set fields."""
+        model = _SampleModel(field_a="value")
+        assert is_field_set(model, "field_a") is True
+        assert is_field_set(model, "field_b") is False
+
+    def test_field_not_set(self):
+        """Test that is_field_set returns False for fields using defaults."""
+        model = _SampleModel()
+        assert is_field_set(model, "field_a") is False
+        assert is_field_set(model, "field_b") is False
+
+    def test_field_set_to_none(self):
+        """Test that explicitly setting to None is tracked."""
+        model = _SampleModel(field_a=None)
+        assert is_field_set(model, "field_a") is True
+
+
+class TestAreFieldsSet:
+    """Tests for the are_fields_set helper function."""
+
+    def test_any_field_set(self):
+        """Test returns True if any field is set."""
+        model = _SampleModel(field_a="value")
+        assert are_fields_set(model, "field_a", "field_b") is True
+
+    def test_no_fields_set(self):
+        """Test returns False if no fields are set."""
+        model = _SampleModel()
+        assert are_fields_set(model, "field_a", "field_b") is False
+
+    def test_all_fields_set(self):
+        """Test returns True when all fields are set."""
+        model = _SampleModel(field_a="a", field_b="b")
+        assert are_fields_set(model, "field_a", "field_b") is True
+
+
+class TestCheckMutuallyExclusive:
+    """Tests for the check_mutually_exclusive helper function."""
+
+    def test_raises_when_multiple_fields_set(self):
+        """Test raises error when multiple fields are set."""
+        model = _SampleModel(field_a="a", field_b="b")
+        with pytest.raises(ValueError, match="Cannot use"):
+            check_mutually_exclusive(model, "field_a", "field_b")
+
+    def test_does_not_raise_when_one_field_set(self):
+        """Test does not raise when only one field is set."""
+        model = _SampleModel(field_a="a")
+        check_mutually_exclusive(model, "field_a", "field_b")
+
+    def test_does_not_raise_when_no_fields_set(self):
+        """Test does not raise when no fields are set."""
+        model = _SampleModel()
+        check_mutually_exclusive(model, "field_a", "field_b")
+
+    def test_custom_error_message(self):
+        """Test that custom error message is used."""
+        model = _SampleModel(field_a="a", field_b="b")
+        with pytest.raises(ValueError, match="Custom message"):
+            check_mutually_exclusive(
+                model, "field_a", "field_b", error="Custom message"
+            )
+
+
+class TestCheckRequires:
+    """Tests for the check_requires helper function."""
+
+    def test_raises_when_field_set_without_required(self):
+        """Test raises error when field is set but required field is not."""
+        model = _SampleModel(field_a="a")
+        with pytest.raises(ValueError, match="--field-a can only be used with"):
+            check_requires(model, "field_a", "field_b")
+
+    def test_does_not_raise_when_both_fields_set(self):
+        """Test does not raise when both fields are set."""
+        model = _SampleModel(field_a="a", field_b="b")
+        check_requires(model, "field_a", "field_b")
+
+    def test_does_not_raise_when_field_not_set(self):
+        """Test does not raise when the dependent field is not set."""
+        model = _SampleModel(field_b="b")
+        check_requires(model, "field_a", "field_b")
+
+    def test_custom_error_message(self):
+        """Test that custom error message is used."""
+        model = _SampleModel(field_a="a")
+        with pytest.raises(ValueError, match="Custom error"):
+            check_requires(model, "field_a", "field_b", error="Custom error")

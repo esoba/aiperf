@@ -15,9 +15,8 @@ from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
 from aiperf.ui.dashboard.rich_log_viewer import LogConsumer
 
 if TYPE_CHECKING:
-    import multiprocessing
-
     from aiperf.common.config import ServiceConfig, UserConfig
+    from aiperf.common.logging import LogQueue
     from aiperf.controller.system_controller import SystemController
 
 
@@ -37,7 +36,7 @@ class AIPerfDashboardUI(BaseAIPerfUI):
 
     def __init__(
         self,
-        log_queue: multiprocessing.Queue,
+        log_queue: LogQueue,
         service_config: ServiceConfig,
         user_config: UserConfig,
         controller: SystemController,

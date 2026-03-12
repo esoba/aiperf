@@ -138,6 +138,46 @@ class TestZMQDualBindProxyConfig:
         addr = proxy_config.resolve_backend(remote_host)
         assert addr.startswith(expected_prefix)
 
+    def test_ipc_only_suppresses_additional_frontend_bind(self, tmp_path: Path) -> None:
+        cfg = ZMQDualBindProxyConfig(
+            ipc_path=tmp_path,
+            name="raw_inference_proxy",
+            ipc_only=True,
+            tcp_frontend_port=5665,
+            tcp_backend_port=5666,
+        )
+        assert cfg.additional_frontend_bind_address is None
+
+    def test_ipc_only_suppresses_additional_backend_bind(self, tmp_path: Path) -> None:
+        cfg = ZMQDualBindProxyConfig(
+            ipc_path=tmp_path,
+            name="raw_inference_proxy",
+            ipc_only=True,
+            tcp_frontend_port=5665,
+            tcp_backend_port=5666,
+        )
+        assert cfg.additional_backend_bind_address is None
+
+    def test_ipc_only_still_resolves_ipc_addresses(self, tmp_path: Path) -> None:
+        cfg = ZMQDualBindProxyConfig(
+            ipc_path=tmp_path,
+            name="raw_inference_proxy",
+            ipc_only=True,
+        )
+        assert cfg.frontend_address.startswith("ipc://")
+        assert cfg.backend_address.startswith("ipc://")
+
+    def test_ipc_only_resolve_ignores_remote_host(self, tmp_path: Path) -> None:
+        cfg = ZMQDualBindProxyConfig(
+            ipc_path=tmp_path,
+            name="raw_inference_proxy",
+            ipc_only=True,
+            tcp_frontend_port=5665,
+            tcp_backend_port=5666,
+        )
+        assert cfg.resolve_frontend("controller.svc").startswith("ipc://")
+        assert cfg.resolve_backend("controller.svc").startswith("ipc://")
+
     def test_resolve_frontend_remote_uses_correct_port(
         self, proxy_config: ZMQDualBindProxyConfig
     ) -> None:
@@ -201,6 +241,7 @@ class TestZMQDualBindConfig:
     def test_default_tcp_ports(self, config: ZMQDualBindConfig) -> None:
         assert config.records_push_pull_tcp_port == 5557
         assert config.credit_router_tcp_port == 5564
+        assert config.control_tcp_port == 5667
 
     def test_default_proxy_tcp_ports(self, config: ZMQDualBindConfig) -> None:
         assert config.event_bus_proxy_config.tcp_frontend_port == 5663
@@ -209,6 +250,27 @@ class TestZMQDualBindConfig:
         assert config.dataset_manager_proxy_config.tcp_backend_port == 5662
         assert config.raw_inference_proxy_config.tcp_frontend_port == 5665
         assert config.raw_inference_proxy_config.tcp_backend_port == 5666
+
+    # --- Raw inference proxy is IPC-only (no TCP bind) ---
+
+    def test_raw_inference_proxy_is_ipc_only(self, config: ZMQDualBindConfig) -> None:
+        assert config.raw_inference_proxy_config.ipc_only is True
+
+    def test_raw_inference_proxy_no_tcp_bind_addresses(
+        self, config: ZMQDualBindConfig
+    ) -> None:
+        assert (
+            config.raw_inference_proxy_config.additional_frontend_bind_address is None
+        )
+        assert config.raw_inference_proxy_config.additional_backend_bind_address is None
+
+    def test_event_bus_proxy_is_not_ipc_only(self, config: ZMQDualBindConfig) -> None:
+        assert config.event_bus_proxy_config.ipc_only is False
+
+    def test_dataset_manager_proxy_is_not_ipc_only(
+        self, config: ZMQDualBindConfig
+    ) -> None:
+        assert config.dataset_manager_proxy_config.ipc_only is False
 
     # --- Local mode (controller_host=None) ---
 
@@ -244,13 +306,44 @@ class TestZMQDualBindConfig:
             remote_config.credit_router_address == "tcp://controller.default.svc:5564"
         )
 
-    def test_get_address_remote_returns_tcp_for_all(
+    def test_control_address_local_uses_ipc(self, config: ZMQDualBindConfig) -> None:
+        assert config.control_address.startswith("ipc://")
+
+    def test_control_address_remote_uses_tcp(
         self, remote_config: ZMQDualBindConfig
     ) -> None:
-        for addr_type in CommAddress:
+        assert remote_config.control_address == "tcp://controller.default.svc:5667"
+
+    def test_get_address_remote_returns_tcp_for_controller_proxies(
+        self, remote_config: ZMQDualBindConfig
+    ) -> None:
+        """Remote (worker pod) mode uses TCP for controller-hosted proxies."""
+        tcp_addresses = [
+            CommAddress.EVENT_BUS_PROXY_FRONTEND,
+            CommAddress.EVENT_BUS_PROXY_BACKEND,
+            CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
+            CommAddress.DATASET_MANAGER_PROXY_BACKEND,
+            CommAddress.CREDIT_ROUTER,
+            CommAddress.CONTROL,
+            CommAddress.RECORDS,
+        ]
+        for addr_type in tcp_addresses:
             addr = remote_config.get_address(addr_type)
             assert addr.startswith("tcp://"), (
                 f"{addr_type} should be TCP in remote mode"
+            )
+
+    def test_get_address_remote_returns_ipc_for_raw_inference(
+        self, remote_config: ZMQDualBindConfig
+    ) -> None:
+        """Raw inference proxy is always local (IPC), even in remote mode."""
+        for addr_type in [
+            CommAddress.RAW_INFERENCE_PROXY_FRONTEND,
+            CommAddress.RAW_INFERENCE_PROXY_BACKEND,
+        ]:
+            addr = remote_config.get_address(addr_type)
+            assert addr.startswith("ipc://"), (
+                f"{addr_type} should be IPC (local proxy) even in remote mode"
             )
 
     def test_get_address_remote_invalid_type_raises(
@@ -481,6 +574,30 @@ class TestProxyDualBind:
 
         assert len(ipc_binds) >= 2, f"Expected >= 2 IPC binds, got {ipc_binds}"
         assert len(tcp_binds) >= 2, f"Expected >= 2 TCP binds, got {tcp_binds}"
+
+    @pytest.mark.asyncio
+    async def test_proxy_ipc_only_does_not_bind_tcp(
+        self, mock_zmq_socket, mock_zmq_context, tmp_path: Path
+    ) -> None:
+        from aiperf.zmq.zmq_proxy_sockets import ZMQPushPullProxy
+
+        proxy_config = ZMQDualBindProxyConfig(
+            ipc_path=tmp_path,
+            name="raw_inference_proxy",
+            tcp_host="0.0.0.0",
+            tcp_frontend_port=5665,
+            tcp_backend_port=5666,
+            ipc_only=True,
+        )
+        proxy = ZMQPushPullProxy(zmq_proxy_config=proxy_config)
+        await proxy.initialize()
+
+        bind_calls = [str(c) for c in mock_zmq_socket.bind.call_args_list]
+        tcp_binds = [c for c in bind_calls if "tcp://" in c]
+        ipc_binds = [c for c in bind_calls if "ipc://" in c]
+
+        assert len(tcp_binds) == 0, f"Expected no TCP binds, got {tcp_binds}"
+        assert len(ipc_binds) >= 2, f"Expected >= 2 IPC binds, got {ipc_binds}"
 
     @pytest.mark.asyncio
     async def test_proxy_dual_bind_uses_correct_tcp_addresses(

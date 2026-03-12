@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from pytest import param
 
 from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.config.user_config import UserConfig
@@ -11,17 +12,23 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     Conversation,
     ParsedResponse,
+    ProcessHealth,
     ReasoningResponseData,
     RequestRecord,
     SSEMessage,
     TextResponseData,
 )
 from aiperf.credit.structs import Credit, CreditContext
+from aiperf.plugin.enums import ServiceRunType
 from aiperf.workers.worker import Worker
 from tests.harness.fake_communication import FakeCommunication as FakeCommunication
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.fake_transport import FakeTransport as FakeTransport
+
+_STUB_PROCESS_HEALTH = ProcessHealth(
+    create_time=0.0, uptime=1.0, cpu_usage=0.0, memory_usage=0
+)
 
 
 @pytest.fixture
@@ -30,13 +37,22 @@ async def mock_worker(
     service_config: ServiceConfig,
     fake_tokenizer: FakeTokenizer,
     skip_service_registration,
+    mock_psutil_process,
 ):
-    """Create a fully initialized and started MockWorker (no SystemController needed)."""
+    """Create a fully initialized and started MockWorker (no SystemController needed).
+
+    Patches psutil.Process so ProcessHealthMixin.__init__ never reads /proc,
+    and stubs get_process_health / get_pss_memory so the @background_task
+    health check never blocks on real syscalls.
+    """
     worker = Worker(
         service_config=service_config,
         user_config=user_config,
         service_id="mock-service-id",
     )
+    worker._measure_baseline_rtt = AsyncMock()
+    worker.get_process_health = Mock(return_value=_STUB_PROCESS_HEALTH)
+    worker.get_pss_memory = Mock(return_value=None)
     await worker.initialize()
     await worker.start()
     yield worker
@@ -314,3 +330,112 @@ class TestRetrieveConversation:
 
         assert result == expected_conversation
         mock_fallback.assert_called_once_with("test-conv-123", sample_credit_context)
+
+
+class TestKubernetesMode:
+    """Test Kubernetes-specific behavior in Worker."""
+
+    @pytest.fixture
+    async def k8s_worker(
+        self,
+        user_config: UserConfig,
+        service_config: ServiceConfig,
+        fake_tokenizer: FakeTokenizer,
+        skip_service_registration,
+    ) -> Worker:
+        """Create a Worker in Kubernetes mode."""
+        service_config.service_run_type = ServiceRunType.KUBERNETES
+        worker = Worker(
+            service_config=service_config,
+            user_config=user_config,
+            service_id="k8s-worker",
+        )
+        worker._measure_baseline_rtt = AsyncMock()
+        await worker.initialize()
+        await worker.start()
+        yield worker
+        await worker.stop()
+
+    @pytest.fixture
+    async def local_worker(
+        self,
+        user_config: UserConfig,
+        service_config: ServiceConfig,
+        fake_tokenizer: FakeTokenizer,
+        skip_service_registration,
+    ) -> Worker:
+        """Create a Worker in local (multiprocessing) mode."""
+        service_config.service_run_type = ServiceRunType.MULTIPROCESSING
+        worker = Worker(
+            service_config=service_config,
+            user_config=user_config,
+            service_id="local-worker",
+        )
+        worker._measure_baseline_rtt = AsyncMock()
+        await worker.initialize()
+        await worker.start()
+        yield worker
+        await worker.stop()
+
+    @pytest.mark.parametrize(
+        "run_type,expected",
+        [
+            param(ServiceRunType.KUBERNETES, True, id="kubernetes"),
+            param(ServiceRunType.MULTIPROCESSING, False, id="multiprocessing"),
+        ],
+    )  # fmt: skip
+    def test_is_kubernetes_mode(
+        self,
+        user_config: UserConfig,
+        service_config: ServiceConfig,
+        run_type: str,
+        expected: bool,
+    ) -> None:
+        """_is_kubernetes_mode should return True only for KUBERNETES run type."""
+        service_config.service_run_type = run_type
+        worker = Worker(
+            service_config=service_config,
+            user_config=user_config,
+            service_id="test-worker",
+        )
+        assert worker._is_kubernetes_mode() is expected
+
+    @pytest.mark.asyncio
+    async def test_dataset_configured_deferred_in_kubernetes_mode(
+        self, k8s_worker: Worker
+    ) -> None:
+        """In K8s mode, dataset config should be stored as pending, not processed immediately."""
+        mock_msg = MagicMock()
+        mock_msg.client_metadata = MagicMock()
+        mock_msg.metadata = MagicMock()
+
+        # Patch _initialize_dataset_client to verify it's NOT called
+        k8s_worker._initialize_dataset_client = AsyncMock()
+
+        await k8s_worker._on_dataset_configured(mock_msg)
+
+        # Should have stored as pending
+        assert k8s_worker._pending_dataset_config is mock_msg
+        # Should NOT have initialized client
+        k8s_worker._initialize_dataset_client.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_dataset_configured_immediate_in_local_mode(
+        self, local_worker: Worker
+    ) -> None:
+        """In local mode, dataset config should initialize the client immediately."""
+        mock_msg = MagicMock()
+        mock_msg.client_metadata = MagicMock()
+        mock_msg.metadata = MagicMock()
+
+        # Patch _initialize_dataset_client to verify it IS called
+        local_worker._initialize_dataset_client = AsyncMock()
+
+        await local_worker._on_dataset_configured(mock_msg)
+
+        # Should NOT have stored as pending
+        assert local_worker._pending_dataset_config is None
+        # Should have initialized client immediately
+        local_worker._initialize_dataset_client.assert_awaited_once_with(
+            mock_msg.client_metadata
+        )

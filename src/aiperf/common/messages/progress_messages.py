@@ -53,3 +53,19 @@ class ProcessRecordsResultMessage(BaseServiceMessage):
     message_type: MessageTypeT = MessageType.PROCESS_RECORDS_RESULT
 
     results: ProcessRecordsResult = Field(..., description="The process records result")
+
+
+class BenchmarkCompleteMessage(BaseServiceMessage):
+    """Signals that the benchmark has completed and results are available.
+
+    This message is sent by the SystemController to notify services (especially
+    the API service) that the benchmark is complete, without requesting shutdown.
+    The API service uses this to know it should continue serving results.
+    """
+
+    message_type: MessageTypeT = MessageType.BENCHMARK_COMPLETE
+
+    was_cancelled: bool = Field(
+        default=False,
+        description="Whether the benchmark was cancelled before completion",
+    )

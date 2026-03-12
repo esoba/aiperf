@@ -173,9 +173,12 @@ async def create_server(**kwargs: Any) -> AsyncIterator[AIPerfMockServer]:
 
     process.start()
 
+    from aiperf.transports.aiohttp_client import create_tcp_connector
+
     try:
         # Wait for server to be ready
-        async with aiohttp.ClientSession() as session:
+        connector = create_tcp_connector()
+        async with aiohttp.ClientSession(connector=connector) as session:
             for _ in range(100):
                 try:
                     async with session.get(

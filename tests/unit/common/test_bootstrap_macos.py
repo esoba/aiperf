@@ -13,6 +13,8 @@ from aiperf.common.bootstrap import (
 )
 from aiperf.common.config import ServiceConfig, UserConfig
 
+_HF_ENV_VARS = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+
 
 class TestBootstrapMacOSRedirect:
     """Test that _redirect_stdio_to_devnull is called under the right conditions."""
@@ -24,7 +26,13 @@ class TestBootstrapMacOSRedirect:
         mock_setup_child_process_logging,
         register_dummy_services,
     ):
-        pass
+        saved = {k: os.environ.get(k) for k in _HF_ENV_VARS}
+        yield
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
     def test_redirect_called_in_macos_child_process(
         self,

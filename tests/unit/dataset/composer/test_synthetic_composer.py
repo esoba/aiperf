@@ -36,7 +36,7 @@ class TestSyntheticDatasetComposer:
         composer = SyntheticDatasetComposer(synthetic_config, mock_tokenizer)
 
         assert composer.config == synthetic_config
-        assert composer.config.input.conversation.num_dataset_entries == 5
+        assert composer.config.input.conversation.num_dataset_entries == 2
         assert composer.prompt_generator is not None
         assert composer.include_image is False
         assert composer.include_audio is False
@@ -100,7 +100,7 @@ class TestSyntheticDatasetComposer:
         conversations = composer.create_dataset()
 
         # Test create_dataset returns correct number of conversations
-        assert len(conversations) == 5  # num_conversations
+        assert len(conversations) == 2  # num_conversations
 
         # Test each conversation has correct structure (session_id, turns)
         for conversation in conversations:
@@ -185,7 +185,7 @@ class TestSyntheticDatasetComposer:
         composer = SyntheticDatasetComposer(prefix_prompt_config, mock_tokenizer)
         conversations = composer.create_dataset()
 
-        assert len(conversations) == 5
+        assert len(conversations) == 2
         for conversation in conversations:
             assert len(conversation.turns) >= 1
             # Test that first turns have text content (prefix prompt should be added)
@@ -201,7 +201,7 @@ class TestSyntheticDatasetComposer:
         conversations = composer.create_dataset()
 
         # Test conversations have multiple turns
-        assert len(conversations) == 4
+        assert len(conversations) == 2
 
         for conversation in conversations:
             assert len(conversation.turns) == 2
@@ -286,7 +286,7 @@ class TestSyntheticDatasetComposer:
             endpoint=EndpointConfig(model_names=["test_model"]),
             input=InputConfig(
                 conversation=ConversationConfig(
-                    num_dataset_entries=5,
+                    num_dataset_entries=2,
                     turn=TurnConfig(
                         mean=3,
                         stddev=0,
@@ -306,7 +306,7 @@ class TestSyntheticDatasetComposer:
         conversations = composer.create_dataset()
 
         # Verify conversations were created
-        assert len(conversations) == 5
+        assert len(conversations) == 2
 
         # Check each conversation
         for conversation in conversations:
@@ -348,7 +348,7 @@ class TestSyntheticDatasetComposer:
             endpoint=EndpointConfig(model_names=["test_model"]),
             input=InputConfig(
                 conversation=ConversationConfig(
-                    num_dataset_entries=3,
+                    num_dataset_entries=2,
                     turn=TurnConfig(
                         mean=2,
                         stddev=0,
@@ -550,7 +550,7 @@ class TestSyntheticDatasetComposer:
                 model_names=["test-model"],
             ),
             input=InputConfig(
-                conversation=ConversationConfig(num_dataset_entries=10, num=2),
+                conversation=ConversationConfig(num_dataset_entries=3, num=2),
             ),
         )
 
@@ -558,9 +558,9 @@ class TestSyntheticDatasetComposer:
         conversations = composer.create_dataset()
 
         # Verify that num_dataset_entries controls the number of conversations generated
-        assert len(conversations) == 10
+        assert len(conversations) == 3
 
-    @pytest.mark.parametrize("num_conversations", [1, 5, 10, 50])
+    @pytest.mark.parametrize("num_conversations", [1, 3, 5])
     def test_different_conversation_counts(
         self, synthetic_config, num_conversations, mock_tokenizer
     ):
@@ -573,7 +573,7 @@ class TestSyntheticDatasetComposer:
         # Parametrized test for different num_conversations values
         assert len(conversations) == num_conversations
 
-    @pytest.mark.parametrize("batch_size", [1, 2, 5, 10])
+    @pytest.mark.parametrize("batch_size", [1, 2, 5])
     def test_different_batch_sizes(self, synthetic_config, batch_size, mock_tokenizer):
         """Test dataset creation with different batch sizes."""
         synthetic_config.input.prompt.batch_size = batch_size

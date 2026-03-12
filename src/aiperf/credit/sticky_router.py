@@ -30,6 +30,8 @@ from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
     FirstToken,
+    TimePing,
+    TimePong,
     WorkerReady,
     WorkerShutdown,
     WorkerToRouterMessage,
@@ -394,6 +396,11 @@ class StickyCreditRouter(CommunicationMixin):
                 if self._on_first_token_callback:
                     # Forward TTFT to orchestrator so it can release the prefill slot.
                     await self._on_first_token_callback(message)
+            case TimePing():
+                await self._router_client.send_to(
+                    worker_id,
+                    TimePong(sequence=message.sequence, sent_at_ns=message.sent_at_ns),
+                )
             case WorkerReady():
                 self._register_worker(worker_id)
             case WorkerShutdown():

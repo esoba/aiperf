@@ -44,7 +44,9 @@ from aiperf.common.models.health_models import (
     CPUTimes,
     CtxSwitches,
     IOCounters,
+    NumericAggregate,
     ProcessHealth,
+    ProcessHealthAggregates,
 )
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -196,6 +198,7 @@ __all__ = [
     "MetricResult",
     "MetricSample",
     "MetricValue",
+    "NumericAggregate",
     "ModelEndpointInfo",
     "ModelInfo",
     "ModelListInfo",
@@ -203,6 +206,7 @@ __all__ = [
     "ParsedResponseRecord",
     "PhaseRecordsStats",
     "ProcessHealth",
+    "ProcessHealthAggregates",
     "ProcessRecordsResult",
     "ProcessServerMetricsResult",
     "ProcessTelemetryResult",

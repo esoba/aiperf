@@ -5,7 +5,7 @@ Shared fixtures for dataset manager testing.
 """
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -15,6 +15,48 @@ from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, Us
 from aiperf.common.models import Conversation
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import EndpointType
+from tests.harness.fake_communication import FakeCommunication  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def _fast_corpus():
+    """Replace expensive Shakespeare corpus tokenization with a cheap stub.
+
+    PromptGenerator._initialize_corpus reads and tokenizes the entire Shakespeare
+    text file (~486 chunks via ThreadPoolExecutor) on every construction. This
+    takes ~150ms per call and is the dominant cost in dataset tests.
+    """
+    with patch(
+        "aiperf.dataset.generator.prompt.PromptGenerator._initialize_corpus",
+        lambda self: (
+            setattr(self, "_tokenized_corpus", list(range(1000))),
+            setattr(self, "_corpus_size", 1000),
+        ),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _skip_gc_in_tests():
+    """Skip gc.collect() calls in dataset manager tests.
+
+    DatasetManager._configure_dataset_client_and_free_memory calls gc.collect()
+    twice to clean up circular references. In the test suite this is extremely
+    expensive (~300ms) because it collects garbage from the entire test process,
+    not just the current test's objects.
+    """
+    with patch("aiperf.dataset.dataset_manager.gc.collect"):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _mock_control_client():
+    """Mock the ZMQ DEALER control client for all dataset tests."""
+    with patch(
+        "aiperf.zmq.streaming_dealer_client.ZMQStreamingDealerClient",
+        return_value=AsyncMock(),
+    ):
+        yield
 
 
 @pytest.fixture

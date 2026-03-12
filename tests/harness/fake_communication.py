@@ -23,7 +23,6 @@ from typing import Any, ClassVar
 from aiperf.common.base_comms import BaseCommunication
 from aiperf.common.enums import CommAddress
 from aiperf.common.hooks import on_stop
-from aiperf.common.messages import TargetedServiceMessage
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.types import CommAddressType, MessageCallbackMapT, MessageTypeT
 from aiperf.plugin import plugins
@@ -33,7 +32,6 @@ from aiperf.plugin.enums import (
     PluginType,
     ZMQProxyType,
 )
-from aiperf.zmq.zmq_defaults import TOPIC_DELIMITER
 
 
 @dataclass(frozen=True)
@@ -214,14 +212,8 @@ class FakePubClient(FakeCommunicationClient):
     client_type = CommClientType.PUB
 
     def _determine_topic(self, message: Any) -> str:
-        """Determine topic based on message type and targeting."""
-        msg_type = getattr(message, "message_type", None)
-        if isinstance(message, TargetedServiceMessage):
-            if message.target_service_id:
-                return f"{msg_type}{TOPIC_DELIMITER}{message.target_service_id}"
-            if message.target_service_type:
-                return f"{msg_type}{TOPIC_DELIMITER}{message.target_service_type}"
-        return str(msg_type)
+        """Determine topic based on message type."""
+        return str(getattr(message, "message_type", None))
 
     async def publish(self, message: Any) -> None:
         """Publish to subscribers - dynamically looks up subs at this address."""
@@ -252,7 +244,7 @@ class FakeSubClient(FakeCommunicationClient):
 
     def __init__(self, address: str, identity: str, bus: FakeCommunicationBus) -> None:
         super().__init__(address, identity, bus)
-        # Keyed by topic string (e.g., "MessageType.COMMAND" or "MessageType.COMMAND.service-id")
+        # Keyed by topic string (e.g., "heartbeat" or "connection_probe.service-id")
         self.subscriptions: dict[str, list[Callable]] = {}
 
     async def subscribe(
@@ -300,6 +292,13 @@ class FakePushClient(FakeCommunicationClient):
             pull_client.capture_received_payload(message, sender_identity=self.identity)
             await callback(message)
 
+    async def push_raw(self, data: bytes) -> None:
+        """Push pre-serialized JSON bytes by deserializing and routing normally."""
+        from aiperf.common.messages import Message
+
+        message = Message.from_json(data)
+        await self.push(message)
+
 
 class FakePullClient(FakeCommunicationClient):
     """Fake PULL - receives from push clients (one callback per message type)."""
@@ -337,6 +336,16 @@ class FakeRequestClient(FakeCommunicationClient):
 
     def __init__(self, address: str, identity: str, bus: FakeCommunicationBus) -> None:
         super().__init__(address, identity, bus)
+
+    async def send(self, message: Any) -> None:
+        """Fire-and-forget send - delivers to reply clients without waiting for response."""
+        self.capture_sent_payload(message)
+        for comm in self.bus.communications:
+            for reply_client in comm.reply_clients.get(self.address, []):
+                reply_client.capture_received_payload(
+                    message, sender_identity=self.identity
+                )
+                await reply_client.handle_request(message)
 
     async def request(self, message: Any, timeout: float = 30.0) -> Any:  # noqa: ARG002
         """Send request - dynamically looks up reply clients at this address."""
@@ -376,6 +385,8 @@ class FakeReplyClient(FakeCommunicationClient):
         service_id: str,
         message_type: MessageTypeT,
         handler: Callable[[Any], Coroutine[Any, Any, Any]],
+        *,
+        fire_and_forget: bool = False,
     ) -> None:
         if message_type in self.handlers:
             raise ValueError(

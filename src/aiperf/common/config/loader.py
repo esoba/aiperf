@@ -11,6 +11,7 @@ import orjson
 from ruamel.yaml import YAML
 
 if TYPE_CHECKING:
+    from aiperf.common.config.kube_config import KubeOptions
     from aiperf.common.config.service_config import ServiceConfig
     from aiperf.common.config.user_config import UserConfig
 
@@ -105,3 +106,22 @@ def load_user_config(path: Path | None = None) -> UserConfig:
         "User configuration file is required. Provide --user-config-file <path> or set "
         "AIPERF_CONFIG_USER_FILE=<path> environment variable."
     )
+
+
+def load_kube_options(path: Path) -> KubeOptions:
+    """Load the Kubernetes deployment options from a file.
+
+    Args:
+        path: Path to the kube options file (YAML or JSON).
+
+    Returns:
+        KubeOptions instance.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If the file format is invalid.
+    """
+    from aiperf.common.config.kube_config import KubeOptions
+
+    data = _load_config_file(path)
+    return KubeOptions(**data)
