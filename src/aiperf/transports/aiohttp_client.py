@@ -24,7 +24,7 @@ from aiperf.transports.http_defaults import AioHttpDefaults, SocketDefaults
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
 if TYPE_CHECKING:
-    from aiperf.transports.base_transports import FirstTokenCallback
+    from aiperf.transports.base_transports import FirstTokenCallback, ProgressCallback
 
 
 class AioHttpClient(AIPerfLoggerMixin):
@@ -59,6 +59,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         data: str | None = None,
         on_request_sent: asyncio.Event | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
+        progress_callback: "ProgressCallback | None" = None,
         trace_data: AioHttpTraceData | None = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
@@ -180,14 +181,23 @@ class AioHttpClient(AIPerfLoggerMixin):
                             ):
                                 AsyncSSEStreamReader.inspect_message_for_error(message)
                                 record.responses.append(message)
+                                if progress_callback is not None:
+                                    progress_callback(len(record.responses))
                                 # Fire callback until it returns True (meaningful content found)
                                 if not first_token_acquired:
                                     ttft_ns = message.perf_ns - record.start_perf_ns
                                     first_token_acquired = await first_token_callback(
                                         ttft_ns, message
                                     )
+                        elif progress_callback is not None:
+                            async for message in AsyncSSEStreamReader(
+                                tracked_content_stream()
+                            ):
+                                AsyncSSEStreamReader.inspect_message_for_error(message)
+                                record.responses.append(message)
+                                progress_callback(len(record.responses))
                         else:
-                            # Fast path: no callback, just collect responses
+                            # Fast path: no callbacks, just collect responses
                             async for message in AsyncSSEStreamReader(
                                 tracked_content_stream()
                             ):
@@ -274,6 +284,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         *,
         cancel_after_ns: int | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
+        progress_callback: "ProgressCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
         **kwargs: Any,
@@ -287,6 +298,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             cancel_after_ns: If set, cancel the request this many nanoseconds after
                 it's fully sent. The request is always sent before cancellation.
             first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            progress_callback: Optional callback fired after each SSE message with running count
             connector: Optional TCP connector to use instead of the shared pool.
             connector_owner: If True, the session will close the connector when done.
             **kwargs: Additional arguments passed to aiohttp
@@ -301,6 +313,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 headers,
                 data=payload,
                 first_token_callback=first_token_callback,
+                progress_callback=progress_callback,
                 connector=connector,
                 connector_owner=connector_owner,
                 **kwargs,
@@ -311,6 +324,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             headers,
             cancel_after_ns,
             first_token_callback=first_token_callback,
+            progress_callback=progress_callback,
             connector=connector,
             connector_owner=connector_owner,
         )
@@ -322,6 +336,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         headers: dict[str, str],
         cancel_after_ns: int,
         first_token_callback: "FirstTokenCallback | None" = None,
+        progress_callback: "ProgressCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
     ) -> RequestRecord:
@@ -352,6 +367,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 data=payload,
                 on_request_sent=request_sent,
                 first_token_callback=first_token_callback,
+                progress_callback=progress_callback,
                 trace_data=trace_data,
                 connector=connector,
                 connector_owner=connector_owner,

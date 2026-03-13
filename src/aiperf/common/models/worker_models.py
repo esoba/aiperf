@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
 
-from pydantic import Field
+from dataclasses import dataclass
+
+from pydantic import ConfigDict, Field
 
 from aiperf.common.models.base_models import AIPerfBaseModel
 
@@ -37,3 +40,28 @@ class WorkerTaskStats(AIPerfBaseModel):
         This is the total number of tasks sent to the worker minus the number of failed and successfully completed tasks.
         """
         return self.total - self.completed - self.failed
+
+
+@dataclass(slots=True)
+class ActiveRequestProgress:
+    """Progress of a single in-flight request."""
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    credit_id: int
+    status: str
+    tokens_received: int
+    tokens_expected: int | None
+
+
+@dataclass(slots=True)
+class ActiveSessionProgress:
+    """Progress of an active user session."""
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    x_correlation_id: str
+    conversation_id: str
+    turn_index: int
+    num_turns: int
+    current_request: ActiveRequestProgress | None

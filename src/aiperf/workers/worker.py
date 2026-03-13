@@ -23,6 +23,7 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
     ErrorMessage,
     InferenceResultsMessage,
+    RequestProgressMessage,
     WorkerHealthMessage,
 )
 from aiperf.common.messages.dataset_messages import (
@@ -41,6 +42,10 @@ from aiperf.common.models import (
     Text,
     Turn,
     WorkerTaskStats,
+)
+from aiperf.common.models.worker_models import (
+    ActiveRequestProgress,
+    ActiveSessionProgress,
 )
 from aiperf.common.protocols import (
     PushClientProtocol,
@@ -148,6 +153,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
         self.credit_tasks: dict[int, asyncio.Task] = {}
+        self.credit_contexts: dict[int, CreditContext] = {}
 
         self.inference_results_push_client: PushClientProtocol = (
             self.comms.create_push_client(
@@ -272,6 +278,35 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             task_stats=self.task_stats,
         )
 
+    @background_task(immediate=False, interval=1.0)
+    async def _publish_request_progress(self) -> None:
+        """Publish active session and in-flight request progress."""
+        if not self.credit_contexts:
+            return
+        sessions: list[ActiveSessionProgress] = []
+        for ctx in self.credit_contexts.values():
+            credit = ctx.credit
+            sessions.append(
+                ActiveSessionProgress(
+                    x_correlation_id=credit.x_correlation_id,
+                    conversation_id=credit.conversation_id,
+                    turn_index=credit.turn_index,
+                    num_turns=credit.num_turns,
+                    current_request=ActiveRequestProgress(
+                        credit_id=credit.id,
+                        status="streaming" if ctx.tokens_received > 0 else "pending",
+                        tokens_received=ctx.tokens_received,
+                        tokens_expected=ctx.max_tokens,
+                    ),
+                )
+            )
+        await self.publish(
+            RequestProgressMessage(
+                service_id=self.service_id,
+                sessions=sessions,
+            )
+        )
+
     async def _on_credit_message(self, message: RouterToWorkerMessage) -> None:
         """Handle incoming credit message from TimingManager via StickyCreditRouter."""
         match message:
@@ -299,6 +334,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         task = self.execute_async(self._on_credit_drop_message_task(credit_context))
         self.credit_tasks[credit.id] = task
+        self.credit_contexts[credit.id] = credit_context
         task.add_done_callback(
             lambda t, ctx=credit_context: self._on_credit_drop_message_task_done(t, ctx)
         )
@@ -314,8 +350,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """
         credit_id = credit_context.credit.id
 
-        # Always remove from tracking dict when task completes
+        # Always remove from tracking dicts when task completes
         self.credit_tasks.pop(credit_id, None)
+        self.credit_contexts.pop(credit_id, None)
 
         # The finally block handles normal/error returns. This callback only needs
         # to return credits for tasks that were cancelled before they started executing.
@@ -478,8 +515,15 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 system_message=session.conversation.system_message,
                 user_context_message=session.conversation.user_context_message,
             )
+            credit_context.max_tokens = request_info.turns[credit.turn_index].max_tokens
+
+            def progress_cb(count: int) -> None:
+                credit_context.tokens_received = count
+
             record: RequestRecord = await self.inference_client.send_request(
-                request_info, first_token_callback=first_token_callback
+                request_info,
+                first_token_callback=first_token_callback,
+                progress_callback=progress_cb,
             )
             await self._send_inference_result_message(record)
 

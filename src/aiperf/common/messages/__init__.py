@@ -67,6 +67,7 @@ from aiperf.common.messages.telemetry_messages import (
     TelemetryStatusMessage,
 )
 from aiperf.common.messages.worker_messages import (
+    RequestProgressMessage,
     WorkerHealthMessage,
     WorkerStatusSummaryMessage,
 )
@@ -121,6 +122,7 @@ __all__ = [
     "TargetedServiceMessage",
     "TelemetryRecordsMessage",
     "TelemetryStatusMessage",
+    "RequestProgressMessage",
     "WorkerHealthMessage",
     "WorkerStatusSummaryMessage",
 ]

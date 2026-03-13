@@ -64,6 +64,8 @@ class CreditContext(
         returned: True if the credit was returned after completion.
         first_token_sent: True if the first token was sent before this return.
         error: The error message if the request failed (None on success).
+        tokens_received: Count of SSE messages received so far (proxy for output tokens).
+        max_tokens: Expected output tokens from the turn's max_tokens setting.
     """
 
     credit: Credit
@@ -72,6 +74,8 @@ class CreditContext(
     returned: bool = False
     first_token_sent: bool = False
     error: str | None = None
+    tokens_received: int = 0
+    max_tokens: int | None = None
 
 
 # =============================================================================

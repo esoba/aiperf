@@ -6,6 +6,7 @@ from pydantic import Field
 from aiperf.common.enums import MessageType, WorkerStatus
 from aiperf.common.messages.service_messages import BaseServiceMessage
 from aiperf.common.models import ProcessHealth, WorkerTaskStats
+from aiperf.common.models.worker_models import ActiveSessionProgress
 from aiperf.common.types import MessageTypeT
 
 
@@ -28,6 +29,17 @@ class WorkerHealthMessage(BaseServiceMessage):
         if self.task_stats.total == 0:
             return 0
         return self.task_stats.failed / self.task_stats.total
+
+
+class RequestProgressMessage(BaseServiceMessage):
+    """Per-worker snapshot of active sessions and in-flight request progress."""
+
+    message_type: MessageTypeT = MessageType.REQUEST_PROGRESS
+
+    sessions: list[ActiveSessionProgress] = Field(
+        default_factory=list,
+        description="Active sessions on this worker with current progress",
+    )
 
 
 class WorkerStatusSummaryMessage(BaseServiceMessage):
