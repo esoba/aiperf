@@ -325,7 +325,7 @@ The number of output tokens generated for a single request, _excluding reasoning
 **Formula:**
 ```python
 # Server-preferred (falls back to client-side)
-output_token_count = token_counts.output or token_counts.output_local
+output_token_count = token_counts.output if token_counts.output is not None else token_counts.output_local
 ```
 
 **Notes:**
@@ -370,10 +370,17 @@ The total number of completion tokens (output + reasoning) generated for a singl
 
 **Formula:**
 ```python
-output_sequence_length = (output_token_count or 0) + (reasoning_token_count or 0)
+# All-server when both are available, otherwise all-client
+if token_counts.output is not None and token_counts.reasoning is not None:
+    output_sequence_length = token_counts.output + token_counts.reasoning
+elif token_counts.output_local is not None:
+    output_sequence_length = token_counts.output_local + (token_counts.reasoning_local or 0)
+else:
+    output_sequence_length = (token_counts.output or 0) + (token_counts.reasoning or 0)
 ```
 
 **Notes:**
+- OSL uses consistent source selection (all-server or all-client) to avoid double-counting. Some servers embed reasoning tokens inside `completion_tokens` but leave `reasoning_tokens` null — mixing server output with client reasoning would count reasoning twice.
 - For models that do not support/separate reasoning tokens, OSL equals the output token count.
 
 ---
@@ -806,7 +813,7 @@ total_usage_total_tokens = sum(r.usage_total_tokens for r in records if r.valid)
 ## Usage Discrepancy Metrics
 
 > [!NOTE]
-> These metrics measure the percentage difference between API-reported token counts (`usage` fields) and client-computed token counts. They are **not displayed in console output** but help identify tokenizer mismatches or counting discrepancies. Output and reasoning token diff metrics require the `--tokenize-output` flag to populate both server and client values.
+> These metrics measure the percentage difference between API-reported token counts (`usage` fields) and client-computed token counts. They are **not displayed in console output** but help identify tokenizer mismatches or counting discrepancies. Prompt diff requires `--tokenize-input` (or fallback tokenization when server omits prompt tokens) for user-provided datasets. Output and reasoning diff metrics require `--tokenize-output` to populate both server and client values.
 
 ### Usage Prompt Tokens Diff %
 
