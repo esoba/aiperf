@@ -12,12 +12,11 @@ from importlib.metadata import version
 from typing import Any
 
 from aiperf.api.prometheus_formatter import InfoLabels
-from aiperf.common.config import UserConfig
 from aiperf.common.config.config_validators import coerce_value
 from aiperf.common.models import MetricResult
 
 
-def build_info_labels(user_config: UserConfig) -> InfoLabels:
+def build_info_labels(user_config: object) -> InfoLabels:
     """Build info labels for metrics from UserConfig.
 
     These labels identify the benchmark and are included in Prometheus metrics.

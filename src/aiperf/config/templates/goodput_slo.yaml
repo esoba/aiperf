@@ -11,7 +11,7 @@
 #
 # Reference: DistServe paper (https://arxiv.org/pdf/2401.09670)
 #
-# Run: aiperf --config examples_v2/goodput_slo.yaml
+# Run: aiperf --config templates/goodput_slo.yaml
 
 random_seed: 42
 

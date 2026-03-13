@@ -229,8 +229,6 @@ class TestConfigMapGeneration:
         )
 
         assert "aiperf_config.json" in cm.data
-        assert "user_config.json" in cm.data
-        assert "service_config.json" in cm.data
 
     def test_configmap_contains_model_names(self) -> None:
         from aiperf.kubernetes.resources import ConfigMapSpec

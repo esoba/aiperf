@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from aiperf.common.config import UserConfig
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricResult
@@ -21,7 +20,7 @@ class AccuracyResultsProcessor(AIPerfLifecycleMixin):
     Self-disables when accuracy mode is not enabled.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+    def __init__(self, user_config: object, **kwargs) -> None:
         if not user_config.accuracy.enabled:
             raise PostProcessorDisabled(
                 "Accuracy results processor is disabled: accuracy mode is not enabled"

@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 import orjson
 
 from aiperf.common.base_service import BaseService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.control_structs import (
     Command,
     CommandAck,
@@ -60,15 +59,19 @@ class BaseComponentService(BaseService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config=None,
         service_id: str | None = None,
         api_port: int | None = None,
+        *,
+        service_config: object | None = None,
+        user_config: object | None = None,
         **kwargs,
     ) -> None:
+        # Support both new (config=) and legacy (service_config=, user_config=) calling conventions
+        if config is None:
+            config = service_config
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             **kwargs,
         )

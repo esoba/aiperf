@@ -594,13 +594,15 @@ class TestBootstrapOfflineMode:
         mock_psutil_process,
         mock_setup_child_process_logging,
         register_dummy_services,
+        monkeypatch,
     ):
-        pass
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.SERVICE, "DISABLE_UVLOOP", True)
 
     def test_offline_mode_enabled_in_child_process(
         self,
-        service_config_no_uvloop,
-        user_config,
+        aiperf_config,
         mock_log_queue,
         monkeypatch,
     ):
@@ -613,8 +615,7 @@ class TestBootstrapOfflineMode:
 
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                config=aiperf_config,
                 log_queue=mock_log_queue,
                 service_id="test_dummy",
             )
@@ -624,8 +625,7 @@ class TestBootstrapOfflineMode:
 
     def test_offline_mode_not_set_in_main_process(
         self,
-        service_config_no_uvloop,
-        user_config,
+        aiperf_config,
         mock_log_queue,
         monkeypatch,
     ):
@@ -638,8 +638,7 @@ class TestBootstrapOfflineMode:
 
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                config=aiperf_config,
                 log_queue=mock_log_queue,
                 service_id="test_dummy",
             )

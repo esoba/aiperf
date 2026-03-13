@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Multi-run orchestrator for AIPerf benchmarks."""
 
+from __future__ import annotations
+
 import logging
 import subprocess
 import sys
@@ -11,12 +13,12 @@ from typing import TYPE_CHECKING
 
 import orjson
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.strategies import ExecutionStrategy
 
 if TYPE_CHECKING:
     from aiperf.common.models.export_models import JsonMetricResult
+    from aiperf.config.config import AIPerfConfig
 
 logger = logging.getLogger(__name__)
 
@@ -42,24 +44,24 @@ class MultiRunOrchestrator:
     def __init__(
         self,
         base_dir: Path,
-        service_config: ServiceConfig,
+        config: AIPerfConfig,
     ):
         """Initialize MultiRunOrchestrator.
 
         Args:
             base_dir: Base directory for all artifacts
-            service_config: Service configuration for SystemController
+            config: AIPerfConfig for SystemController
         """
         self.base_dir = Path(base_dir)
-        self.service_config = service_config
+        self.config = config
 
     def execute(
-        self, base_config: UserConfig, strategy: ExecutionStrategy
+        self, config: AIPerfConfig, strategy: ExecutionStrategy
     ) -> list[RunResult]:
         """Execute runs based on strategy.
 
         Args:
-            base_config: Base benchmark configuration
+            config: AIPerfConfig benchmark configuration
             strategy: Execution strategy that decides what to run
 
         Returns:
@@ -73,13 +75,13 @@ class MultiRunOrchestrator:
         )
 
         # Let strategy validate config before starting
-        strategy.validate_config(base_config)
+        strategy.validate_config(config)
 
         should_continue = strategy.should_continue(results)
 
         while should_continue:
             # Strategy decides next config (including warmup handling)
-            config = strategy.get_next_config(base_config, results)
+            run_config = strategy.get_next_config(config, results)
 
             # Strategy provides label
             label = strategy.get_run_label(run_index)
@@ -87,7 +89,7 @@ class MultiRunOrchestrator:
             logger.info(f"[{run_index + 1}] Executing {label}...")
 
             # Execute run - strategy determines artifact path
-            result = self._execute_single_run(config, strategy, run_index)
+            result = self._execute_single_run(run_config, strategy, run_index)
             results.append(result)
 
             if result.success:
@@ -113,7 +115,7 @@ class MultiRunOrchestrator:
         return results
 
     def _execute_single_run(
-        self, config: UserConfig, strategy: ExecutionStrategy, run_index: int
+        self, config: AIPerfConfig, strategy: ExecutionStrategy, run_index: int
     ) -> RunResult:
         """Execute a single benchmark run in a subprocess.
 
@@ -121,7 +123,7 @@ class MultiRunOrchestrator:
         This allows the SystemController to call os._exit() without affecting the orchestrator.
 
         Args:
-            config: Benchmark configuration
+            config: AIPerfConfig benchmark configuration
             strategy: Execution strategy (determines artifact path and label)
             run_index: Zero-based run index
 
@@ -140,22 +142,13 @@ class MultiRunOrchestrator:
             label = strategy.get_run_label(run_index)
 
             config = config.model_copy(deep=True)
-            config.output.artifact_directory = artifacts_path
+            config.artifacts.dir = artifacts_path
 
-            # Serialize configs to JSON
-            # Use exclude_defaults=True to avoid serializing fields that weren't explicitly set
-            # This prevents validation errors on deserialization for fields with conditional validators
-            config_data = {
-                "user_config": config.model_dump(
-                    mode="json", exclude_defaults=True, exclude_none=True
-                ),
-                "service_config": self.service_config.model_dump(
-                    mode="json", exclude_defaults=True, exclude_none=True
-                ),
-            }
+            # Serialize AIPerfConfig to JSON for subprocess
+            config_data = config.model_dump(
+                mode="json", exclude_defaults=True, exclude_none=True
+            )
 
-            # Write config to artifact directory for debugging and reproducibility
-            # This allows users to see exactly what config was used for each run
             config_file = artifacts_path / "run_config.json"
             with open(config_file, "wb") as f:
                 f.write(orjson.dumps(config_data, option=orjson.OPT_INDENT_2))
@@ -261,7 +254,7 @@ class MultiRunOrchestrator:
 
     def _extract_summary_metrics(
         self, artifacts_path: Path
-    ) -> dict[str, "JsonMetricResult"]:
+    ) -> dict[str, JsonMetricResult]:
         """Extract run-level summary statistics from artifacts.
 
         Reads the profile_export_aiperf.json file written by the SystemController

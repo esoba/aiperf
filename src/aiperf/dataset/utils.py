@@ -10,7 +10,7 @@ from PIL import Image
 from aiperf.common.enums import AudioFormat, ImageFormat, VideoFormat
 
 
-def check_file_exists(filename: Path) -> None:
+def check_file_exists(filename: str | Path) -> None:
     """Verifies that the file exists.
 
     Args:
@@ -19,7 +19,7 @@ def check_file_exists(filename: Path) -> None:
     Raises:
         FileNotFoundError: If the file does not exist.
     """
-    if not filename.exists():
+    if not Path(filename).exists():
         raise FileNotFoundError(f"The file '{filename}' does not exist.")
 
 

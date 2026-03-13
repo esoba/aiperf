@@ -11,7 +11,7 @@ from aiperf.common.bootstrap import (
     _redirect_stdio_to_devnull,
     bootstrap_and_run_service,
 )
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.config.config import AIPerfConfig
 
 _HF_ENV_VARS = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
 
@@ -25,7 +25,11 @@ class TestBootstrapMacOSRedirect:
         mock_psutil_process,
         mock_setup_child_process_logging,
         register_dummy_services,
+        monkeypatch,
     ):
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.SERVICE, "DISABLE_UVLOOP", True)
         saved = {k: os.environ.get(k) for k in _HF_ENV_VARS}
         yield
         for k, v in saved.items():
@@ -36,8 +40,7 @@ class TestBootstrapMacOSRedirect:
 
     def test_redirect_called_in_macos_child_process(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_log_queue,
         mock_darwin_child_process,
     ):
@@ -47,8 +50,7 @@ class TestBootstrapMacOSRedirect:
         ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                config=aiperf_config,
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
@@ -56,8 +58,7 @@ class TestBootstrapMacOSRedirect:
 
     def test_redirect_not_called_in_main_process(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_log_queue,
         mock_darwin_main_process,
     ):
@@ -67,8 +68,7 @@ class TestBootstrapMacOSRedirect:
         ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                config=aiperf_config,
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )
@@ -76,8 +76,7 @@ class TestBootstrapMacOSRedirect:
 
     def test_redirect_not_called_on_linux(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_log_queue,
         mock_linux_child_process,
     ):
@@ -87,8 +86,7 @@ class TestBootstrapMacOSRedirect:
         ) as mock_redirect:
             bootstrap_and_run_service(
                 "test_dummy",
-                service_config=service_config_no_uvloop,
-                user_config=user_config,
+                config=aiperf_config,
                 log_queue=mock_log_queue,
                 service_id="test_service",
             )

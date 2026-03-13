@@ -8,7 +8,6 @@ from typing import Any, TypeAlias
 from pydantic import ValidationError
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import MediaType
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_loader import BaseFileLoader
@@ -75,7 +74,7 @@ class RandomPoolDatasetLoader(BaseFileLoader, MediaConversionMixin):
         self,
         *,
         filename: str,
-        user_config: UserConfig,
+        user_config: object,
         num_conversations: int = 1,
         **kwargs,
     ):

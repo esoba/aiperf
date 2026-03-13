@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.models import ErrorDetails
+from aiperf.config.config import AIPerfConfig
 from aiperf.controller.system_controller import SystemController
 
 
@@ -26,8 +26,7 @@ def mock_service_manager() -> AsyncMock:
 
 @pytest.fixture
 def system_controller(
-    service_config: ServiceConfig,
-    user_config: UserConfig,
+    aiperf_config: AIPerfConfig,
     mock_service_manager: AsyncMock,
 ) -> SystemController:
     """Create a SystemController instance with mocked dependencies."""
@@ -53,7 +52,7 @@ def system_controller(
         ),
         patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
         patch(
-            "aiperf.zmq.router_reply_client.ZMQRouterReplyClient",
+            "aiperf.controller.system_controller.ZMQStreamingRouterClient",
             return_value=AsyncMock(),
         ),
         patch(
@@ -64,8 +63,7 @@ def system_controller(
         mock_proxy.return_value = AsyncMock()
 
         controller = SystemController(
-            user_config=user_config,
-            service_config=service_config,
+            config=aiperf_config,
             service_id="test_controller",
         )
         # Mock the stop method to avoid actual shutdown

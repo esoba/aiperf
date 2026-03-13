@@ -3,7 +3,6 @@
 
 from abc import ABC
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.protocols import CommunicationProtocol
 from aiperf.plugin import plugins
@@ -15,9 +14,13 @@ class CommunicationMixin(AIPerfLifecycleMixin, ABC):
     by any mixin that needs access to the communication layer to create Communication clients.
     """
 
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
-        super().__init__(service_config=service_config, **kwargs)
-        self.service_config = service_config
+    def __init__(
+        self, config=None, *, service_config: object | None = None, **kwargs
+    ) -> None:
+        if config is None:
+            config = service_config
+        super().__init__(config=config, **kwargs)
+        self.service_config = config
         CommClass = plugins.get_class(
             PluginType.COMMUNICATION, self.service_config.comm_config.comm_backend
         )

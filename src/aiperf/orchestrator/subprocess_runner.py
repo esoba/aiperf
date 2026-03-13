@@ -18,7 +18,7 @@ def main() -> None:
 
     This function is the entry point for subprocess execution. It:
     1. Loads serialized config from a JSON file (path passed as argv[1])
-    2. Deserializes into UserConfig and ServiceConfig using Pydantic
+    2. Deserializes into AIPerfConfig using Pydantic
     3. Calls _run_single_benchmark() which runs the SystemController
     4. SystemController calls os._exit() at the end, terminating this subprocess
 
@@ -46,21 +46,20 @@ def main() -> None:
     # Import here to avoid loading heavy modules at import time
     # This keeps the subprocess startup fast
     from aiperf.cli_runner import _run_single_benchmark
-    from aiperf.common.config import ServiceConfig, UserConfig
+    from aiperf.config.config import AIPerfConfig
 
     try:
         # Load config from JSON file
         with open(config_file, "rb") as f:
             config_data = orjson.loads(f.read())
 
-        # Deserialize using Pydantic validation
-        user_config = UserConfig.model_validate(config_data["user_config"])
-        service_config = ServiceConfig.model_validate(config_data["service_config"])
+        # Deserialize AIPerfConfig using Pydantic validation
+        config = AIPerfConfig.model_validate(config_data)
 
         # Run the benchmark
         # Note: _run_single_benchmark() will call SystemController which calls os._exit()
         # at the end, so this function will never return normally
-        _run_single_benchmark(user_config, service_config)
+        _run_single_benchmark(config)
 
     except KeyError as e:
         print(f"Error: Missing required config key: {e}", file=sys.stderr)

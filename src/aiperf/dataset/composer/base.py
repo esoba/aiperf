@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import UserConfig
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
@@ -17,7 +16,7 @@ from aiperf.dataset.generator.video import VideoGenerator
 
 
 class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None, **kwargs):
+    def __init__(self, config: object, tokenizer: Tokenizer | None, **kwargs):
         self.config = config
         super().__init__(config=config, tokenizer=tokenizer, **kwargs)
 

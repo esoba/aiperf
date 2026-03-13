@@ -6,8 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from pytest import param
 
-from aiperf.common.config.service_config import ServiceConfig
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     Conversation,
@@ -33,8 +31,7 @@ _STUB_PROCESS_HEALTH = ProcessHealth(
 
 @pytest.fixture
 async def mock_worker(
-    user_config: UserConfig,
-    service_config: ServiceConfig,
+    aiperf_config,
     fake_tokenizer: FakeTokenizer,
     skip_service_registration,
     mock_psutil_process,
@@ -46,8 +43,7 @@ async def mock_worker(
     health check never blocks on real syscalls.
     """
     worker = Worker(
-        service_config=service_config,
-        user_config=user_config,
+        config=aiperf_config,
         service_id="mock-service-id",
     )
     worker._measure_baseline_rtt = AsyncMock()
@@ -338,16 +334,14 @@ class TestKubernetesMode:
     @pytest.fixture
     async def k8s_worker(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        aiperf_config,
         fake_tokenizer: FakeTokenizer,
         skip_service_registration,
     ) -> Worker:
         """Create a Worker in Kubernetes mode."""
-        service_config.service_run_type = ServiceRunType.KUBERNETES
+        aiperf_config.service_run_type = ServiceRunType.KUBERNETES
         worker = Worker(
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
             service_id="k8s-worker",
         )
         worker._measure_baseline_rtt = AsyncMock()
@@ -359,16 +353,14 @@ class TestKubernetesMode:
     @pytest.fixture
     async def local_worker(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        aiperf_config,
         fake_tokenizer: FakeTokenizer,
         skip_service_registration,
     ) -> Worker:
         """Create a Worker in local (multiprocessing) mode."""
-        service_config.service_run_type = ServiceRunType.MULTIPROCESSING
+        aiperf_config.service_run_type = ServiceRunType.MULTIPROCESSING
         worker = Worker(
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
             service_id="local-worker",
         )
         worker._measure_baseline_rtt = AsyncMock()
@@ -386,16 +378,14 @@ class TestKubernetesMode:
     )  # fmt: skip
     def test_is_kubernetes_mode(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        aiperf_config,
         run_type: str,
         expected: bool,
     ) -> None:
         """_is_kubernetes_mode should return True only for KUBERNETES run type."""
-        service_config.service_run_type = run_type
+        aiperf_config.service_run_type = run_type
         worker = Worker(
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
             service_id="test-worker",
         )
         assert worker._is_kubernetes_mode() is expected

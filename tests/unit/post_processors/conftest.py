@@ -9,10 +9,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CreditPhase,
-    ExportLevel,
     MessageType,
     MetricFlags,
     MetricValueTypeT,
@@ -44,6 +42,7 @@ from aiperf.common.models.record_models import (
     TokenCounts,
 )
 from aiperf.common.types import MetricTagT
+from aiperf.config.config import AIPerfConfig
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
@@ -82,48 +81,63 @@ async def aiperf_lifecycle(instance: T) -> T:
 
 
 @asynccontextmanager
-async def raw_record_processor(service_id: str, user_config: UserConfig):
+async def raw_record_processor(service_id: str, config):
     """Async context manager for RawRecordWriterProcessor lifecycle.
 
     Handles initialize, start, and stop automatically.
 
     Usage:
-        async with raw_record_processor("processor-1", user_config) as processor:
+        async with raw_record_processor("processor-1", config) as processor:
             await processor.process_record(record, metadata)
     """
 
     processor = RawRecordWriterProcessor(
         service_id=service_id,
-        user_config=user_config,
+        user_config=config,
     )
     async with aiperf_lifecycle(processor) as proc:
         yield proc
 
 
 @pytest.fixture
-def mock_user_config() -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        )
+def mock_user_config() -> AIPerfConfig:
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={
+            "urls": ["http://localhost:8000/v1/completions"],
+            "type": "completions",
+            "streaming": False,
+        },
+        datasets={
+            "main": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        load={"type": "concurrency", "requests": 10, "concurrency": 1},
     )
 
 
 @pytest.fixture
-def user_config_raw(tmp_artifact_dir: Path) -> UserConfig:
-    """Create a UserConfig for raw record testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            streaming=False,
-        ),
-        output=OutputConfig(
-            artifact_directory=tmp_artifact_dir,
-            export_level=ExportLevel.RAW,
-        ),
+def user_config_raw(tmp_artifact_dir: Path) -> AIPerfConfig:
+    """Create an AIPerfConfig for raw record testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={
+            "urls": ["http://localhost:8000/v1/chat/completions"],
+            "type": "chat",
+            "streaming": False,
+        },
+        datasets={
+            "main": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        load={"type": "concurrency", "requests": 10, "concurrency": 1},
+        artifacts={"dir": str(tmp_artifact_dir), "raw": True},
     )
 
 
@@ -253,11 +267,10 @@ def error_parsed_record() -> ParsedResponseRecord:
     )
 
 
-def create_exporter_config(user_config: UserConfig) -> ExporterConfig:
+def create_exporter_config(config) -> ExporterConfig:
     """Helper to create standard ExporterConfig for aggregator tests."""
     return ExporterConfig(
-        user_config=user_config,
-        service_config=ServiceConfig(),
+        config=config,
         results=ProfileResults(
             records=None,
             completed=0,
@@ -322,7 +335,7 @@ def setup_mock_registry_sequences(
 
 
 def create_results_processor_with_metrics(
-    user_config: UserConfig, *metrics: type[BaseMetric]
+    user_config, *metrics: type[BaseMetric]
 ) -> MetricResultsProcessor:
     """Create a MetricResultsProcessor with pre-configured metrics.
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pydantic import ConfigDict, Field
 
-from aiperf.common.config import InputDefaults, UserConfig
+from aiperf.common.config import InputDefaults
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.plugin.enums import (
@@ -45,7 +45,7 @@ class TimingConfig(AIPerfBaseModel):
     )
 
     @classmethod
-    def from_user_config(cls, user_config: UserConfig) -> TimingConfig:
+    def from_user_config(cls, user_config: object) -> TimingConfig:
         """Build ordered list of phase configs based on user config: [warmup?, profiling].
 
         Warmup (if enabled) executes first to prepare system,
@@ -184,7 +184,7 @@ class CreditPhaseConfig(AIPerfBaseModel):
     )
 
 
-def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
+def _build_warmup_config(user_config: object) -> CreditPhaseConfig | None:
     """Build warmup phase config if any warmup stop condition is set.
 
     Returns None if warmup disabled (no stop conditions).
@@ -236,7 +236,7 @@ def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
     )  # fmt: skip
 
 
-def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
+def _build_profiling_config(user_config: object) -> CreditPhaseConfig:
     """Build profiling phase config (always created).
 
     Main benchmark phase where all performance metrics are collected.

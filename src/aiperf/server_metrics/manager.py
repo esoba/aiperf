@@ -4,7 +4,6 @@
 import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.control_structs import Command, ServerMetricsStatus
 from aiperf.common.enums import CommAddress, CommandType, CreditPhase, MessageType
 from aiperf.common.environment import Environment
@@ -32,21 +31,18 @@ class ServerMetricsManager(BaseComponentService):
     - Follows centralized architecture patterns
 
     Args:
-        service_config: Service-level configuration (logging, communication, etc.)
-        user_config: User-provided configuration including server_metrics endpoints
+        config: AIPerfConfig instance containing all configuration
         service_id: Optional unique identifier for this service instance
     """
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             **kwargs,
         )
@@ -56,11 +52,11 @@ class ServerMetricsManager(BaseComponentService):
         )
 
         self._collectors: dict[str, ServerMetricsDataCollector] = {}
-        self._server_metrics_disabled = user_config.server_metrics_disabled
+        self._server_metrics_disabled = self.user_config.server_metrics_disabled
 
         # Collect metrics from all endpoint URLs (for multi-URL load balancing)
         self._server_metrics_endpoints: list[str] = []
-        for url in user_config.endpoint.urls:
+        for url in self.user_config.endpoint.urls:
             normalized_url = normalize_metrics_endpoint_url(url)
             if normalized_url not in self._server_metrics_endpoints:
                 self._server_metrics_endpoints.append(normalized_url)
@@ -69,9 +65,9 @@ class ServerMetricsManager(BaseComponentService):
         )
 
         # Add user-specified URLs if provided
-        if user_config.server_metrics_urls:
+        if self.user_config.server_metrics_urls:
             # Add user URLs, avoiding duplicates
-            for url in user_config.server_metrics_urls:
+            for url in self.user_config.server_metrics_urls:
                 normalized_url = normalize_metrics_endpoint_url(url)
                 if normalized_url not in self._server_metrics_endpoints:
                     self._server_metrics_endpoints.append(normalized_url)

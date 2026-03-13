@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task
 from aiperf.common.messages import RealtimeServerMetricsMessage
@@ -68,17 +67,17 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
     - All timeslices have identical duration for fair comparison
 
     Args:
-        user_config: User configuration including server_metrics settings
+        user_config: Configuration object with server_metrics settings
         **kwargs: Additional arguments passed to base class
 
     Raises:
         PostProcessorDisabled: If --no-server-metrics flag is set
 
     Example:
-        >>> from aiperf.common.config import UserConfig
+        >>> from aiperf.config.config import AIPerfConfig
         >>> from aiperf.common.models import ServerMetricsRecord, MetricFamily, MetricSample
         >>> # Create accumulator
-        >>> config = UserConfig(...)
+        >>> config = AIPerfConfig(...)
         >>> accumulator = ServerMetricsAccumulator(user_config=config)
         >>>
         >>> # Process records from collection
@@ -106,8 +105,8 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig | None = None,
+        user_config: object,
+        service_config: object | None = None,
         pub_client: "PubClientProtocol | None" = None,
         **kwargs: Any,
     ) -> None:

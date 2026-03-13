@@ -10,7 +10,7 @@
 #
 # Use case: Validate model quality after quantization or deployment
 #
-# Run: aiperf --config examples_v2/accuracy.yaml
+# Run: aiperf --config templates/accuracy.yaml
 
 model: meta-llama/Llama-3.1-8B-Instruct
 

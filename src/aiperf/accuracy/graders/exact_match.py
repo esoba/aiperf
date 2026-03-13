@@ -3,13 +3,12 @@
 
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.config import UserConfig
 
 
 class ExactMatchGrader(BaseGrader):
     """Grades responses by exact string matching against ground truth."""
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+    def __init__(self, user_config: object, **kwargs) -> None:
         super().__init__(user_config=user_config, **kwargs)
 
     async def grade(

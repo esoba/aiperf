@@ -17,7 +17,6 @@ from aiperf.cli_commands.kube.logs import logs
 from aiperf.cli_commands.kube.preflight import preflight
 from aiperf.cli_commands.kube.profile import profile
 from aiperf.cli_commands.kube.results import results
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.kube_config import KubeManageOptions, KubeOptions
 from aiperf.config.cli_builder import CLIModel
 from aiperf.kubernetes.cli_helpers import resolve_job_id_and_namespace
@@ -699,26 +698,17 @@ class TestProfileCommand:
 
     @pytest.fixture
     def _mock_config_conversion(self):
-        """Mock build_aiperf_config and convert_to_legacy_configs."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        service_config = ServiceConfig()
-        with (
-            patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build,
-            patch(
-                "aiperf.config.reverse_converter.convert_to_legacy_configs"
-            ) as mock_convert,
-        ):
+        """Mock build_aiperf_config."""
+        with patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build:
             mock_aiperf_config = MagicMock()
             mock_aiperf_config.endpoint.urls = [
                 "http://localhost:8000/v1/chat/completions"
             ]
             mock_build.return_value = mock_aiperf_config
-            mock_convert.return_value = (user_config, service_config)
-            yield mock_build, mock_convert, user_config, service_config
+            yield mock_build, mock_aiperf_config
 
     async def test_profile_calls_runner(self, _mock_config_conversion) -> None:
         """Test profile calls run_kubernetes_deployment with correct args."""
-        _, _, user_config, service_config = _mock_config_conversion
         cli = CLIModel(model_names=["test-model"])
         kube_options = KubeOptions(image="aiperf:latest", workers=10)
 
@@ -738,8 +728,8 @@ class TestProfileCommand:
     async def test_profile_derives_configs_from_cli(
         self, _mock_config_conversion
     ) -> None:
-        """Test profile derives UserConfig/ServiceConfig via build_aiperf_config."""
-        mock_build, mock_convert, _, _ = _mock_config_conversion
+        """Test profile derives config via build_aiperf_config."""
+        mock_build, _ = _mock_config_conversion
         cli = CLIModel(model_names=["test-model"])
         kube_options = KubeOptions(image="aiperf:latest")
 
@@ -755,7 +745,6 @@ class TestProfileCommand:
             )
 
             mock_build.assert_called_once_with(cli)
-            mock_convert.assert_called_once()
             mock_run.assert_called_once()
 
     async def test_profile_with_kube_options(self, _mock_config_conversion) -> None:
@@ -783,7 +772,7 @@ class TestProfileCommand:
 
             mock_run.assert_called_once()
             call_kwargs = mock_run.call_args
-            passed_kube_options = call_kwargs.args[2]
+            passed_kube_options = call_kwargs.args[1]
             assert passed_kube_options.image == "aiperf:v2"
             assert passed_kube_options.namespace == "benchmarks"
             assert passed_kube_options.workers == 50
@@ -1023,22 +1012,14 @@ class TestGenerateCommand:
 
     @pytest.fixture
     def _mock_config_conversion(self):
-        """Mock build_aiperf_config and convert_to_legacy_configs."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        service_config = ServiceConfig()
-        with (
-            patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build,
-            patch(
-                "aiperf.config.reverse_converter.convert_to_legacy_configs"
-            ) as mock_convert,
-        ):
+        """Mock build_aiperf_config."""
+        with patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build:
             mock_aiperf_config = MagicMock()
             mock_aiperf_config.endpoint.urls = [
                 "http://localhost:8000/v1/chat/completions"
             ]
             mock_build.return_value = mock_aiperf_config
-            mock_convert.return_value = (user_config, service_config)
-            yield mock_build, mock_convert, user_config, service_config
+            yield mock_build, mock_aiperf_config
 
     async def test_generate_calls_runner_with_dry_run(
         self, _mock_config_conversion
@@ -1060,7 +1041,7 @@ class TestGenerateCommand:
         self, _mock_config_conversion
     ) -> None:
         """Test generate derives configs via build_aiperf_config."""
-        mock_build, mock_convert, _, _ = _mock_config_conversion
+        mock_build, _ = _mock_config_conversion
         cli = CLIModel(model_names=["test-model"])
         kube_options = KubeOptions(image="aiperf:latest")
 
@@ -1070,7 +1051,6 @@ class TestGenerateCommand:
             await generate(cli=cli, kube_options=kube_options)
 
             mock_build.assert_called_once_with(cli)
-            mock_convert.assert_called_once()
             mock_run.assert_called_once()
 
 
@@ -1252,22 +1232,14 @@ class TestProfileCommandAdditional:
 
     @pytest.fixture
     def _mock_config_conversion(self):
-        """Mock build_aiperf_config and convert_to_legacy_configs."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        service_config = ServiceConfig()
-        with (
-            patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build,
-            patch(
-                "aiperf.config.reverse_converter.convert_to_legacy_configs"
-            ) as mock_convert,
-        ):
+        """Mock build_aiperf_config."""
+        with patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build:
             mock_aiperf_config = MagicMock()
             mock_aiperf_config.endpoint.urls = [
                 "http://localhost:8000/v1/chat/completions"
             ]
             mock_build.return_value = mock_aiperf_config
-            mock_convert.return_value = (user_config, service_config)
-            yield mock_build, mock_convert, user_config, service_config
+            yield mock_build, mock_aiperf_config
 
     async def test_profile_non_interactive_auto_detach(
         self, _mock_config_conversion, capsys, monkeypatch
@@ -1551,22 +1523,14 @@ class TestProfilePreflight:
 
     @pytest.fixture
     def _mock_config_conversion(self):
-        """Mock build_aiperf_config and convert_to_legacy_configs."""
-        user_config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-        service_config = ServiceConfig()
-        with (
-            patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build,
-            patch(
-                "aiperf.config.reverse_converter.convert_to_legacy_configs"
-            ) as mock_convert,
-        ):
+        """Mock build_aiperf_config."""
+        with patch("aiperf.config.cli_builder.build_aiperf_config") as mock_build:
             mock_aiperf_config = MagicMock()
             mock_aiperf_config.endpoint.urls = [
                 "http://localhost:8000/v1/chat/completions"
             ]
             mock_build.return_value = mock_aiperf_config
-            mock_convert.return_value = (user_config, service_config)
-            yield mock_build, mock_convert, user_config, service_config
+            yield mock_build, mock_aiperf_config
 
     async def test_profile_runs_preflight_before_deploy(
         self, _mock_config_conversion

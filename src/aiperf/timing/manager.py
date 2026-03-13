@@ -5,7 +5,6 @@
 import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
@@ -38,19 +37,17 @@ class TimingManager(BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config=None,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             **kwargs,
         )
         self.debug("Timing manager __init__")
-        self.config = TimingConfig.from_user_config(self.user_config)
+        self.timing_config = TimingConfig.from_user_config(self.user_config)
 
         self.phase_publisher = PhasePublisher(
             pub_client=self.pub_client,
@@ -64,7 +61,7 @@ class TimingManager(BaseComponentService):
         # worker lifecycle. Created early to handle worker connections
         # immediately, as well as attaching to the lifecycle.
         self.sticky_router: StickyCreditRouter = StickyCreditRouter(
-            service_config=service_config,
+            service_config=self.service_config,
             service_id=self.service_id,
         )
         self.attach_child_lifecycle(self.sticky_router)
@@ -105,7 +102,7 @@ class TimingManager(BaseComponentService):
 
         # Create orchestrator that executes phases
         self._phase_orchestrator = PhaseOrchestrator(
-            config=self.config,
+            config=self.timing_config,
             phase_publisher=self.phase_publisher,
             credit_router=self.sticky_router,
             dataset_metadata=self._dataset_metadata,

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
+from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
@@ -69,8 +69,7 @@ def exporter_config(mock_results, mock_user_config):
         mock_user_config.output.artifact_directory = Path(temp_dir)
         yield ExporterConfig(
             results=mock_results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -84,8 +83,7 @@ class TestMetricsBaseExporterInitialization:
             mock_user_config.output.artifact_directory = Path(temp_dir)
             config = ExporterConfig(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -158,8 +156,7 @@ class TestMetricsBaseExporterExport:
 
             config = ExporterConfig(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -179,8 +176,7 @@ class TestMetricsBaseExporterExport:
             mock_user_config.output.artifact_directory = Path(temp_dir)
             config = ExporterConfig(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -200,8 +196,7 @@ class TestMetricsBaseExporterExport:
             mock_user_config.output.artifact_directory = Path(temp_dir)
             config = ExporterConfig(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -224,8 +219,7 @@ class TestMetricsBaseExporterExport:
             mock_user_config.output.artifact_directory = Path(temp_dir)
             config = ExporterConfig(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -259,8 +253,7 @@ class TestMetricsBaseExporterExport:
             mock_user_config.output.artifact_directory = Path(temp_dir)
             config = ExporterConfig(
                 results=mock_results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(verbose=True),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 

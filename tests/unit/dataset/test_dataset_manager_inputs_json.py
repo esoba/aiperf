@@ -90,7 +90,7 @@ class TestDatasetManagerInputsJsonGeneration:
         tmp_path: Path,
     ):
         """Test file creation in correct location and valid JSON output."""
-        populated_dataset_manager.user_config.output.artifact_directory = tmp_path
+        populated_dataset_manager.user_config.artifacts.dir = tmp_path
 
         await populated_dataset_manager._generate_inputs_json_file()
 

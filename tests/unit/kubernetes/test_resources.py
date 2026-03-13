@@ -69,8 +69,6 @@ class TestConfigMapSpec:
         assert cm.name == "aiperf-config"
         assert cm.namespace == "default"
         assert "aiperf_config.json" in cm.data
-        assert "user_config.json" in cm.data
-        assert "service_config.json" in cm.data
         assert cm.labels["app"] == "aiperf"
         assert cm.labels["aiperf.nvidia.com/job-id"] == "test-123"
 
@@ -369,43 +367,31 @@ class TestKubernetesDeployment:
     """Tests for KubernetesDeployment model."""
 
     @pytest.fixture
-    def basic_deployment(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> KubernetesDeployment:
+    def basic_deployment(self, sample_aiperf_config) -> KubernetesDeployment:
         """Create a basic KubernetesDeployment for testing."""
         return KubernetesDeployment(
             job_id="test123",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
 
-    def test_effective_namespace_auto_generated(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_effective_namespace_auto_generated(self, sample_aiperf_config) -> None:
         """Test effective_namespace when namespace is None."""
         deployment = KubernetesDeployment(
             job_id="abc123",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         assert deployment.effective_namespace == "aiperf-abc123"
         assert deployment.auto_namespace is True
 
-    def test_effective_namespace_explicit(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_effective_namespace_explicit(self, sample_aiperf_config) -> None:
         """Test effective_namespace when namespace is specified."""
         deployment = KubernetesDeployment(
             job_id="abc123",
             namespace="my-namespace",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         assert deployment.effective_namespace == "my-namespace"
         assert deployment.auto_namespace is False
@@ -429,7 +415,7 @@ class TestKubernetesDeployment:
         assert ns_spec.labels["aiperf.nvidia.com/auto-generated"] == "true"
 
     def test_get_namespace_spec_explicit_returns_none(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
+        self, sample_aiperf_config
     ) -> None:
         """Test get_namespace_spec returns None for explicit namespace."""
         deployment = KubernetesDeployment(
@@ -437,8 +423,6 @@ class TestKubernetesDeployment:
             namespace="existing-namespace",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         assert deployment.get_namespace_spec() is None
 
@@ -447,8 +431,7 @@ class TestKubernetesDeployment:
         cm_spec = basic_deployment.get_configmap_spec()
         assert cm_spec.name == basic_deployment.configmap_name
         assert cm_spec.namespace == basic_deployment.effective_namespace
-        assert "user_config.json" in cm_spec.data
-        assert "service_config.json" in cm_spec.data
+        assert "aiperf_config.json" in cm_spec.data
 
     def test_get_rbac_spec(self, basic_deployment: KubernetesDeployment) -> None:
         """Test get_rbac_spec returns correct spec."""
@@ -478,17 +461,13 @@ class TestKubernetesDeployment:
         assert "ConfigMap" in kinds
         assert "JobSet" in kinds
 
-    def test_get_all_manifests_explicit_namespace(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_get_all_manifests_explicit_namespace(self, sample_aiperf_config) -> None:
         """Test get_all_manifests excludes namespace when explicit."""
         deployment = KubernetesDeployment(
             job_id="abc123",
             namespace="existing",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         manifests = deployment.get_all_manifests()
         # Should have: Role, RoleBinding, ConfigMap, JobSet (no Namespace)
@@ -513,16 +492,12 @@ class TestKubernetesDeployment:
 class TestKubernetesDeploymentWorkers:
     """Tests for KubernetesDeployment worker configuration."""
 
-    def test_worker_replicas_default(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_worker_replicas_default(self, sample_aiperf_config) -> None:
         """Test default worker replica count."""
         deployment = KubernetesDeployment(
             job_id="test",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         assert deployment.worker_replicas == 1
 
@@ -531,8 +506,6 @@ class TestKubernetesDeploymentWorkers:
         self,
         workers: int,
         sample_aiperf_config,
-        sample_user_config,
-        sample_service_config,
     ) -> None:
         """Test custom worker replica count."""
         deployment = KubernetesDeployment(
@@ -540,8 +513,6 @@ class TestKubernetesDeploymentWorkers:
             image="aiperf:latest",
             worker_replicas=workers,
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         jobset_spec = deployment.get_jobset_spec()
         assert jobset_spec.worker_replicas == workers
@@ -550,16 +521,12 @@ class TestKubernetesDeploymentWorkers:
 class TestKubernetesDeploymentTTL:
     """Tests for KubernetesDeployment TTL configuration."""
 
-    def test_ttl_default(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_ttl_default(self, sample_aiperf_config) -> None:
         """Test default TTL value."""
         deployment = KubernetesDeployment(
             job_id="test",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         assert deployment.ttl_seconds == 300
 
@@ -568,8 +535,6 @@ class TestKubernetesDeploymentTTL:
         self,
         ttl: int | None,
         sample_aiperf_config,
-        sample_user_config,
-        sample_service_config,
     ) -> None:
         """Test custom TTL values."""
         deployment = KubernetesDeployment(
@@ -577,8 +542,6 @@ class TestKubernetesDeploymentTTL:
             image="aiperf:latest",
             ttl_seconds=ttl,
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         jobset_spec = deployment.get_jobset_spec()
         assert jobset_spec.ttl_seconds == ttl
@@ -587,23 +550,17 @@ class TestKubernetesDeploymentTTL:
 class TestKubernetesDeploymentPodCustomization:
     """Tests for KubernetesDeployment pod customization."""
 
-    def test_default_pod_customization(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_default_pod_customization(self, sample_aiperf_config) -> None:
         """Test default pod customization is empty."""
         deployment = KubernetesDeployment(
             job_id="test",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         assert deployment.pod_customization.node_selector == {}
         assert deployment.pod_customization.tolerations == []
 
-    def test_pod_customization_propagated_to_jobset(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_pod_customization_propagated_to_jobset(self, sample_aiperf_config) -> None:
         """Test pod customization is propagated to JobSet spec."""
         custom = PodCustomization(
             node_selector={"gpu": "true"},
@@ -613,8 +570,6 @@ class TestKubernetesDeploymentPodCustomization:
             job_id="test",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
             pod_customization=custom,
         )
         jobset_spec = deployment.get_jobset_spec()
@@ -623,8 +578,6 @@ class TestKubernetesDeploymentPodCustomization:
     def test_pod_customization_in_manifest(
         self,
         sample_aiperf_config,
-        sample_user_config,
-        sample_service_config,
         sample_pod_customization,
     ) -> None:
         """Test pod customization appears in generated manifest."""
@@ -632,8 +585,6 @@ class TestKubernetesDeploymentPodCustomization:
             job_id="test",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
             pod_customization=sample_pod_customization,
         )
         manifests = deployment.get_all_manifests()
@@ -654,8 +605,6 @@ class TestKubernetesDeploymentImagePullPolicy:
         self,
         policy: str,
         sample_aiperf_config,
-        sample_user_config,
-        sample_service_config,
     ) -> None:
         """Test image pull policy is set correctly."""
         deployment = KubernetesDeployment(
@@ -663,8 +612,6 @@ class TestKubernetesDeploymentImagePullPolicy:
             image="aiperf:latest",
             image_pull_policy=policy,
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         jobset_spec = deployment.get_jobset_spec()
         assert jobset_spec.image_pull_policy == policy
@@ -789,71 +736,51 @@ class TestDnsLabelPattern:
 class TestKubernetesDeploymentJobIdValidation:
     """Tests for KubernetesDeployment job_id validation."""
 
-    def test_valid_job_id(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_valid_job_id(self, sample_aiperf_config) -> None:
         """Test valid job_id is accepted."""
         deployment = KubernetesDeployment(
             job_id="valid-job-123",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         assert deployment.job_id == "valid-job-123"
 
-    def test_auto_generated_job_id(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_auto_generated_job_id(self, sample_aiperf_config) -> None:
         """Test auto-generated job_id is valid DNS label."""
         deployment = KubernetesDeployment(
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         # Auto-generated is 8 hex chars - should be valid
         assert len(deployment.job_id) == 8
         # Should not raise on re-validation
         validate_dns_label(deployment.job_id, "job_id")
 
-    def test_invalid_job_id_uppercase(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_invalid_job_id_uppercase(self, sample_aiperf_config) -> None:
         """Test uppercase job_id raises validation error."""
         with pytest.raises(ValueError, match="must be a valid DNS label"):
             KubernetesDeployment(
                 job_id="Invalid",
                 image="aiperf:latest",
                 aiperf_config=sample_aiperf_config,
-                user_config=sample_user_config,
-                service_config=sample_service_config,
             )
 
-    def test_invalid_job_id_special_chars(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_invalid_job_id_special_chars(self, sample_aiperf_config) -> None:
         """Test job_id with special characters raises validation error."""
         with pytest.raises(ValueError, match="must be a valid DNS label"):
             KubernetesDeployment(
                 job_id="job_with_underscores",
                 image="aiperf:latest",
                 aiperf_config=sample_aiperf_config,
-                user_config=sample_user_config,
-                service_config=sample_service_config,
             )
 
-    def test_job_id_max_length_is_35(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_job_id_max_length_is_35(self, sample_aiperf_config) -> None:
         """Test job_id max length is 35 (to fit in resource names)."""
         # 35 chars should pass
         deployment = KubernetesDeployment(
             job_id="a" * 35,
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         assert len(deployment.job_id) == 35
 
@@ -863,34 +790,24 @@ class TestKubernetesDeploymentJobIdValidation:
                 job_id="a" * 36,
                 image="aiperf:latest",
                 aiperf_config=sample_aiperf_config,
-                user_config=sample_user_config,
-                service_config=sample_service_config,
             )
 
-    def test_job_id_starting_with_hyphen_raises(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_job_id_starting_with_hyphen_raises(self, sample_aiperf_config) -> None:
         """Test job_id starting with hyphen raises validation error."""
         with pytest.raises(ValueError, match="must be a valid DNS label"):
             KubernetesDeployment(
                 job_id="-invalid",
                 image="aiperf:latest",
                 aiperf_config=sample_aiperf_config,
-                user_config=sample_user_config,
-                service_config=sample_service_config,
             )
 
-    def test_job_id_ending_with_hyphen_raises(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_job_id_ending_with_hyphen_raises(self, sample_aiperf_config) -> None:
         """Test job_id ending with hyphen raises validation error."""
         with pytest.raises(ValueError, match="must be a valid DNS label"):
             KubernetesDeployment(
                 job_id="invalid-",
                 image="aiperf:latest",
                 aiperf_config=sample_aiperf_config,
-                user_config=sample_user_config,
-                service_config=sample_service_config,
             )
 
 
@@ -898,7 +815,7 @@ class TestKubernetesDeploymentConfigMapValidation:
     """Tests for KubernetesDeployment ConfigMap size validation."""
 
     def test_get_all_manifests_validates_configmap_size(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
+        self, sample_aiperf_config
     ) -> None:
         """Test get_all_manifests validates ConfigMap size."""
         # This test ensures the validation path is exercised
@@ -906,8 +823,6 @@ class TestKubernetesDeploymentConfigMapValidation:
             job_id="test",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         # Should not raise for normal configs
         manifests = deployment.get_all_manifests()
@@ -915,15 +830,13 @@ class TestKubernetesDeploymentConfigMapValidation:
         assert "data" in configmap
 
     def test_get_namespace_spec_labels_include_job_id(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
+        self, sample_aiperf_config
     ) -> None:
         """Test auto-generated namespace labels include job_id."""
         deployment = KubernetesDeployment(
             job_id="my-job-123",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         ns_spec = deployment.get_namespace_spec()
         assert ns_spec is not None
@@ -933,16 +846,12 @@ class TestKubernetesDeploymentConfigMapValidation:
 class TestKubernetesDeploymentManifestContents:
     """Tests for KubernetesDeployment manifest content details."""
 
-    def test_role_binding_index_in_manifests(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_role_binding_index_in_manifests(self, sample_aiperf_config) -> None:
         """Test RoleBinding is after Role in manifests."""
         deployment = KubernetesDeployment(
             job_id="test",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         manifests = deployment.get_all_manifests()
         kinds = [m["kind"] for m in manifests]
@@ -950,63 +859,36 @@ class TestKubernetesDeploymentManifestContents:
         binding_idx = kinds.index("RoleBinding")
         assert role_idx < binding_idx
 
-    def test_configmap_contains_user_config(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
-        """Test ConfigMap manifest contains user_config.json."""
+    def test_configmap_contains_aiperf_config(self, sample_aiperf_config) -> None:
+        """Test ConfigMap manifest contains aiperf_config.json."""
         deployment = KubernetesDeployment(
             job_id="test",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         manifests = deployment.get_all_manifests()
         configmap = next(m for m in manifests if m["kind"] == "ConfigMap")
-        assert "user_config.json" in configmap["data"]
+        assert "aiperf_config.json" in configmap["data"]
 
-    def test_configmap_contains_service_config(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
-        """Test ConfigMap manifest contains service_config.json."""
-        deployment = KubernetesDeployment(
-            job_id="test",
-            image="aiperf:latest",
-            aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
-        )
-        manifests = deployment.get_all_manifests()
-        configmap = next(m for m in manifests if m["kind"] == "ConfigMap")
-        assert "service_config.json" in configmap["data"]
-
-    def test_all_manifests_have_namespace(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_all_manifests_have_namespace(self, sample_aiperf_config) -> None:
         """Test all namespaced resources have correct namespace."""
         deployment = KubernetesDeployment(
             job_id="test",
             namespace="my-namespace",
             image="aiperf:latest",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         manifests = deployment.get_all_manifests()
         for manifest in manifests:
             if manifest["kind"] != "Namespace":
                 assert manifest["metadata"]["namespace"] == "my-namespace"
 
-    def test_jobset_in_manifests_has_correct_image(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_jobset_in_manifests_has_correct_image(self, sample_aiperf_config) -> None:
         """Test JobSet in manifests has correct image."""
         deployment = KubernetesDeployment(
             job_id="test",
             image="my-registry/aiperf:v1.2.3",
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         manifests = deployment.get_all_manifests()
         jobset = next(m for m in manifests if m["kind"] == "JobSet")
@@ -1019,17 +901,13 @@ class TestKubernetesDeploymentManifestContents:
 class TestKubernetesDeploymentImagePullPolicyPropagation:
     """Tests for KubernetesDeployment image pull policy propagation."""
 
-    def test_image_pull_policy_none_uses_default(
-        self, sample_aiperf_config, sample_user_config, sample_service_config
-    ) -> None:
+    def test_image_pull_policy_none_uses_default(self, sample_aiperf_config) -> None:
         """Test None image_pull_policy lets Kubernetes use default."""
         deployment = KubernetesDeployment(
             job_id="test",
             image="aiperf:latest",
             image_pull_policy=None,
             aiperf_config=sample_aiperf_config,
-            user_config=sample_user_config,
-            service_config=sample_service_config,
         )
         assert deployment.image_pull_policy is None
         jobset_spec = deployment.get_jobset_spec()

@@ -32,7 +32,7 @@ from aiperf.common.enums import (
     CommunicationType,
     ModelSelectionStrategy,
 )
-from aiperf.plugin.enums import UIType
+from aiperf.plugin.enums import ServiceRunType, UIType
 
 __all__ = [
     # Section 1: Models
@@ -242,6 +242,15 @@ class TokenizerConfig(BaseModel):
             description="Allow execution of custom tokenizer code from the repository. "
             "Required for some models but poses security risk. "
             "Only enable for trusted sources.",
+        ),
+    ]
+
+    resolved_names: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            exclude=True,
+            description="Resolved tokenizer names. Set at runtime during tokenizer validation.",
         ),
     ]
 
@@ -516,6 +525,79 @@ class RuntimeConfig(BaseModel):
             default=None,
             description="Inter-process communication configuration. "
             "Defaults to IPC for single-machine operation.",
+        ),
+    ]
+
+    # =========================================================================
+    # SERVICE-LEVEL FIELDS (from legacy ServiceConfig)
+    # =========================================================================
+
+    service_run_type: Annotated[
+        ServiceRunType,
+        Field(
+            default=ServiceRunType.MULTIPROCESSING,
+            exclude=True,
+            description="Service run type (local multiprocessing or Kubernetes).",
+        ),
+    ]
+
+    api_port: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            le=65535,
+            exclude=True,
+            description="AIPerf API port (enables HTTP + WebSocket endpoints).",
+        ),
+    ]
+
+    api_host: Annotated[
+        str | None,
+        Field(
+            default=None,
+            exclude=True,
+            description="AIPerf API host.",
+        ),
+    ]
+
+    workers_per_pod: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            le=100,
+            exclude=True,
+            description="Worker subprocesses per Kubernetes worker pod.",
+        ),
+    ]
+
+    record_processors_per_pod: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            le=100,
+            exclude=True,
+            description="Record processors per Kubernetes worker pod.",
+        ),
+    ]
+
+    dataset_api_base_url: Annotated[
+        str | None,
+        Field(
+            default=None,
+            exclude=True,
+            description="Base URL for dataset API endpoints (Kubernetes workers).",
+        ),
+    ]
+
+    cors_origins: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            exclude=True,
+            description="Allowed CORS origins for the API server.",
         ),
     ]
 

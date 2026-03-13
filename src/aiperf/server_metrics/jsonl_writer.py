@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.config import UserConfig
 from aiperf.common.enums import ServerMetricsFormat
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
@@ -33,7 +32,7 @@ class ServerMetricsJSONLWriter(
 
     def __init__(
         self,
-        user_config: UserConfig,
+        user_config: object,
         **kwargs,
     ) -> None:
         if user_config.server_metrics_disabled:

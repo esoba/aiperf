@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.config.config import AIPerfConfig
 from aiperf.plugin.enums import UIType
 
 
@@ -16,80 +16,74 @@ class TestRunSystemController:
     """Test the run_system_controller routing logic."""
 
     @pytest.fixture
-    def user_config_single_run(self, user_config: UserConfig) -> UserConfig:
-        """Create a UserConfig for single run (num_profile_runs=1)."""
-        user_config.loadgen.num_profile_runs = 1
-        return user_config
+    def config_single_run(self, aiperf_config: AIPerfConfig) -> AIPerfConfig:
+        """Create an AIPerfConfig for single run (num_runs=1)."""
+        return aiperf_config
 
     @pytest.fixture
-    def user_config_multi_run(self, user_config: UserConfig) -> UserConfig:
-        """Create a UserConfig for multi-run (num_profile_runs>1)."""
-        user_config.loadgen.num_profile_runs = 3
-        user_config.loadgen.confidence_level = 0.95
-        user_config.loadgen.profile_run_cooldown_seconds = 5
-        return user_config
+    def config_multi_run(self, aiperf_config: AIPerfConfig) -> AIPerfConfig:
+        """Create an AIPerfConfig for multi-run (num_runs>1)."""
+        aiperf_config.multi_run.num_runs = 3
+        aiperf_config.multi_run.confidence_level = 0.95
+        aiperf_config.multi_run.cooldown_seconds = 5
+        return aiperf_config
 
     @patch("aiperf.cli_runner._run_single_benchmark")
     def test_routes_to_single_benchmark_when_num_runs_is_one(
         self,
         mock_single: Mock,
-        user_config_single_run: UserConfig,
-        service_config: ServiceConfig,
+        config_single_run: AIPerfConfig,
     ):
-        """Test that single run is called when num_profile_runs=1."""
+        """Test that single run is called when num_runs=1."""
         from aiperf.cli_runner import run_system_controller
 
-        run_system_controller(user_config_single_run, service_config)
+        run_system_controller(config_single_run)
 
-        mock_single.assert_called_once_with(user_config_single_run, service_config)
+        mock_single.assert_called_once_with(config_single_run)
 
     @patch("aiperf.cli_runner._run_multi_benchmark")
     def test_routes_to_multi_benchmark_when_num_runs_greater_than_one(
         self,
         mock_multi: Mock,
-        user_config_multi_run: UserConfig,
-        service_config: ServiceConfig,
+        config_multi_run: AIPerfConfig,
     ):
-        """Test that multi-run is called when num_profile_runs>1."""
+        """Test that multi-run is called when num_runs>1."""
         from aiperf.cli_runner import run_system_controller
 
-        run_system_controller(user_config_multi_run, service_config)
+        run_system_controller(config_multi_run)
 
-        mock_multi.assert_called_once_with(user_config_multi_run, service_config)
+        mock_multi.assert_called_once_with(config_multi_run)
 
     def test_raises_error_when_using_dashboard_ui_with_multi_run(
         self,
-        user_config_multi_run: UserConfig,
-        service_config: ServiceConfig,
+        config_multi_run: AIPerfConfig,
     ):
         """Test that an error is raised when explicitly using dashboard UI with multi-run."""
         from aiperf.cli_runner import _run_multi_benchmark
 
-        # Set dashboard UI explicitly (simulate user setting it)
-        service_config.ui_type = UIType.DASHBOARD
-        service_config.model_fields_set.add("ui_type")
+        # Set dashboard UI explicitly
+        config_multi_run.ui_type = UIType.DASHBOARD
 
         # Should raise ValueError when _run_multi_benchmark is called
         with pytest.raises(
             ValueError, match="Dashboard UI is not supported with multi-run mode"
         ):
-            _run_multi_benchmark(user_config_multi_run, service_config)
+            _run_multi_benchmark(config_multi_run)
 
     @patch("aiperf.cli_runner._run_multi_benchmark")
     def test_no_warning_when_using_simple_ui_with_multi_run(
         self,
         mock_multi: Mock,
-        user_config_multi_run: UserConfig,
-        service_config: ServiceConfig,
+        config_multi_run: AIPerfConfig,
         caplog: pytest.LogCaptureFixture,
     ):
         """Test that no warning is logged when using simple UI with multi-run."""
         from aiperf.cli_runner import run_system_controller
 
         # Set simple UI
-        service_config.ui_type = UIType.SIMPLE
+        config_multi_run.ui_type = UIType.SIMPLE
 
-        run_system_controller(user_config_multi_run, service_config)
+        run_system_controller(config_multi_run)
 
         # Check that no dashboard warning was logged
         assert not any(
@@ -101,17 +95,16 @@ class TestRunSystemController:
     def test_no_warning_when_using_dashboard_ui_with_single_run(
         self,
         mock_single: Mock,
-        user_config_single_run: UserConfig,
-        service_config: ServiceConfig,
+        config_single_run: AIPerfConfig,
         caplog: pytest.LogCaptureFixture,
     ):
         """Test that no warning is logged when using dashboard UI with single run."""
         from aiperf.cli_runner import run_system_controller
 
         # Set dashboard UI
-        service_config.ui_type = UIType.DASHBOARD
+        config_single_run.ui_type = UIType.DASHBOARD
 
-        run_system_controller(user_config_single_run, service_config)
+        run_system_controller(config_single_run)
 
         # Check that no dashboard warning was logged
         assert not any(
@@ -133,11 +126,10 @@ class TestRunSingleBenchmark:
             yield
 
     @pytest.fixture
-    def service_config_simple(self) -> ServiceConfig:
-        """Create a ServiceConfig with Simple UI type."""
-        config = ServiceConfig()
-        config.ui_type = UIType.SIMPLE
-        return config
+    def config_simple(self, aiperf_config: AIPerfConfig) -> AIPerfConfig:
+        """Create an AIPerfConfig with Simple UI type."""
+        aiperf_config.ui_type = UIType.SIMPLE
+        return aiperf_config
 
     @patch("aiperf.cli_runner.MetricsConfigLoader")
     @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
@@ -147,16 +139,15 @@ class TestRunSingleBenchmark:
         mock_setup_rich: Mock,
         mock_bootstrap: Mock,
         mock_loader_cls: Mock,
-        service_config_simple: ServiceConfig,
-        user_config: UserConfig,
+        config_simple: AIPerfConfig,
     ):
         """Test that simple UI uses rich logging instead of log queue."""
         from aiperf.cli_runner import _run_single_benchmark
 
-        _run_single_benchmark(user_config, service_config_simple)
+        _run_single_benchmark(config_simple)
 
         # Verify rich logging was set up
-        mock_setup_rich.assert_called_once_with(user_config, service_config_simple)
+        mock_setup_rich.assert_called_once_with(config_simple, config_simple)
 
         # Verify bootstrap was called without log_queue
         mock_bootstrap.assert_called_once()
@@ -169,8 +160,7 @@ class TestRunSingleBenchmark:
         self,
         mock_bootstrap: Mock,
         mock_loader_cls: Mock,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
     ):
         """Test that exceptions from bootstrap are raised."""
         from aiperf.cli_runner import _run_single_benchmark
@@ -179,20 +169,21 @@ class TestRunSingleBenchmark:
         mock_bootstrap.side_effect = RuntimeError("Bootstrap failed")
 
         with pytest.raises(RuntimeError, match="Bootstrap failed"):
-            _run_single_benchmark(user_config, service_config)
+            _run_single_benchmark(aiperf_config)
 
 
 class TestRunMultiBenchmark:
     """Test the _run_multi_benchmark function."""
 
     @pytest.fixture
-    def user_config_multi(self, user_config: UserConfig) -> UserConfig:
-        """Create a UserConfig for multi-run."""
-        user_config.loadgen.num_profile_runs = 3
-        user_config.loadgen.confidence_level = 0.95
-        user_config.loadgen.profile_run_cooldown_seconds = 5
-        user_config.loadgen.profile_run_disable_warmup_after_first = True
-        return user_config
+    def config_multi(self, aiperf_config: AIPerfConfig) -> AIPerfConfig:
+        """Create an AIPerfConfig for multi-run."""
+        aiperf_config.runtime.ui = UIType.SIMPLE
+        aiperf_config.multi_run.num_runs = 3
+        aiperf_config.multi_run.confidence_level = 0.95
+        aiperf_config.multi_run.cooldown_seconds = 5
+        aiperf_config.multi_run.disable_warmup_after_first = True
+        return aiperf_config
 
     @pytest.fixture
     def mock_run_result(self):
@@ -227,8 +218,7 @@ class TestRunMultiBenchmark:
         mock_aggregation_cls: Mock,
         mock_orchestrator_cls: Mock,
         mock_strategy_cls: Mock,
-        user_config_multi: UserConfig,
-        service_config: ServiceConfig,
+        config_multi: AIPerfConfig,
         mock_run_result: MagicMock,
         mock_aggregate_result: MagicMock,
         tmp_path: Path,
@@ -237,7 +227,7 @@ class TestRunMultiBenchmark:
         from aiperf.cli_runner import _run_multi_benchmark
 
         # Set up artifact directory
-        user_config_multi.output.artifact_directory = tmp_path
+        config_multi.artifacts.dir = tmp_path
 
         # Mock strategy
         mock_strategy = MagicMock()
@@ -267,7 +257,7 @@ class TestRunMultiBenchmark:
         mock_csv_exporter.export = AsyncMock(return_value=tmp_path / "aggregate.csv")
         mock_csv_exporter_cls.return_value = mock_csv_exporter
 
-        _run_multi_benchmark(user_config_multi, service_config)
+        _run_multi_benchmark(config_multi)
 
         # Verify strategy was created with correct parameters
         mock_strategy_cls.assert_called_once_with(
@@ -279,11 +269,9 @@ class TestRunMultiBenchmark:
 
         # Verify orchestrator was created and executed
         mock_orchestrator_cls.assert_called_once_with(
-            base_dir=tmp_path, service_config=service_config
+            base_dir=tmp_path, config=config_multi
         )
-        mock_orchestrator.execute.assert_called_once_with(
-            user_config_multi, mock_strategy
-        )
+        mock_orchestrator.execute.assert_called_once_with(config_multi, mock_strategy)
 
         # Verify aggregation was performed
         mock_aggregation_cls.assert_called_once_with(confidence_level=0.95)
@@ -299,14 +287,13 @@ class TestRunMultiBenchmark:
         self,
         mock_orchestrator_cls: Mock,
         mock_strategy_cls: Mock,
-        user_config_multi: UserConfig,
-        service_config: ServiceConfig,
+        config_multi: AIPerfConfig,
         tmp_path: Path,
     ):
         """Test that orchestrator exceptions are raised."""
         from aiperf.cli_runner import _run_multi_benchmark
 
-        user_config_multi.output.artifact_directory = tmp_path
+        config_multi.artifacts.dir = tmp_path
 
         # Mock strategy
         mock_strategy = MagicMock()
@@ -318,7 +305,7 @@ class TestRunMultiBenchmark:
         mock_orchestrator_cls.return_value = mock_orchestrator
 
         with pytest.raises(RuntimeError, match="Orchestrator failed"):
-            _run_multi_benchmark(user_config_multi, service_config)
+            _run_multi_benchmark(config_multi)
 
     @patch("aiperf.orchestrator.strategies.FixedTrialsStrategy")
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
@@ -326,15 +313,14 @@ class TestRunMultiBenchmark:
         self,
         mock_orchestrator_cls: Mock,
         mock_strategy_cls: Mock,
-        user_config_multi: UserConfig,
-        service_config: ServiceConfig,
+        config_multi: AIPerfConfig,
         mock_run_result: MagicMock,
         tmp_path: Path,
     ):
         """Test that only 1 successful run exits with error code 1."""
         from aiperf.cli_runner import _run_multi_benchmark
 
-        user_config_multi.output.artifact_directory = tmp_path
+        config_multi.artifacts.dir = tmp_path
 
         # Mock strategy
         mock_strategy = MagicMock()
@@ -354,7 +340,7 @@ class TestRunMultiBenchmark:
         mock_orchestrator_cls.return_value = mock_orchestrator
 
         with pytest.raises(SystemExit) as exc_info:
-            _run_multi_benchmark(user_config_multi, service_config)
+            _run_multi_benchmark(config_multi)
 
         assert exc_info.value.code == 1
 
@@ -364,14 +350,13 @@ class TestRunMultiBenchmark:
         self,
         mock_orchestrator_cls: Mock,
         mock_strategy_cls: Mock,
-        user_config_multi: UserConfig,
-        service_config: ServiceConfig,
+        config_multi: AIPerfConfig,
         tmp_path: Path,
     ):
         """Test that all failed runs exit with error code 1."""
         from aiperf.cli_runner import _run_multi_benchmark
 
-        user_config_multi.output.artifact_directory = tmp_path
+        config_multi.artifacts.dir = tmp_path
 
         # Mock strategy
         mock_strategy = MagicMock()
@@ -391,7 +376,7 @@ class TestRunMultiBenchmark:
         mock_orchestrator_cls.return_value = mock_orchestrator
 
         with pytest.raises(SystemExit) as exc_info:
-            _run_multi_benchmark(user_config_multi, service_config)
+            _run_multi_benchmark(config_multi)
 
         assert exc_info.value.code == 1
 

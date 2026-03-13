@@ -8,7 +8,6 @@ import kr8s
 import orjson
 import pytest
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.config.kube_config import KubeOptions, SecretMountConfig
 from aiperf.common.environment import Environment
 from aiperf.kubernetes.environment import K8sEnvironment
@@ -25,7 +24,7 @@ from aiperf.kubernetes.runner import (
     _with_retry,
     run_kubernetes_deployment,
 )
-from aiperf.plugin.enums import CommunicationBackend, ServiceRunType, UIType
+from aiperf.plugin.enums import ServiceRunType, UIType
 from tests.unit.kubernetes.conftest import create_server_error
 
 # =============================================================================
@@ -386,19 +385,8 @@ class TestKubeOptionsToPodCustomization:
 class TestRunKubernetesDeployment:
     """Tests for run_kubernetes_deployment function."""
 
-    @pytest.fixture
-    def fresh_service_config(self):
-        """Create a fresh service config to avoid state leakage between tests."""
-
-        return ServiceConfig(
-            service_run_type=ServiceRunType.MULTIPROCESSING,
-            comm_backend=CommunicationBackend.ZMQ_IPC,
-        )
-
     @pytest.mark.asyncio
-    async def test_dry_run_outputs_yaml(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config, capsys
-    ) -> None:
+    async def test_dry_run_outputs_yaml(self, sample_aiperf_config, capsys) -> None:
         """Test dry run mode outputs YAML manifests."""
 
         kube_options = KubeOptions(
@@ -408,10 +396,8 @@ class TestRunKubernetesDeployment:
         )
 
         job_id, namespace = await run_kubernetes_deployment(
-            sample_user_config,
-            fresh_service_config,
+            sample_aiperf_config,
             kube_options,
-            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -427,7 +413,7 @@ class TestRunKubernetesDeployment:
 
     @pytest.mark.asyncio
     async def test_dry_run_generates_namespace_when_not_specified(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config, capsys
+        self, sample_aiperf_config, capsys
     ) -> None:
         """Test dry run auto-generates namespace from job_id."""
 
@@ -438,10 +424,8 @@ class TestRunKubernetesDeployment:
         )
 
         job_id, namespace = await run_kubernetes_deployment(
-            sample_user_config,
-            fresh_service_config,
+            sample_aiperf_config,
             kube_options,
-            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
@@ -452,9 +436,7 @@ class TestRunKubernetesDeployment:
         assert "kind: Namespace" in captured.out
 
     @pytest.mark.asyncio
-    async def test_apply_mode_creates_resources(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config
-    ) -> None:
+    async def test_apply_mode_creates_resources(self, sample_aiperf_config) -> None:
         """Test apply mode creates Kubernetes resources."""
 
         kube_options = KubeOptions(
@@ -493,10 +475,8 @@ class TestRunKubernetesDeployment:
             patch.dict("aiperf.kubernetes.runner._KIND_TO_CLASS", kind_mocks),
         ):
             job_id, namespace = await run_kubernetes_deployment(
-                sample_user_config,
-                fresh_service_config,
+                sample_aiperf_config,
                 kube_options,
-                aiperf_config=sample_aiperf_config,
                 dry_run=False,
             )
 
@@ -506,9 +486,7 @@ class TestRunKubernetesDeployment:
         assert "JobSet" in created_kinds
 
     @pytest.mark.asyncio
-    async def test_worker_scaling_single_pod(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config
-    ) -> None:
+    async def test_worker_scaling_single_pod(self, sample_aiperf_config) -> None:
         """Test that few workers results in single pod."""
 
         kube_options = KubeOptions(
@@ -518,20 +496,16 @@ class TestRunKubernetesDeployment:
         )
 
         await run_kubernetes_deployment(
-            sample_user_config,
-            fresh_service_config,
+            sample_aiperf_config,
             kube_options,
-            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
         # workers_per_pod should be set to the total workers
-        assert fresh_service_config.workers_per_pod == 2
+        assert sample_aiperf_config.workers_per_pod == 2
 
     @pytest.mark.asyncio
-    async def test_worker_scaling_multiple_pods(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config
-    ) -> None:
+    async def test_worker_scaling_multiple_pods(self, sample_aiperf_config) -> None:
         """Test that many workers results in multiple pods."""
 
         kube_options = KubeOptions(
@@ -541,16 +515,14 @@ class TestRunKubernetesDeployment:
         )
 
         await run_kubernetes_deployment(
-            sample_user_config,
-            fresh_service_config,
+            sample_aiperf_config,
             kube_options,
-            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
         # workers_per_pod should be the default
         assert (
-            fresh_service_config.workers_per_pod
+            sample_aiperf_config.workers_per_pod
             == Environment.WORKER.DEFAULT_WORKERS_PER_POD
         )
 
@@ -1024,24 +996,14 @@ class TestWithRetryAsync:
 class TestRunKubernetesDeploymentAdvanced:
     """Additional tests for run_kubernetes_deployment."""
 
-    @pytest.fixture
-    def fresh_service_config(self):
-        """Create a fresh service config to avoid state leakage between tests."""
-
-        return ServiceConfig(
-            service_run_type=ServiceRunType.MULTIPROCESSING,
-            comm_backend=CommunicationBackend.ZMQ_IPC,
-        )
-
     @pytest.mark.asyncio
     async def test_preserves_existing_workers_per_pod(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config
+        self, sample_aiperf_config
     ) -> None:
         """Test that existing workers_per_pod config is respected."""
 
         # Set a custom workers_per_pod
-        fresh_service_config.workers_per_pod = 5
-        fresh_service_config.model_fields_set.add("workers_per_pod")
+        sample_aiperf_config.workers_per_pod = 5
 
         kube_options = KubeOptions(
             image="aiperf:latest",
@@ -1050,20 +1012,16 @@ class TestRunKubernetesDeploymentAdvanced:
         )
 
         await run_kubernetes_deployment(
-            sample_user_config,
-            fresh_service_config,
+            sample_aiperf_config,
             kube_options,
-            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
         # workers_per_pod should use the custom value
-        assert fresh_service_config.workers_per_pod == 5
+        assert sample_aiperf_config.workers_per_pod == 5
 
     @pytest.mark.asyncio
-    async def test_sets_api_config_for_kubernetes(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config
-    ) -> None:
+    async def test_sets_api_config_for_kubernetes(self, sample_aiperf_config) -> None:
         """Test that API port and host are set correctly for Kubernetes."""
 
         kube_options = KubeOptions(
@@ -1073,21 +1031,17 @@ class TestRunKubernetesDeploymentAdvanced:
         )
 
         await run_kubernetes_deployment(
-            sample_user_config,
-            fresh_service_config,
+            sample_aiperf_config,
             kube_options,
-            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
         # API should be enabled
-        assert fresh_service_config.api_port == K8sEnvironment.PORTS.API_SERVICE
-        assert fresh_service_config.api_host == "0.0.0.0"
+        assert sample_aiperf_config.api_port == K8sEnvironment.PORTS.API_SERVICE
+        assert sample_aiperf_config.api_host == "0.0.0.0"
 
     @pytest.mark.asyncio
-    async def test_sets_dataset_api_url(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config
-    ) -> None:
+    async def test_sets_dataset_api_url(self, sample_aiperf_config) -> None:
         """Test that dataset API URL is constructed correctly."""
 
         kube_options = KubeOptions(
@@ -1097,22 +1051,18 @@ class TestRunKubernetesDeploymentAdvanced:
         )
 
         job_id, namespace = await run_kubernetes_deployment(
-            sample_user_config,
-            fresh_service_config,
+            sample_aiperf_config,
             kube_options,
-            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
         # Dataset API URL should use the controller DNS
-        assert fresh_service_config.dataset_api_base_url is not None
-        assert f"aiperf-{job_id}" in fresh_service_config.dataset_api_base_url
-        assert "test-ns" in fresh_service_config.dataset_api_base_url
+        assert sample_aiperf_config.dataset_api_base_url is not None
+        assert f"aiperf-{job_id}" in sample_aiperf_config.dataset_api_base_url
+        assert "test-ns" in sample_aiperf_config.dataset_api_base_url
 
     @pytest.mark.asyncio
-    async def test_apply_with_kubeconfig(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config
-    ) -> None:
+    async def test_apply_with_kubeconfig(self, sample_aiperf_config) -> None:
         """Test apply mode with custom kubeconfig path."""
 
         kube_options = KubeOptions(
@@ -1145,10 +1095,8 @@ class TestRunKubernetesDeploymentAdvanced:
             patch.dict("aiperf.kubernetes.runner._KIND_TO_CLASS", kind_mocks),
         ):
             await run_kubernetes_deployment(
-                sample_user_config,
-                fresh_service_config,
+                sample_aiperf_config,
                 kube_options,
-                aiperf_config=sample_aiperf_config,
                 dry_run=False,
             )
 
@@ -1158,9 +1106,7 @@ class TestRunKubernetesDeploymentAdvanced:
         )
 
     @pytest.mark.asyncio
-    async def test_worker_scaling_exact_divisible(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config
-    ) -> None:
+    async def test_worker_scaling_exact_divisible(self, sample_aiperf_config) -> None:
         """Test worker scaling when workers divide evenly into pods."""
 
         # Set a known workers_per_pod default
@@ -1173,20 +1119,16 @@ class TestRunKubernetesDeploymentAdvanced:
         )
 
         await run_kubernetes_deployment(
-            sample_user_config,
-            fresh_service_config,
+            sample_aiperf_config,
             kube_options,
-            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
         # Should use default workers_per_pod
-        assert fresh_service_config.workers_per_pod == default_workers_per_pod
+        assert sample_aiperf_config.workers_per_pod == default_workers_per_pod
 
     @pytest.mark.asyncio
-    async def test_sets_zmq_dual_config(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config
-    ) -> None:
+    async def test_sets_zmq_dual_config(self, sample_aiperf_config) -> None:
         """Test that ZMQ dual-bind config is set correctly."""
 
         kube_options = KubeOptions(
@@ -1196,23 +1138,17 @@ class TestRunKubernetesDeploymentAdvanced:
         )
 
         await run_kubernetes_deployment(
-            sample_user_config,
-            fresh_service_config,
+            sample_aiperf_config,
             kube_options,
-            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
         # ZMQ dual config should be set
-        assert fresh_service_config.zmq_dual is not None
-        # IPC path should match K8s environment
-        assert (
-            str(fresh_service_config.zmq_dual.ipc_path) == K8sEnvironment.ZMQ.IPC_PATH
-        )
+        assert sample_aiperf_config.comm_config is not None
 
     @pytest.mark.asyncio
     async def test_sets_service_run_type_and_ui_type(
-        self, sample_user_config, fresh_service_config, sample_aiperf_config
+        self, sample_aiperf_config
     ) -> None:
         """Test that service_run_type and ui_type are set for Kubernetes."""
         kube_options = KubeOptions(
@@ -1222,17 +1158,15 @@ class TestRunKubernetesDeploymentAdvanced:
         )
 
         await run_kubernetes_deployment(
-            sample_user_config,
-            fresh_service_config,
+            sample_aiperf_config,
             kube_options,
-            aiperf_config=sample_aiperf_config,
             dry_run=True,
         )
 
         # Service run type should be KUBERNETES
-        assert fresh_service_config.service_run_type == ServiceRunType.KUBERNETES
+        assert sample_aiperf_config.service_run_type == ServiceRunType.KUBERNETES
         # UI should be disabled in pods
-        assert fresh_service_config.ui_type == UIType.NONE
+        assert sample_aiperf_config.ui_type == UIType.NONE
 
 
 class TestApplyManifestsRetry:

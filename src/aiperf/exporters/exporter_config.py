@@ -4,21 +4,27 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.models import ProfileResults
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 
 
-@dataclass(slots=True)
+@dataclass
 class ExporterConfig:
     """Configuration for the exporter."""
 
     results: ProfileResults | None
-    user_config: UserConfig
-    service_config: ServiceConfig | None
+    config: object
     telemetry_results: TelemetryExportData | None
     server_metrics_results: ServerMetricsResults | None = None
+
+    @property
+    def user_config(self) -> object:
+        return self.config
+
+    @property
+    def service_config(self) -> object:
+        return self.config
 
 
 @dataclass(slots=True)

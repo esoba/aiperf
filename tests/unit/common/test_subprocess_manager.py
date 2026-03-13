@@ -115,37 +115,33 @@ class TestSubprocessManagerInit:
     """Tests for SubprocessManager initialization."""
 
     def test_init_stores_config_and_creates_empty_subprocesses(
-        self, service_config, user_config
+        self, aiperf_config
     ) -> None:
         """SubprocessManager stores configs and initializes empty subprocess list."""
         manager = SubprocessManager(
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
 
-        assert manager.service_config == service_config
-        assert manager.user_config == user_config
+        assert manager.config == aiperf_config
         assert manager.log_queue is None
         assert manager._logger is None
         assert manager.subprocesses == []
 
-    def test_init_accepts_log_queue(self, service_config, user_config) -> None:
+    def test_init_accepts_log_queue(self, aiperf_config) -> None:
         """SubprocessManager stores provided log queue."""
         mock_queue = MagicMock()
         manager = SubprocessManager(
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
             log_queue=mock_queue,
         )
 
         assert manager.log_queue == mock_queue
 
-    def test_init_accepts_logger(self, service_config, user_config) -> None:
+    def test_init_accepts_logger(self, aiperf_config) -> None:
         """SubprocessManager stores provided logger."""
         mock_logger = MagicMock()
         manager = SubprocessManager(
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
             logger=mock_logger,
         )
 
@@ -236,10 +232,7 @@ class TestSubprocessManagerSpawn:
             bootstrap_kwargs = call_kwargs["kwargs"]
             assert bootstrap_kwargs["service_type"] == ServiceType.WORKER
             assert bootstrap_kwargs["service_id"] == "worker_explicit_id"
-            assert (
-                bootstrap_kwargs["service_config"] == subprocess_manager.service_config
-            )
-            assert bootstrap_kwargs["user_config"] == subprocess_manager.user_config
+            assert bootstrap_kwargs["config"] == subprocess_manager.config
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

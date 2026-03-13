@@ -10,7 +10,6 @@ import asyncio
 import sys
 import uuid
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.protocols import ServiceProtocol
 from aiperf.common.service_registry import ServiceRegistry
@@ -32,11 +31,15 @@ class FakeServiceManager(BaseServiceManager):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config=None,
+        *,
+        service_config=None,
+        user_config=None,
         **kwargs,
     ):
-        super().__init__(required_services, service_config, user_config, **kwargs)
+        if config is None:
+            config = service_config
+        super().__init__(required_services, config=config, **kwargs)
         self.services: dict[str, ServiceProtocol] = {}
 
         # Disable health server for in-process services to prevent port conflicts.
@@ -59,8 +62,7 @@ class FakeServiceManager(BaseServiceManager):
             # Deep copy configs to simulate separate process behavior
             # (in production each process deserializes its own copy)
             service = ServiceClass(
-                service_config=self.service_config.model_copy(deep=True),
-                user_config=self.user_config.model_copy(deep=True),
+                config=self.config.model_copy(deep=True),
                 service_id=service_id,
             )
 

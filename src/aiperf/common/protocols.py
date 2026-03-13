@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
     from typing import Any
 
-    from aiperf.common.config import ServiceConfig, UserConfig
     from aiperf.common.enums import LifecycleState
     from aiperf.common.models import (
         MessageCallbackMapT,
@@ -21,6 +20,7 @@ if TYPE_CHECKING:
         MessageTypeT,
     )
     from aiperf.common.types import CommAddressType, ServiceTypeT
+    from aiperf.config.config import AIPerfConfig
     from aiperf.plugin.enums import CommClientType
 
 
@@ -378,8 +378,7 @@ class ServiceProtocol(MessageBusClientProtocol, Protocol):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        config: AIPerfConfig,
         service_id: str | None = None,
         **kwargs,
     ) -> None: ...

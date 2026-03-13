@@ -24,7 +24,6 @@ from aiperf.api.dataset_mixin import DatasetMixin
 from aiperf.api.routers.base_router import BaseRouter
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_start, on_stop
 from aiperf.plugin import plugins
@@ -54,20 +53,23 @@ class FastAPIService(DatasetMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config=None,
         service_id: str | None = None,
+        *,
+        service_config=None,
+        user_config=None,
         **kwargs,
     ) -> None:
+        if config is None:
+            config = service_config or user_config
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             **kwargs,
         )
 
-        self.api_host = service_config.api_host or Environment.API_SERVER.HOST
-        self.api_port = service_config.api_port or Environment.API_SERVER.PORT
+        self.api_host = self.config.api_host or Environment.API_SERVER.HOST
+        self.api_port = self.config.api_port or Environment.API_SERVER.PORT
         self.cors_origins = Environment.API_SERVER.CORS_ORIGINS
 
         self._server: uvicorn.Server | None = None
@@ -88,8 +90,8 @@ class FastAPIService(DatasetMixin, BaseComponentService):
         for entry in plugins.iter_entries(PluginType.API_ROUTER):
             cls = entry.load()
             router = cls(
-                service_config=self.service_config,
-                user_config=self.user_config,
+                config=self.config,
+                service_config=self.config,
             )
             self._routers[entry.name] = router
             self.attach_child_lifecycle(router)

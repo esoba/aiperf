@@ -3,7 +3,6 @@
 from collections import defaultdict
 from typing import Any
 
-from aiperf.common.config import UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.exceptions import NoMetricValue, PostProcessorDisabled
 from aiperf.common.models import MetricResult
@@ -21,7 +20,7 @@ class TimesliceMetricResultsProcessor(MetricResultsProcessor):
     Groups metrics by time slices based on request timestamps and slice_duration.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any):
+    def __init__(self, user_config: object, **kwargs: Any):
         super().__init__(user_config=user_config, **kwargs)
 
         if self.user_config.output.slice_duration is None:

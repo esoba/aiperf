@@ -64,18 +64,16 @@ async def profile(
 
     with cli_utils.exit_on_error(title="Error Running Kubernetes Benchmark"):
         from aiperf.config.cli_builder import build_aiperf_config
-        from aiperf.config.reverse_converter import convert_to_legacy_configs
         from aiperf.kubernetes import runner
 
-        aiperf_config = build_aiperf_config(cli)
-        user_config, service_config = convert_to_legacy_configs(aiperf_config)
+        config = build_aiperf_config(cli)
 
         if not skip_preflight:
             from aiperf.kubernetes import preflight as kube_preflight
 
             endpoint_url = (
-                aiperf_config.endpoint.urls[0]
-                if not skip_endpoint_check and aiperf_config.endpoint.urls
+                config.endpoint.urls[0]
+                if not skip_endpoint_check and config.endpoint.urls
                 else None
             )
             preflight_ns = kube_options.namespace or "aiperf-preflight-check"
@@ -100,11 +98,9 @@ async def profile(
                 )
                 raise SystemExit(1)
         job_id, namespace = await runner.run_kubernetes_deployment(
-            user_config,
-            service_config,
+            config,
             kube_options,
             dry_run=False,
-            aiperf_config=aiperf_config,
         )
 
         kube_console.save_last_benchmark(job_id, namespace, name=kube_options.name)

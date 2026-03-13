@@ -2,14 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.accuracy.models import BenchmarkProblem
-from aiperf.common.config import UserConfig
 from aiperf.common.mixins import AIPerfLoggerMixin
 
 
 class GPQADiamondBenchmark(AIPerfLoggerMixin):
     """GPQA Diamond benchmark loader for graduate-level science questions."""
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+    def __init__(self, user_config: object, **kwargs) -> None:
         super().__init__(**kwargs)
         self.user_config = user_config
 

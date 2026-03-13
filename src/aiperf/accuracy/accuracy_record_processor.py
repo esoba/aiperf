@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.config import UserConfig
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
@@ -18,7 +17,7 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
     def __init__(
         self,
         service_id: str | None,
-        user_config: UserConfig,
+        user_config: object,
         **kwargs,
     ) -> None:
         if not user_config.accuracy.enabled:

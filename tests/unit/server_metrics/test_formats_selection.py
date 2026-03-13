@@ -140,8 +140,7 @@ class TestJsonExporterFormatSelection:
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            config=config,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -166,8 +165,7 @@ class TestJsonExporterFormatSelection:
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            config=config,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -195,8 +193,7 @@ class TestCsvExporterFormatSelection:
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            config=config,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -221,8 +218,7 @@ class TestCsvExporterFormatSelection:
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            config=config,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -292,8 +288,7 @@ class TestAllExportersEnabled:
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            config=config,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )
@@ -323,8 +318,7 @@ class TestAllExportersEnabled:
 
         exporter_config = ExporterConfig(
             results=None,
-            user_config=config,
-            service_config=None,
+            config=config,
             telemetry_results=None,
             server_metrics_results=mock_server_metrics_results,
         )

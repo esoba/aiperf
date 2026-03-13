@@ -9,7 +9,7 @@
 #
 # Use case: Validate server handles cancellations gracefully
 #
-# Run: aiperf --config examples_v2/request_cancellation.yaml
+# Run: aiperf --config templates/request_cancellation.yaml
 
 random_seed: 42
 

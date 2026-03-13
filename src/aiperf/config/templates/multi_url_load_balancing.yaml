@@ -9,7 +9,7 @@
 #
 # Use case: Benchmark a multi-replica inference deployment
 #
-# Run: aiperf --config examples_v2/multi_url_load_balancing.yaml
+# Run: aiperf --config templates/multi_url_load_balancing.yaml
 
 random_seed: 42
 

@@ -23,6 +23,7 @@ from pydantic import (
 
 from aiperf.common.enums import (
     ConsoleFormat,
+    ExportLevel,
     GPUTelemetryMode,
     ServerMetricsFormat,
 )
@@ -228,6 +229,20 @@ class ArtifactsConfig(BaseModel):
     def artifact_directory(self) -> Path:
         """Alias for dir for backward compatibility."""
         return self.dir
+
+    @property
+    def export_level(self) -> ExportLevel:
+        """Compute export level from raw/records/summary settings."""
+        if self.raw:
+            return ExportLevel.RAW
+        if self.records is not False:
+            return ExportLevel.RECORDS
+        return ExportLevel.SUMMARY
+
+    @property
+    def export_http_trace(self) -> bool:
+        """Alias for trace (legacy field name)."""
+        return self.trace
 
 
 class ServerMetricsConfig(BaseModel):

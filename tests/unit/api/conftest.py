@@ -22,12 +22,12 @@ from starlette.websockets import WebSocketState
 from aiperf.api.api_service import FastAPIService
 from aiperf.api.routers.api import api_router
 from aiperf.api.routers.core import core_router
-from aiperf.api.routers.static import static_router
-from aiperf.api.routers.websocket import WebSocketManager, ws_router
+from aiperf.api.routers.websocket import WebSocketManager
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
+from aiperf.config.config import AIPerfConfig
 
 # -----------------------------------------------------------------------------
 # WebSocket Mock Helpers
@@ -251,18 +251,14 @@ def api_user_config() -> UserConfig:
 
 
 @pytest.fixture
-def mock_fastapi_service(
-    mock_zmq, api_service_config: ServiceConfig, api_user_config: UserConfig
-) -> FastAPIService:
+def mock_fastapi_service(mock_zmq, aiperf_config: AIPerfConfig) -> FastAPIService:
     """Create a FastAPIService instance for testing without starting the server."""
+    aiperf_config.api_port = 9999
+    aiperf_config.api_host = "127.0.0.1"
     svc = FastAPIService(
-        service_config=api_service_config,
-        user_config=api_user_config,
+        config=aiperf_config,
         service_id="api-test-1",
     )
-    # Include routers not yet registered as plugins.
-    svc.app.include_router(static_router)
-    svc.app.include_router(ws_router)
     return svc
 
 

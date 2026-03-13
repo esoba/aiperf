@@ -6,9 +6,9 @@ from typing import ClassVar
 
 from pydantic import ConfigDict, Field
 
-from aiperf.common.config import UserConfig
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.error_models import ErrorDetailsCount
+from aiperf.config.config import AIPerfConfig
 
 # =============================================================================
 # JSON Metric Result
@@ -107,7 +107,7 @@ class TimesliceCollectionExportData(AIPerfBaseModel):
     """
 
     timeslices: list[TimesliceData]
-    input_config: UserConfig | None = None
+    input_config: AIPerfConfig | None = None
 
 
 # =============================================================================
@@ -170,7 +170,7 @@ class JsonExportData(AIPerfBaseModel):
     error_isl: JsonMetricResult | None = None
     total_error_isl: JsonMetricResult | None = None
     telemetry_data: TelemetryExportData | None = None
-    input_config: UserConfig | None = None
+    input_config: AIPerfConfig | None = None
     was_cancelled: bool | None = None
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None

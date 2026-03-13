@@ -14,10 +14,10 @@ from textual.widgets import Static
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import MetricFlags
 from aiperf.common.environment import Environment
 from aiperf.common.models.record_models import MetricResult
+from aiperf.config.config import AIPerfConfig
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget, NonFocusableDataTable
 
@@ -37,7 +37,7 @@ class RealtimeMetricsTable(Widget):
     STATS_FIELDS: list[str] = ["avg", "min", "max", "p99", "p90", "p50", "std"]
     COLUMNS = ["Metric", *STATS_FIELDS]
 
-    def __init__(self, service_config: ServiceConfig | None = None, **kwargs) -> None:
+    def __init__(self, service_config: AIPerfConfig | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.service_config = service_config
         self.data_table: NonFocusableDataTable | None = None
@@ -193,7 +193,7 @@ class RealtimeMetricsDashboard(Container, MaximizableWidget):
     }
     """
 
-    def __init__(self, service_config: ServiceConfig | None = None, **kwargs) -> None:
+    def __init__(self, service_config: AIPerfConfig | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.service_config = service_config
         self.metrics_table: RealtimeMetricsTable | None = None

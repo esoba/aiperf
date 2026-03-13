@@ -4,7 +4,7 @@
 import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
+from aiperf.common.config import EndpointConfig, OutputConfig, UserConfig
 from aiperf.common.exceptions import ConsoleExporterDisabled
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -170,8 +170,7 @@ def make_exporter_config(
             end_ns=0,
             completed=0,
         ),
-        user_config=user_config,
-        service_config=ServiceConfig(),
+        config=user_config,
         telemetry_results=None,
     )
 

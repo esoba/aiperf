@@ -4,7 +4,6 @@ import asyncio
 import time
 from contextlib import suppress
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import ExportLevel
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
@@ -27,15 +26,15 @@ class InferenceResultParser(CommunicationMixin):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        service_config: object,
+        user_config: object,
     ) -> None:
         super().__init__(
             service_config=service_config,
             user_config=user_config,
         )
         self.tokenizers: dict[str, Tokenizer] = {}
-        self.user_config: UserConfig = user_config
+        self.user_config = user_config
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
             user_config

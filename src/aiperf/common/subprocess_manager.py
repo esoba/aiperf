@@ -26,7 +26,7 @@ from aiperf.common.logging import LogQueue
 from aiperf.common.types import ServiceTypeT
 
 if TYPE_CHECKING:
-    from aiperf.common.config import ServiceConfig, UserConfig
+    from aiperf.config.config import AIPerfConfig
 
 
 @dataclass(slots=True)
@@ -127,15 +127,14 @@ class SubprocessManager:
     child processes.
 
     Example usage:
-        manager = SubprocessManager(service_config, user_config, log_queue)
+        manager = SubprocessManager(config=config, log_queue=log_queue)
         await manager.spawn_service(ServiceType.WORKER, "worker_0")
         await manager.stop_all()
     """
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config: AIPerfConfig,
         log_queue: LogQueue | None = None,
         error_queue: ErrorQueue | None = None,
         logger: object | None = None,
@@ -143,14 +142,12 @@ class SubprocessManager:
         """Initialize the subprocess manager.
 
         Args:
-            service_config: Configuration for spawned services.
-            user_config: User configuration for spawned services.
+            config: AIPerfConfig for spawned services.
             log_queue: Optional multiprocessing queue for centralized logging.
             error_queue: Optional multiprocessing queue for error reporting from child processes.
             logger: Optional logger object with debug/warning/error methods.
         """
-        self.service_config = service_config
-        self.user_config = user_config
+        self.config = config
         self.log_queue = log_queue
         self.error_queue = error_queue
         self.subprocesses: list[SubprocessInfo] = []
@@ -195,8 +192,7 @@ class SubprocessManager:
             kwargs={
                 "service_type": service_type,
                 "service_id": service_id,
-                "service_config": self.service_config,
-                "user_config": self.user_config,
+                "config": self.config,
                 "log_queue": self.log_queue,
                 "error_queue": self.error_queue,
             },

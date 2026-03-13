@@ -50,6 +50,7 @@ __all__ = [
     # Core loading functions
     "load_config",
     "load_config_from_env",
+    "load_config_from_file_env",
     "load_config_from_string",
     "dump_config",
     "save_config",
@@ -476,6 +477,30 @@ def validate_config_file(file_path: Path | str) -> list[str]:
             )
 
     return warnings
+
+
+def load_config_from_file_env() -> AIPerfConfig:
+    """
+    Load AIPerf configuration from the AIPERF_CONFIG_FILE environment variable.
+
+    This function is used by Kubernetes child processes to load the
+    configuration file that was mounted into the pod via a ConfigMap.
+
+    Returns:
+        AIPerfConfig object.
+
+    Raises:
+        ConfigurationError: If the env var is not set or the file cannot be loaded.
+    """
+    config_file = os.environ.get("AIPERF_CONFIG_FILE")
+    if config_file is None:
+        raise ConfigurationError(
+            "AIPERF_CONFIG_FILE environment variable not set. "
+            "This function is meant to be called from Kubernetes pods "
+            "that receive configuration via a mounted ConfigMap."
+        )
+
+    return load_config(config_file, substitute_env=True)
 
 
 def load_config_from_env() -> AIPerfConfig:

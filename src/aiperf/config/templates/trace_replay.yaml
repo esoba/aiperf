@@ -9,7 +9,7 @@
 #
 # Use case: Validate performance against real production workloads
 #
-# Run: aiperf --config src/aiperf/config/templates/trace_replay.yaml
+# Run: aiperf --config templates/trace_replay.yaml
 #
 # Note: You need a mooncake_trace format file. Example structure:
 # {"timestamp": 0, "input_length": 512, "output_length": 128, "hash_ids": [...]}

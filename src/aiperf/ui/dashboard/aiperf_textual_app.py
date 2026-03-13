@@ -14,11 +14,11 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Footer
 
-from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.enums import GPUTelemetryMode, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import CombinedPhaseStats
 from aiperf.common.models import MetricResult, WorkerStats
+from aiperf.config.config import AIPerfConfig
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
 from aiperf.ui.dashboard.progress_dashboard import ProgressDashboard
 from aiperf.ui.dashboard.progress_header import ProgressHeader
@@ -90,7 +90,7 @@ class AIPerfTextualApp(App):
     ]
 
     def __init__(
-        self, service_config: ServiceConfig, controller: SystemController
+        self, service_config: AIPerfConfig, controller: SystemController
     ) -> None:
         super().__init__()
 

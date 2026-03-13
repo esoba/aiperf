@@ -7,15 +7,15 @@ from typing import Any
 
 from pydantic import Field
 
-from aiperf.common.config import UserConfig
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.config.config import AIPerfConfig
 
 
 class RunConfig(AIPerfBaseModel):
     """Configuration for a single benchmark run."""
 
-    config: UserConfig = Field(description="The benchmark configuration to execute")
+    config: AIPerfConfig = Field(description="The benchmark configuration to execute")
     label: str = Field(
         description="Human-readable label for this run (e.g., 'run_0001')"
     )

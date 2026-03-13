@@ -24,16 +24,10 @@ WORKER_ID = "test-worker-1"
 
 
 @pytest.fixture
-def worker_manager() -> WorkerManager:
+def worker_manager(aiperf_config) -> WorkerManager:
     """Create a WorkerManager instance for testing."""
-    service_config = ServiceConfig(workers=WorkersConfig(max=4))
-    user_config = UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        loadgen=LoadGeneratorConfig(concurrency=10),
-    )
     manager = WorkerManager(
-        service_config=service_config,
-        user_config=user_config,
+        config=aiperf_config,
         service_id="test-worker-manager",
     )
     manager.warning = MagicMock()

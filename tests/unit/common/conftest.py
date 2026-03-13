@@ -81,11 +81,10 @@ def mock_process_crashed(mock_process_factory) -> MagicMock:
 
 
 @pytest.fixture
-def subprocess_manager(service_config, user_config) -> SubprocessManager:
+def subprocess_manager(aiperf_config) -> SubprocessManager:
     """Create a SubprocessManager instance for testing."""
     return SubprocessManager(
-        service_config=service_config,
-        user_config=user_config,
+        config=aiperf_config,
         log_queue=None,
         logger=None,
     )
@@ -93,7 +92,7 @@ def subprocess_manager(service_config, user_config) -> SubprocessManager:
 
 @pytest.fixture
 def subprocess_manager_with_logger(
-    service_config, user_config
+    aiperf_config,
 ) -> tuple[SubprocessManager, MagicMock]:
     """Create a SubprocessManager with a mock logger.
 
@@ -103,8 +102,7 @@ def subprocess_manager_with_logger(
     mock_logger.debug = MagicMock()
     mock_logger.warning = MagicMock()
     manager = SubprocessManager(
-        service_config=service_config,
-        user_config=user_config,
+        config=aiperf_config,
         log_queue=None,
         logger=mock_logger,
     )

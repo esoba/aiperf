@@ -4,7 +4,7 @@
 import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
+from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
@@ -85,8 +85,7 @@ def mock_exporter_config(sample_records, mock_endpoint_config):
             end_ns=0,
             completed=0,
         ),
-        user_config=input_config,
-        service_config=ServiceConfig(),
+        config=input_config,
         telemetry_results=None,
     )
 
@@ -129,7 +128,6 @@ class TestConsoleExporter:
     ):
         """Test that metrics are shown/hidden based on their flags"""
         user_config = UserConfig(endpoint=mock_endpoint_config)
-        service_config = ServiceConfig()
         config = ExporterConfig(
             results=ProfileResults(
                 records=[],
@@ -137,8 +135,7 @@ class TestConsoleExporter:
                 end_ns=0,
                 completed=0,
             ),
-            user_config=user_config,
-            service_config=service_config,
+            config=user_config,
             telemetry_results=None,
         )
         exporter = ConsoleMetricsExporter(config)

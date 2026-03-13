@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import InputDefaults, UserConfig
+from aiperf.common.config import InputDefaults
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
@@ -16,7 +16,7 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
     Each dataset entry contains one query and multiple passages.
     """
 
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
+    def __init__(self, config: object, tokenizer: Tokenizer | None):
         super().__init__(config, tokenizer)
 
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)

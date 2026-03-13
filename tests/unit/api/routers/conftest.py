@@ -9,6 +9,7 @@ import pytest
 
 from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.models import MetricResult
+from aiperf.config.config import AIPerfConfig
 
 
 def make_latency_metric(
@@ -45,4 +46,21 @@ def router_user_config() -> UserConfig:
     return UserConfig(
         benchmark_id="test-bench",
         endpoint=EndpointConfig(model_names=["test-model"]),
+    )
+
+
+@pytest.fixture
+def router_aiperf_config() -> AIPerfConfig:
+    """AIPerfConfig for router testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "main": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        load={"type": "concurrency", "requests": 10, "concurrency": 1},
     )

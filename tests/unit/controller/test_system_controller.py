@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.control_structs import CommandErr, Registration, RegistrationAck
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
+from aiperf.config.config import AIPerfConfig
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import ServiceRunType, ServiceType
 from tests.unit.controller.conftest import MockTestException
@@ -332,8 +332,7 @@ class TestKubernetesMode:
 
     def _create_system_controller(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> tuple[SystemController, MagicMock]:
         """Create a SystemController with custom config, mimicking the conftest pattern.
@@ -343,6 +342,7 @@ class TestKubernetesMode:
         """
         mock_ui = AsyncMock()
         mock_comm = AsyncMock()
+        mock_comm.get_address = MagicMock(return_value="ipc:///tmp/test-health-check")
         mock_comm.create_reply_client = MagicMock(return_value=AsyncMock())
 
         def mock_get_class(protocol, name):
@@ -361,14 +361,17 @@ class TestKubernetesMode:
             ),
             patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
             patch(
+                "aiperf.controller.system_controller.ZMQStreamingRouterClient",
+                return_value=AsyncMock(),
+            ),
+            patch(
                 "aiperf.common.mixins.communication_mixin.plugins.get_class",
                 side_effect=mock_get_class,
             ),
         ):  # fmt: skip
             mock_proxy.return_value = AsyncMock()
             controller = SystemController(
-                user_config=user_config,
-                service_config=service_config,
+                config=aiperf_config,
                 service_id="test_controller",
             )
             controller.stop = AsyncMock()
@@ -376,8 +379,7 @@ class TestKubernetesMode:
 
     def test_kubernetes_mode_includes_workers_and_rps_in_required_services(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
         """In K8s mode, WORKER and RECORD_PROCESSOR are in required_services.
@@ -385,23 +387,22 @@ class TestKubernetesMode:
         KubernetesServiceManager handles them as external services via
         expect_services() rather than spawning subprocesses.
         """
-        service_config.service_run_type = ServiceRunType.KUBERNETES
+        aiperf_config.service_run_type = ServiceRunType.KUBERNETES
         controller, _ = self._create_system_controller(
-            service_config, user_config, mock_service_manager
+            aiperf_config, mock_service_manager
         )
         assert ServiceType.WORKER in controller.required_services
         assert ServiceType.RECORD_PROCESSOR in controller.required_services
 
     def test_multiprocessing_mode_includes_calculated_worker_count(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
         """In local mode, WORKER count is calculated from config (not hardcoded to 1)."""
-        service_config.service_run_type = ServiceRunType.MULTIPROCESSING
+        aiperf_config.service_run_type = ServiceRunType.MULTIPROCESSING
         controller, _ = self._create_system_controller(
-            service_config, user_config, mock_service_manager
+            aiperf_config, mock_service_manager
         )
         assert ServiceType.WORKER in controller.required_services
         # In multiprocessing mode, worker count is calculated (at least 1)
@@ -409,15 +410,14 @@ class TestKubernetesMode:
 
     def test_keep_api_running_true_in_kubernetes_with_api_port(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
         """In K8s mode with api_port set, keep_api_running should be True."""
-        service_config.service_run_type = ServiceRunType.KUBERNETES
-        service_config.api_port = 9090
+        aiperf_config.service_run_type = ServiceRunType.KUBERNETES
+        aiperf_config.api_port = 9090
         controller, _ = self._create_system_controller(
-            service_config, user_config, mock_service_manager
+            aiperf_config, mock_service_manager
         )
         is_k8s_mode = (
             controller.service_config.service_run_type == ServiceRunType.KUBERNETES
@@ -427,14 +427,13 @@ class TestKubernetesMode:
 
     def test_keep_api_running_false_in_local_mode(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
         """In local mode, keep_api_running should be False."""
-        service_config.service_run_type = ServiceRunType.MULTIPROCESSING
+        aiperf_config.service_run_type = ServiceRunType.MULTIPROCESSING
         controller, _ = self._create_system_controller(
-            service_config, user_config, mock_service_manager
+            aiperf_config, mock_service_manager
         )
         is_k8s_mode = (
             controller.service_config.service_run_type == ServiceRunType.KUBERNETES
@@ -444,15 +443,14 @@ class TestKubernetesMode:
 
     def test_keep_api_running_false_in_kubernetes_without_api_port(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
         """In K8s mode without api_port, keep_api_running should be False."""
-        service_config.service_run_type = ServiceRunType.KUBERNETES
-        service_config.api_port = None
+        aiperf_config.service_run_type = ServiceRunType.KUBERNETES
+        aiperf_config.api_port = None
         controller, _ = self._create_system_controller(
-            service_config, user_config, mock_service_manager
+            aiperf_config, mock_service_manager
         )
         is_k8s_mode = (
             controller.service_config.service_run_type == ServiceRunType.KUBERNETES
@@ -462,17 +460,16 @@ class TestKubernetesMode:
 
     def test_kubernetes_mode_disables_raw_inference_proxy(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
         """In K8s mode, raw inference proxy is disabled (worker pods run it locally)."""
-        service_config.service_run_type = ServiceRunType.KUBERNETES
+        aiperf_config.service_run_type = ServiceRunType.KUBERNETES
         _, mock_proxy_cls = self._create_system_controller(
-            service_config, user_config, mock_service_manager
+            aiperf_config, mock_service_manager
         )
         mock_proxy_cls.assert_called_once_with(
-            service_config=service_config,
+            config=aiperf_config,
             enable_event_bus=True,
             enable_dataset_manager=True,
             enable_raw_inference=False,
@@ -480,17 +477,16 @@ class TestKubernetesMode:
 
     def test_multiprocessing_mode_enables_all_proxies(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
         """In local mode, all proxies including raw inference are enabled."""
-        service_config.service_run_type = ServiceRunType.MULTIPROCESSING
+        aiperf_config.service_run_type = ServiceRunType.MULTIPROCESSING
         _, mock_proxy_cls = self._create_system_controller(
-            service_config, user_config, mock_service_manager
+            aiperf_config, mock_service_manager
         )
         mock_proxy_cls.assert_called_once_with(
-            service_config=service_config,
+            config=aiperf_config,
             enable_event_bus=True,
             enable_dataset_manager=True,
             enable_raw_inference=True,
@@ -499,16 +495,15 @@ class TestKubernetesMode:
     @pytest.mark.asyncio
     async def test_wpm_registration_logs_capacity(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
         """WPM Registration with capacity fields logs pod capacity info."""
         from aiperf.common.service_registry import ServiceRegistry
 
-        service_config.service_run_type = ServiceRunType.KUBERNETES
+        aiperf_config.service_run_type = ServiceRunType.KUBERNETES
         controller, _ = self._create_system_controller(
-            service_config, user_config, mock_service_manager
+            aiperf_config, mock_service_manager
         )
 
         msg = Registration(
@@ -527,16 +522,15 @@ class TestKubernetesMode:
     @pytest.mark.asyncio
     async def test_registration_without_capacity_does_not_modify_expectations(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_service_manager: AsyncMock,
     ) -> None:
         """Regular service Registration (no capacity fields) should not change expectations."""
         from aiperf.common.service_registry import ServiceRegistry
 
-        service_config.service_run_type = ServiceRunType.KUBERNETES
+        aiperf_config.service_run_type = ServiceRunType.KUBERNETES
         controller, _ = self._create_system_controller(
-            service_config, user_config, mock_service_manager
+            aiperf_config, mock_service_manager
         )
 
         workers_before = ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)

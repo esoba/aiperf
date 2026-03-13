@@ -4,7 +4,6 @@
 from pathlib import Path
 from typing import Any, ClassVar
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation, RequestRecord
@@ -45,7 +44,7 @@ class BasePublicDatasetLoader(BaseLoader):
     url: ClassVar[str]
     filename: ClassVar[str] = "dataset.json"
 
-    def __init__(self, user_config: UserConfig, **kwargs):
+    def __init__(self, user_config: object, **kwargs):
         super().__init__(user_config=user_config, **kwargs)
         self.http_client = AioHttpClient(
             timeout=Environment.DATASET.PUBLIC_DATASET_TIMEOUT

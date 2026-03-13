@@ -11,8 +11,8 @@ from textual.widgets import Static
 from textual.widgets.data_table import ColumnKey, RowDoesNotExist, RowKey
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config.service_config import ServiceConfig
 from aiperf.common.models.record_models import MetricResult
+from aiperf.config.config import AIPerfConfig
 from aiperf.ui.dashboard.custom_widgets import MaximizableWidget, NonFocusableDataTable
 
 _logger = AIPerfLogger(__name__)
@@ -266,7 +266,7 @@ class RealtimeTelemetryDashboard(Container, MaximizableWidget):
     }
     """
 
-    def __init__(self, service_config: ServiceConfig, **kwargs):
+    def __init__(self, service_config: AIPerfConfig, **kwargs):
         super().__init__(**kwargs)
         self.service_config = service_config
         self.all_nodes_view: SingleNodeView | None = None

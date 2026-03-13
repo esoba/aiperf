@@ -9,7 +9,7 @@
 #
 # Use case: Production-grade results with statistical confidence
 #
-# Run: aiperf run examples_v2/multi_run.yaml
+# Run: aiperf --config templates/multi_run.yaml
 
 models:
   - meta-llama/Llama-3.1-8B-Instruct

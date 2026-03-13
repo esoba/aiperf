@@ -16,7 +16,6 @@ from fastapi.responses import Response
 
 from aiperf.api.api_service import ServiceDep
 from aiperf.api.routers.base_router import BaseRouter
-from aiperf.common.config import UserConfig
 
 core_router = APIRouter()
 
@@ -28,7 +27,7 @@ class CoreRouter(BaseRouter):
         return core_router
 
 
-@core_router.get("/api/config", response_model=UserConfig, tags=["API"])
+@core_router.get("/api/config", tags=["API"])
 async def get_config(svc: ServiceDep) -> dict[str, Any]:
     """Get benchmark configuration."""
     return svc.user_config.model_dump(

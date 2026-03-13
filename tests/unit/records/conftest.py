@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models import (
     ErrorDetails,
@@ -69,7 +68,7 @@ def sample_turn():
 
 
 @pytest.fixture
-def inference_result_parser(user_config):
+def inference_result_parser(aiperf_config):
     """Create an InferenceResultParser with mocked dependencies."""
 
     def mock_communication_init(self, service_config, **kwargs):
@@ -99,8 +98,8 @@ def inference_result_parser(user_config):
         patch("aiperf.plugin.plugins.get_endpoint_metadata"),
     ):
         parser = InferenceResultParser(
-            service_config=ServiceConfig(),
-            user_config=user_config,
+            service_config=aiperf_config,
+            user_config=aiperf_config,
         )
         return parser
 

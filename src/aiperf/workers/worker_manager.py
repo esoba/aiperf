@@ -7,7 +7,6 @@ from rich.console import Console
 from rich.table import Table
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, MessageType, WorkerStatus
@@ -41,14 +40,12 @@ class WorkerManager(BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config,
         service_id: str | None = None,
         **kwargs,
     ):
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             **kwargs,
         )

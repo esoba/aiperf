@@ -5,7 +5,7 @@
 import pytest
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.config.config import AIPerfConfig
 from tests.unit.common.conftest import MockGC
 
 
@@ -18,22 +18,23 @@ class TestBootstrapGarbageCollection:
         mock_psutil_process,
         mock_setup_child_process_logging,
         register_dummy_services,
+        monkeypatch,
     ):
         """Combine common bootstrap mocks that are used but not called in tests."""
-        pass
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.SERVICE, "DISABLE_UVLOOP", True)
 
     def test_gc_disabled_for_worker_service(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_log_queue,
         mock_gc: MockGC,
     ):
         """Test that GC is disabled for Worker service."""
         bootstrap_and_run_service(
             "test_worker",
-            service_config=service_config_no_uvloop,
-            user_config=user_config,
+            config=aiperf_config,
             log_queue=mock_log_queue,
             service_id="test_worker",
         )
@@ -46,16 +47,14 @@ class TestBootstrapGarbageCollection:
 
     def test_gc_disabled_for_timing_manager_service(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_log_queue,
         mock_gc: MockGC,
     ):
         """Test that GC is disabled for TimingManager service."""
         bootstrap_and_run_service(
             "test_timing_manager",
-            service_config=service_config_no_uvloop,
-            user_config=user_config,
+            config=aiperf_config,
             log_queue=mock_log_queue,
             service_id="test_timing_manager",
         )
@@ -68,16 +67,14 @@ class TestBootstrapGarbageCollection:
 
     def test_gc_not_disabled_for_other_services(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_log_queue,
         mock_gc: MockGC,
     ):
         """Test that GC is NOT disabled for services other than Worker and TimingManager."""
         bootstrap_and_run_service(
             "test_dummy",
-            service_config=service_config_no_uvloop,
-            user_config=user_config,
+            config=aiperf_config,
             log_queue=mock_log_queue,
             service_id="test_dummy",
         )
@@ -90,16 +87,14 @@ class TestBootstrapGarbageCollection:
 
     def test_gc_operations_occur_in_correct_order(
         self,
-        service_config_no_uvloop: ServiceConfig,
-        user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         mock_log_queue,
         mock_gc: MockGC,
     ):
         """Test that GC operations occur in the correct order: collect -> freeze -> set_threshold -> disable."""
         bootstrap_and_run_service(
             "test_worker",
-            service_config=service_config_no_uvloop,
-            user_config=user_config,
+            config=aiperf_config,
             log_queue=mock_log_queue,
             service_id="test_worker",
         )

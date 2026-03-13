@@ -795,8 +795,7 @@ class TestRecordsManagerDualBind(_DualBindServiceFixtures):
         self, dual_bind_service_config, user_config
     ) -> None:
         manager = RecordsManager(
-            service_config=dual_bind_service_config,
-            user_config=user_config,
+            config=dual_bind_service_config,
         )
         assert manager.pull_client.additional_bind_address == "tcp://0.0.0.0:5557"
 
@@ -804,16 +803,14 @@ class TestRecordsManagerDualBind(_DualBindServiceFixtures):
         self, remote_dual_bind_service_config, user_config
     ) -> None:
         manager = RecordsManager(
-            service_config=remote_dual_bind_service_config,
-            user_config=user_config,
+            config=remote_dual_bind_service_config,
         )
         assert manager.pull_client.additional_bind_address is None
 
     def test_ipc_mode_does_not_pass_tcp_bind_address(self, user_config) -> None:
         config = ServiceConfig()
         manager = RecordsManager(
-            service_config=config,
-            user_config=user_config,
+            config=config,
         )
         assert manager.pull_client.additional_bind_address is None
 

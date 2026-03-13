@@ -4,7 +4,6 @@ import asyncio
 import traceback
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
 from aiperf.common.environment import Environment
@@ -41,14 +40,12 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             pull_client_address=CommAddress.RAW_INFERENCE_PROXY_BACKEND,
             pull_client_bind=False,
@@ -59,14 +56,13 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             CommAddress.RECORDS,
         )
         self.tokenizers: dict[str, Tokenizer] = {}
-        self.user_config: UserConfig = user_config
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
-            user_config
+            self.user_config
         )
         self.inference_result_parser = InferenceResultParser(
-            service_config=service_config,
-            user_config=user_config,
+            service_config=self.service_config,
+            user_config=self.user_config,
         )
 
         self.records_processors: list[RecordProcessorProtocol] = []

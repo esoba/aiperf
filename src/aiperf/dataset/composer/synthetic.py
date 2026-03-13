@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
 from aiperf.common.session_id_generator import SessionIDGenerator
@@ -12,7 +11,7 @@ from aiperf.dataset.composer.base import BaseDatasetComposer
 
 
 class SyntheticDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
+    def __init__(self, config: object, tokenizer: Tokenizer | None):
         super().__init__(config, tokenizer)
         self.session_id_generator = SessionIDGenerator(seed=config.input.random_seed)
 

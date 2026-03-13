@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
@@ -21,8 +20,8 @@ class RecordExportResultsProcessor(
     def __init__(
         self,
         service_id: str,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        service_config: object,
+        user_config: object,
         **kwargs,
     ):
         export_level = user_config.output.export_level

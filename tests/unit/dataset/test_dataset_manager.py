@@ -8,16 +8,14 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.common.config import (
-    ConversationConfig,
     EndpointConfig,
     InputConfig,
-    ServiceConfig,
     UserConfig,
 )
 from aiperf.common.config.config_defaults import InputDefaults
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import CommandType, PublicDatasetType
+from aiperf.common.enums import CommandType
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -25,12 +23,31 @@ from aiperf.common.messages import (
     DatasetConfiguredNotification,
 )
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.config.config import AIPerfConfig
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import (
-    CustomDatasetType,
     DatasetSamplingStrategy,
     ServiceRunType,
 )
+
+_DEFAULT_ENDPOINT = {"urls": ["http://localhost:8000/v1/chat/completions"]}
+_DEFAULT_LOAD = {"type": "concurrency", "requests": 10, "concurrency": 1}
+
+
+def _make_config(*, datasets=None, **overrides):
+    """Create an AIPerfConfig with defaults for dataset tests."""
+    if datasets is None:
+        datasets = {
+            "main": {"type": "synthetic", "entries": 1, "prompts": {"isl": 128}},
+        }
+    return AIPerfConfig(
+        models=overrides.pop("models", ["test-model"]),
+        endpoint=overrides.pop("endpoint", _DEFAULT_ENDPOINT),
+        datasets=datasets,
+        load=overrides.pop("load", _DEFAULT_LOAD),
+        **overrides,
+    )
+
 
 # ============================================================================
 # Shared Fixtures
@@ -52,19 +69,15 @@ def mock_tokenizer(mock_tokenizer_cls):
 
 
 @pytest.fixture
-def base_user_config():
-    """Create a basic UserConfig for testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(model_names=["test-model"]),
-        input=InputConfig(conversation=ConversationConfig(num_dataset_entries=1)),
-    )
+def base_config():
+    """Create a basic AIPerfConfig for testing."""
+    return _make_config()
 
 
 @pytest.fixture
-async def initialized_dataset_manager(mock_tokenizer, base_user_config):
+async def initialized_dataset_manager(mock_tokenizer, base_config):
     """Create an initialized DatasetManager with mocked publish."""
-    service_config = ServiceConfig()
-    dataset_manager = DatasetManager(service_config, base_user_config)
+    dataset_manager = DatasetManager(base_config)
 
     await dataset_manager.initialize()
     dataset_manager.publish = AsyncMock()
@@ -73,7 +86,7 @@ async def initialized_dataset_manager(mock_tokenizer, base_user_config):
 
 
 @pytest.fixture
-async def configured_dataset_manager(initialized_dataset_manager, base_user_config):
+async def configured_dataset_manager(initialized_dataset_manager, base_config):
     """Create a fully configured DatasetManager ready for request handling."""
     await initialized_dataset_manager._profile_configure_command(
         Command(cid="test", cmd=CommandType.PROFILE_CONFIGURE)
@@ -156,20 +169,22 @@ class TestDatasetManager:
         filename = create_mooncake_trace_file(entries)
 
         try:
-            user_config = UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                input=InputConfig(
-                    file=filename, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
-                ),
+            config = _make_config(
+                datasets={
+                    "main": {
+                        "type": "file",
+                        "path": filename,
+                        "format": "mooncake_trace",
+                    },
+                },
             )
 
-            service_config = ServiceConfig()
-            dataset_manager = DatasetManager(service_config, user_config)
+            dataset_manager = DatasetManager(config)
 
             await dataset_manager.initialize()
 
             published_messages = await capture_published_messages(
-                dataset_manager, user_config
+                dataset_manager, config
             )
 
             # Verify the notification was published
@@ -223,20 +238,22 @@ class TestDatasetManager:
         filename = create_mooncake_trace_file(entries)
 
         try:
-            user_config = UserConfig(
-                endpoint=EndpointConfig(model_names=["test-model"]),
-                input=InputConfig(
-                    file=filename, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE
-                ),
+            config = _make_config(
+                datasets={
+                    "main": {
+                        "type": "file",
+                        "path": filename,
+                        "format": "mooncake_trace",
+                    },
+                },
             )
 
-            service_config = ServiceConfig()
-            dataset_manager = DatasetManager(service_config, user_config)
+            dataset_manager = DatasetManager(config)
 
             await dataset_manager.initialize()
 
             published_messages = await capture_published_messages(
-                dataset_manager, user_config
+                dataset_manager, config
             )
 
             # Verify the notification was published
@@ -282,14 +299,11 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
         # Create config with public dataset and NO explicit sampling strategy
-        user_config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(public_dataset=PublicDatasetType.SHAREGPT),
+        config = _make_config(
+            datasets={"main": {"type": "public", "name": "sharegpt"}},
         )
-        assert user_config.input.dataset_sampling_strategy is None
 
-        service_config = ServiceConfig()
-        dataset_manager = DatasetManager(service_config, user_config)
+        dataset_manager = DatasetManager(config)
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
@@ -298,8 +312,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
         # Verify the loader's recommended strategy was used (SEQUENTIAL for ShareGPT)
         assert (
-            user_config.input.dataset_sampling_strategy
-            == DatasetSamplingStrategy.SEQUENTIAL
+            config.input.dataset_sampling_strategy == DatasetSamplingStrategy.SEQUENTIAL
         )
 
     @pytest.mark.asyncio
@@ -310,13 +323,9 @@ class TestDatasetManagerSamplingStrategyDefaults:
         """Test that InputDefaults.DATASET_SAMPLING_STRATEGY is used as fallback."""
         # Create config with NO public dataset and NO explicit sampling strategy
         # This will use synthetic dataset generation
-        user_config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(conversation=ConversationConfig(num_dataset_entries=1)),
-        )
+        config = _make_config()
 
-        service_config = ServiceConfig()
-        dataset_manager = DatasetManager(service_config, user_config)
+        dataset_manager = DatasetManager(config)
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
@@ -324,9 +333,9 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
         # Synthetic composer sets its own default, which should be the same as InputDefaults
-        assert user_config.input.dataset_sampling_strategy is not None
+        assert config.input.dataset_sampling_strategy is not None
         assert (
-            user_config.input.dataset_sampling_strategy
+            config.input.dataset_sampling_strategy
             == InputDefaults.DATASET_SAMPLING_STRATEGY
         )
 
@@ -345,16 +354,18 @@ class TestDatasetManagerSamplingStrategyDefaults:
         mock_convert.return_value = create_mock_conversations(["session-1"])
 
         # Create config with explicit SHUFFLE strategy (different from loader's SEQUENTIAL)
-        user_config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
-                public_dataset=PublicDatasetType.SHAREGPT,
-                dataset_sampling_strategy=DatasetSamplingStrategy.SHUFFLE,
-            ),
+        config = _make_config(
+            datasets={
+                "main": {
+                    "type": "public",
+                    "name": "sharegpt",
+                },
+            },
         )
+        # Set explicit sampling strategy via the facade
+        config.input.dataset_sampling_strategy = DatasetSamplingStrategy.SHUFFLE
 
-        service_config = ServiceConfig()
-        dataset_manager = DatasetManager(service_config, user_config)
+        dataset_manager = DatasetManager(config)
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
@@ -362,10 +373,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
         )
 
         # Verify the explicit strategy was preserved, not overwritten by loader's SEQUENTIAL
-        assert (
-            user_config.input.dataset_sampling_strategy
-            == DatasetSamplingStrategy.SHUFFLE
-        )
+        assert config.input.dataset_sampling_strategy == DatasetSamplingStrategy.SHUFFLE
 
 
 class TestDatasetManagerMemoryAndClient:
@@ -375,7 +383,6 @@ class TestDatasetManagerMemoryAndClient:
     async def test_dataset_client_initialized_after_configuration(
         self,
         initialized_dataset_manager,
-        base_user_config,
     ):
         """Test that dataset client is initialized after profile configuration."""
         dataset_manager = initialized_dataset_manager
@@ -396,12 +403,8 @@ class TestDatasetManagerMemoryAndClient:
         mock_tokenizer,
     ):
         """Test that in-memory dataset is freed after dataset client is initialized."""
-        user_config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(conversation=ConversationConfig(num_dataset_entries=1)),
-        )
-        service_config = ServiceConfig()
-        dataset_manager = DatasetManager(service_config, user_config)
+        config = _make_config()
+        dataset_manager = DatasetManager(config)
 
         await dataset_manager.initialize()
         dataset_manager.publish = AsyncMock()
@@ -418,7 +421,6 @@ class TestDatasetManagerMemoryAndClient:
     async def test_dataset_configured_event_set_after_client_initialization(
         self,
         initialized_dataset_manager,
-        base_user_config,
     ):
         """Test that dataset_configured event is set after client initialization."""
         dataset_manager = initialized_dataset_manager
@@ -440,14 +442,8 @@ class TestDatasetManagerFallbackHandlers:
     @pytest.fixture
     async def dataset_manager_with_entries(self, mock_tokenizer):
         """Create a configured dataset manager with minimal entries."""
-        user_config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"]),
-            input=InputConfig(
-                conversation=ConversationConfig(num_dataset_entries=1),
-            ),
-        )
-        service_config = ServiceConfig()
-        dataset_manager = DatasetManager(service_config, user_config)
+        config = _make_config()
+        dataset_manager = DatasetManager(config)
 
         await dataset_manager.initialize()
         dataset_manager.publish = AsyncMock()
@@ -558,28 +554,27 @@ class TestKubernetesMode:
     """Test Kubernetes-specific behavior in DatasetManager."""
 
     def test_compress_only_kubernetes_returns_true(
-        self, base_user_config: UserConfig
+        self, base_config: AIPerfConfig
     ) -> None:
         """compress_only should be True when service_run_type is KUBERNETES."""
-        service_config = ServiceConfig(service_run_type=ServiceRunType.KUBERNETES)
-        manager = DatasetManager(service_config, base_user_config)
+        base_config.service_run_type = ServiceRunType.KUBERNETES
+        manager = DatasetManager(base_config)
         assert manager._compress_only is True
 
     def test_compress_only_multiprocessing_returns_false(
-        self, base_user_config: UserConfig
+        self, base_config: AIPerfConfig
     ) -> None:
         """compress_only should be False in local (multiprocessing) mode."""
-        service_config = ServiceConfig(service_run_type=ServiceRunType.MULTIPROCESSING)
-        manager = DatasetManager(service_config, base_user_config)
+        manager = DatasetManager(base_config)
         assert manager._compress_only is False
 
     @pytest.mark.asyncio
     async def test_configure_client_compress_only_skips_client_creation(
-        self, base_user_config: UserConfig
+        self, base_config: AIPerfConfig
     ) -> None:
         """In compress_only mode, _configure_dataset_client_and_free_memory skips client creation."""
-        service_config = ServiceConfig(service_run_type=ServiceRunType.KUBERNETES)
-        manager = DatasetManager(service_config, base_user_config)
+        base_config.service_run_type = ServiceRunType.KUBERNETES
+        manager = DatasetManager(base_config)
         # Simulate some dataset entries
         manager.dataset = {"conv1": MagicMock(), "conv2": MagicMock()}
         manager._conversation_ids_cache = ["conv1", "conv2"]
@@ -620,15 +615,11 @@ class TestDatasetManagerTokenizerSkip:
     @pytest.mark.usefixtures("_mock_dataset_steps")
     async def test_tokenizer_skipped_for_non_tokenizing_endpoint(self):
         """Test that tokenizer is not loaded when endpoint has tokenizes_input=false."""
-        user_config = UserConfig(
-            endpoint=EndpointConfig(
-                model_names=["nvidia/nemoretriever-page-elements-v3"],
-                type="image_retrieval",
-            ),
-            input=InputConfig(),
+        config = _make_config(
+            models=["nvidia/nemoretriever-page-elements-v3"],
+            endpoint={"urls": ["http://localhost:8000"], "type": "image_retrieval"},
         )
-        service_config = ServiceConfig()
-        dataset_manager = DatasetManager(service_config, user_config)
+        dataset_manager = DatasetManager(config)
         await dataset_manager.initialize()
         dataset_manager.publish = AsyncMock()
 
@@ -646,12 +637,10 @@ class TestDatasetManagerTokenizerSkip:
     @pytest.mark.usefixtures("_mock_dataset_steps", "mock_tokenizer")
     async def test_tokenizer_loaded_for_tokenizing_endpoint(self):
         """Test that tokenizer is loaded when endpoint has tokenizes_input=true."""
-        user_config = UserConfig(
-            endpoint=EndpointConfig(model_names=["test-model"], type="chat"),
-            input=InputConfig(),
+        config = _make_config(
+            endpoint={"urls": ["http://localhost:8000"], "type": "chat"},
         )
-        service_config = ServiceConfig()
-        dataset_manager = DatasetManager(service_config, user_config)
+        dataset_manager = DatasetManager(config)
         await dataset_manager.initialize()
         dataset_manager.publish = AsyncMock()
 

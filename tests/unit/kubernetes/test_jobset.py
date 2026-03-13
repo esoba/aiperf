@@ -528,8 +528,7 @@ class TestJobSetSpecContainerDetails:
             for container in containers:
                 assert "env" in container, f"{container['name']} missing env"
                 env_names = [e["name"] for e in container["env"]]
-                assert "AIPERF_CONFIG_USER_FILE" in env_names
-                assert "AIPERF_CONFIG_SERVICE_FILE" in env_names
+                assert "AIPERF_CONFIG_FILE" in env_names
 
     def test_worker_containers_have_controller_host(
         self, jobset_manifest: dict[str, Any]
@@ -1587,8 +1586,7 @@ class TestJobSetSpecPrivateMethods:
         """Test _create_env_vars without controller_host."""
         env = jobset_spec._create_env_vars()
         env_names = [e["name"] for e in env]
-        assert "AIPERF_CONFIG_USER_FILE" in env_names
-        assert "AIPERF_CONFIG_SERVICE_FILE" in env_names
+        assert "AIPERF_CONFIG_FILE" in env_names
         assert "AIPERF_DATASET_MMAP_BASE_PATH" in env_names
         assert "AIPERF_JOB_ID" in env_names
         assert "AIPERF_NAMESPACE" in env_names

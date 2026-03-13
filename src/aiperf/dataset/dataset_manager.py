@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import OutputDefaults, ServiceConfig, UserConfig
+from aiperf.common.config import OutputDefaults
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommAddress,
@@ -71,20 +71,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             reply_client_address=CommAddress.DATASET_MANAGER_PROXY_BACKEND,
             reply_client_bind=False,
             **kwargs,
         )
-        self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[
             str, Conversation
@@ -97,14 +94,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # This avoids creating large uncompressed files on the control plane.
         # WorkerPodManagers will download compressed files and decompress locally.
         self._compress_only = (
-            service_config.service_run_type == ServiceRunType.KUBERNETES
+            self.service_config.service_run_type == ServiceRunType.KUBERNETES
         )
 
         BackingStoreClass = plugins.get_class(
             PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
         )
         self._backing_store: DatasetBackingStoreProtocol = BackingStoreClass(
-            benchmark_id=user_config.benchmark_id,
+            benchmark_id=self.user_config.benchmark_id,
             compress_only=self._compress_only,
         )
         self._dataset_client: DatasetClientStoreProtocol | None = None
@@ -180,15 +177,30 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         """Configure the tokenizer for the dataset manager."""
         model_name = self.user_config.endpoint.model_names[0]
         tokenizer_config = self.user_config.tokenizer
-        tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model_name)
+
+        if tokenizer_config is None:
+            tokenizer_name = model_name
+            trust_remote_code = False
+            revision = "main"
+            resolve_alias = True
+        elif hasattr(tokenizer_config, "get_tokenizer_name_for_model"):
+            tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model_name)
+            trust_remote_code = tokenizer_config.trust_remote_code
+            revision = tokenizer_config.revision
+            resolve_alias = tokenizer_config.should_resolve_alias
+        else:
+            tokenizer_name = tokenizer_config.name or model_name
+            trust_remote_code = tokenizer_config.trust_remote_code
+            revision = tokenizer_config.revision
+            resolve_alias = tokenizer_config.resolved_names is None
 
         # Let exceptions propagate - controller_utils will display the error panel
         self.tokenizer = await asyncio.to_thread(
             Tokenizer.from_pretrained,
             tokenizer_name,
-            trust_remote_code=tokenizer_config.trust_remote_code,
-            revision=tokenizer_config.revision,
-            resolve_alias=tokenizer_config.should_resolve_alias,
+            trust_remote_code=trust_remote_code,
+            revision=revision,
+            resolve_alias=resolve_alias,
         )
 
     def _generate_input_payloads(
@@ -293,7 +305,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         dataset = await loader.load_dataset()
         # Only use loader's recommended strategy if user hasn't explicitly set one
-        if "dataset_sampling_strategy" not in self.user_config.input.model_fields_set:
+        if self.user_config.input.dataset_sampling_strategy is None:
             self.user_config.input.dataset_sampling_strategy = (
                 loader.get_recommended_sampling_strategy()
             )

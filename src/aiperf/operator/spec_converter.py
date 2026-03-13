@@ -3,8 +3,7 @@
 """Convert AIPerfJob CRD spec to AIPerf configuration objects.
 
 This module provides the translation layer between Kubernetes-native AIPerfJob
-custom resource specs and AIPerf's AIPerfConfig model. Legacy UserConfig/ServiceConfig
-are produced via the reverse converter for backward compatibility with services.
+custom resource specs and AIPerf's AIPerfConfig model.
 """
 
 import copy
@@ -12,9 +11,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.config.config import AIPerfConfig
-from aiperf.config.reverse_converter import convert_to_legacy_configs
 from aiperf.kubernetes.jobset import PodCustomization, SecretMount
 
 # Default connections per worker for auto-scaling calculation
@@ -45,13 +42,11 @@ class AIPerfJobSpecConverter:
 
     The CRD spec directly maps to AIPerfConfig schema. The spec fields
     (models, endpoint, datasets, load, etc.) are passed to AIPerfConfig
-    for validation. Legacy UserConfig/ServiceConfig are produced via
-    the reverse converter for backward compatibility.
+    for validation.
 
     Example:
         >>> converter = AIPerfJobSpecConverter(spec, "my-job", "default")
         >>> config = converter.to_aiperf_config()
-        >>> user_config, service_config = converter.to_legacy_configs()
 
     Attributes:
         spec: The AIPerfJob CR spec dict.
@@ -92,18 +87,6 @@ class AIPerfJobSpecConverter:
         config_dict["artifacts"].setdefault("dir", "/results")
 
         return AIPerfConfig.model_validate(config_dict)
-
-    def to_legacy_configs(self) -> tuple[UserConfig, ServiceConfig]:
-        """Convert AIPerfJob spec to legacy UserConfig and ServiceConfig.
-
-        Uses the reverse converter to bridge AIPerfConfig to the legacy
-        config objects that services still expect.
-
-        Returns:
-            Tuple of (UserConfig, ServiceConfig).
-        """
-        config = self.to_aiperf_config()
-        return convert_to_legacy_configs(config)
 
     def to_pod_customization(self) -> PodCustomization:
         """Convert podTemplate spec to PodCustomization.

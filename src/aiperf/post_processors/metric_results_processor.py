@@ -3,7 +3,6 @@
 from collections.abc import Callable
 from typing import Any
 
-from aiperf.common.config import UserConfig
 from aiperf.common.enums import (
     MetricDictValueTypeT,
     MetricFlags,
@@ -30,7 +29,7 @@ class MetricResultsProcessor(BaseMetricsProcessor):
     It is responsible for processing the results and returning them to the RecordsManager, as well as summarizing the results.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any):
+    def __init__(self, user_config: object, **kwargs: Any):
         super().__init__(user_config=user_config, **kwargs)
         # For derived metrics, we don't care about splitting up the error metrics
         # Note: _setup_metrics returns metrics in dependency order, which includes

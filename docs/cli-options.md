@@ -34,6 +34,12 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 
 Run an AIPerf service in a single process.
 
+### [`config generate`](#aiperf-config-generate)
+
+Generate a YAML config file or Kubernetes CR from CLI options.
+
+[Endpoint](#endpoint) • [Input](#input) • [Fixed Schedule](#fixed-schedule) • [Goodput](#goodput) • [Output](#output) • [HTTP Trace](#http-trace) • [Tokenizer](#tokenizer) • [Load Generator](#load-generator) • [Warmup](#warmup) • [User-Centric Rate](#user-centric-rate) • [Request Cancellation](#request-cancellation) • [Conversation Input](#conversation-input) • [Input Sequence Length (ISL)](#input-sequence-length-isl) • [Output Sequence Length (OSL)](#output-sequence-length-osl) • [Prompt](#prompt) • [Prefix Prompt](#prefix-prompt) • [Rankings](#rankings) • [Synthesis](#synthesis) • [Audio Input](#audio-input) • [Image Input](#image-input) • [Video Input](#video-input) • [Service](#service) • [Server Metrics](#server-metrics) • [GPU Telemetry](#gpu-telemetry) • [UI](#ui) • [Workers](#workers) • [ZMQ Communication](#zmq-communication) • [Multi-Run](#multi-run) • [Accuracy](#accuracy) • [Parameters](#parameters)
+
 ### [`kube attach`](#aiperf-kube-attach)
 
 Attach to a running AIPerf benchmark and stream progress.
@@ -1070,6 +1076,823 @@ HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes live
 #### `--api-port` `<int>`
 
 HTTP port for API endpoints (e.g., /api/dataset, /api/progress). Only used by services that expose HTTP APIs.
+
+<hr/>
+
+## `aiperf config generate`
+
+Generate a YAML config file or Kubernetes CR from CLI options.
+
+Converts profile CLI flags into a reusable configuration file. Supports plain YAML config or Kubernetes AIPerfJob custom resource format.
+
+**Examples:**
+
+```bash
+# Generate YAML config from CLI options
+aiperf config generate --model Qwen/Qwen3-0.6B --url localhost:8000 --streaming
+
+# Save to file
+aiperf config generate --model Qwen/Qwen3-0.6B --url localhost:8000 -o benchmark.yaml
+
+# Generate Kubernetes AIPerfJob CR
+aiperf config generate --model Qwen/Qwen3-0.6B --url localhost:8000 \
+    --format cr --cr-name my-bench --cr-image aiperf:latest
+
+# Full example with load options
+aiperf config generate --model Qwen/Qwen3-0.6B --url localhost:8000 \
+    --concurrency 64 --request-count 1000 --streaming -o config.yaml
+```
+
+### Endpoint
+
+#### `-m`, `--model-names`, `--model` `<list>`
+
+List of model configurations. At least one model required.
+
+#### `--model-selection-strategy` `<str>`
+
+Strategy for selecting models when multiple are configured. round_robin cycles through models, random selects randomly, weighted uses configured weights, modality_aware routes by input type.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `round_robin` | _default_ | Cycle through models in order. The nth prompt is assigned to model at index (n mod number_of_models). |
+| `random` |  | Randomly select a model for each prompt using uniform distribution. |
+| `weighted` |  | Select models based on configured weights. Each model's weight determines its selection probability. |
+
+#### `-u`, `--url` `<list>`
+
+List of server URLs to benchmark. Requests distributed according to url_strategy. Example: ['http://localhost:8000/v1/chat/completions'].
+<br/>_Default: `['localhost:8000']`_
+
+#### `--url-strategy` `<str>`
+
+Strategy for distributing requests across multiple URLs. round_robin cycles through URLs in order.
+<br/>_Choices: [`round_robin`]_
+<br/>_Default: `round_robin`_
+
+#### `--endpoint-type` `<str>`
+
+API endpoint type determining request/response format. chat: OpenAI chat completions, completions: OpenAI completions, embeddings: vector embeddings, rankings: reranking, template: custom format.
+<br/>_Choices: [`chat`, `cohere_rankings`, `completions`, `chat_embeddings`, `embeddings`, `hf_tei_rankings`, `huggingface_generate`, `image_generation`, `video_generation`, `image_retrieval`, `nim_embeddings`, `nim_rankings`, `solido_rag`, `template`]_
+<br/>_Default: `chat`_
+
+#### `--streaming`
+
+Enable streaming (Server-Sent Events) responses. Required for accurate TTFT (time to first token) measurement. Server must support streaming for this to work.
+<br/>_Flag (no value required)_
+
+#### `--custom-endpoint`, `--endpoint` `<str>`
+
+Override default endpoint path. Use for servers with non-standard API paths. Example: '/custom/v2/generate'.
+
+#### `--api-key` `<str>`
+
+API authentication key. Supports environment variable substitution: ${OPENAI_API_KEY}. Can also use ${VAR:default} syntax for defaults.
+
+#### `--request-timeout-seconds` `<float>`
+
+Request timeout in seconds. Requests exceeding this duration are marked as failed. Should exceed expected max response time.
+<br/>_Default: `600.0`_
+
+#### `--transport`, `--transport-type` `<str>`
+
+HTTP transport protocol (http/https). Auto-detected from URL scheme if not specified. Explicit setting overrides auto-detection.
+<br/>_Choices: [`http`]_
+
+#### `--use-legacy-max-tokens`
+
+Use 'max_tokens' field instead of 'max_completion_tokens'. Enable for compatibility with older OpenAI API versions.
+<br/>_Flag (no value required)_
+
+#### `--use-server-token-count`
+
+Use server-reported token counts from response usage field. When true, trusts usage.prompt_tokens and usage.completion_tokens. When false, counts tokens locally using configured tokenizer.
+<br/>_Flag (no value required)_
+
+#### `--connection-reuse-strategy` `<str>`
+
+HTTP connection management strategy. pooled: shared connection pool (fastest), never: new connection per request (includes TCP overhead), sticky_sessions: dedicated connection per session.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `pooled` | _default_ | Connections are pooled and reused across all requests |
+| `never` |  | New connection for each request, closed after response |
+| `sticky-user-sessions` |  | Connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing) |
+
+#### `--download-video-content`
+
+For video generation endpoints, download the video content after generation completes. When enabled, request latency includes the video download time. When disabled, only generation time is measured.
+<br/>_Flag (no value required)_
+
+#### `--extra-inputs` `<str>`
+
+Additional fields to include in request body. Merged into every request. Common fields: temperature, top_p, top_k, stop.
+
+#### `-H`, `--header` `<str>`
+
+Custom HTTP headers to include in all requests. Useful for authentication, tracing, or routing. Values support environment variable substitution.
+
+### Input
+
+#### `--input-file` `<str>`
+
+Path to file or directory containing benchmark dataset. Can be absolute or relative. Supported formats depend on the format field: JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace, directories for random_pool.
+
+#### `--public-dataset` `<str>`
+
+Pre-configured public dataset to download and use for benchmarking. AIPerf automatically downloads and parses these datasets.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `sharegpt` |  | ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges. |
+
+#### `--custom-dataset-type` `<str>`
+
+Dataset file format determining parsing logic and expected file structure. single_turn: JSONL with single prompt-response exchanges. multi_turn: JSONL with conversation history. mooncake_trace: timestamped trace files for replay. random_pool: directory of reusable prompts.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `single_turn` | _default_ | Simple prompt-response pairs. |
+| `multi_turn` |  | Conversational data with multiple turns. |
+| `mooncake_trace` |  | Mooncake production trace format. |
+| `random_pool` |  | Treat file as a pool for random sampling. |
+
+#### `--dataset-sampling-strategy` `<str>`
+
+Strategy for selecting entries from dataset during benchmarking. sequential: iterate in order, wrapping to start after end. random: randomly sample with replacement (entries may repeat). shuffle: random permutation without replacement, re-shuffling after exhaustion.
+<br/>_Choices: [`random`, `sequential`, `shuffle`]_
+<br/>_Default: `sequential`_
+
+#### `--random-seed` `<int>`
+
+Global random seed for reproducibility. Can be overridden per-dataset. If not set, uses system entropy.
+
+### Fixed Schedule
+
+#### `--fixed-schedule`, `--no-fixed-schedule`
+
+Run requests according to timestamps specified in the input dataset. When enabled, AIPerf replays the exact timing pattern from the dataset. This mode is automatically enabled for mooncake_trace datasets.
+
+#### `--fixed-schedule-auto-offset`
+
+Normalize trace timestamps to start at 0. Subtracts minimum timestamp from all entries. Only used with type='fixed_schedule'.
+<br/>_Flag (no value required)_
+<br/>_Default: `True`_
+
+#### `--fixed-schedule-start-offset` `<int>`
+
+Filter out trace requests before this timestamp in ms (must be >= 0). Only used with type='fixed_schedule'.
+
+#### `--fixed-schedule-end-offset` `<int>`
+
+Filter out trace requests after this timestamp in ms (must be >= 0). Only used with type='fixed_schedule'.
+
+### Goodput
+
+#### `--goodput` `<str>`
+
+SLO (Service Level Objectives) configuration as a generic dict. Maps metric names to threshold values. A request is counted as good only if it meets ALL specified thresholds.
+
+### Output
+
+#### `--output-artifact-dir`, `--artifact-dir` `<str>`
+
+Output directory for all benchmark artifacts. Created if it doesn't exist.
+<br/>_Default: `artifacts`_
+
+#### `--profile-export-prefix`, `--profile-export-file` `<str>`
+
+Filename prefix for all exported files. Example: 'my_run' produces 'my_run_summary.json', 'my_run_records.jsonl'.
+
+#### `--export-level`, `--profile-export-level` `<str>`
+
+Controls which output files are generated. summary: Only aggregate metrics files. records: Includes per-request metrics. raw: Includes raw request/response data.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `summary` | _default_ | Export only aggregated/summarized metrics (default, most compact) |
+| `records` |  | Export per-record metrics after aggregation with display unit conversion |
+| `raw` |  | Export raw parsed records with full request/response data (most detailed) |
+
+#### `--slice-duration` `<float>`
+
+Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.
+
+### HTTP Trace
+
+#### `--export-http-trace`
+
+Export HTTP trace data for debugging.
+<br/>_Flag (no value required)_
+
+#### `--show-trace-timing`
+
+Display HTTP trace timing metrics in console output. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration.
+<br/>_Flag (no value required)_
+
+### Tokenizer
+
+#### `--tokenizer` `<str>`
+
+HuggingFace tokenizer identifier or local filesystem path. Should match the model's tokenizer for accurate token counts. Example: 'meta-llama/Llama-3.1-8B-Instruct'.
+
+#### `--tokenizer-revision` `<str>`
+
+Model revision to use: branch name, tag, or commit hash. Use for version pinning to ensure reproducibility.
+<br/>_Default: `main`_
+
+#### `--tokenizer-trust-remote-code`
+
+Allow execution of custom tokenizer code from the repository. Required for some models but poses security risk. Only enable for trusted sources.
+<br/>_Flag (no value required)_
+
+### Load Generator
+
+#### `--benchmark-duration` `<float>`
+
+Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'.
+
+#### `--benchmark-grace-period` `<float>`
+
+Seconds to wait for in-flight requests at phase end (must be >= 0). Supports: 30, '30s', '2m'.
+
+#### `--concurrency` `<int>`
+
+Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap.
+
+#### `--prefill-concurrency` `<int>`
+
+Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.
+
+#### `--request-rate` `<float>`
+
+Target request rate in requests per second (must be > 0). Required for poisson/gamma/constant types. For user_centric: global rate shared across all users.
+
+#### `--arrival-pattern`, `--request-rate-mode` `<str>`
+
+Sets the arrival pattern for the load generated by AIPerf. Valid values: constant, poisson, gamma. constant: Generate requests at a fixed rate. poisson: Generate requests using a poisson distribution. gamma: Generate requests using a gamma distribution with tunable smoothness.
+<br/>_Choices: [`concurrency_burst`, `constant`, `gamma`, `poisson`]_
+<br/>_Default: `poisson`_
+
+#### `--arrival-smoothness`, `--vllm-burstiness` `<float>`
+
+Gamma distribution shape parameter (must be > 0). Only used with type='gamma'. 1.0 = Poisson, &lt;1 = bursty, >1 = regular.
+
+#### `--request-count`, `--num-requests` `<int>`
+
+Stop after this many requests sent (must be >= 1).
+
+#### `--concurrency-ramp-duration` `<float>`
+
+Seconds to ramp from start to target value.
+
+#### `--prefill-concurrency-ramp-duration` `<float>`
+
+Seconds to ramp from start to target value.
+
+### Warmup
+
+#### `--request-rate-ramp-duration` `<float>`
+
+Seconds to ramp from start to target value.
+
+#### `--warmup-request-count`, `--num-warmup-requests` `<int>`
+
+Warmup phase: Stop after this many requests sent (must be >= 1). If not set, uses the --request-count value.
+
+#### `--warmup-duration` `<float>`
+
+Warmup phase: Stop after this time elapsed (must be > 0). Supports: 300, '5m', '2h'. If not set, uses the --benchmark-duration value.
+
+#### `--num-warmup-sessions` `<int>`
+
+Warmup phase: Stop after this many sessions completed (must be >= 1). If not set, uses the --conversation-num value.
+
+#### `--warmup-concurrency` `<int>`
+
+Warmup phase: Max concurrent in-flight requests (must be >= 1). For concurrency type: primary control. For rate types: acts as a cap. If not set, uses the --concurrency value.
+
+#### `--warmup-prefill-concurrency` `<int>`
+
+Warmup phase: Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received. If not set, uses the --prefill-concurrency value.
+
+#### `--warmup-request-rate` `<float>`
+
+Warmup phase: Target request rate in requests per second (must be > 0). Required for poisson/gamma/constant types. For user_centric: global rate shared across all users. If not set, uses the --request-rate value.
+
+#### `--warmup-arrival-pattern` `<str>`
+
+Warmup phase: Load generation type. concurrency: concurrency-controlled immediate dispatch, poisson/gamma/constant: rate-controlled with arrival distribution, user_centric: N users sharing global rate, fixed_schedule: replay from timestamps. If not set, uses the --arrival-pattern value.
+
+#### `--warmup-grace-period` `<float>`
+
+Warmup phase: Seconds to wait for in-flight requests at phase end (must be >= 0). Supports: 30, '30s', '2m'. If not set, uses the --benchmark-grace-period value.
+
+#### `--warmup-concurrency-ramp-duration` `<float>`
+
+Warmup phase: Seconds to ramp from start to target value. If not set, uses the --concurrency-ramp-duration value.
+
+#### `--warmup-prefill-concurrency-ramp-duration` `<float>`
+
+Warmup phase: Seconds to ramp from start to target value. If not set, uses the --prefill-concurrency-ramp-duration value.
+
+#### `--warmup-request-rate-ramp-duration` `<float>`
+
+Warmup phase: Seconds to ramp from start to target value. If not set, uses the --request-rate-ramp-duration value.
+
+### User-Centric Rate
+
+#### `--user-centric-rate` `<float>`
+
+Enable user-centric rate limiting mode with the specified request rate (QPS). Each user has a gap = num_users / qps between turns. Designed for KV cache benchmarking with realistic multi-user patterns. Requires --num-users to be set.
+
+#### `--num-users` `<int>`
+
+Number of simulated concurrent users (must be >= 1). Required for user_centric type. Requests distributed across users to achieve global rate.
+
+### Request Cancellation
+
+#### `--request-cancellation-rate` `<float>`
+
+Percentage (0-100) of requests to cancel for testing cancellation handling. Cancelled requests are sent normally but aborted after --request-cancellation-delay seconds.
+
+#### `--request-cancellation-delay` `<float>`
+
+Seconds to wait after the request is fully sent before cancelling. A delay of 0 means send the full request, then immediately disconnect. Requires --request-cancellation-rate to be set.
+<br/>_Default: `0.0`_
+
+### Conversation Input
+
+#### `--conversation-turn-delay-mean`, `--session-turn-delay-mean` `<float>`
+
+Mean delay in milliseconds between consecutive turns within a multi-turn conversation. Simulates user think time. Set to 0 for back-to-back turns.
+<br/>_Default: `0.0`_
+
+#### `--conversation-turn-delay-stddev`, `--session-turn-delay-stddev` `<float>`
+
+Standard deviation for turn delays in milliseconds.
+<br/>_Default: `0.0`_
+
+#### `--conversation-turn-delay-ratio`, `--session-delay-ratio` `<float>`
+
+Multiplier for scaling all turn delays. Values &lt; 1 speed up, > 1 slow down.
+<br/>_Default: `1.0`_
+
+#### `--conversation-turn-mean`, `--session-turns-mean` `<int>`
+
+Mean number of request-response turns per conversation. Set to 1 for single-turn.
+<br/>_Default: `1`_
+
+#### `--conversation-turn-stddev`, `--session-turns-stddev` `<int>`
+
+Standard deviation for number of turns per conversation.
+<br/>_Default: `0`_
+
+#### `--conversation-num`, `--num-conversations`, `--num-sessions` `<int>`
+
+Stop after this many sessions completed (must be >= 1).
+
+#### `--num-dataset-entries`, `--num-prompts` `<int>`
+
+Total number of unique entries to generate for the dataset. Each entry represents a unique prompt with sampled ISL/OSL. Entries are reused across conversations and turns according to the sampling strategy. Higher values provide more diversity.
+<br/>_Default: `100`_
+
+### Input Sequence Length (ISL)
+
+#### `--prompt-input-tokens-mean`, `--synthetic-input-tokens-mean`, `--isl` `<int>`
+
+The mean (average) value of the distribution. For token counts, represents the target number of tokens.
+<br/>_Default: `550`_
+
+#### `--prompt-input-tokens-stddev`, `--synthetic-input-tokens-stddev`, `--isl-stddev` `<float>`
+
+The standard deviation of the distribution. A value of 0 means deterministic (no variation). Higher values produce more spread in sampled values.
+<br/>_Default: `0.0`_
+
+#### `--prompt-input-tokens-block-size`, `--synthetic-input-tokens-block-size`, `--isl-block-size` `<int>`
+
+Token block size for hash-based prompt caching in mooncake_trace datasets. When hash_ids are provided in trace entries, prompts are divided into blocks of this size. Each hash_id maps to a cached block, enabling simulation of KV-cache sharing patterns from production workloads. Total prompt length = (num_hash_ids - 1) * block_size + final_block_size.
+
+#### `--seq-dist`, `--sequence-distribution` `<str>`
+
+Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Format: ISL,OSL:prob;ISL,OSL:prob (probabilities 0-100 summing to 100).
+
+### Output Sequence Length (OSL)
+
+#### `--prompt-output-tokens-mean`, `--output-tokens-mean`, `--osl` `<int>`
+
+The mean (average) value of the distribution. For token counts, represents the target number of tokens.
+
+#### `--prompt-output-tokens-stddev`, `--output-tokens-stddev`, `--osl-stddev` `<float>`
+
+The standard deviation of the distribution. A value of 0 means deterministic (no variation). Higher values produce more spread in sampled values.
+<br/>_Default: `0.0`_
+
+### Prompt
+
+#### `-b`, `--prompt-batch-size`, `--batch-size-text`, `--batch-size` `<int>`
+
+Number of text inputs to include in each request for batch processing endpoints. Supported by embeddings and rankings endpoint types where models can process multiple inputs simultaneously. Set to 1 for single-input requests. Not applicable to chat or completions endpoints.
+<br/>_Default: `1`_
+
+### Prefix Prompt
+
+#### `--prompt-prefix-pool-size`, `--prefix-prompt-pool-size`, `--num-prefix-prompts` `<int>`
+
+Number of distinct prefix prompts to generate for KV cache testing. Each prefix is prepended to user prompts, simulating cached context scenarios. Prefixes are randomly selected from pool per request. Mutually exclusive with shared_system_length/user_context_length.
+<br/>_Default: `0`_
+
+#### `--prompt-prefix-length`, `--prefix-prompt-length` `<int>`
+
+Token length for each prefix prompt in the pool. Only used when pool_size is set. Note: due to prefix and user prompts being concatenated, the final prompt token count may be off by one. Mutually exclusive with shared_system_length/user_context_length.
+<br/>_Default: `0`_
+
+#### `--shared-system-prompt-length` `<int>`
+
+Length of shared system prompt in tokens. This prompt is identical across all sessions and appears as a system message. First part of a two-part prefix structure with high cache hit rate expected. Mutually exclusive with pool_size/length.
+
+#### `--user-context-prompt-length` `<int>`
+
+Length of per-session user context prompt in tokens. Each dataset entry gets a unique user context prompt. Second part of two-part prefix structure with lower cache hit rate expected. Mutually exclusive with pool_size/length.
+
+### Rankings
+
+#### `--rankings-passages-mean` `<int>`
+
+The mean (average) value of the distribution. For token counts, represents the target number of tokens.
+<br/>_Default: `10`_
+
+#### `--rankings-passages-stddev` `<int>`
+
+The standard deviation of the distribution. A value of 0 means deterministic (no variation). Higher values produce more spread in sampled values.
+<br/>_Default: `0`_
+
+#### `--rankings-passages-prompt-token-mean` `<int>`
+
+The mean (average) value of the distribution. For token counts, represents the target number of tokens.
+<br/>_Default: `128`_
+
+#### `--rankings-passages-prompt-token-stddev` `<int>`
+
+The standard deviation of the distribution. A value of 0 means deterministic (no variation). Higher values produce more spread in sampled values.
+<br/>_Default: `0`_
+
+#### `--rankings-query-prompt-token-mean` `<int>`
+
+The mean (average) value of the distribution. For token counts, represents the target number of tokens.
+<br/>_Default: `32`_
+
+#### `--rankings-query-prompt-token-stddev` `<int>`
+
+The standard deviation of the distribution. A value of 0 means deterministic (no variation). Higher values produce more spread in sampled values.
+<br/>_Default: `0`_
+
+### Synthesis
+
+#### `--synthesis-speedup-ratio` `<float>`
+
+Multiplier for timestamp scaling in synthesized traces. 1.0 = real-time, 2.0 = 2x faster, 0.5 = 2x slower.
+<br/>_Default: `1.0`_
+
+#### `--synthesis-prefix-len-multiplier` `<float>`
+
+Multiplier for core prefix branch lengths in the radix tree. 1.5 means prefix branches are 50%% longer.
+<br/>_Default: `1.0`_
+
+#### `--synthesis-prefix-root-multiplier` `<int>`
+
+Number of independent radix trees to distribute traces across. Higher values increase prefix diversity.
+<br/>_Default: `1`_
+
+#### `--synthesis-prompt-len-multiplier` `<float>`
+
+Multiplier for leaf path (unique prompt) lengths. 2.0 means prompts are 2x longer.
+<br/>_Default: `1.0`_
+
+#### `--synthesis-max-isl` `<int>`
+
+Maximum input sequence length filter. Traces with input_length > max_isl are skipped entirely.
+
+#### `--synthesis-max-osl` `<int>`
+
+Maximum output sequence length cap. Traces with output_length > max_osl are capped to this value (not filtered).
+
+### Audio Input
+
+#### `--audio-length-mean` `<float>`
+
+The mean (average) value of the distribution. For token counts, represents the target number of tokens.
+<br/>_Default: `10.0`_
+
+#### `--audio-length-stddev` `<float>`
+
+The standard deviation of the distribution. A value of 0 means deterministic (no variation). Higher values produce more spread in sampled values.
+<br/>_Default: `0.0`_
+
+#### `--audio-batch-size`, `--batch-size-audio` `<int>`
+
+Number of audio inputs to include in each multimodal request. Supported with chat endpoint type for multimodal models. Set to 0 to disable audio inputs.
+<br/>_Default: `0`_
+
+#### `--audio-format` `<str>`
+
+File format for generated audio files. wav: uncompressed PCM (larger files). mp3: compressed (smaller files). Format affects file size in multimodal requests but not audio characteristics.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `wav` | _default_ | WAV format. Uncompressed audio, larger file sizes, best quality. |
+| `mp3` |  | MP3 format. Compressed audio, smaller file sizes, good quality. |
+
+#### `--audio-depths` `<list>`
+
+List of audio bit depths in bits to randomly select from. Each audio file is assigned a random depth from this list. Common values: 8 (low quality), 16 (CD quality), 24 (professional), 32 (high-end). Specify multiple values for mixed-quality testing.
+
+#### `--audio-sample-rates` `<list>`
+
+List of audio sample rates in kHz to randomly select from. Common values: 8.0 (telephony), 16.0 (speech), 44.1 (CD quality), 48.0 (professional). Specify multiple values for mixed-quality testing.
+
+#### `--audio-num-channels` `<int>`
+
+Number of audio channels. 1 = mono (single channel), 2 = stereo (left/right channels). Stereo doubles file size. Most speech models use mono.
+<br/>_Default: `1`_
+
+### Image Input
+
+#### `--image-height-mean` `<float>`
+
+The mean (average) value of the distribution. For token counts, represents the target number of tokens.
+<br/>_Default: `512.0`_
+
+#### `--image-height-stddev` `<float>`
+
+The standard deviation of the distribution. A value of 0 means deterministic (no variation). Higher values produce more spread in sampled values.
+<br/>_Default: `0.0`_
+
+#### `--image-width-mean` `<float>`
+
+The mean (average) value of the distribution. For token counts, represents the target number of tokens.
+<br/>_Default: `512.0`_
+
+#### `--image-width-stddev` `<float>`
+
+The standard deviation of the distribution. A value of 0 means deterministic (no variation). Higher values produce more spread in sampled values.
+<br/>_Default: `0.0`_
+
+#### `--image-batch-size`, `--batch-size-image` `<int>`
+
+Number of images to include in each multimodal request. Supported with chat endpoint type for vision-language models. Set to 0 to disable image inputs. Higher batch sizes test multi-image understanding and increase request payload size.
+<br/>_Default: `0`_
+
+#### `--image-format` `<str>`
+
+Image file format for generated images. png: lossless compression (larger files, best quality). jpeg: lossy compression (smaller files, good quality). random: randomly select between PNG and JPEG per image. Format affects file size in multimodal requests and encoding overhead.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `png` |  | PNG format. Lossless compression, larger file sizes, best quality. |
+| `jpeg` | _default_ | JPEG format. Lossy compression, smaller file sizes, good for photos. |
+| `random` |  | Randomly select PNG or JPEG for each image. |
+
+### Video Input
+
+#### `--video-batch-size`, `--batch-size-video` `<int>`
+
+Number of video files to include in each multimodal request. Supported with chat endpoint type for video understanding models. Set to 0 to disable video inputs. Higher batch sizes significantly increase request payload size.
+<br/>_Default: `0`_
+
+#### `--video-duration` `<float>`
+
+Duration in seconds for each generated video clip. Combined with fps, determines total frame count (frames = duration * fps). Longer durations increase file size and processing time. Typical values: 1-10 seconds for testing.
+<br/>_Default: `1.0`_
+
+#### `--video-fps` `<int>`
+
+Frames per second for generated video. Higher FPS creates smoother video but increases frame count and file size. Common values: 4 (minimal, recommended for Cosmos models), 24 (cinematic), 30 (standard), 60 (high frame rate). Total frames = duration * fps.
+<br/>_Default: `4`_
+
+#### `--video-width` `<int>`
+
+Video frame width in pixels. Determines video resolution and file size. Common values: 640 (SD), 1280 (HD), 1920 (Full HD). If not specified, uses codec/format defaults.
+
+#### `--video-height` `<int>`
+
+Video frame height in pixels. Combined with width determines aspect ratio and total pixel count per frame. Common values: 480 (SD), 720 (HD), 1080 (Full HD). If not specified, uses codec/format defaults.
+
+#### `--video-synth-type` `<str>`
+
+Algorithm for generating synthetic video content. Different types produce different visual patterns for testing. Content doesn't affect semantic meaning but may impact encoding efficiency and file size.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `moving_shapes` | _default_ | Generate videos with animated geometric shapes moving across the frame |
+| `grid_clock` |  | Generate videos with a grid pattern and frame number overlay for frame-accurate verification |
+| `noise` |  | Generate videos with random noise frames |
+
+#### `--video-format` `<str>`
+
+Container format for generated video files. webm: VP9 codec, BSD-licensed, recommended for open-source workflows. mp4: H.264/H.265, widely compatible. avi: legacy, larger files. mkv: Matroska, flexible container. Format affects compatibility, file size, and encoding options.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `mp4` |  | MP4 container. Widely compatible, good for H.264/H.265 codecs. |
+| `webm` | _default_ | WebM container. Open format, optimized for web, good for VP9 codec. |
+
+#### `--video-codec` `<str>`
+
+Video codec for encoding. Common options: libvpx-vp9 (CPU, BSD-licensed, default for WebM), libx264 (CPU, GPL, widely compatible), libx265 (CPU, GPL, smaller files), h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). Any FFmpeg-supported codec can be used.
+<br/>_Default: `libvpx-vp9`_
+
+### Service
+
+#### `--log-level` `<str>`
+
+Global logging verbosity level. trace: most verbose, error: least verbose.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `TRACE` |  | Most verbose. Logs all operations including ZMQ messages and internal state changes. |
+| `DEBUG` |  | Detailed debugging information. Logs function calls and important state transitions. |
+| `INFO` | _default_ | General informational messages. Default level showing benchmark progress and results. |
+| `NOTICE` |  | Important informational messages that are more significant than INFO but not warnings. |
+| `WARNING` |  | Warning messages for potentially problematic situations that don't prevent execution. |
+| `SUCCESS` |  | Success messages for completed operations and milestones. |
+| `ERROR` |  | Error messages for failures that prevent specific operations but allow continued execution. |
+| `CRITICAL` |  | Critical errors that may cause the benchmark to fail or produce invalid results. |
+
+#### `-v`, `--verbose`
+
+Equivalent to --log-level DEBUG. Enables detailed logging and switches UI to simple mode.
+<br/>_Flag (no value required)_
+
+#### `-vv`, `--extra-verbose`
+
+Equivalent to --log-level TRACE. Most verbose logging including ZMQ messages. Switches UI to simple mode.
+<br/>_Flag (no value required)_
+
+#### `--record-processor-service-count`, `--record-processors` `<int>`
+
+Number of parallel record processors. null = auto-detect based on CPU cores.
+
+### Server Metrics
+
+#### `--server-metrics` `<list>`
+
+Server metrics collection (ENABLED BY DEFAULT). Optionally specify additional Prometheus endpoint URLs. Use --no-server-metrics to disable.
+
+#### `--no-server-metrics`
+
+Disable server metrics collection entirely.
+
+#### `--server-metrics-formats` `<list>`
+
+Export formats for scraped metrics. Options: json, csv, parquet, jsonl.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `json` |  | Export aggregated statistics in JSON hybrid format with metrics keyed by name. Best for: Programmatic access, CI/CD pipelines, automated analysis. |
+| `csv` |  | Export aggregated statistics in CSV tabular format organized by metric type. Best for: Spreadsheet analysis, Excel/Google Sheets, pandas DataFrames. |
+| `jsonl` |  | Export raw time-series records in line-delimited JSON format. Best for: Time-series analysis, debugging, visualizing metric evolution. Warning: Can generate very large files for long-running benchmarks. |
+| `parquet` |  | Export raw time-series data with delta calculations in Parquet columnar format. Best for: Analytics with DuckDB/pandas/Polars, efficient storage, SQL queries. Includes cumulative deltas from reference point for counters and histograms. |
+
+### GPU Telemetry
+
+#### `--gpu-telemetry` `<list>`
+
+Enable GPU telemetry and optionally specify: 'dashboard' for realtime mode, custom DCGM URLs, or a metrics CSV file.
+
+#### `--no-gpu-telemetry`
+
+Disable GPU telemetry collection entirely.
+
+### UI
+
+#### `--ui-type`, `--ui` `<str>`
+
+User interface mode. dashboard: rich interactive UI, simple: text progress, none: silent operation.
+<br/>_Choices: [`dashboard`, `none`, `simple`]_
+<br/>_Default: `dashboard`_
+
+### Workers
+
+#### `--workers-max`, `--max-workers` `<int>`
+
+Maximum worker processes. null = auto-detect based on CPU cores.
+
+### ZMQ Communication
+
+#### `--zmq-host` `<str>`
+
+Host address for internal ZMQ TCP communication between AIPerf services.
+
+#### `--zmq-ipc-path` `<str>`
+
+Directory path for ZMQ IPC socket files for local inter-process communication.
+
+### Multi-Run
+
+#### `--num-profile-runs` `<int>`
+
+Number of profile runs to execute for confidence reporting. When 1, runs a single benchmark. When >1, computes aggregate statistics across runs.
+<br/>_Default: `1`_
+
+#### `--profile-run-cooldown-seconds` `<float>`
+
+Cooldown duration in seconds between profile runs. Allows the system to stabilize between runs.
+<br/>_Default: `0.0`_
+
+#### `--confidence-level` `<float>`
+
+Confidence level for computing confidence intervals (0-1). Common values: 0.90 (90%%), 0.95 (95%%), 0.99 (99%%).
+<br/>_Default: `0.95`_
+
+#### `--profile-run-disable-warmup-after-first`, `--no-profile-run-disable-warmup-after-first`
+
+Disable warmup for runs after the first. When true, only the first run includes warmup for steady-state measurement.
+<br/>_Default: `True`_
+
+#### `--set-consistent-seed`, `--no-set-consistent-seed`
+
+Automatically set random seed for consistent workloads across runs. When true, sets random_seed=42 if not specified, ensuring identical workloads for valid statistical comparison.
+<br/>_Default: `True`_
+
+### Accuracy
+
+#### `--accuracy-benchmark` `<str>`
+
+Accuracy benchmark to run (e.g., mmlu, aime, hellaswag). When set, enables accuracy benchmarking mode.
+
+#### `--accuracy-tasks` `<list>`
+
+Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects). If not set, all tasks are included.
+
+#### `--accuracy-n-shots` `<int>`
+
+Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation. Maximum 8.
+<br/>_Default: `0`_
+
+#### `--accuracy-enable-cot`
+
+Enable chain-of-thought prompting for accuracy evaluation.
+<br/>_Flag (no value required)_
+
+#### `--accuracy-grader` `<str>`
+
+Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution).
+
+#### `--accuracy-system-prompt` `<str>`
+
+Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific system prompt.
+
+#### `--accuracy-verbose`
+
+Enable verbose output for accuracy evaluation, showing per-problem grading details.
+<br/>_Flag (no value required)_
+
+### Parameters
+
+#### `-f`, `--format` `<str>`
+
+Output format. 'yaml' for config file, 'cr' for Kubernetes AIPerfJob custom resource.
+<br/>_Default: `yaml`_
+
+#### `-o`, `--output` `<str>`
+
+Output file path. Prints to stdout if not specified.
+
+#### `--cr-name` `<str>`
+
+Name for the AIPerfJob custom resource (only used with --format cr).
+<br/>_Default: `my-benchmark`_
+
+#### `--cr-namespace` `<str>`
+
+Namespace for the custom resource (only used with --format cr). Omitted if not set.
+
+#### `--cr-image` `<str>`
+
+Container image for the AIPerfJob (only used with --format cr).
 
 <hr/>
 

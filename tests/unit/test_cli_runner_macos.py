@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.config.config import AIPerfConfig
 from aiperf.plugin.enums import UIType
 
 
@@ -26,23 +26,20 @@ class TestMacOSTerminalFixes:
     """Test the macOS-specific terminal corruption fixes in cli_runner.py"""
 
     @pytest.fixture
-    def service_config_dashboard(self) -> ServiceConfig:
-        """Create a ServiceConfig with Dashboard UI type."""
-        config = ServiceConfig()
-        config.ui_type = UIType.DASHBOARD
-        return config
+    def config_dashboard(self, aiperf_config: AIPerfConfig) -> AIPerfConfig:
+        """Create an AIPerfConfig with Dashboard UI type."""
+        aiperf_config.ui_type = UIType.DASHBOARD
+        return aiperf_config
 
     @pytest.fixture
-    def service_config_simple(self) -> ServiceConfig:
-        """Create a ServiceConfig with Simple UI type."""
-        config = ServiceConfig()
-        config.ui_type = UIType.SIMPLE
-        return config
+    def config_simple(self, aiperf_config: AIPerfConfig) -> AIPerfConfig:
+        """Create an AIPerfConfig with Simple UI type."""
+        aiperf_config.ui_type = UIType.SIMPLE
+        return aiperf_config
 
     def test_spawn_method_set_on_macos_dashboard(
         self,
-        service_config_dashboard: ServiceConfig,
-        user_config: UserConfig,
+        config_dashboard: AIPerfConfig,
         mock_platform_darwin: Mock,
         mock_multiprocessing_set_start_method: Mock,
         mock_bootstrap_and_run_service: Mock,
@@ -50,7 +47,7 @@ class TestMacOSTerminalFixes:
         """Test that spawn method is set when on macOS with Dashboard UI."""
         from aiperf.cli_runner import run_system_controller
 
-        run_system_controller(user_config, service_config_dashboard)
+        run_system_controller(config_dashboard)
 
         # Verify spawn method was set
         mock_multiprocessing_set_start_method.assert_called_once_with(
@@ -59,8 +56,7 @@ class TestMacOSTerminalFixes:
 
     def test_no_start_method_set_on_linux(
         self,
-        service_config_dashboard: ServiceConfig,
-        user_config: UserConfig,
+        config_dashboard: AIPerfConfig,
         mock_platform_linux: Mock,
         mock_multiprocessing_set_start_method: Mock,
         mock_bootstrap_and_run_service: Mock,
@@ -68,14 +64,13 @@ class TestMacOSTerminalFixes:
         """Test that no start method override on Linux (uses platform default fork)."""
         from aiperf.cli_runner import run_system_controller
 
-        run_system_controller(user_config, service_config_dashboard)
+        run_system_controller(config_dashboard)
 
         mock_multiprocessing_set_start_method.assert_not_called()
 
     def test_no_start_method_set_for_simple_ui_on_macos(
         self,
-        service_config_simple: ServiceConfig,
-        user_config: UserConfig,
+        config_simple: AIPerfConfig,
         mock_platform_darwin: Mock,
         mock_multiprocessing_set_start_method: Mock,
         mock_bootstrap_and_run_service: Mock,
@@ -83,7 +78,7 @@ class TestMacOSTerminalFixes:
         """Test that no start method override for non-dashboard UI on macOS."""
         from aiperf.cli_runner import run_system_controller
 
-        run_system_controller(user_config, service_config_simple)
+        run_system_controller(config_simple)
 
         mock_multiprocessing_set_start_method.assert_not_called()
 
@@ -91,8 +86,7 @@ class TestMacOSTerminalFixes:
     def test_fd_cloexec_not_set_on_linux(
         self,
         mock_fcntl: Mock,
-        service_config_dashboard: ServiceConfig,
-        user_config: UserConfig,
+        config_dashboard: AIPerfConfig,
         mock_platform_linux: Mock,
         mock_bootstrap_and_run_service: Mock,
         mock_get_global_log_queue: Mock,
@@ -102,15 +96,14 @@ class TestMacOSTerminalFixes:
 
         mock_get_global_log_queue.return_value = MagicMock(spec=multiprocessing.Queue)
 
-        run_system_controller(user_config, service_config_dashboard)
+        run_system_controller(config_dashboard)
 
         # fcntl should not be called on Linux
         mock_fcntl.assert_not_called()
 
     def test_runtime_error_in_set_start_method_is_handled(
         self,
-        service_config_dashboard: ServiceConfig,
-        user_config: UserConfig,
+        config_dashboard: AIPerfConfig,
         mock_platform_darwin: Mock,
         mock_multiprocessing_set_start_method: Mock,
         mock_bootstrap_and_run_service: Mock,
@@ -123,15 +116,14 @@ class TestMacOSTerminalFixes:
         )
 
         # Should not raise an exception
-        run_system_controller(user_config, service_config_dashboard)
+        run_system_controller(config_dashboard)
 
         # Verify it tried to set the method
         mock_multiprocessing_set_start_method.assert_called_once()
 
     def test_log_queue_created_before_ui_on_dashboard(
         self,
-        service_config_dashboard: ServiceConfig,
-        user_config: UserConfig,
+        config_dashboard: AIPerfConfig,
         mock_platform_darwin: Mock,
         mock_bootstrap_and_run_service: Mock,
         mock_get_global_log_queue: Mock,
@@ -142,7 +134,7 @@ class TestMacOSTerminalFixes:
         mock_queue = MagicMock(spec=multiprocessing.Queue)
         mock_get_global_log_queue.return_value = mock_queue
 
-        run_system_controller(user_config, service_config_dashboard)
+        run_system_controller(config_dashboard)
 
         # Verify log queue was created
         mock_get_global_log_queue.assert_called_once()

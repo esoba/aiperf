@@ -4,9 +4,20 @@
 
 from pathlib import Path
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.config.config import AIPerfConfig
 from aiperf.orchestrator.models import RunConfig, RunResult
+
+
+def _make_config() -> AIPerfConfig:
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "main": {"type": "synthetic", "entries": 100, "prompts": {"isl": 128}}
+        },
+        load={"type": "concurrency", "requests": 10, "concurrency": 1},
+    )
 
 
 class TestRunConfig:
@@ -14,7 +25,7 @@ class TestRunConfig:
 
     def test_create_run_config_valid_inputs_sets_fields(self):
         """Test creating a RunConfig with valid inputs sets all fields correctly."""
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config = _make_config()
         run_config = RunConfig(
             config=config, label="run_0001", metadata={"run_index": 0, "seed": 42}
         )
@@ -25,7 +36,7 @@ class TestRunConfig:
 
     def test_create_run_config_empty_metadata_returns_empty_dict(self):
         """Test creating a RunConfig with empty metadata returns empty dict."""
-        config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+        config = _make_config()
         run_config = RunConfig(config=config, label="run_0001", metadata={})
 
         assert run_config.metadata == {}

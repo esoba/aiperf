@@ -46,10 +46,8 @@ def profile(cli: CLIModel) -> None:
     with exit_on_error(title="Error Running AIPerf System"):
         from aiperf.cli_runner import run_system_controller
         from aiperf.config.cli_builder import build_aiperf_config
-        from aiperf.config.reverse_converter import convert_to_legacy_configs
 
-        aiperf_config = build_aiperf_config(cli)
-        user_config, service_config = convert_to_legacy_configs(aiperf_config)
+        config = build_aiperf_config(cli)
 
         # Auto-detect UI type when not explicitly set by user
         if "ui_type" not in cli.model_fields_set:
@@ -58,6 +56,6 @@ def profile(cli: CLIModel) -> None:
             from aiperf.plugin.enums import UIType
 
             if not sys.stdout.isatty():
-                service_config.ui_type = UIType.NONE
+                config.ui_type = UIType.NONE
 
-        run_system_controller(user_config, service_config)
+        run_system_controller(config)

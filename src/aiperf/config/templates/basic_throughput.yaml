@@ -10,7 +10,7 @@
 #
 # Use case: Find maximum tokens/sec the server can sustain
 #
-# Run: aiperf --config examples_v2/basic_throughput.yaml
+# Run: aiperf --config templates/basic_throughput.yaml
 
 random_seed: 42
 

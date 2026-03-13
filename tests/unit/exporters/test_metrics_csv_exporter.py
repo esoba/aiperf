@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
+from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -133,8 +133,7 @@ async def test_metrics_csv_exporter_writes_two_sections_and_values(
         mock_user_config.output.artifact_directory = outdir
         cfg = ExporterConfig(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -177,8 +176,7 @@ async def test_metrics_csv_exporter_empty_records_creates_empty_file(
         mock_user_config.output.artifact_directory = outdir
         cfg = ExporterConfig(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -210,8 +208,7 @@ async def test_metrics_csv_exporter_deterministic_sort_order(
         mock_user_config.output.artifact_directory = outdir
         cfg = ExporterConfig(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -259,8 +256,7 @@ async def test_metrics_csv_exporter_unit_aware_number_formatting(
         mock_user_config.output.artifact_directory = outdir
         cfg = ExporterConfig(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -312,8 +308,7 @@ async def test_metrics_csv_exporter_logs_and_raises_on_write_failure(
         mock_user_config.output.artifact_directory = outdir
         cfg = ExporterConfig(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -360,8 +355,7 @@ async def test_format_number_various_types(mock_user_config, value, expected):
     """
     cfg = ExporterConfig(
         results=None,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        config=mock_user_config,
         telemetry_results=None,
     )
     exporter = MetricsCsvExporter(cfg)
@@ -398,8 +392,7 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=sample_telemetry_results,
             )
 
@@ -441,8 +434,7 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
 
@@ -472,8 +464,7 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=sample_telemetry_results,
             )
 
@@ -532,8 +523,7 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=telemetry_results,
             )
 
@@ -658,8 +648,7 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=telemetry_results,
             )
 
@@ -720,8 +709,7 @@ class TestMetricsCsvExporterTelemetry:
 
             cfg = ExporterConfig(
                 results=results,
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=telemetry_results,
             )
 
@@ -745,8 +733,7 @@ class TestMetricsCsvExporterTelemetry:
         results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
         cfg = ExporterConfig(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -770,8 +757,7 @@ class TestMetricsCsvExporterTelemetry:
         results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
         cfg = ExporterConfig(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -838,8 +824,7 @@ class TestOptionalTelemetryHeaders:
         results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
         cfg = ExporterConfig(
             results=results,
-            user_config=mock_user_config,
-            service_config=ServiceConfig(),
+            config=mock_user_config,
             telemetry_results=telemetry,
         )
         return MetricsCsvExporter(cfg)
@@ -958,8 +943,7 @@ def test_metrics_csv_exporter_inherits_from_base(mock_user_config):
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        config=mock_user_config,
         telemetry_results=None,
     )
 
@@ -980,8 +964,7 @@ async def test_metrics_csv_exporter_uses_base_export(mock_user_config):
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        config=mock_user_config,
         telemetry_results=None,
     )
 
@@ -1018,8 +1001,7 @@ def test_metrics_csv_exporter_generate_content_uses_instance_data_members(
     results = ProfileResults(records=mock_records, start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        config=mock_user_config,
         telemetry_results=None,
     )
 
@@ -1040,8 +1022,7 @@ def test_metrics_csv_exporter_generate_content_uses_telemetry_results_from_insta
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        config=mock_user_config,
         telemetry_results=sample_telemetry_results,
     )
 
@@ -1063,8 +1044,7 @@ async def test_metrics_csv_exporter_export_calls_generate_content_internally(
     results = ProfileResults(records=[], start_ns=0, end_ns=0, completed=0)
     cfg = ExporterConfig(
         results=results,
-        user_config=mock_user_config,
-        service_config=ServiceConfig(),
+        config=mock_user_config,
         telemetry_results=None,
     )
 

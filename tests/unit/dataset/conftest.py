@@ -11,8 +11,9 @@ import pytest
 
 import aiperf.endpoints  # noqa: F401  # Import to register endpoints
 import aiperf.transports  # noqa: F401  # Import to register transports
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
+from aiperf.common.config import EndpointConfig, OutputConfig, UserConfig
 from aiperf.common.models import Conversation
+from aiperf.config.config import AIPerfConfig
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import EndpointType
 from tests.harness.fake_communication import FakeCommunication  # noqa: F401
@@ -74,13 +75,34 @@ def user_config(tmp_path: Path) -> UserConfig:
 
 
 @pytest.fixture
+def dataset_aiperf_config(tmp_path: Path) -> AIPerfConfig:
+    """Create an AIPerfConfig for dataset manager testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={
+            "urls": ["http://localhost:8000"],
+            "type": "chat",
+            "streaming": False,
+        },
+        datasets={
+            "main": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        load={"type": "concurrency", "requests": 10, "concurrency": 1},
+        artifacts={"dir": str(tmp_path)},
+    )
+
+
+@pytest.fixture
 def empty_dataset_manager(
-    user_config: UserConfig,
+    dataset_aiperf_config: AIPerfConfig,
 ) -> DatasetManager:
     """Create a DatasetManager instance with empty dataset."""
     manager = DatasetManager(
-        service_config=ServiceConfig(),
-        user_config=user_config,
+        config=dataset_aiperf_config,
         service_id="test_dataset_manager",
     )
     manager.dataset = {}
@@ -89,13 +111,12 @@ def empty_dataset_manager(
 
 @pytest.fixture
 def populated_dataset_manager(
-    user_config: UserConfig,
+    dataset_aiperf_config: AIPerfConfig,
     sample_conversations: dict[str, Conversation],
 ) -> DatasetManager:
     """Create a DatasetManager instance with sample data."""
     manager = DatasetManager(
-        service_config=ServiceConfig(),
-        user_config=user_config,
+        config=dataset_aiperf_config,
         service_id="test_dataset_manager",
     )
     manager.dataset = sample_conversations

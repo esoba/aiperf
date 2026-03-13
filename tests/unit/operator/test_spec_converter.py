@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from aiperf.config.reverse_converter import convert_to_legacy_configs
 from aiperf.operator.spec_converter import (
     DEFAULT_CONNECTIONS_PER_WORKER,
     AIPerfJobSpecConverter,
@@ -131,16 +132,16 @@ class TestToAIPerfConfig:
 
 
 class TestToLegacyConfigs:
-    """Tests for to_legacy_configs method."""
+    """Tests for convert_to_legacy_configs with AIPerfJobSpecConverter."""
 
     def test_legacy_configs_returns_tuple(
         self, minimal_aiperfjob_spec: dict[str, Any]
     ) -> None:
-        """Test to_legacy_configs returns a (UserConfig, ServiceConfig) tuple."""
+        """Test convert_to_legacy_configs returns a (UserConfig, ServiceConfig) tuple."""
         converter = AIPerfJobSpecConverter(
             minimal_aiperfjob_spec, "test-job", "default"
         )
-        result = converter.to_legacy_configs()
+        result = convert_to_legacy_configs(converter.to_aiperf_config())
 
         assert isinstance(result, tuple)
         assert len(result) == 2
@@ -152,7 +153,7 @@ class TestToLegacyConfigs:
         converter = AIPerfJobSpecConverter(
             minimal_aiperfjob_spec, "test-job", "default"
         )
-        user_config, _ = converter.to_legacy_configs()
+        user_config, _ = convert_to_legacy_configs(converter.to_aiperf_config())
 
         assert user_config.endpoint.model_names == ["test-model"]
 
@@ -163,7 +164,7 @@ class TestToLegacyConfigs:
         converter = AIPerfJobSpecConverter(
             minimal_aiperfjob_spec, "test-job", "default"
         )
-        user_config, _ = converter.to_legacy_configs()
+        user_config, _ = convert_to_legacy_configs(converter.to_aiperf_config())
 
         assert "http://localhost:8000/v1/chat/completions" in user_config.endpoint.urls
 
@@ -174,7 +175,7 @@ class TestToLegacyConfigs:
         converter = AIPerfJobSpecConverter(
             minimal_aiperfjob_spec, "test-job", "default"
         )
-        _, service_config = converter.to_legacy_configs()
+        _, service_config = convert_to_legacy_configs(converter.to_aiperf_config())
 
         from aiperf.common.config import ServiceConfig
 
@@ -185,7 +186,7 @@ class TestToLegacyConfigs:
     ) -> None:
         """Test legacy configs from full spec have correct values."""
         converter = AIPerfJobSpecConverter(full_aiperfjob_spec, "test-job", "default")
-        user_config, _ = converter.to_legacy_configs()
+        user_config, _ = convert_to_legacy_configs(converter.to_aiperf_config())
 
         assert user_config.endpoint.model_names == ["meta-llama/Llama-3.1-8B-Instruct"]
         assert "http://api.example.com/v1/chat/completions" in user_config.endpoint.urls

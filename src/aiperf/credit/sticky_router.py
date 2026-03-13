@@ -21,7 +21,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.config.zmq_config import ZMQDualBindConfig
 from aiperf.common.enums import CommAddress
 from aiperf.common.mixins import CommunicationMixin
@@ -188,7 +187,7 @@ class StickyCreditRouter(CommunicationMixin):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
+        service_config: object,
         service_id: str,
         **kwargs,
     ) -> None:

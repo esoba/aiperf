@@ -327,13 +327,17 @@ async def on_create(
                 event_endpoint_unreachable(body, endpoint_url, health.error)
                 logger.warning(f"Endpoint {endpoint_url} not reachable: {health.error}")
 
-        # Step 3: Convert spec to AIPerf configs
+        # Step 3: Convert spec to AIPerfConfig
         converter = AIPerfJobSpecConverter(spec, name, namespace, job_id=job_id)
         aiperf_config = converter.to_aiperf_config()
-        user_config, service_config = converter.to_legacy_configs()
         pod_customization = converter.to_pod_customization()
         worker_count = converter.calculate_workers()
         scheduling = converter.to_scheduling_config()
+
+        # Legacy configs derived for KubernetesDeployment compatibility
+        from aiperf.config.reverse_converter import convert_to_legacy_configs
+
+        user_config, service_config = convert_to_legacy_configs(aiperf_config)
 
         deployment = KubernetesDeployment(
             job_id=job_id,

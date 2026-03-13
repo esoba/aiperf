@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from rich.console import Console
 
     from aiperf.common.aiperf_logger import AIPerfLogger
-    from aiperf.common.config import UserConfig
+    from aiperf.config.config import AIPerfConfig
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ def _resolve_aliases(
 
 
 def validate_tokenizer_early(
-    user_config: UserConfig, logger: AIPerfLogger
+    user_config: AIPerfConfig, logger: AIPerfLogger
 ) -> dict[str, str] | None:
     """Resolve aliases and warm the HF cache (see module docstring).
 

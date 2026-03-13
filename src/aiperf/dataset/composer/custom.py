@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from aiperf.common.config import UserConfig
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
@@ -16,7 +15,7 @@ from aiperf.plugin.enums import CustomDatasetType, PluginType
 
 
 class CustomDatasetComposer(BaseDatasetComposer):
-    def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
+    def __init__(self, config: object, tokenizer: Tokenizer | None):
         super().__init__(config, tokenizer)
 
     def create_dataset(self) -> list[Conversation]:

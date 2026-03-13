@@ -14,10 +14,10 @@ from starlette.testclient import TestClient
 from aiperf.api.api_service import FastAPIService
 from aiperf.api.routers.static import _read_static
 from aiperf.api.routers.websocket import WebSocketManager
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import CreditPhase, LifecycleState, WorkerStatus
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.common.models import WorkerStats
+from aiperf.config.config import AIPerfConfig
 
 from .conftest import (
     create_test_app,
@@ -321,7 +321,7 @@ class TestHTTPEndpoints:
         response = api_test_client.get("/api/config")
         assert response.status_code == 200
         data = response.json()
-        assert "benchmark_id" in data
+        assert "models" in data
 
     def test_prometheus_empty_metrics(
         self, api_test_client: TestClient, mock_fastapi_service: FastAPIService
@@ -1143,11 +1143,11 @@ class TestResultsListEndpoint:
         self, api_test_client: TestClient, mock_fastapi_service: FastAPIService
     ) -> None:
         """Test listing results when directory doesn't exist."""
-        from unittest.mock import MagicMock
+        from pathlib import Path
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory.exists.return_value = False
-        mock_fastapi_service._routers["results"].user_config.output = mock_output
+        mock_fastapi_service._routers["results"].user_config.artifacts.dir = Path(
+            "/nonexistent/path"
+        )
 
         response = api_test_client.get("/api/results/list")
         assert response.status_code == 200
@@ -1161,15 +1161,11 @@ class TestResultsListEndpoint:
         tmp_path,
     ) -> None:
         """Test listing results with files in directory."""
-        from unittest.mock import MagicMock
-
         # Create test files
         (tmp_path / "metrics.json").write_text('{"test": 1}')
         (tmp_path / "records.jsonl").write_text('{"id": 1}')
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        mock_fastapi_service._routers["results"].user_config.output = mock_output
+        mock_fastapi_service._routers["results"].user_config.artifacts.dir = tmp_path
 
         response = api_test_client.get("/api/results/list")
         assert response.status_code == 200
@@ -1193,11 +1189,8 @@ class TestResultsFileEndpoints:
         tmp_path,
     ) -> None:
         """Test returns 404 for nonexistent file."""
-        from unittest.mock import MagicMock
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        mock_fastapi_service._routers["results"].user_config.output = mock_output
+        mock_fastapi_service._routers["results"].user_config.artifacts.dir = tmp_path
 
         response = api_test_client.get("/api/results/files/nonexistent.json")
         assert response.status_code == 404
@@ -1210,14 +1203,11 @@ class TestResultsFileEndpoints:
         tmp_path,
     ) -> None:
         """Test file streams content with correct headers."""
-        from unittest.mock import MagicMock
 
         test_file = tmp_path / "profile_export.json"
         test_file.write_text('{"metrics": {"latency": 100}}')
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        mock_fastapi_service._routers["results"].user_config.output = mock_output
+        mock_fastapi_service._routers["results"].user_config.artifacts.dir = tmp_path
 
         response = api_test_client.get(
             "/api/results/files/profile_export.json",
@@ -1234,11 +1224,8 @@ class TestResultsFileEndpoints:
         tmp_path,
     ) -> None:
         """Test path traversal attempts are rejected."""
-        from unittest.mock import MagicMock
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        mock_fastapi_service._routers["results"].user_config.output = mock_output
+        mock_fastapi_service._routers["results"].user_config.artifacts.dir = tmp_path
 
         response = api_test_client.get("/api/results/files/../../../etc/passwd")
         assert response.status_code in (400, 404)
@@ -1250,14 +1237,11 @@ class TestResultsFileEndpoints:
         tmp_path,
     ) -> None:
         """Test result file endpoint supports gzip compression."""
-        from unittest.mock import MagicMock
 
         test_file = tmp_path / "metrics.json"
         test_file.write_text('{"metrics": {"latency": 100}}')
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        mock_fastapi_service._routers["results"].user_config.output = mock_output
+        mock_fastapi_service._routers["results"].user_config.artifacts.dir = tmp_path
 
         response = api_test_client.get(
             "/api/results/files/metrics.json",
@@ -1410,15 +1394,15 @@ class TestFastAPIServiceInit:
         assert len(mock_fastapi_service._routers) > 0
 
     def test_init_with_custom_host(
-        self, mock_zmq: None, api_user_config: UserConfig
+        self, mock_zmq: None, aiperf_config: AIPerfConfig
     ) -> None:
-        sc = ServiceConfig(api_port=8080, api_host="0.0.0.0")
+        aiperf_config.api_host = "10.0.0.1"
+        aiperf_config.api_port = 8080
         service = FastAPIService(
-            service_config=sc,
-            user_config=api_user_config,
+            config=aiperf_config,
             service_id="api-custom",
         )
-        assert service.api_host == "0.0.0.0"
+        assert service.api_host == "10.0.0.1"
         assert service.api_port == 8080
 
 
@@ -1428,7 +1412,7 @@ class TestFastAPIServiceCORSMiddleware:
     def test_cors_middleware_added_when_origins_set(
         self,
         mock_zmq: None,
-        api_user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
@@ -1439,10 +1423,8 @@ class TestFastAPIServiceCORSMiddleware:
                 {"HOST": "127.0.0.1", "PORT": 8080, "CORS_ORIGINS": ["*"]},
             )(),
         )
-        sc = ServiceConfig(api_port=8080)
         service = FastAPIService(
-            service_config=sc,
-            user_config=api_user_config,
+            config=aiperf_config,
             service_id="api-cors",
         )
         middleware_names = [m.cls.__name__ for m in service.app.user_middleware]
@@ -1451,7 +1433,7 @@ class TestFastAPIServiceCORSMiddleware:
     def test_no_cors_middleware_when_origins_empty(
         self,
         mock_zmq: None,
-        api_user_config: UserConfig,
+        aiperf_config: AIPerfConfig,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(
@@ -1460,10 +1442,8 @@ class TestFastAPIServiceCORSMiddleware:
                 "_Fake", (), {"HOST": "127.0.0.1", "PORT": 8080, "CORS_ORIGINS": []}
             )(),
         )
-        sc = ServiceConfig(api_port=8080)
         service = FastAPIService(
-            service_config=sc,
-            user_config=api_user_config,
+            config=aiperf_config,
             service_id="api-no-cors",
         )
         middleware_names = [m.cls.__name__ for m in service.app.user_middleware]

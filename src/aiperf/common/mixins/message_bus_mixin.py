@@ -6,7 +6,6 @@ from abc import ABC
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommAddress, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import (
@@ -33,8 +32,12 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
     streaming DEALER client directly.
     """
 
-    def __init__(self, service_config: ServiceConfig, **kwargs) -> None:
-        super().__init__(service_config=service_config, **kwargs)
+    def __init__(
+        self, config=None, *, service_config: object | None = None, **kwargs
+    ) -> None:
+        if config is None:
+            config = service_config
+        super().__init__(config=config, **kwargs)
         self.sub_client = self.comms.create_sub_client(
             CommAddress.EVENT_BUS_PROXY_BACKEND
         )

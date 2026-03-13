@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from aiperf.config.reverse_converter import convert_to_legacy_configs
 from aiperf.operator.spec_converter import CONFIG_FIELDS, AIPerfJobSpecConverter
 
 RECIPES_DIR = Path(__file__).parents[3] / "recipes"
@@ -63,7 +64,8 @@ class TestRecipeValidation:
         name = doc["metadata"]["name"]
 
         converter = AIPerfJobSpecConverter(spec=spec, name=name, namespace="default")
-        user_config, service_config = converter.to_legacy_configs()
+        config = converter.to_aiperf_config()
+        user_config, service_config = convert_to_legacy_configs(config)
 
         assert user_config is not None
         assert service_config is not None

@@ -4,7 +4,6 @@
 from collections.abc import Callable
 from typing import Any
 
-from aiperf.common.config import UserConfig
 from aiperf.common.enums import MetricType
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
@@ -23,7 +22,7 @@ class MetricRecordProcessor(BaseMetricsProcessor):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        user_config: object,
         **kwargs,
     ) -> None:
         super().__init__(user_config=user_config, **kwargs)

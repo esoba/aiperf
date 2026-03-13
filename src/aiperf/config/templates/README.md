@@ -10,7 +10,7 @@ This directory contains example YAML configuration files for common benchmarking
 
 ```bash
 # Run any example with:
-aiperf --config examples_v2/basic_throughput.yaml
+aiperf --config templates/basic_throughput.yaml
 ```
 
 ## Example Categories
@@ -19,6 +19,7 @@ aiperf --config examples_v2/basic_throughput.yaml
 
 | Example | Description |
 |---------|-------------|
+| [minimal.yaml](minimal.yaml) | Absolute bare minimum using all shorthand forms |
 | [basic_throughput.yaml](basic_throughput.yaml) | Maximum throughput test with concurrency mode |
 | [latency_test.yaml](latency_test.yaml) | Latency measurement at controlled QPS |
 | [warmup_profiling.yaml](warmup_profiling.yaml) | Two-phase benchmark with warmup |
@@ -27,6 +28,7 @@ aiperf --config examples_v2/basic_throughput.yaml
 
 | Example | Description |
 |---------|-------------|
+| [rate_limited.yaml](rate_limited.yaml) | Controlled rate with Poisson arrival pattern |
 | [goodput_slo.yaml](goodput_slo.yaml) | Measure goodput with SLO thresholds |
 | [multi_url_load_balancing.yaml](multi_url_load_balancing.yaml) | Distribute load across multiple servers |
 
@@ -123,7 +125,7 @@ Phases support:
 2. Update `endpoint.urls` with your server URL(s)
 3. Update `models` with your model name
 4. Adjust `load` for your test parameters
-5. Configure `output.dir` for results location
+5. Configure `artifacts.dir` for results location
 
 ## Environment Variables
 

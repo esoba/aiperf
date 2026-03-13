@@ -3,7 +3,6 @@
 
 from abc import ABC
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommAddress
 from aiperf.common.hooks import (
     AIPerfHook,
@@ -25,12 +24,16 @@ class ReplyClientMixin(CommunicationMixin, ABC):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        reply_client_address: CommAddress,
+        config=None,
+        reply_client_address: CommAddress | None = None,
         reply_client_bind: bool = False,
+        *,
+        service_config: object | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(service_config=service_config, **kwargs)
+        if config is None:
+            config = service_config
+        super().__init__(config=config, **kwargs)
         # NOTE: The communication base class will automatically manage the reply client's lifecycle.
         self.reply_client = self.comms.create_reply_client(
             reply_client_address, bind=reply_client_bind

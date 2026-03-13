@@ -12,7 +12,10 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
+
+if TYPE_CHECKING:
+    from aiperf.config.config import AIPerfConfig
 
 from rich.console import Console, ConsoleRenderable, Group
 from rich.highlighter import ReprHighlighter
@@ -21,7 +24,7 @@ from rich.text import Text
 from rich.traceback import Traceback
 
 from aiperf.common.aiperf_logger import _DEBUG, _TRACE, AIPerfLogger
-from aiperf.common.config import ServiceConfig, ServiceDefaults, UserConfig
+from aiperf.common.config import ServiceDefaults
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.environment import Environment
 from aiperf.common.utils import is_tty
@@ -212,8 +215,8 @@ class StructuredLogHandler(logging.Handler):
 def setup_child_process_logging(
     log_queue: LogQueue | None = None,
     service_id: str | None = None,
-    service_config: ServiceConfig | None = None,
-    user_config: UserConfig | None = None,
+    service_config: AIPerfConfig | None = None,
+    user_config: AIPerfConfig | None = None,
 ) -> None:
     """Set up logging for a child process to send logs to the main process.
 
@@ -222,8 +225,8 @@ def setup_child_process_logging(
     Args:
         log_queue: The multiprocessing queue to send logs to. If None, tries to get the global queue.
         service_id: The ID of the service to log under. If None, logs will be under the process name.
-        service_config: The service configuration used to determine the log level.
-        user_config: The user configuration used to determine the log folder.
+        service_config: Configuration used to determine the log level.
+        user_config: Configuration used to determine the log folder.
     """
     root_logger = logging.getLogger()
     level = ServiceDefaults.LOG_LEVEL.upper()
@@ -293,7 +296,7 @@ def setup_subprocess_logging(level: str | int) -> None:
 
 
 # TODO: Integrate with the subprocess logging instead of being separate
-def setup_rich_logging(user_config: UserConfig, service_config: ServiceConfig) -> None:
+def setup_rich_logging(user_config: AIPerfConfig, service_config: AIPerfConfig) -> None:
     """Set up rich logging with appropriate configuration. Falls back to basic logging for non-TTY."""
     # Set logging level for the root logger (affects all loggers)
     level = service_config.log_level.upper()

@@ -3,7 +3,6 @@
 
 from abc import ABC
 
-from aiperf.common.config import UserConfig
 from aiperf.common.constants import GOOD_REQUEST_COUNT_TAG
 from aiperf.common.enums import MetricFlags, MetricType
 from aiperf.common.environment import Environment
@@ -15,7 +14,7 @@ from aiperf.metrics.metric_registry import MetricRegistry
 class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
     """Base class for all metrics processors. This class is responsible for filtering the metrics based on the user config."""
 
-    def __init__(self, user_config: UserConfig, **kwargs):
+    def __init__(self, user_config: object, **kwargs):
         self.user_config = user_config
         super().__init__(user_config=user_config, **kwargs)
 

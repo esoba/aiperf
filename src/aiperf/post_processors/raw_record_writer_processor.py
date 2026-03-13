@@ -6,7 +6,6 @@ import contextlib
 
 import aiofiles
 
-from aiperf.common.config import UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
@@ -37,7 +36,7 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
     def __init__(
         self,
         service_id: str | None,
-        user_config: UserConfig,
+        user_config: object,
         **kwargs,
     ):
         self.service_id = service_id or "processor"

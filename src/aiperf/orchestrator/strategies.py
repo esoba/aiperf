@@ -2,12 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Execution strategies for multi-run orchestration."""
 
+from __future__ import annotations
+
 import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from aiperf.common.config import UserConfig
+if TYPE_CHECKING:
+    from aiperf.config.config import AIPerfConfig
+
 from aiperf.orchestrator.models import RunResult
 
 logger = logging.getLogger(__name__)
@@ -29,14 +34,14 @@ class ExecutionStrategy(ABC):
     5. Cooldown duration between runs
     """
 
-    def validate_config(self, config: UserConfig) -> None:  # noqa: B027
+    def validate_config(self, config: AIPerfConfig) -> None:  # noqa: B027
         """Validate that config is suitable for this strategy.
 
         Override this method to add strategy-specific validation.
         Called by orchestrator before starting execution.
 
         Args:
-            config: User configuration to validate
+            config: AIPerfConfig to validate
         """
         # Default implementation: no validation required
         # Subclasses can override to add strategy-specific validation
@@ -56,8 +61,8 @@ class ExecutionStrategy(ABC):
 
     @abstractmethod
     def get_next_config(
-        self, base_config: UserConfig, results: list[RunResult]
-    ) -> UserConfig:
+        self, base_config: AIPerfConfig, results: list[RunResult]
+    ) -> AIPerfConfig:
         """Generate config for next run.
 
         Args:
@@ -170,7 +175,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
         self.auto_set_seed = auto_set_seed
         self.disable_warmup_after_first = disable_warmup_after_first
 
-    def validate_config(self, config: UserConfig) -> None:
+    def validate_config(self, config: AIPerfConfig) -> None:
         """Validate that config is suitable for this strategy.
 
         For FixedTrialsStrategy with multiple trials, warns if random seed
@@ -178,7 +183,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
         different workloads across runs.
 
         Args:
-            config: User configuration to validate
+            config: AIPerfConfig to validate
         """
         if (
             self.num_trials > 1
@@ -197,8 +202,8 @@ class FixedTrialsStrategy(ExecutionStrategy):
         return len(results) < self.num_trials
 
     def get_next_config(
-        self, base_config: UserConfig, results: list[RunResult]
-    ) -> UserConfig:
+        self, base_config: AIPerfConfig, results: list[RunResult]
+    ) -> AIPerfConfig:
         """Return config for next trial.
 
         For first trial: ensure random seed is set (for workload consistency).
@@ -301,7 +306,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
         base_dir = Path(base_dir)
         return base_dir / "aggregate"
 
-    def _ensure_random_seed(self, config: UserConfig) -> UserConfig:
+    def _ensure_random_seed(self, config: AIPerfConfig) -> AIPerfConfig:
         """Ensure config has random seed set.
 
         Auto-sets seed if not specified for multi-run consistency.
@@ -322,7 +327,7 @@ class FixedTrialsStrategy(ExecutionStrategy):
 
         return config
 
-    def _disable_warmup(self, config: UserConfig) -> UserConfig:
+    def _disable_warmup(self, config: AIPerfConfig) -> AIPerfConfig:
         """Create config copy with warmup disabled.
 
         This is called for subsequent trials when disable_warmup_after_first=True.

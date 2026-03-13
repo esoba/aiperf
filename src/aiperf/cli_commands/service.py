@@ -74,12 +74,16 @@ def service(
 
     with exit_on_error(title=f"Error Running AIPerf Service {service_type}"):
         from aiperf.common.bootstrap import bootstrap_and_run_service
-        from aiperf.common.config.loader import load_service_config, load_user_config
         from aiperf.common.environment import Environment
+        from aiperf.config.loader import load_config
 
-        # Load configs (with fallback to environment variables)
-        user_config = load_user_config(user_config_file)
-        service_config = load_service_config(service_config_file)
+        # Load unified AIPerfConfig from the config file or AIPERF_CONFIG_FILE env var.
+        # The legacy user_config_file / service_config_file parameters are accepted
+        # for backward compatibility; prefer user_config_file if provided.
+        config_file = user_config_file or service_config_file
+        config = None
+        if config_file is not None:
+            config = load_config(config_file)
 
         if health_host is not None:
             Environment.SERVICE.HEALTH_ENABLED = True
@@ -91,8 +95,7 @@ def service(
 
         bootstrap_and_run_service(
             service_type=service_type,
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             api_port=api_port,
         )

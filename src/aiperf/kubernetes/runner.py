@@ -21,11 +21,11 @@ from kr8s.asyncio.objects import (
 )
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.kube_config import KubeOptions
-from aiperf.common.config.zmq_config import ZMQDualBindConfig
+from aiperf.common.enums import CommunicationType
 from aiperf.common.environment import Environment
 from aiperf.config.config import AIPerfConfig
+from aiperf.config.models import DualBindCommunicationConfig
 from aiperf.kubernetes.console import print_deployment_summary
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import (
@@ -211,57 +211,48 @@ def _kube_options_to_pod_customization(kube_options: KubeOptions) -> PodCustomiz
     )
 
 
-def _setup_zmq_dual_bind(service_config: ServiceConfig) -> None:
+def _setup_zmq_dual_bind(config: AIPerfConfig) -> None:
     """Configure ZMQ dual-bind for Kubernetes (IPC for controller, TCP for workers).
 
-    Directly assigns fields and updates model_fields_set to bypass validators
-    that would try to create the IPC directory (which doesn't exist on the CLI
-    machine). Also updates _comm_config since Pydantic model validators only
-    run during initialization.
+    Sets the runtime communication config to dual-bind mode so that
+    controller services connect via IPC and worker pods connect via TCP.
 
     Args:
-        service_config: Service configuration to modify in-place.
+        config: AIPerfConfig to modify in-place.
     """
-    if service_config.zmq_dual is not None:
+    if config.runtime.communication is not None:
         return
-    ipc_path = Path(K8sEnvironment.ZMQ.IPC_PATH)
-    service_config.zmq_dual = ZMQDualBindConfig(ipc_path=ipc_path, tcp_host="0.0.0.0")
-    service_config.model_fields_set.add("zmq_dual")
-    # Critical: without updating _comm_config, comm_config returns the default
-    # ZMQIPCConfig instead of ZMQDualBindConfig, causing workers to use wrong addresses
-    service_config._comm_config = service_config.zmq_dual
+    ipc_path = K8sEnvironment.ZMQ.IPC_PATH
+    config.runtime.communication = DualBindCommunicationConfig(
+        type=CommunicationType.DUAL,
+        ipc_path=ipc_path,
+        tcp_host="0.0.0.0",
+    )
 
 
-def _setup_api_service(
-    service_config: ServiceConfig, job_id: str, namespace: str
-) -> None:
+def _setup_api_service(config: AIPerfConfig, job_id: str, namespace: str) -> None:
     """Configure API service for dataset serving to workers.
 
     Sets API port/host and builds the dataset download URL that workers use
     to fetch data from the controller pod's API service.
 
     Args:
-        service_config: Service configuration to modify in-place.
+        config: AIPerfConfig to modify in-place.
         job_id: Job identifier for building the controller DNS name.
         namespace: Kubernetes namespace for DNS resolution.
     """
-    if service_config.api_port is None:
-        service_config.api_port = K8sEnvironment.PORTS.API_SERVICE
-        service_config.api_host = "0.0.0.0"  # Listen on all interfaces for K8s
-        service_config.model_fields_set.add("api_port")
-        service_config.model_fields_set.add("api_host")
+    if config.api_port is None:
+        config.api_port = K8sEnvironment.PORTS.API_SERVICE
+        config.api_host = "0.0.0.0"
 
-    if service_config.dataset_api_base_url is None:
+    if config.dataset_api_base_url is None:
         api_port = K8sEnvironment.PORTS.API_SERVICE
         jobset_name = f"aiperf-{job_id}"
         dns = controller_dns_name(jobset_name, namespace)
-        service_config.dataset_api_base_url = f"http://{dns}:{api_port}/api/dataset"
-        service_config.model_fields_set.add("dataset_api_base_url")
+        config.dataset_api_base_url = f"http://{dns}:{api_port}/api/dataset"
 
 
-def _calculate_worker_pods(
-    total_workers: int, service_config: ServiceConfig
-) -> tuple[int, int]:
+def _calculate_worker_pods(total_workers: int, config: AIPerfConfig) -> tuple[int, int]:
     """Calculate number of worker pods and workers per pod.
 
     If requesting fewer workers than default per pod, uses a single pod.
@@ -269,13 +260,13 @@ def _calculate_worker_pods(
 
     Args:
         total_workers: Total workers requested by user (--workers-max).
-        service_config: Service configuration (modified in-place to set workers_per_pod).
+        config: AIPerfConfig (modified in-place to set workers_per_pod).
 
     Returns:
         Tuple of (num_pods, workers_per_pod).
     """
     default_workers_per_pod = (
-        service_config.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
+        config.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
     )
 
     if total_workers <= default_workers_per_pod:
@@ -285,8 +276,7 @@ def _calculate_worker_pods(
         workers_per_pod = default_workers_per_pod
         num_pods = math.ceil(total_workers / workers_per_pod)
 
-    service_config.workers_per_pod = workers_per_pod
-    service_config.model_fields_set.add("workers_per_pod")
+    config.workers_per_pod = workers_per_pod
 
     return num_pods, workers_per_pod
 
@@ -314,21 +304,17 @@ def _generate_benchmark_name(config: AIPerfConfig) -> str:
 
 
 async def run_kubernetes_deployment(
-    user_config: UserConfig,
-    service_config: ServiceConfig,
+    config: AIPerfConfig,
     kube_options: KubeOptions,
     *,
     dry_run: bool = False,
-    aiperf_config: AIPerfConfig,
 ) -> tuple[str, str]:
     """Run AIPerf benchmark in Kubernetes mode.
 
     Args:
-        user_config: User configuration for the benchmark (derived from AIPerfConfig).
-        service_config: Service configuration (derived from AIPerfConfig).
+        config: AIPerfConfig with all benchmark settings.
         kube_options: Kubernetes-specific deployment options.
         dry_run: If True, output YAML manifests instead of applying to cluster.
-        aiperf_config: AIPerfConfig v2 (primary configuration).
 
     Returns:
         Tuple of (job_id, namespace) for the deployed benchmark.
@@ -338,26 +324,20 @@ async def run_kubernetes_deployment(
     job_id = uuid.uuid4().hex[:8]
     namespace = kube_options.namespace or f"aiperf-{job_id}"
 
-    name = kube_options.name or _generate_benchmark_name(aiperf_config)
+    name = kube_options.name or _generate_benchmark_name(config)
 
     # Set service_run_type for Kubernetes mode
-    service_config.service_run_type = ServiceRunType.KUBERNETES
-    service_config.model_fields_set.add("service_run_type")
+    config.service_run_type = ServiceRunType.KUBERNETES
 
     # Always disable UI in Kubernetes pods
-    service_config.ui_type = UIType.NONE
-    service_config.model_fields_set.add("ui_type")
+    config.ui_type = UIType.NONE
 
     # Override artifact directory to writable /results volume
-    user_config.output.artifact_directory = Path("/results")
-    user_config.output.model_fields_set.add("artifact_directory")
-    user_config.model_fields_set.add("output")
+    config.artifacts.dir = Path("/results")
 
-    _setup_zmq_dual_bind(service_config)
-    _setup_api_service(service_config, job_id, namespace)
-    num_pods, workers_per_pod = _calculate_worker_pods(
-        kube_options.workers, service_config
-    )
+    _setup_zmq_dual_bind(config)
+    _setup_api_service(config, job_id, namespace)
+    num_pods, workers_per_pod = _calculate_worker_pods(kube_options.workers, config)
 
     # Store total worker count so the controller can set proper expectations
     total_workers = num_pods * workers_per_pod
@@ -368,17 +348,14 @@ async def run_kubernetes_deployment(
             f"Requested {kube_options.workers} workers, but {num_pods} pods x "
             f"{workers_per_pod} workers/pod = {total_workers} workers"
         )
-    service_config.workers.max = total_workers
-    service_config.workers.model_fields_set.add("max")
-    service_config.model_fields_set.add("workers")
+    config.runtime.workers = total_workers
 
     # Align record processor expectation with actual per-pod spawning
     rp_per_pod = max(1, workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR)
-    service_config.record_processor_service_count = rp_per_pod * num_pods
-    service_config.model_fields_set.add("record_processor_service_count")
+    config.record_processor_service_count = rp_per_pod * num_pods
 
-    endpoint_url = user_config.endpoint.url if user_config.endpoint.urls else None
-    model_names = aiperf_config.get_model_names()
+    endpoint_url = config.endpoint.url if config.endpoint.urls else None
+    model_names = config.get_model_names()
 
     # Create the deployment specification
     deployment = KubernetesDeployment(
@@ -389,9 +366,7 @@ async def run_kubernetes_deployment(
         worker_replicas=num_pods,
         workers_per_pod=workers_per_pod,
         ttl_seconds=kube_options.ttl_seconds,
-        aiperf_config=aiperf_config,
-        user_config=user_config,
-        service_config=service_config,
+        aiperf_config=config,
         pod_customization=_kube_options_to_pod_customization(kube_options),
         queue_name=kube_options.queue_name,
         priority_class=kube_options.priority_class,

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
+from aiperf.common.config import EndpointConfig, OutputConfig, UserConfig
 from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin.enums import (
@@ -68,8 +68,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
             await manager.export_data()
@@ -112,8 +111,7 @@ class TestExporterManager:
                     was_cancelled=False,
                     error_summary=[],
                 ),
-                user_config=mock_user_config,
-                service_config=ServiceConfig(),
+                config=mock_user_config,
                 telemetry_results=None,
             )
             await manager.export_console(Console())

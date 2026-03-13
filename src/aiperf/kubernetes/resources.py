@@ -10,12 +10,10 @@ import re
 import uuid
 from typing import Any, ClassVar
 
-from pydantic import Field, SkipValidation, field_validator
+from pydantic import Field, field_validator
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.config import AIPerfConfig
-from aiperf.config.reverse_converter import convert_to_legacy_configs
 from aiperf.kubernetes.constants import Annotations, Labels
 from aiperf.kubernetes.enums import ImagePullPolicy
 from aiperf.kubernetes.jobset import JobSetSpec, PodCustomization
@@ -116,9 +114,7 @@ class ConfigMapSpec(AIPerfBaseModel):
     ) -> "ConfigMapSpec":
         """Create a ConfigMapSpec from AIPerfConfig.
 
-        Stores the AIPerfConfig as the primary config and generates legacy
-        UserConfig/ServiceConfig via the reverse converter for backward
-        compatibility with services.
+        Stores the AIPerfConfig as a single JSON file in the ConfigMap.
 
         Args:
             name: ConfigMap name.
@@ -131,21 +127,14 @@ class ConfigMapSpec(AIPerfBaseModel):
         """
         import orjson
 
-        user_config, service_config = convert_to_legacy_configs(config)
         return cls(
             name=name,
             namespace=namespace,
             data={
                 "aiperf_config.json": orjson.dumps(
-                    config.model_dump(mode="json", exclude_none=True),
+                    config.model_dump(mode="json"),
                     option=orjson.OPT_INDENT_2,
                 ).decode(),
-                "user_config.json": user_config.to_json_str(
-                    indent=True, exclude_unset=True, exclude_none=True
-                ),
-                "service_config.json": service_config.to_json_str(
-                    indent=True, exclude_unset=True, exclude_none=True
-                ),
             },
             labels={
                 Labels.APP_KEY: Labels.APP_VALUE,
@@ -296,12 +285,6 @@ class KubernetesDeployment(AIPerfBaseModel):
     )
     aiperf_config: AIPerfConfig = Field(
         description="AIPerf configuration (primary)",
-    )
-    user_config: SkipValidation[UserConfig] = Field(
-        description="User configuration (derived from AIPerfConfig for service compatibility)",
-    )
-    service_config: SkipValidation[ServiceConfig] = Field(
-        description="Service configuration (derived from AIPerfConfig for service compatibility)",
     )
     pod_customization: PodCustomization = Field(
         default_factory=PodCustomization,

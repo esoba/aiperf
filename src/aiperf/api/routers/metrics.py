@@ -13,7 +13,6 @@ from pydantic import Field
 
 from aiperf import __version__ as aiperf_version
 from aiperf.api.routers.base_router import BaseRouter, component_dependency
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.config_validators import coerce_value
 from aiperf.common.mixins.realtime_metrics_mixin import RealtimeMetricsMixin
 from aiperf.common.models import MetricResult
@@ -48,13 +47,15 @@ class MetricsRouter(RealtimeMetricsMixin, BaseRouter):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config: object = None,
+        *,
+        service_config: object = None,
+        user_config: object = None,
         **kwargs,
     ) -> None:
-        super().__init__(
-            service_config=service_config, user_config=user_config, **kwargs
-        )
+        if config is None:
+            config = service_config or user_config
+        super().__init__(config=config, service_config=config, **kwargs)
         self._info_labels: InfoLabels | None = None
 
     def get_info_labels(self) -> InfoLabels:
@@ -88,7 +89,7 @@ async def json_metrics(component: MetricsDep) -> MetricsResponse:
     )
 
 
-def build_info_labels(user_config: UserConfig) -> InfoLabels:
+def build_info_labels(user_config: object) -> InfoLabels:
     """Build info labels for metrics from UserConfig.
 
     These labels identify the benchmark and are included in Prometheus metrics.

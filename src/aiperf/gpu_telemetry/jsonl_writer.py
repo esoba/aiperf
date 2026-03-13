@@ -3,7 +3,6 @@
 
 from pathlib import Path
 
-from aiperf.common.config import UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.mixins import BufferedJSONLWriterMixin
@@ -33,7 +32,7 @@ class GPUTelemetryJSONLWriter(
 
     def __init__(
         self,
-        user_config: UserConfig,
+        user_config: object,
         **kwargs,
     ):
         if user_config.gpu_telemetry_disabled:

@@ -8,13 +8,12 @@ WorkerManager (to determine initial pool size). No service imports.
 
 import multiprocessing
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
 
 
 def calculate_worker_count(
-    user_config: UserConfig,
-    service_config: ServiceConfig,
+    user_config: object,
+    service_config: object,
 ) -> int:
     """Calculate the number of workers to spawn.
 

@@ -11,7 +11,7 @@
 #
 # Use case: Production benchmarking with stable measurements
 #
-# Run: aiperf --config examples_v2/warmup_profiling.yaml
+# Run: aiperf --config templates/warmup_profiling.yaml
 
 random_seed: 42
 

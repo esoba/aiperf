@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pytest import param
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
@@ -23,6 +22,7 @@ from aiperf.common.models import (
     ProcessHealth,
     WorkerTaskStats,
 )
+from aiperf.config.config import AIPerfConfig
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.plugin.enums import DatasetSamplingStrategy, ServiceType
 from aiperf.workers.worker_pod_manager import WorkerPodManager
@@ -32,32 +32,29 @@ from aiperf.workers.worker_pod_manager import WorkerPodManager
 # =============================================================================
 
 
-@pytest.fixture
-def user_config() -> UserConfig:
-    """Create a minimal UserConfig for testing."""
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
-
-
-@pytest.fixture
-def service_config() -> ServiceConfig:
-    """Create a ServiceConfig with default worker settings."""
-    return ServiceConfig()
-
-
-@pytest.fixture
-def service_config_with_workers() -> ServiceConfig:
-    """Create a ServiceConfig with explicit worker settings."""
-    return ServiceConfig(
-        workers_per_pod=8,
-        record_processors_per_pod=2,
+def _make_aiperf_config(**runtime_overrides) -> AIPerfConfig:
+    """Create a minimal AIPerfConfig with optional overrides for runtime fields."""
+    config = AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "main": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        load={"type": "concurrency", "requests": 10, "concurrency": 1},
     )
+    for key, value in runtime_overrides.items():
+        setattr(config.runtime, key, value)
+    return config
 
 
 @pytest.fixture
-def worker_pod_manager(
-    service_config: ServiceConfig, user_config: UserConfig
-) -> WorkerPodManager:
+def worker_pod_manager() -> WorkerPodManager:
     """Create a WorkerPodManager instance for testing."""
+    config = _make_aiperf_config()
     with (
         patch.object(WorkerPodManager, "debug"),
         patch.object(WorkerPodManager, "info"),
@@ -65,18 +62,16 @@ def worker_pod_manager(
         patch.object(WorkerPodManager, "error"),
     ):
         manager = WorkerPodManager(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id="test-pod-manager",
         )
         return manager
 
 
 @pytest.fixture
-def worker_pod_manager_custom(
-    service_config_with_workers: ServiceConfig, user_config: UserConfig
-) -> WorkerPodManager:
+def worker_pod_manager_custom() -> WorkerPodManager:
     """Create a WorkerPodManager with custom worker configuration."""
+    config = _make_aiperf_config(workers_per_pod=8, record_processors_per_pod=2)
     with (
         patch.object(WorkerPodManager, "debug"),
         patch.object(WorkerPodManager, "info"),
@@ -84,8 +79,7 @@ def worker_pod_manager_custom(
         patch.object(WorkerPodManager, "error"),
     ):
         manager = WorkerPodManager(
-            service_config=service_config_with_workers,
-            user_config=user_config,
+            config=config,
             service_id="test-pod-manager",
         )
         return manager
@@ -154,18 +148,17 @@ class TestWorkerPodManagerInit:
         ],
     )  # fmt: skip
     def test_default_record_processors_calculation(
-        self, workers: int, expected_rps: int, user_config: UserConfig
+        self, workers: int, expected_rps: int
     ) -> None:
         """Test record processors default to workers / PROCESSOR_SCALE_FACTOR."""
-        config = ServiceConfig(workers_per_pod=workers)
+        config = _make_aiperf_config(workers_per_pod=workers)
 
         with (
             patch.object(WorkerPodManager, "debug"),
             patch.object(WorkerPodManager, "info"),
         ):
             manager = WorkerPodManager(
-                service_config=config,
-                user_config=user_config,
+                config=config,
                 service_id="test",
             )
 
@@ -560,11 +553,10 @@ class TestWorkerPodManagerIntegration:
     @pytest.mark.asyncio
     async def test_full_lifecycle(
         self,
-        user_config: UserConfig,
         dataset_notification: DatasetConfiguredNotification,
     ) -> None:
         """Test full WorkerPodManager lifecycle from init to shutdown."""
-        config = ServiceConfig(workers_per_pod=2, record_processors_per_pod=1)
+        config = _make_aiperf_config(workers_per_pod=2, record_processors_per_pod=1)
 
         with (
             patch.object(WorkerPodManager, "debug"),
@@ -572,8 +564,7 @@ class TestWorkerPodManagerIntegration:
             patch.object(WorkerPodManager, "warning"),
         ):
             manager = WorkerPodManager(
-                service_config=config,
-                user_config=user_config,
+                config=config,
                 service_id="lifecycle-test",
             )
 
@@ -630,18 +621,19 @@ class TestWorkerPodManagerIntegration:
     )  # fmt: skip
     @pytest.mark.asyncio
     async def test_spawn_total_subprocesses(
-        self, workers: int, rps: int, expected_total: int, user_config: UserConfig
+        self, workers: int, rps: int, expected_total: int
     ) -> None:
         """Test total subprocess count matches workers + record processors."""
-        config = ServiceConfig(workers_per_pod=workers, record_processors_per_pod=rps)
+        config = _make_aiperf_config(
+            workers_per_pod=workers, record_processors_per_pod=rps
+        )
 
         with (
             patch.object(WorkerPodManager, "debug"),
             patch.object(WorkerPodManager, "info"),
         ):
             manager = WorkerPodManager(
-                service_config=config,
-                user_config=user_config,
+                config=config,
                 service_id="spawn-test",
             )
 

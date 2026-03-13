@@ -9,7 +9,7 @@
 #
 # Use case: Measure P50/P90/P99 latencies at production-like request rates
 #
-# Run: aiperf --config examples_v2/latency_test.yaml
+# Run: aiperf --config templates/latency_test.yaml
 
 random_seed: 42
 

@@ -37,15 +37,11 @@ async def generate(
 
     with cli_utils.exit_on_error(title="Error Generating Kubernetes Manifests"):
         from aiperf.config.cli_builder import build_aiperf_config
-        from aiperf.config.reverse_converter import convert_to_legacy_configs
         from aiperf.kubernetes import runner
 
-        aiperf_config = build_aiperf_config(cli)
-        user_config, service_config = convert_to_legacy_configs(aiperf_config)
+        config = build_aiperf_config(cli)
         await runner.run_kubernetes_deployment(
-            user_config,
-            service_config,
+            config,
             kube_options,
             dry_run=True,
-            aiperf_config=aiperf_config,
         )

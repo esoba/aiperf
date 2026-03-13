@@ -3,7 +3,6 @@
 import asyncio
 from abc import ABC, abstractmethod
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -19,18 +18,19 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config=None,
+        *,
+        service_config=None,
+        user_config=None,
         **kwargs,
     ):
-        super().__init__(
-            service_config=service_config,
-            user_config=user_config,
-            **kwargs,
-        )
+        if config is None:
+            config = service_config
+        super().__init__(**kwargs)
         self.required_services = required_services
-        self.service_config = service_config
-        self.user_config = user_config
+        self.config = config
+        self.service_config = config
+        self.user_config = config
         self._shutdown_complete = False
         self._heartbeat_monitoring_active = False
         self._pod_monitoring_active = False

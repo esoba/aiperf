@@ -40,17 +40,14 @@ class TestMultiProcessServiceManager:
         return mock_process
 
     @pytest.fixture
-    def service_manager(
-        self, service_config, user_config
-    ) -> MultiProcessServiceManager:
+    def service_manager(self, aiperf_config) -> MultiProcessServiceManager:
         """Create a MultiProcessServiceManager instance for testing."""
         return MultiProcessServiceManager(
             required_services={
                 ServiceType.DATASET_MANAGER: 1,
                 ServiceType.TIMING_MANAGER: 1,
             },
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
 
     @pytest.mark.asyncio

@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.error_queue import ErrorQueue
 from aiperf.common.hooks import background_task
@@ -24,16 +23,19 @@ class MultiProcessServiceManager(BaseServiceManager):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config=None,
         log_queue: LogQueue | None = None,
         error_queue: ErrorQueue | None = None,
+        *,
+        service_config=None,
+        user_config=None,
         **kwargs,
     ):
-        super().__init__(required_services, service_config, user_config, **kwargs)
+        if config is None:
+            config = service_config
+        super().__init__(required_services, config=config, **kwargs)
         self._subprocess_manager = SubprocessManager(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             log_queue=log_queue,
             error_queue=error_queue,
             logger=self,

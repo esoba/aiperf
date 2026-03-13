@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.plugin import plugins
@@ -12,15 +11,19 @@ from aiperf.plugin.enums import PluginType, ZMQProxyType
 class ProxyManager(AIPerfLifecycleMixin):
     def __init__(
         self,
-        service_config: ServiceConfig,
+        config=None,
         *,
+        service_config=None,
         enable_event_bus: bool = False,
         enable_dataset_manager: bool = False,
         enable_raw_inference: bool = False,
         **kwargs,
     ) -> None:
-        super().__init__(service_config=service_config, **kwargs)
-        self.service_config = service_config
+        if config is None:
+            config = service_config
+        super().__init__(**kwargs)
+        self.config = config
+        self.service_config = config
         self._enable_event_bus = enable_event_bus
         self._enable_dataset_manager = enable_dataset_manager
         self._enable_raw_inference = enable_raw_inference

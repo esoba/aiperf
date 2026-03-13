@@ -6,7 +6,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from aiperf.cli_utils import raise_startup_error_and_exit
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.config.config import AIPerfConfig
 from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
 from aiperf.plugin.enums import ServiceType, UIType
 
@@ -16,8 +16,7 @@ if TYPE_CHECKING:
 
 
 def run_system_controller(
-    user_config: UserConfig,
-    service_config: ServiceConfig,
+    config: AIPerfConfig,
 ) -> None:
     """Run the system controller with the given configuration.
 
@@ -25,15 +24,14 @@ def run_system_controller(
     Otherwise, runs a single benchmark (backward compatibility).
     """
     # Check if multi-run mode is enabled
-    if user_config.loadgen.num_profile_runs > 1:
-        _run_multi_benchmark(user_config, service_config)
+    if config.multi_run.num_runs > 1:
+        _run_multi_benchmark(config)
     else:
-        _run_single_benchmark(user_config, service_config)
+        _run_single_benchmark(config)
 
 
 def _run_single_benchmark(
-    user_config: UserConfig,
-    service_config: ServiceConfig,
+    config: AIPerfConfig,
 ) -> None:
     """Run a single benchmark (original behavior)."""
 
@@ -51,7 +49,7 @@ def _run_single_benchmark(
     from aiperf.common.environment import Environment
 
     is_macos = platform.system() == "Darwin"
-    using_dashboard = service_config.ui_type == UIType.DASHBOARD
+    using_dashboard = config.ui_type == UIType.DASHBOARD
 
     # Set multiprocessing start method:
     # - macOS + Dashboard: "spawn" prevents terminal corruption from inherited FDs
@@ -104,18 +102,19 @@ def _run_single_benchmark(
     else:
         from aiperf.common.logging import setup_rich_logging
 
-        setup_rich_logging(user_config, service_config)
+        setup_rich_logging(config, config)
 
     # Create and start the system controller
     logger.info("Starting AIPerf System")
 
     # Validate tokenizer early (before spawning services) to fail fast.
-    user_config.tokenizer.resolved_names = validate_tokenizer_early(user_config, logger)
+    if config.tokenizer and config.tokenizer.name:
+        config.tokenizer.resolved_names = validate_tokenizer_early(config, logger)
 
     # Validate custom GPU metrics CSV file
-    if user_config.gpu_telemetry_metrics_file:
+    if config.gpu_telemetry_metrics_file:
         try:
-            csv_path = user_config.gpu_telemetry_metrics_file
+            csv_path = config.gpu_telemetry_metrics_file
             logger.info(f"Custom GPU metrics file configured: {csv_path}")
 
             loader = MetricsConfigLoader()
@@ -133,8 +132,7 @@ def _run_single_benchmark(
     try:
         bootstrap_and_run_service(
             service_type=ServiceType.SYSTEM_CONTROLLER,
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             log_queue=log_queue,
         )
     except Exception:
@@ -145,8 +143,7 @@ def _run_single_benchmark(
 
 
 def _run_multi_benchmark(
-    user_config: UserConfig,
-    service_config: ServiceConfig,
+    config: AIPerfConfig,
 ) -> None:
     """Run multiple benchmarks for confidence reporting.
 
@@ -165,36 +162,26 @@ def _run_multi_benchmark(
     from aiperf.orchestrator.strategies import FixedTrialsStrategy
 
     # Validate and adjust UI type for multi-run mode
-    if (
-        "ui_type" in service_config.model_fields_set
-        and service_config.ui_type == UIType.DASHBOARD
-    ):
+    if config.ui_type == UIType.DASHBOARD:
         raise ValueError(
             "Dashboard UI is not supported with multi-run mode (--num-profile-runs > 1) "
             "due to terminal control limitations. "
             "Please use '--ui simple' or '--ui none' instead."
         )
 
-    # Set default to simple if ui_type wasn't explicitly set
-    if "ui_type" not in service_config.model_fields_set:
-        service_config.ui_type = UIType.SIMPLE
+    # Set default to simple
+    if config.ui_type != UIType.NONE:
+        config.ui_type = UIType.SIMPLE
 
     # Set up logging so output is visible
-    setup_rich_logging(user_config, service_config)
+    setup_rich_logging(config, config)
 
     logger = AIPerfLogger(__name__)
 
-    # Inform user about UI mode (now that logging is set up)
-    if "ui_type" not in service_config.model_fields_set:
-        logger.info(
-            "Multi-run mode: UI automatically set to 'simple' "
-            "(use '--ui none' to disable UI output)"
-        )
-
     # Print multi-run banner
-    num_runs = user_config.loadgen.num_profile_runs
-    confidence_level = user_config.loadgen.confidence_level
-    cooldown = user_config.loadgen.profile_run_cooldown_seconds
+    num_runs = config.multi_run.num_runs
+    confidence_level = config.multi_run.confidence_level
+    cooldown = config.multi_run.cooldown_seconds
 
     logger.info("=" * 80)
     logger.info("Starting Multi-Run Confidence Reporting")
@@ -207,18 +194,18 @@ def _run_multi_benchmark(
     strategy = FixedTrialsStrategy(
         num_trials=num_runs,
         cooldown_seconds=cooldown,
-        auto_set_seed=user_config.loadgen.set_consistent_seed,
-        disable_warmup_after_first=user_config.loadgen.profile_run_disable_warmup_after_first,
+        auto_set_seed=config.multi_run.set_consistent_seed,
+        disable_warmup_after_first=config.multi_run.disable_warmup_after_first,
     )
 
     # Create orchestrator
     orchestrator = MultiRunOrchestrator(
-        base_dir=user_config.output.artifact_directory, service_config=service_config
+        base_dir=config.output.artifact_directory, config=config
     )
 
     # Execute runs
     try:
-        results = orchestrator.execute(user_config, strategy)
+        results = orchestrator.execute(config, strategy)
     except Exception:
         logger.exception("Error executing multi-run benchmark")
         raise
@@ -244,9 +231,7 @@ def _run_multi_benchmark(
         aggregate_result.metadata["cooldown_seconds"] = cooldown
 
         # Write aggregate artifacts using exporters
-        aggregate_dir = strategy.get_aggregate_path(
-            user_config.output.artifact_directory
-        )
+        aggregate_dir = strategy.get_aggregate_path(config.output.artifact_directory)
 
         # Create exporter config
         exporter_config = AggregateExporterConfig(

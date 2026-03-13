@@ -10,7 +10,6 @@ from aiperf.common.environment import Environment
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 
 if TYPE_CHECKING:
-    from aiperf.common.config import ServiceConfig, UserConfig
     from aiperf.common.error_queue import ErrorQueue
     from aiperf.common.logging import LogQueue
     from aiperf.common.types import ServiceTypeT
@@ -26,8 +25,7 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
     def __init__(
         self,
         required_services: dict[ServiceTypeT, int],
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config: object = None,
         log_queue: LogQueue | None = None,
         error_queue: ErrorQueue | None = None,
     ): ...

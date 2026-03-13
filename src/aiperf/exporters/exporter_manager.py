@@ -5,7 +5,6 @@ import asyncio
 
 from rich.console import Console
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.exceptions import (
     ConsoleExporterDisabled,
     DataExporterDisabled,
@@ -29,21 +28,21 @@ class ExporterManager(AIPerfLoggerMixin):
     def __init__(
         self,
         results: ProfileResults,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        config: object,
         telemetry_results: TelemetryExportData | None,
         server_metrics_results: ServerMetricsResults | None = None,
+        *,
+        user_config: object = None,
+        service_config: object = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._results = results
-        self._user_config = user_config
+        self._config = config
         self._tasks: set[asyncio.Task] = set()
-        self._service_config = service_config
         self._exporter_config = ExporterConfig(
             results=self._results,
-            user_config=self._user_config,
-            service_config=self._service_config,
+            config=self._config,
             telemetry_results=telemetry_results,
             server_metrics_results=server_metrics_results,
         )

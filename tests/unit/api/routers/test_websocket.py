@@ -419,12 +419,9 @@ class TestWebSocketRouterLifecycle:
     """Test WebSocketRouter lifecycle hooks."""
 
     @pytest.fixture
-    def ws_router(
-        self, mock_zmq, router_service_config, router_user_config
-    ) -> WebSocketRouter:
+    def ws_router(self, mock_zmq, router_aiperf_config) -> WebSocketRouter:
         return WebSocketRouter(
-            service_config=router_service_config,
-            user_config=router_user_config,
+            config=router_aiperf_config,
         )
 
     @pytest.mark.asyncio

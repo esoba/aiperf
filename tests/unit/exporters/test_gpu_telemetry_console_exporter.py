@@ -8,7 +8,7 @@ from datetime import datetime
 import pytest
 from rich.console import Console
 
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
+from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.models import (
     EndpointData,
     GpuSummary,
@@ -67,11 +67,9 @@ class TestGPUTelemetryConsoleExporter:
         """Test that export does not print when gpu_telemetry is not enabled."""
         # Create user config without gpu_telemetry
         user_config = UserConfig(endpoint=mock_endpoint_config)
-        service_config = ServiceConfig(verbose=False)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=user_config,
-            service_config=service_config,
+            config=user_config,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -88,11 +86,9 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config, capsys
     ):
         """Test that export does not print when telemetry_results is None."""
-        service_config = ServiceConfig(verbose=True)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -108,11 +104,9 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config, sample_telemetry_results, capsys
     ):
         """Test export with real telemetry data displays correctly."""
-        service_config = ServiceConfig(verbose=True)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -131,11 +125,9 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config, sample_telemetry_results, capsys
     ):
         """Test that all endpoints are displayed in the summary."""
-        service_config = ServiceConfig(verbose=True)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -157,11 +149,9 @@ class TestGPUTelemetryConsoleExporter:
         capsys,
     ):
         """Test that failed endpoints are marked appropriately."""
-        service_config = ServiceConfig(verbose=True)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=sample_telemetry_results_with_failures,
         )
 
@@ -180,11 +170,9 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config, empty_telemetry_results, capsys
     ):
         """Test that empty telemetry data shows appropriate message."""
-        service_config = ServiceConfig(verbose=True)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=empty_telemetry_results,
         )
 
@@ -204,11 +192,9 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config, sample_telemetry_results
     ):
         """Test get_renderable method with multi-GPU data."""
-        service_config = ServiceConfig(verbose=True)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -247,11 +233,9 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config, sample_telemetry_results, capsys
     ):
         """Test that all key metrics are displayed in the output."""
-        service_config = ServiceConfig(verbose=True)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=sample_telemetry_results,
         )
 
@@ -275,7 +259,6 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config, capsys
     ):
         """Test that failed endpoints show appropriate message."""
-        service_config = ServiceConfig(verbose=True)
 
         # Create telemetry results with failed endpoint (no data)
         telemetry_results = TelemetryExportData(
@@ -290,8 +273,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=telemetry_results,
         )
 
@@ -318,8 +300,6 @@ class TestGPUTelemetryConsoleExporter:
             TelemetryExportData,
             TelemetrySummary,
         )
-
-        service_config = ServiceConfig(verbose=True)
 
         # Create telemetry results with GPU that only has some metrics
         telemetry_results = TelemetryExportData(
@@ -351,8 +331,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=telemetry_results,
         )
 
@@ -372,7 +351,6 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config, capsys
     ):
         """Test display when all endpoints failed."""
-        service_config = ServiceConfig(verbose=True)
 
         telemetry_results = TelemetryExportData(
             summary=TelemetrySummary(
@@ -390,8 +368,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=telemetry_results,
         )
 
@@ -414,7 +391,6 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config
     ):
         """Test get_renderable with endpoint that has no GPU data."""
-        service_config = ServiceConfig(verbose=True)
 
         # Endpoint exists but has no GPU data
         telemetry_results = TelemetryExportData(
@@ -431,8 +407,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=telemetry_results,
         )
 
@@ -447,11 +422,9 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config
     ):
         """Test _format_number with None value."""
-        service_config = ServiceConfig(verbose=True)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -464,11 +437,9 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config
     ):
         """Test _format_number with large values (scientific notation)."""
-        service_config = ServiceConfig(verbose=True)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -481,11 +452,9 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config
     ):
         """Test _format_number with normal values."""
-        service_config = ServiceConfig(verbose=True)
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=None,
         )
 
@@ -498,7 +467,6 @@ class TestGPUTelemetryConsoleExporter:
         self, mock_profile_results, mock_user_config, capsys
     ):
         """Test display with mix of successful and failed endpoints."""
-        service_config = ServiceConfig(verbose=True)
 
         # Create one successful endpoint with GPU data
         telemetry_results = TelemetryExportData(
@@ -532,8 +500,7 @@ class TestGPUTelemetryConsoleExporter:
 
         exporter_config = ExporterConfig(
             results=mock_profile_results,
-            user_config=mock_user_config,
-            service_config=service_config,
+            config=mock_user_config,
             telemetry_results=telemetry_results,
         )
 

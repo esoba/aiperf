@@ -19,7 +19,6 @@ from aiperf.cli_utils import (
     warn_osl_without_ignore_eos,
 )
 from aiperf.common.base_service import BaseService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.config.zmq_config import ZMQDualBindConfig
 from aiperf.common.control_structs import (
@@ -108,14 +107,12 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        config=None,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             **kwargs,
         )
@@ -137,7 +134,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             ServiceType.RECORDS_MANAGER: 1,
         }
 
-        num_workers = calculate_worker_count(user_config, service_config)
+        num_workers = calculate_worker_count(self.config, self.config)
         if self.service_config.record_processor_service_count is not None:
             num_record_processors = self.service_config.record_processor_service_count
         else:
@@ -146,7 +143,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self.required_services[ServiceType.RECORD_PROCESSOR] = num_record_processors
 
         self.proxy_manager: ProxyManager = ProxyManager(
-            service_config=self.service_config,
+            config=self.config,
             enable_event_bus=True,
             enable_dataset_manager=True,
             enable_raw_inference=not is_k8s_mode,
@@ -190,8 +187,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         self.service_manager: ServiceManagerProtocol = ServiceManagerClass(
             required_services=self.required_services,
-            user_config=self.user_config,
-            service_config=self.service_config,
+            config=self.config,
             log_queue=log_queue,
             error_queue=self._error_collector.error_queue,
         )
@@ -1426,8 +1422,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         exporter_manager = ExporterManager(
             results=self._profile_results.results,
-            user_config=self.user_config,
-            service_config=self.service_config,
+            config=self.config,
             telemetry_results=self._telemetry_results,
             server_metrics_results=self._server_metrics_results,
         )

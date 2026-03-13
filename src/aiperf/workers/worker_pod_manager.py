@@ -19,7 +19,6 @@ import aiohttp
 import zstandard
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.control_structs import Registration
 from aiperf.common.enums import MessageType, WorkerStatus
 from aiperf.common.environment import Environment
@@ -80,16 +79,14 @@ class WorkerPodManager(BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         self._pod_index = os.environ.get("AIPERF_POD_INDEX")
 
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             **kwargs,
         )
@@ -99,8 +96,7 @@ class WorkerPodManager(BaseComponentService):
             logger=self, exit_errors=self._exit_errors
         )
         self._subprocess_manager = SubprocessManager(
-            service_config=service_config,
-            user_config=user_config,
+            config=self.config,
             log_queue=get_global_log_queue(),
             error_queue=self._error_collector.error_queue,
             logger=self,
@@ -108,13 +104,16 @@ class WorkerPodManager(BaseComponentService):
 
         # Configuration for workers per pod
         self.workers_per_pod = (
-            service_config.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
+            self.service_config.workers_per_pod
+            or Environment.WORKER.DEFAULT_WORKERS_PER_POD
         )
 
         # Configuration for record processors per pod
         # Default: 1 RP for every 4 workers, minimum 1
-        if service_config.record_processors_per_pod is not None:
-            self.record_processors_per_pod = service_config.record_processors_per_pod
+        if self.service_config.record_processors_per_pod is not None:
+            self.record_processors_per_pod = (
+                self.service_config.record_processors_per_pod
+            )
         else:
             self.record_processors_per_pod = max(
                 1, self.workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR
@@ -130,7 +129,7 @@ class WorkerPodManager(BaseComponentService):
         self._stopping = False
 
         self._proxy_manager = ProxyManager(
-            service_config=self.service_config,
+            config=self.config,
             enable_raw_inference=True,
         )
 

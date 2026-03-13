@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pytest import param
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import (
     ServiceProcessDiedError,
@@ -33,13 +32,10 @@ class TestIsExternalService:
     """Test _is_external_service classification for all service types."""
 
     @pytest.fixture
-    def manager(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> KubernetesServiceManager:
+    def manager(self, aiperf_config) -> KubernetesServiceManager:
         return KubernetesServiceManager(
             required_services={ServiceType.DATASET_MANAGER: 1},
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
 
     @pytest.mark.parametrize(
@@ -85,16 +81,13 @@ class TestRunService:
     """Test run_service delegates or no-ops based on service type."""
 
     @pytest.fixture
-    def manager(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> KubernetesServiceManager:
+    def manager(self, aiperf_config) -> KubernetesServiceManager:
         return KubernetesServiceManager(
             required_services={
                 ServiceType.DATASET_MANAGER: 1,
                 ServiceType.WORKER: 5,
             },
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
 
     @pytest.mark.asyncio
@@ -162,16 +155,13 @@ class TestStopService:
     """Test stop_service delegates or no-ops based on service type."""
 
     @pytest.fixture
-    def manager(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> KubernetesServiceManager:
+    def manager(self, aiperf_config) -> KubernetesServiceManager:
         return KubernetesServiceManager(
             required_services={
                 ServiceType.DATASET_MANAGER: 1,
                 ServiceType.WORKER: 5,
             },
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
 
     @pytest.mark.asyncio
@@ -232,17 +222,14 @@ class TestShutdownAllServices:
         return proc
 
     @pytest.fixture
-    def manager(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> KubernetesServiceManager:
+    def manager(self, aiperf_config) -> KubernetesServiceManager:
         return KubernetesServiceManager(
             required_services={
                 ServiceType.DATASET_MANAGER: 1,
                 ServiceType.TIMING_MANAGER: 1,
                 ServiceType.API: 1,
             },
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
 
     @pytest.mark.asyncio
@@ -315,13 +302,10 @@ class TestWaitForApiSubprocess:
     """Test wait_for_api_subprocess blocking behavior."""
 
     @pytest.fixture
-    def manager(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> KubernetesServiceManager:
+    def manager(self, aiperf_config) -> KubernetesServiceManager:
         return KubernetesServiceManager(
             required_services={ServiceType.API: 1},
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
 
     @pytest.mark.asyncio
@@ -385,17 +369,14 @@ class TestWaitForAllServicesRegistration:
     """Test registration wait using ServiceRegistry."""
 
     @pytest.fixture
-    def manager(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> KubernetesServiceManager:
+    def manager(self, aiperf_config) -> KubernetesServiceManager:
         return KubernetesServiceManager(
             required_services={
                 ServiceType.DATASET_MANAGER: 1,
                 ServiceType.TIMING_MANAGER: 1,
                 ServiceType.WORKER: 1,
             },
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
 
     @pytest.mark.asyncio
@@ -481,9 +462,7 @@ class TestWaitForAllServicesRegistration:
 class TestKubernetesServiceManagerInit:
     """Test construction and inheritance."""
 
-    def test_inherits_from_multiprocess(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> None:
+    def test_inherits_from_multiprocess(self, aiperf_config) -> None:
         """KubernetesServiceManager should be a subclass of MultiProcessServiceManager."""
         from aiperf.controller.multiprocess_service_manager import (
             MultiProcessServiceManager,
@@ -491,19 +470,15 @@ class TestKubernetesServiceManagerInit:
 
         manager = KubernetesServiceManager(
             required_services={ServiceType.DATASET_MANAGER: 1},
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
         assert isinstance(manager, MultiProcessServiceManager)
 
-    def test_has_subprocess_manager(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> None:
+    def test_has_subprocess_manager(self, aiperf_config) -> None:
         """Should have a SubprocessManager from parent init."""
         manager = KubernetesServiceManager(
             required_services={ServiceType.DATASET_MANAGER: 1},
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
         assert isinstance(manager._subprocess_manager, SubprocessManager)
 
@@ -512,13 +487,10 @@ class TestHeartbeatMonitoring:
     """Test _monitor_heartbeats detects stale external services."""
 
     @pytest.fixture
-    def manager(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> KubernetesServiceManager:
+    def manager(self, aiperf_config) -> KubernetesServiceManager:
         mgr = KubernetesServiceManager(
             required_services={ServiceType.DATASET_MANAGER: 1},
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
         mgr.activate_heartbeat_monitoring()
         return mgr
@@ -589,13 +561,10 @@ class TestMonitorWorkerPods:
     """Test _monitor_worker_pods detects failed Kubernetes pods."""
 
     @pytest.fixture
-    def manager(
-        self, service_config: ServiceConfig, user_config: UserConfig
-    ) -> KubernetesServiceManager:
+    def manager(self, aiperf_config) -> KubernetesServiceManager:
         mgr = KubernetesServiceManager(
             required_services={ServiceType.DATASET_MANAGER: 1},
-            service_config=service_config,
-            user_config=user_config,
+            config=aiperf_config,
         )
         mgr.activate_heartbeat_monitoring()
         return mgr

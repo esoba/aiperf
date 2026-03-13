@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.config.zmq_config import ZMQDualBindConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
@@ -108,15 +107,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         # For dual-bind mode (Kubernetes), also bind to TCP for remote record processors.
         # Controller binds to IPC + TCP; workers connect via TCP.
         additional_bind_address: str | None = None
-        comm_config = service_config.comm_config
+        comm_config = config.comm_config
         if (
             isinstance(comm_config, ZMQDualBindConfig)
             and not comm_config.controller_host
@@ -124,8 +122,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             additional_bind_address = comm_config.records_push_pull_tcp_bind_address
 
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             pull_client_address=CommAddress.RECORDS,
             pull_client_bind=True,

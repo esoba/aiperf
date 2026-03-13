@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.config import UserConfig
 from aiperf.common.mixins import AIPerfLoggerMixin
 
 
@@ -13,7 +12,7 @@ class BaseGrader(AIPerfLoggerMixin):
     Subclasses must override `grade()` and `extract_answer()`.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs) -> None:
+    def __init__(self, user_config: object, **kwargs) -> None:
         super().__init__(**kwargs)
         self.user_config = user_config
 

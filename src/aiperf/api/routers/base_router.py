@@ -10,7 +10,6 @@ from abc import abstractmethod
 from fastapi import APIRouter, Depends
 from starlette.requests import HTTPConnection
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 
 
@@ -24,13 +23,18 @@ class BaseRouter(AIPerfLifecycleMixin):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig | None = None,
+        config: object = None,
+        *,
+        user_config: object = None,
+        service_config: object = None,
         **kwargs,
     ) -> None:
+        if config is None:
+            config = user_config or service_config
         super().__init__(**kwargs)
-        self.user_config = user_config
-        self.service_config = service_config
+        self.config = config
+        self.user_config = config
+        self.service_config = config
 
     @abstractmethod
     def get_router(self) -> APIRouter:

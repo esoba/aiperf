@@ -414,6 +414,25 @@ def service_config() -> ServiceConfig:
     )
 
 
+@pytest.fixture
+def aiperf_config():
+    """Create a minimal AIPerfConfig for testing services."""
+    from aiperf.config.config import AIPerfConfig
+
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "main": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        load={"type": "concurrency", "requests": 10, "concurrency": 1},
+    )
+
+
 class MockPubClient:
     """Mock pub client."""
 
@@ -739,7 +758,7 @@ def tmp_artifact_dir(tmp_path: Path) -> Path:
 
 def create_exporter_config(
     profile_results,
-    user_config,
+    config,
     telemetry_results=None,
     server_metrics_results=None,
     verbose=True,
@@ -747,8 +766,7 @@ def create_exporter_config(
     """Helper to create ExporterConfig with common defaults."""
     return ExporterConfig(
         results=profile_results,
-        user_config=user_config,
-        service_config=ServiceConfig(verbose=verbose),
+        config=config,
         telemetry_results=telemetry_results,
         server_metrics_results=server_metrics_results,
     )

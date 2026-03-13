@@ -5,7 +5,6 @@ from abc import abstractmethod
 from typing import Any, Generic, TypeVar
 
 from aiperf.common.config.config_defaults import InputTokensDefaults
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.generator.prompt import PromptGenerator
@@ -37,7 +36,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         *,
         filename: str,
         prompt_generator: PromptGenerator,
-        user_config: UserConfig,
+        user_config: object,
         default_block_size: int | None = None,
         **kwargs: Any,
     ) -> None:

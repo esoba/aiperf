@@ -5,7 +5,6 @@ import time
 import uuid
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import BYTES_PER_MIB
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType, MessageType
@@ -134,14 +133,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config,
         service_id: str | None = None,
         **kwargs,
     ):
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             **kwargs,
         )

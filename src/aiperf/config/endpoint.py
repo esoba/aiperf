@@ -15,11 +15,13 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     model_validator,
 )
 
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
+    ModelSelectionStrategy,
 )
 from aiperf.config.constraints import ConstraintsMixin, RequiredIf
 from aiperf.plugin.enums import (
@@ -224,6 +226,55 @@ class EndpointConfig(BaseModel, ConstraintsMixin):
             "Common fields: temperature, top_p, top_k, stop.",
         ),
     ]
+
+    # Private attributes populated by AIPerfConfig.inject_endpoint_compat
+    _model_names: list[str] = PrivateAttr(default_factory=list)
+    _model_selection_strategy: ModelSelectionStrategy = PrivateAttr(
+        default=ModelSelectionStrategy.ROUND_ROBIN
+    )
+
+    # =========================================================================
+    # BACKWARD COMPATIBILITY PROPERTIES
+    # =========================================================================
+
+    @property
+    def model_names(self) -> list[str]:
+        """Model names from parent config. Populated by AIPerfConfig."""
+        return self._model_names
+
+    @property
+    def model_selection_strategy(self) -> ModelSelectionStrategy:
+        """Model selection strategy from parent config. Populated by AIPerfConfig."""
+        return self._model_selection_strategy
+
+    @property
+    def timeout_seconds(self) -> float:
+        """Alias for timeout (legacy field name)."""
+        return self.timeout
+
+    @property
+    def custom_endpoint(self) -> str | None:
+        """Alias for path (legacy field name)."""
+        return self.path
+
+    @property
+    def url_selection_strategy(self) -> URLSelectionStrategy:
+        """Alias for url_strategy (legacy field name)."""
+        return self.url_strategy
+
+    @property
+    def connection_reuse_strategy(self) -> ConnectionReuseStrategy:
+        """Alias for connection_reuse (legacy field name)."""
+        return self.connection_reuse
+
+    @property
+    def url(self) -> str:
+        """Return the first URL."""
+        return self.urls[0]
+
+    # =========================================================================
+    # VALIDATORS
+    # =========================================================================
 
     @model_validator(mode="before")
     @classmethod

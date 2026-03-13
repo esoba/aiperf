@@ -7,7 +7,6 @@ import signal
 import uuid
 from abc import ABC
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.exceptions import ServiceError
@@ -15,6 +14,7 @@ from aiperf.common.hooks import on_command
 from aiperf.common.mixins import CommandHandlerMixin
 from aiperf.common.mixins.health_server_mixin import HealthServerMixin
 from aiperf.common.mixins.process_health_mixin import ProcessHealthMixin
+from aiperf.config.config import AIPerfConfig
 from aiperf.plugin.enums import ServiceType
 
 
@@ -75,21 +75,27 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config: AIPerfConfig,
         service_id: str | None = None,
         health_port: int | None = None,
+        *,
+        service_config: object | None = None,
+        user_config: object | None = None,
         **kwargs,
     ) -> None:
-        self.service_config = service_config
-        self.user_config = user_config
+        self.config = config
+        # Backward compat: self.user_config and self.service_config
+        # both point to the AIPerfConfig which has facade properties
+        # for all legacy UserConfig/ServiceConfig fields.
+        self.user_config = config
+        self.service_config = config
         self.service_id = service_id or f"{self.service_type}_{uuid.uuid4().hex[:8]}"
         self._health_port = health_port
         super().__init__(
             service_id=self.service_id,
             id=self.service_id,
-            service_config=self.service_config,
-            user_config=self.user_config,
+            service_config=self.config,
+            user_config=self.config,
             **kwargs,
         )
         self.debug(

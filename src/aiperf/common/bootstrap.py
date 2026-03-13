@@ -14,10 +14,10 @@ import uuid
 import warnings
 from typing import Any
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
 from aiperf.common.error_queue import ErrorQueue
 from aiperf.common.logging import LogQueue
+from aiperf.config.config import AIPerfConfig
 from aiperf.plugin.enums import ServiceType
 
 # Suppress ZMQ RuntimeWarning about dropped messages during shutdown.
@@ -44,13 +44,15 @@ def _enable_hf_offline_mode() -> None:
 
 def bootstrap_and_run_service(
     service_type: ServiceType,
-    service_config: ServiceConfig | None = None,
-    user_config: UserConfig | None = None,
+    config: AIPerfConfig | None = None,
     service_id: str | None = None,
     log_queue: LogQueue | None = None,
     error_queue: ErrorQueue | None = None,
     health_port: int | None = None,
     api_port: int | None = None,
+    *,
+    service_config: object | None = None,
+    user_config: object | None = None,
     **kwargs: Any,
 ) -> None:
     """Bootstrap the service and run it.
@@ -60,16 +62,15 @@ def bootstrap_and_run_service(
 
     Args:
         service_type: The type of the service to run.
-        service_config: The service configuration to use. If not provided, the service
-            configuration will be loaded from the environment variables.
-        user_config: The user configuration to use. If not provided, the user configuration
-            will be loaded from the environment variables.
-        log_queue: Optional multiprocessing queue for child process logging. If provided,
-            the child process logging will be set up.
-        error_queue: Optional multiprocessing queue for reporting unhandled errors back
-            to the parent process.
+        config: The AIPerfConfig to use. If not provided, will be loaded from
+            environment variables via legacy config loaders.
+        service_id: Unique identifier for this service instance.
+        log_queue: Optional multiprocessing queue for child process logging.
+        error_queue: Optional multiprocessing queue for reporting unhandled errors.
         health_port: HTTP port for health endpoints (/healthz, /readyz).
         api_port: HTTP port for API endpoints (services that support it).
+        service_config: Deprecated. Ignored if config is provided.
+        user_config: Deprecated. Ignored if config is provided.
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
@@ -106,17 +107,19 @@ def bootstrap_and_run_service(
         else:
             service_id = str(service_type)
 
-    # Load the service configuration
-    if service_config is None:
-        from aiperf.common.config.loader import load_service_config
+    # Load config from environment if not provided directly.
+    # In K8s child processes, config is serialized via AIPERF_CONFIG_FILE env var.
+    if config is None:
+        config_file = os.environ.get("AIPERF_CONFIG_FILE")
+        if config_file:
+            from aiperf.config.loader import load_config
 
-        service_config = load_service_config()
-
-    # Load the user configuration
-    if user_config is None:
-        from aiperf.common.config.loader import load_user_config
-
-        user_config = load_user_config()
+            config = load_config(config_file)
+        else:
+            raise ValueError(
+                "AIPerfConfig must be provided either directly or via "
+                "AIPERF_CONFIG_FILE environment variable."
+            )
 
     async def _run_service():
         # Disable health server in child processes to prevent port conflicts.
@@ -130,32 +133,29 @@ def bootstrap_and_run_service(
             _start_yappi_profiling()
 
         if service_metadata.disable_gc:
-            # Disable garbage collection in child processes to prevent unpredictable latency spikes.
-            # Only required in timing critical services such as Worker and TimingManager.
             import gc
 
-            for _ in range(3):  # Run 3 times to ensure all objects are collected
+            for _ in range(3):
                 gc.collect()
             gc.freeze()
             gc.set_threshold(0)
             gc.disable()
 
         # Load and apply custom GPU metrics in child process
-        if user_config.gpu_telemetry_metrics_file:
+        if config.gpu_telemetry_metrics_file:
             from aiperf.gpu_telemetry import constants
             from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
 
             loader = MetricsConfigLoader()
             custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
-                custom_csv_path=user_config.gpu_telemetry_metrics_file
+                custom_csv_path=config.gpu_telemetry_metrics_file
             )
 
             constants.GPU_TELEMETRY_METRICS_CONFIG.extend(custom_metrics)
             constants.DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
 
         service = ServiceClass(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             health_port=health_port,
             api_port=api_port,
@@ -164,9 +164,7 @@ def bootstrap_and_run_service(
 
         from aiperf.common.logging import setup_child_process_logging
 
-        setup_child_process_logging(
-            log_queue, service.service_id, service_config, user_config
-        )
+        setup_child_process_logging(log_queue, service.service_id, config, config)
 
         # NOTE: Prevent child processes from accessing parent's terminal on macOS.
         # This solves the macOS terminal corruption issue with Textual UI where child
@@ -181,7 +179,7 @@ def bootstrap_and_run_service(
 
         # Always reset and then initialize the global random generator to ensure a clean state
         rng.reset()
-        rng.init(user_config.input.random_seed)
+        rng.init(config.input.random_seed)
 
         nonlocal has_errors
 
@@ -199,7 +197,7 @@ def bootstrap_and_run_service(
             has_errors = bool(service._exit_errors)
 
         if Environment.DEV.ENABLE_YAPPI:
-            _stop_yappi_profiling(service.service_id, user_config)
+            _stop_yappi_profiling(service.service_id, config)
 
     has_errors = False
 
@@ -264,7 +262,7 @@ def _start_yappi_profiling() -> None:
         ) from e
 
 
-def _stop_yappi_profiling(service_id_: str, user_config: UserConfig) -> None:
+def _stop_yappi_profiling(service_id_: str, config: AIPerfConfig) -> None:
     """Stop yappi profiling and save the profile to a file."""
     import yappi
 
@@ -272,7 +270,7 @@ def _stop_yappi_profiling(service_id_: str, user_config: UserConfig) -> None:
 
     # Get profile stats and save to file in the artifact directory
     stats = yappi.get_func_stats()
-    yappi_dir = user_config.output.artifact_directory / "yappi"
+    yappi_dir = config.output.artifact_directory / "yappi"
     yappi_dir.mkdir(parents=True, exist_ok=True)
     stats.save(
         str(yappi_dir / f"{service_id_}.prof"),

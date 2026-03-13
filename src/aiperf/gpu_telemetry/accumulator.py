@@ -5,7 +5,6 @@ import asyncio
 from datetime import datetime
 from typing import Any
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import GPUTelemetryMode
 from aiperf.common.environment import Environment
@@ -46,8 +45,8 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         - Background task for periodic metric updates
 
     Args:
-        user_config: User configuration including GPU telemetry settings
-        service_config: Service configuration for communication and UI settings
+        user_config: Configuration object with GPU telemetry settings
+        service_config: Configuration object for communication and UI settings
         pub_client: Publish client for sending realtime metric updates
         **kwargs: Additional arguments passed to base class
 
@@ -57,8 +56,8 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        user_config: object,
+        service_config: object,
         pub_client: PubClientProtocol,
         **kwargs: Any,
     ):

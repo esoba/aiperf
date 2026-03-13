@@ -6,7 +6,7 @@
 # =====================
 # Absolute bare minimum using all shorthand forms.
 #
-# Run: aiperf run examples_v2/minimal.yaml
+# Run: aiperf --config templates/minimal.yaml
 
 model: meta-llama/Llama-3.1-8B-Instruct
 

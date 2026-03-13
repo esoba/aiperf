@@ -29,14 +29,20 @@ Example Usage:
 
 from __future__ import annotations
 
+from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
+    from aiperf.common.config.endpoint_config import (
+        EndpointConfig as LegacyEndpointConfig,
+    )
+    from aiperf.common.config.input_config import InputConfig
+    from aiperf.common.config.loadgen_config import LoadGeneratorConfig
     from aiperf.common.config.zmq_config import BaseZMQCommunicationConfig
     from aiperf.common.enums import AIPerfLogLevel, GPUTelemetryMode
-    from aiperf.plugin.enums import UIType
+    from aiperf.plugin.enums import ServiceRunType, TimingMode, UIType
 
 from aiperf.config.artifacts import (
     ArtifactsConfig,
@@ -322,9 +328,9 @@ class AIPerfConfig(BaseModel):
     ]
 
     tokenizer: Annotated[
-        TokenizerConfig | None,
+        TokenizerConfig,
         Field(
-            default=None,
+            default_factory=TokenizerConfig,
             description="Tokenizer configuration for token counting. "
             "Used for ISL/OSL enforcement and accurate metrics. "
             "If not specified, uses the first model name.",
@@ -447,6 +453,10 @@ class AIPerfConfig(BaseModel):
                 data["load"] = {"default": load}
             # Otherwise it's already a dict of named phases
 
+        # Coerce tokenizer=None to default (matches legacy UserConfig behavior)
+        if data.get("tokenizer") is None:
+            data.pop("tokenizer", None)
+
         return data
 
     @field_validator("load", mode="before")
@@ -521,6 +531,13 @@ class AIPerfConfig(BaseModel):
                 result[name] = config
 
         return result
+
+    @model_validator(mode="after")
+    def inject_endpoint_compat(self) -> AIPerfConfig:
+        """Inject model names and strategy into endpoint for backward compat."""
+        self.endpoint._model_names = self.get_model_names()
+        self.endpoint._model_selection_strategy = self.models.strategy
+        return self
 
     @model_validator(mode="after")
     def inject_phase_names(self) -> AIPerfConfig:
@@ -649,19 +666,62 @@ class AIPerfConfig(BaseModel):
     # ==========================================================================
     # BACKWARD COMPATIBILITY PROPERTIES
     # These properties provide access to common fields using patterns that
-    # mirror the old ServiceConfig/UserConfig structure.
+    # mirror the old ServiceConfig/UserConfig structure, enabling a gradual
+    # migration from UserConfig+ServiceConfig to unified AIPerfConfig.
     # ==========================================================================
+
+    # -- Profiling/warmup phase helpers (used by facade properties) --
+
+    @property
+    def _profiling_phase(self) -> PhaseConfig | None:
+        """Get the first non-excluded (profiling) phase."""
+        return next((p for p in self.load.values() if not p.exclude), None)
+
+    @property
+    def _warmup_phase(self) -> PhaseConfig | None:
+        """Get the first excluded (warmup) phase."""
+        return next((p for p in self.load.values() if p.exclude), None)
+
+    # -- Legacy sub-config facades --
+
+    @cached_property
+    def input(self) -> InputConfig:
+        """Build legacy InputConfig from AIPerfConfig data.
+
+        Provides backward-compatible access to input.* fields.
+        """
+        from aiperf.config.reverse_converter import _build_input
+
+        return _build_input(self, self._profiling_phase)
+
+    @cached_property
+    def loadgen(self) -> LoadGeneratorConfig:
+        """Build legacy LoadGeneratorConfig from AIPerfConfig data.
+
+        Provides backward-compatible access to loadgen.* fields.
+        """
+        from aiperf.config.reverse_converter import _build_loadgen
+
+        return _build_loadgen(self, self._profiling_phase)
+
+    @cached_property
+    def legacy_endpoint(self) -> LegacyEndpointConfig:
+        """Build legacy EndpointConfig from AIPerfConfig data.
+
+        Use when code needs the legacy EndpointConfig type specifically.
+        Most code should use config.endpoint directly (new EndpointConfig
+        has backward compat properties for model_names, timeout_seconds, etc.).
+        """
+        from aiperf.config.reverse_converter import _build_user_config
+
+        uc = _build_user_config(self)
+        return uc.endpoint
+
+    # -- ServiceConfig fields --
 
     @property
     def comm_config(self) -> BaseZMQCommunicationConfig:
-        """Get the ZMQ communication configuration.
-
-        Creates a BaseZMQCommunicationConfig from the runtime.communication config.
-        Falls back to ZMQIPCConfig if no communication config is specified.
-
-        Returns:
-            BaseZMQCommunicationConfig instance for ZMQ communication.
-        """
+        """Get the ZMQ communication configuration."""
         from aiperf.common.config.zmq_config import ZMQIPCConfig, ZMQTCPConfig
         from aiperf.common.enums import CommunicationType
 
@@ -679,111 +739,174 @@ class AIPerfConfig(BaseModel):
                 credit_router_port=comm.credit_router_port,
             )
 
-        # Fallback for unknown types
         return ZMQIPCConfig()
 
     @property
     def ui_type(self) -> UIType:
-        """Get the UI type.
-
-        Backward compatibility for ServiceConfig.ui_type.
-
-        Returns:
-            UIType enum value.
-        """
+        """Get the UI type."""
         return self.runtime.ui
+
+    @ui_type.setter
+    def ui_type(self, value: UIType) -> None:
+        """Set the UI type."""
+        self.runtime.ui = value
+
+    @cached_property
+    def workers(self) -> object:
+        """Facade returning an object with .max and .min for backward compat with WorkersConfig."""
+        from types import SimpleNamespace
+
+        return SimpleNamespace(max=self.runtime.workers, min=None)
 
     @property
     def workers_max(self) -> int | None:
-        """Get the maximum number of workers.
-
-        Backward compatibility for ServiceConfig.workers.max.
-
-        Returns:
-            Maximum number of workers or None for auto-detect.
-        """
+        """Get the maximum number of workers."""
         return self.runtime.workers
 
     @property
     def record_processor_service_count(self) -> int | None:
-        """Get the number of record processor services.
-
-        Backward compatibility for ServiceConfig.record_processor_service_count.
-
-        Returns:
-            Number of record processors or None for auto-detect.
-        """
+        """Get the number of record processor services."""
         return self.runtime.record_processors
+
+    @record_processor_service_count.setter
+    def record_processor_service_count(self, value: int | None) -> None:
+        """Set the number of record processor services."""
+        self.runtime.record_processors = value
 
     @property
     def log_level(self) -> AIPerfLogLevel:
-        """Get the logging level.
-
-        Backward compatibility for ServiceConfig.log_level.
-
-        Returns:
-            AIPerfLogLevel enum value.
-        """
+        """Get the logging level."""
         return self.logging.level
 
     @property
     def verbose(self) -> bool:
-        """Check if verbose logging is enabled.
-
-        Backward compatibility for ServiceConfig.verbose.
-
-        Returns:
-            True if logging level is DEBUG or more verbose.
-        """
+        """Check if verbose logging is enabled."""
         from aiperf.common.enums import AIPerfLogLevel
 
         return self.logging.level in (AIPerfLogLevel.DEBUG, AIPerfLogLevel.TRACE)
 
     @property
     def extra_verbose(self) -> bool:
-        """Check if extra verbose (trace) logging is enabled.
-
-        Backward compatibility for ServiceConfig.extra_verbose.
-
-        Returns:
-            True if logging level is TRACE.
-        """
+        """Check if extra verbose (trace) logging is enabled."""
         from aiperf.common.enums import AIPerfLogLevel
 
         return self.logging.level == AIPerfLogLevel.TRACE
 
     @property
+    def api_port(self) -> int | None:
+        """Get the API port."""
+        return self.runtime.api_port
+
+    @api_port.setter
+    def api_port(self, value: int | None) -> None:
+        """Set the API port."""
+        self.runtime.api_port = value
+
+    @property
+    def api_host(self) -> str | None:
+        """Get the API host."""
+        return self.runtime.api_host
+
+    @api_host.setter
+    def api_host(self, value: str | None) -> None:
+        """Set the API host."""
+        self.runtime.api_host = value
+
+    @property
+    def api_enabled(self) -> bool:
+        """Whether the API server is enabled."""
+        from aiperf.common.environment import Environment
+
+        return (self.runtime.api_port or Environment.API_SERVER.PORT) is not None
+
+    @property
+    def service_run_type(self) -> ServiceRunType:
+        """Get the service run type."""
+        return self.runtime.service_run_type
+
+    @service_run_type.setter
+    def service_run_type(self, value: ServiceRunType) -> None:
+        """Set the service run type."""
+        self.runtime.service_run_type = value
+
+    @property
+    def workers_per_pod(self) -> int | None:
+        """Get workers per pod for Kubernetes."""
+        return self.runtime.workers_per_pod
+
+    @workers_per_pod.setter
+    def workers_per_pod(self, value: int | None) -> None:
+        """Set workers per pod."""
+        self.runtime.workers_per_pod = value
+
+    @property
+    def record_processors_per_pod(self) -> int | None:
+        """Get record processors per pod for Kubernetes."""
+        return self.runtime.record_processors_per_pod
+
+    @property
+    def dataset_api_base_url(self) -> str | None:
+        """Get the dataset API base URL for Kubernetes."""
+        return self.runtime.dataset_api_base_url
+
+    @dataset_api_base_url.setter
+    def dataset_api_base_url(self, value: str | None) -> None:
+        """Set the dataset API base URL."""
+        self.runtime.dataset_api_base_url = value
+
+    @property
+    def cors_origins(self) -> list[str] | None:
+        """Get CORS origins for the API server."""
+        return self.runtime.cors_origins
+
+    # -- UserConfig fields --
+
+    @property
+    def timing_mode(self) -> TimingMode:
+        """Get the timing mode based on the profiling phase type."""
+        from aiperf.config.phases import PhaseType
+        from aiperf.plugin.enums import TimingMode
+
+        prof = self._profiling_phase
+        if prof is None:
+            return TimingMode.REQUEST_RATE
+        if prof.type == PhaseType.FIXED_SCHEDULE:
+            return TimingMode.FIXED_SCHEDULE
+        if prof.type == PhaseType.USER_CENTRIC:
+            return TimingMode.USER_CENTRIC_RATE
+        return TimingMode.REQUEST_RATE
+
+    @property
     def gpu_telemetry_disabled(self) -> bool:
-        """Check if GPU telemetry collection is disabled.
-
-        Backward compatibility for UserConfig.gpu_telemetry_disabled.
-
-        Returns:
-            True if GPU telemetry is disabled.
-        """
+        """Check if GPU telemetry collection is disabled."""
         return not self.gpu_telemetry.enabled
 
     @property
     def gpu_telemetry_mode(self) -> GPUTelemetryMode:
-        """Get the GPU telemetry display mode.
-
-        Backward compatibility for UserConfig.gpu_telemetry_mode.
-
-        Returns:
-            GPUTelemetryMode enum value.
-        """
+        """Get the GPU telemetry display mode."""
         return self.gpu_telemetry.mode
 
     @gpu_telemetry_mode.setter
     def gpu_telemetry_mode(self, value: GPUTelemetryMode) -> None:
-        """Set the GPU telemetry display mode.
-
-        Backward compatibility for UserConfig.gpu_telemetry_mode.
-
-        Args:
-            value: GPUTelemetryMode enum value.
-        """
+        """Set the GPU telemetry display mode."""
         self.gpu_telemetry.mode = value
+
+    @property
+    def gpu_telemetry_urls(self) -> list[str]:
+        """Get the GPU telemetry DCGM endpoint URLs."""
+        return list(self.gpu_telemetry.urls) if self.gpu_telemetry.enabled else []
+
+    @property
+    def gpu_telemetry_metrics_file(self):
+        """Get the path to custom GPU metrics CSV file."""
+        return self.gpu_telemetry.metrics_file if self.gpu_telemetry.enabled else None
+
+    @property
+    def gpu_telemetry_collector_type(self):
+        """Get the GPU telemetry collector type."""
+        from aiperf.plugin.enums import GPUTelemetryCollectorType
+
+        return GPUTelemetryCollectorType.DCGM
 
     @property
     def output(self) -> ArtifactsConfig:
@@ -804,6 +927,21 @@ class AIPerfConfig(BaseModel):
         return self.server_metrics.formats
 
     @property
+    def server_metrics_urls(self) -> list[str]:
+        """Get the server metrics endpoint URLs."""
+        return list(self.server_metrics.urls) if self.server_metrics.enabled else []
+
+    @property
     def benchmark_id(self) -> str:
         """Get the benchmark ID."""
         return self.artifacts.benchmark_id
+
+    @property
+    def cli_command(self) -> str | None:
+        """Get the CLI command."""
+        return self.artifacts.cli_command
+
+    @cli_command.setter
+    def cli_command(self, value: str | None) -> None:
+        """Set the CLI command."""
+        self.artifacts.cli_command = value

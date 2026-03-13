@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import Field
 
-from aiperf.common.config import EndpointDefaults, UserConfig
+from aiperf.common.config import EndpointDefaults
 from aiperf.common.enums import ConnectionReuseStrategy, ModelSelectionStrategy
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.plugin.enums import EndpointType, TransportType
@@ -45,7 +45,7 @@ class ModelListInfo(AIPerfBaseModel):
     )
 
     @classmethod
-    def from_user_config(cls, user_config: UserConfig) -> "ModelListInfo":
+    def from_user_config(cls, user_config: object) -> "ModelListInfo":
         """Create a ModelListInfo from a UserConfig."""
         return cls(
             models=[
@@ -141,15 +141,15 @@ class EndpointInfo(AIPerfBaseModel):
         return self.base_urls[index % len(self.base_urls)]
 
     @classmethod
-    def from_user_config(cls, user_config: UserConfig) -> "EndpointInfo":
+    def from_user_config(cls, user_config: object) -> "EndpointInfo":
         """Create an EndpointInfo from a UserConfig."""
         return cls(
             type=user_config.endpoint.type,
             custom_endpoint=user_config.endpoint.custom_endpoint,
             streaming=user_config.endpoint.streaming,
             base_urls=user_config.endpoint.urls,
-            headers=user_config.input.headers,
-            extra=user_config.input.extra,
+            headers=user_config.input.headers or [],
+            extra=user_config.input.extra or [],
             timeout=user_config.endpoint.timeout_seconds,
             api_key=user_config.endpoint.api_key,
             use_legacy_max_tokens=user_config.endpoint.use_legacy_max_tokens,
@@ -177,7 +177,7 @@ class ModelEndpointInfo(AIPerfBaseModel):
     )
 
     @classmethod
-    def from_user_config(cls, user_config: UserConfig) -> "ModelEndpointInfo":
+    def from_user_config(cls, user_config: object) -> "ModelEndpointInfo":
         """Create a ModelEndpointInfo from a UserConfig."""
         return cls(
             models=ModelListInfo.from_user_config(user_config),

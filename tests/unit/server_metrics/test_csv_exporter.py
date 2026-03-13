@@ -101,7 +101,7 @@ def _generate_csv_content(
     """Create exporter and generate CSV content."""
     config = create_exporter_config(
         profile_results=mock_profile_results,
-        user_config=mock_user_config,
+        config=mock_user_config,
         server_metrics_results=server_metrics_results,
     )
     return ServerMetricsCsvExporter(config)._generate_content()
@@ -338,7 +338,7 @@ class TestServerMetricsCsvExporterInitialization:
         """Test that exporter initializes correctly with valid config."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_user_config,
             server_metrics_results=server_metrics_results_with_all_types,
         )
         assert ServerMetricsCsvExporter(config) is not None
@@ -349,7 +349,7 @@ class TestServerMetricsCsvExporterInitialization:
         """Test that exporter raises DataExporterDisabled when no results."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_user_config,
             server_metrics_results=None,
         )
         with pytest.raises(DataExporterDisabled):
@@ -368,7 +368,7 @@ class TestServerMetricsCsvExporterGetExportInfo:
         """Test that export info contains correct type and path."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_user_config,
             server_metrics_results=server_metrics_results_with_all_types,
         )
         info = ServerMetricsCsvExporter(config).get_export_info()
@@ -987,7 +987,7 @@ class TestServerMetricsCsvExporterIntegration:
         """Test that export creates a valid CSV file."""
         config = create_exporter_config(
             profile_results=mock_profile_results,
-            user_config=mock_user_config,
+            config=mock_user_config,
             server_metrics_results=server_metrics_results_with_all_types,
         )
         exporter = ServerMetricsCsvExporter(config)

@@ -9,7 +9,7 @@
 #
 # Use case: Benchmark Whisper, audio-LLMs, or speech recognition
 #
-# Run: aiperf --config examples_v2/audio_multimodal.yaml
+# Run: aiperf --config templates/audio_multimodal.yaml
 
 random_seed: 42
 

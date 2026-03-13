@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.hooks import (
     AIPerfHook,
     provides_hooks,
@@ -24,8 +23,8 @@ class CommandHandlerMixin(MessageBusClientMixin, ABC):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        service_config: object,
+        user_config: object,
         service_id: str,
         **kwargs,
     ) -> None:

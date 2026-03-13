@@ -506,12 +506,8 @@ class JobSetSpec(AIPerfBaseModel):
         datasets_path = jobset_config.DATASETS_PATH
         env: list[dict[str, Any]] = [
             {
-                "name": "AIPERF_CONFIG_USER_FILE",
-                "value": f"{config_path}/user_config.json",
-            },
-            {
-                "name": "AIPERF_CONFIG_SERVICE_FILE",
-                "value": f"{config_path}/service_config.json",
+                "name": "AIPERF_CONFIG_FILE",
+                "value": f"{config_path}/aiperf_config.json",
             },
             # Shared dataset path: dataset-manager writes mmap files here,
             # API service serves them to workers via HTTP

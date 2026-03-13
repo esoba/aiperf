@@ -4,7 +4,6 @@
 import asyncio
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.control_structs import Command, TelemetryStatus
 from aiperf.common.enums import CommAddress, CommandType, CreditPhase, MessageType
 from aiperf.common.environment import Environment
@@ -37,21 +36,18 @@ class GPUTelemetryManager(BaseComponentService):
     - Follows centralized architecture patterns
 
     Args:
-        service_config: Service-level configuration (logging, communication, etc.)
-        user_config: User-provided configuration including gpu_telemetry list
+        config: AIPerfConfig instance containing all configuration
         service_id: Optional unique identifier for this service instance
     """
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        config,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            config=config,
             service_id=service_id,
             **kwargs,
         )
@@ -64,16 +60,16 @@ class GPUTelemetryManager(BaseComponentService):
         self._collector_id_to_url: dict[str, str] = {}
         self._shutdown_task: asyncio.Task[None] | None = None
 
-        self._telemetry_disabled = user_config.gpu_telemetry_disabled
+        self._telemetry_disabled = self.user_config.gpu_telemetry_disabled
         self._user_explicitly_configured_telemetry = (
-            user_config.gpu_telemetry is not None and not self._telemetry_disabled
+            bool(self.user_config.gpu_telemetry_urls) and not self._telemetry_disabled
         )
 
         # Store the collector type (DCGM or PYNVML)
-        self._collector_type = user_config.gpu_telemetry_collector_type
+        self._collector_type = self.user_config.gpu_telemetry_collector_type
 
         # DCGM-specific endpoint configuration
-        user_endpoints = user_config.gpu_telemetry_urls or []
+        user_endpoints = self.user_config.gpu_telemetry_urls or []
         if isinstance(user_endpoints, str):
             user_endpoints = [user_endpoints]
 

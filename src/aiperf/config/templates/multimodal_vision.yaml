@@ -9,7 +9,7 @@
 #
 # Use case: Benchmark VLMs like LLaVA, Qwen-VL, or GPT-4V compatible endpoints
 #
-# Run: aiperf --config examples_v2/multimodal_vision.yaml
+# Run: aiperf --config templates/multimodal_vision.yaml
 
 random_seed: 42
 
