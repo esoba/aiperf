@@ -167,7 +167,7 @@ Use the legacy 'max_tokens' field instead of 'max_completion_tokens' in request 
 
 #### `--use-server-token-count`
 
-[Deprecated] This flag is a no-op and will be removed in a future release. AIPerf now always computes both client-side and server-reported token counts. Server counts are preferred for output metrics; client counts are used for input validation.
+[Deprecated] This flag is a no-op and will be removed in a future release. AIPerf now prefers server-reported token counts when available and falls back to client-side tokenization for input. Use --tokenize-output to enable client-side output tokenization.
 <br/>_Flag (no value required)_
 
 #### `--stream-usage`, `--no-stream-usage`
@@ -675,7 +675,7 @@ Enable client-side tokenization of output and reasoning tokens, even when the se
 
 #### `--tokenize-input`, `--no-tokenize-input`
 
-Enable client-side tokenization of input prompts for every request. When enabled, locally computed input token counts are always stored in token_counts.input_local. When disabled, client-side input tokenization only occurs as a fallback when the server does not report prompt tokens. Automatically set to False for user-provided input datasets (--custom-dataset-type or --public-dataset) unless explicitly overridden.
+Enable client-side tokenization of input prompts for every request. When enabled, locally computed input token counts are always stored in token_counts.input_local. When disabled, client-side input tokenization only occurs as a fallback when the server does not report prompt tokens. Use --no-tokenize-input to disable client-side input tokenization entirely, including fallback. Automatically set to False for user-provided input datasets (--custom-dataset-type or --public-dataset) unless explicitly overridden.
 <br/>_Default: `True`_
 
 ### Load Generator

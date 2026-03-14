@@ -80,6 +80,8 @@ class TokenizerConfig(BaseConfig):
             "When enabled, locally computed input token counts are always stored "
             "in token_counts.input_local. When disabled, client-side input tokenization "
             "only occurs as a fallback when the server does not report prompt tokens. "
+            "Use --no-tokenize-input to disable client-side input tokenization entirely, "
+            "including fallback. "
             "Automatically set to False for user-provided input datasets "
             "(--custom-dataset-type or --public-dataset) unless explicitly overridden.",
         ),

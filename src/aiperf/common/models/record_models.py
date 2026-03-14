@@ -881,30 +881,18 @@ class ParsedResponse:
 class TokenCounts:
     """Token counts for a record."""
 
-    input: int | None = Field(
-        default=None,
-        description="The server-reported prompt token count from the API usage field. If None, the server did not report prompt tokens.",
-    )
-    input_local: int | None = Field(
-        default=None,
-        description="The number of input tokens computed by the client-side tokenizer. If None, the number of tokens could not be calculated.",
-    )
-    output: int | None = Field(
-        default=None,
-        description="The server-reported output token count (completion minus reasoning). If None, the server did not report completion tokens.",
-    )
-    output_local: int | None = Field(
-        default=None,
-        description="The number of output tokens computed by the client-side tokenizer.",
-    )
-    reasoning: int | None = Field(
-        default=None,
-        description="The server-reported reasoning token count. If None, the server did not report reasoning tokens.",
-    )
-    reasoning_local: int | None = Field(
-        default=None,
-        description="The number of reasoning tokens computed by the client-side tokenizer.",
-    )
+    input: int | None = None
+    """Server-reported prompt token count from the API usage field."""
+    input_local: int | None = None
+    """Input tokens computed by the client-side tokenizer."""
+    output: int | None = None
+    """Server-reported output token count (completion minus reasoning)."""
+    output_local: int | None = None
+    """Output tokens computed by the client-side tokenizer."""
+    reasoning: int | None = None
+    """Server-reported reasoning token count."""
+    reasoning_local: int | None = None
+    """Reasoning tokens computed by the client-side tokenizer."""
 
 
 @dataclass

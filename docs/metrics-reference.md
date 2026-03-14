@@ -394,15 +394,18 @@ The number of input/prompt tokens for a single request. This represents the size
 **Formula:**
 ```python
 # Server-preferred (falls back to client-side)
-input_sequence_length = usage.prompt_tokens or len(tokenizer.encode(prompt, add_special_tokens=False))
+if usage.prompt_tokens is not None:
+    input_sequence_length = usage.prompt_tokens
+else:
+    input_sequence_length = len(tokenizer.encode(prompt, add_special_tokens=False))
 ```
 
 **Notes:**
 - When the server reports `usage.prompt_tokens`, that value is used for ISL (and thus for console display and derived metrics).
-- Falls back to client-side tokenization when server does not report prompt token counts.
+- Falls back to client-side tokenization when server does not report prompt token counts, unless `--no-tokenize-input` is explicitly specified.
 - Client-side tokenization uses `add_special_tokens=False` to count only content tokens.
 - Automatically disabled for user-provided input datasets; use `--tokenize-input` to force.
-- Use `--no-tokenize-input` to skip when relying on server-reported prompt tokens.
+- Use `--no-tokenize-input` to disable client-side input tokenization entirely (no fallback).
 - Useful for understanding the relationship between input size and latency/throughput.
 
 ---
@@ -813,7 +816,7 @@ total_usage_total_tokens = sum(r.usage_total_tokens for r in records if r.valid)
 ## Usage Discrepancy Metrics
 
 > [!NOTE]
-> These metrics measure the percentage difference between API-reported token counts (`usage` fields) and client-computed token counts. They are **not displayed in console output** but help identify tokenizer mismatches or counting discrepancies. Prompt diff requires `--tokenize-input` (or fallback tokenization when server omits prompt tokens) for user-provided datasets. Output and reasoning diff metrics require `--tokenize-output` to populate both server and client values.
+> These metrics measure the percentage difference between API-reported token counts (`usage` fields) and client-computed token counts. They are **not displayed in console output** but help identify tokenizer mismatches or counting discrepancies. Prompt diff requires both server-reported and client-computed input token counts. Client-side input tokenization is used as a fallback when the server omits prompt tokens, unless `--no-tokenize-input` is explicitly specified. Output and reasoning diff metrics require `--tokenize-output` to populate both server and client values.
 
 ### Usage Prompt Tokens Diff %
 

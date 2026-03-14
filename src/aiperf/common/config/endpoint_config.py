@@ -230,8 +230,9 @@ class EndpointConfig(BaseConfig):
         Field(
             description=(
                 "[Deprecated] This flag is a no-op and will be removed in a future release. "
-                "AIPerf now always computes both client-side and server-reported token counts. "
-                "Server counts are preferred for output metrics; client counts are used for input validation."
+                "AIPerf now prefers server-reported token counts when available and falls back "
+                "to client-side tokenization for input. Use --tokenize-output to enable "
+                "client-side output tokenization."
             ),
         ),
         CLIParameter(

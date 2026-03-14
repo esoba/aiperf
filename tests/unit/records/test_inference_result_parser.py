@@ -560,6 +560,23 @@ class TestTokenizeInputFlag:
         assert result.token_counts.input is None
         assert result.token_counts.input_local == 8  # 8 words in sample turn
 
+    async def test_explicit_no_tokenize_input_skips_fallback(
+        self, setup_inference_parser, request_record, spy_tokenizer
+    ):
+        """Explicit --no-tokenize-input without server usage → no fallback."""
+        setup_inference_parser.tokenize_input = False
+        setup_inference_parser._explicit_no_tokenize_input = True
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_parser_responses(
+            setup_inference_parser,
+            [make_parsed_response(text="output", include_usage=False)],
+        )
+
+        result = await setup_inference_parser.process_valid_record(request_record)
+
+        assert result.token_counts.input is None
+        assert result.token_counts.input_local is None
+
     async def test_tokenize_input_always_computes(
         self, setup_inference_parser, request_record, spy_tokenizer
     ):

@@ -54,6 +54,7 @@ class InferenceResultParser(CommunicationMixin):
             "tokenize_input" in user_config.tokenizer.model_fields_set
             and not user_config.tokenizer.tokenize_input
         )
+        self._warned_no_usage: bool = False
         if (
             self.model_endpoint.endpoint.streaming
             and self.model_endpoint.endpoint.stream_usage
@@ -63,11 +64,18 @@ class InferenceResultParser(CommunicationMixin):
                 "Server-reported token counts will be requested. "
                 "Use --no-stream-usage if the server does not support stream_options."
             )
-        if not self.disable_tokenization and not self.tokenize_input:
+        if not self.disable_tokenization and self._explicit_no_tokenize_input:
             self.info(
-                "Input tokenization is disabled. "
-                "Usage prompt token diff metrics will not be available. "
+                "Input tokenization is disabled (--no-tokenize-input). "
+                "Client-side input token counts will not be computed, even as fallback. "
                 "Use --tokenize-input to enable."
+            )
+        elif not self.disable_tokenization and not self.tokenize_input:
+            self.info(
+                "Always-on input tokenization is disabled. "
+                "Client-side input tokenization will still occur as a fallback "
+                "when the server does not report prompt tokens. "
+                "Use --tokenize-input to enable for all requests."
             )
         if not self.disable_tokenization and not self.tokenize_output:
             self.info(
@@ -311,12 +319,14 @@ class InferenceResultParser(CommunicationMixin):
             responses, reasoning_server
         )
 
-        # Warn if server provided no usage information at all
+        # Warn once if server provided no usage information at all
         if (
-            input_token_count is None
+            not self._warned_no_usage
+            and input_token_count is None
             and output_server is None
             and reasoning_server is None
         ):
+            self._warned_no_usage = True
             self.warning(
                 "Server did not provide token usage information. Token count metrics will be unavailable. "
                 "Verify that your API endpoint supports usage reporting (stream_options are automatically configured for OpenAI-compatible endpoints)."
@@ -324,8 +334,10 @@ class InferenceResultParser(CommunicationMixin):
 
         # Client-side input tokenization
         input_local: int | None = None
-        if not self.disable_tokenization and (
-            self.tokenize_input or input_token_count is None
+        if (
+            not self.disable_tokenization
+            and not self._explicit_no_tokenize_input
+            and (self.tokenize_input or input_token_count is None)
         ):
             try:
                 input_local = await self.compute_input_token_count(request_record)
