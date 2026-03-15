@@ -788,22 +788,24 @@ class CodingContentGenerator(BaseGenerator):
         tokens = self._sample_tokens(num_tokens, self._tool_pool)
         return self.tokenizer.decode(tokens)
 
-    def generate_response(self, num_tokens: int) -> list[dict[str, Any]]:
+    def generate_response(
+        self, num_tokens: int, *, use_content_blocks: bool = False
+    ) -> list[dict[str, Any]]:
         """Generate a pre-canned coding assistant tool-use conversation.
 
-        Returns Anthropic-format messages using content-block arrays, matching
-        real Claude Code API traffic.  Each assistant message contains
-        ``text`` and ``tool_use`` content blocks; each user message contains
-        ``tool_result`` blocks (ordered before any text, per Anthropic rules).
-
-        Supports single calls, parallel calls (2-3 ``tool_use`` blocks in one
-        assistant message), and silent tool-only calls (no ``text`` block).
+        Produces a multi-turn conversation of tool calls matching real coding
+        agent traffic.  Supports single calls, parallel calls (2-3 in one
+        assistant message), and silent tool-only calls.
 
         Args:
             num_tokens: Target number of assistant output tokens.
+            use_content_blocks: When True, emit Anthropic content-block format
+                (``tool_use``/``tool_result`` inside content arrays).  When
+                False (default), emit OpenAI chat-completions format
+                (``tool_calls`` array + ``role: "tool"`` messages).
 
         Returns:
-            List of message dicts in Anthropic content-block format.
+            List of message dicts.
         """
         if num_tokens <= 0:
             return []
@@ -827,12 +829,15 @@ class CodingContentGenerator(BaseGenerator):
                         remaining - len(summary_tokens), self._tool_pool
                     )
                     summary += " " + self.tokenizer.decode(pad)
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": summary}],
-                    }
-                )
+                if use_content_blocks:
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": summary}],
+                        }
+                    )
+                else:
+                    messages.append({"role": "assistant", "content": summary})
                 break
 
             iter_budget = r.randint(30, max(31, remaining - 20 * (num_iter - i - 1)))
@@ -848,44 +853,96 @@ class CodingContentGenerator(BaseGenerator):
 
             num_calls = r.randint(2, 3) if style == "parallel" else 1
 
-            # Build assistant content blocks
-            assistant_content: list[dict[str, Any]] = []
-            tool_result_blocks: list[dict[str, Any]] = []
-
-            if style != "tool_only":
-                preamble = r.choice(_ASSISTANT_PREAMBLES).format(**fills)
-                assistant_content.append({"type": "text", "text": preamble})
-
+            # Generate tool calls and results
+            calls: list[tuple[str, str, dict[str, Any]]] = []
             for _ in range(num_calls):
                 tool_name, tool_input = self._make_tool_call()
                 tool_id = f"toolu_{r.randint(100000, 999999):06d}"
-                assistant_content.append(
-                    {
-                        "type": "tool_use",
-                        "id": tool_id,
-                        "name": tool_name,
-                        "input": tool_input,
-                    }
-                )
-                result_tokens = r.randint(30, 200)
-                result_text = self.tokenizer.decode(
-                    self._sample_tokens(result_tokens, self._tool_pool)
-                )
-                tool_result_blocks.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_id,
-                        "content": result_text,
-                    }
-                )
+                calls.append((tool_id, tool_name, tool_input))
 
-            messages.append({"role": "assistant", "content": assistant_content})
+            preamble: str | None = None
+            if style != "tool_only":
+                preamble = r.choice(_ASSISTANT_PREAMBLES).format(**fills)
+
+            if use_content_blocks:
+                self._emit_content_blocks(messages, calls, preamble, r, remaining)
+            else:
+                self._emit_openai(messages, calls, preamble, r, remaining)
+
             remaining -= iter_budget
 
-            # User message: tool_result blocks first (Anthropic ordering rule)
-            messages.append({"role": "user", "content": tool_result_blocks})
-
         return messages
+
+    # -- Format helpers for generate_response --
+
+    def _emit_openai(
+        self,
+        messages: list[dict[str, Any]],
+        calls: list[tuple[str, str, dict[str, Any]]],
+        preamble: str | None,
+        r: rng.RandomGenerator,
+        remaining: int,
+    ) -> None:
+        """Append OpenAI chat-completions format messages."""
+        import orjson
+
+        tool_calls = [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": orjson.dumps(inp).decode(),
+                },
+            }
+            for call_id, name, inp in calls
+        ]
+        messages.append(
+            {
+                "role": "assistant",
+                "content": preamble,
+                "tool_calls": tool_calls,
+            }
+        )
+        for call_id, _, _ in calls:
+            result_tokens = r.randint(30, 200)
+            result_text = self.tokenizer.decode(
+                self._sample_tokens(result_tokens, self._tool_pool)
+            )
+            messages.append(
+                {"role": "tool", "tool_call_id": call_id, "content": result_text}
+            )
+
+    def _emit_content_blocks(
+        self,
+        messages: list[dict[str, Any]],
+        calls: list[tuple[str, str, dict[str, Any]]],
+        preamble: str | None,
+        r: rng.RandomGenerator,
+        remaining: int,
+    ) -> None:
+        """Append Anthropic content-block format messages."""
+        assistant_content: list[dict[str, Any]] = []
+        tool_result_blocks: list[dict[str, Any]] = []
+
+        if preamble is not None:
+            assistant_content.append({"type": "text", "text": preamble})
+
+        for call_id, name, inp in calls:
+            assistant_content.append(
+                {"type": "tool_use", "id": call_id, "name": name, "input": inp}
+            )
+            result_tokens = r.randint(30, 200)
+            result_text = self.tokenizer.decode(
+                self._sample_tokens(result_tokens, self._tool_pool)
+            )
+            tool_result_blocks.append(
+                {"type": "tool_result", "tool_use_id": call_id, "content": result_text}
+            )
+
+        messages.append({"role": "assistant", "content": assistant_content})
+        # tool_result blocks first in user message (Anthropic ordering rule)
+        messages.append({"role": "user", "content": tool_result_blocks})
 
     def _template_fills(self) -> dict[str, str]:
         """Random fill values for assistant narration templates."""

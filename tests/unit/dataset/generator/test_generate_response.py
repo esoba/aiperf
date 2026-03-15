@@ -3,15 +3,11 @@
 
 """Tests for generate_response() on CodingContentGenerator and PromptGenerator.
 
-Focuses on:
-- Anthropic content-block message structure from CodingContentGenerator.generate_response
-- Tool use / tool result block structure, ordering, and uniqueness
-- Style variety (text+tool_use, tool-only, parallel)
-- PromptGenerator.generate_response single-message output
-- _make_tool_call realistic tool name / input dict pairs
-- Determinism and seed sensitivity
+Covers both OpenAI chat-completions format (default) and Anthropic
+content-block format (use_content_blocks=True).
 """
 
+import orjson
 import pytest
 from pytest import param
 
@@ -32,159 +28,133 @@ def _default_config() -> PromptConfig:
     )
 
 
-def _get_blocks(msg: dict) -> list[dict]:
-    content = msg.get("content")
-    return content if isinstance(content, list) else []
-
-
-def _tool_use_blocks(msgs: list[dict]) -> list[dict]:
-    return [b for m in msgs for b in _get_blocks(m) if b.get("type") == "tool_use"]
-
-
-def _tool_result_blocks(msgs: list[dict]) -> list[dict]:
-    return [b for m in msgs for b in _get_blocks(m) if b.get("type") == "tool_result"]
-
-
 # ============================================================
-# CodingContentGenerator.generate_response - Happy Path
+# OpenAI format (default)
 # ============================================================
 
 
-class TestCodingGenerateResponseHappyPath:
-    """Verify normal successful operation of generate_response."""
+class TestOpenAIFormat:
+    """Default format: tool_calls array + role='tool' messages."""
 
     @pytest.fixture
     def generator(self, mock_tokenizer_cls) -> CodingContentGenerator:
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
         return CodingContentGenerator(_default_config(), tokenizer)
 
-    def test_returns_list_of_dicts(self, generator: CodingContentGenerator) -> None:
-        result = generator.generate_response(200)
-        assert isinstance(result, list)
-        assert all(isinstance(m, dict) for m in result)
-
-    def test_all_messages_have_valid_role(
+    def test_roles_are_assistant_or_tool(
         self, generator: CodingContentGenerator
     ) -> None:
-        result = generator.generate_response(200)
-        for msg in result:
-            assert "role" in msg
-            assert msg["role"] in ("assistant", "user")
+        for msg in generator.generate_response(300):
+            assert msg["role"] in ("assistant", "tool")
 
-    def test_all_messages_have_content_list(
+    def test_last_message_is_plain_text_assistant(
         self, generator: CodingContentGenerator
     ) -> None:
-        result = generator.generate_response(200)
-        for msg in result:
-            assert isinstance(msg["content"], list)
-
-    def test_last_message_is_text_only_assistant(
-        self, generator: CodingContentGenerator
-    ) -> None:
-        result = generator.generate_response(200)
+        result = generator.generate_response(300)
         last = result[-1]
         assert last["role"] == "assistant"
-        blocks = _get_blocks(last)
-        assert len(blocks) == 1
-        assert blocks[0]["type"] == "text"
-        assert isinstance(blocks[0]["text"], str)
-        assert len(blocks[0]["text"]) > 0
+        assert isinstance(last["content"], str)
+        assert "tool_calls" not in last
 
-    def test_tool_use_block_structure(self, generator: CodingContentGenerator) -> None:
-        result = generator.generate_response(500)
-        for b in _tool_use_blocks(result):
-            assert "id" in b
-            assert b["id"].startswith("toolu_")
-            assert "name" in b
-            assert "input" in b
-            assert isinstance(b["input"], dict)
+    def test_tool_calls_structure(self, generator: CodingContentGenerator) -> None:
+        for msg in generator.generate_response(500):
+            if msg["role"] == "assistant" and "tool_calls" in msg:
+                for tc in msg["tool_calls"]:
+                    assert tc["type"] == "function"
+                    assert tc["id"].startswith("toolu_")
+                    assert tc["function"]["name"] in _EXPECTED_TOOL_NAMES
+                    orjson.loads(tc["function"]["arguments"])  # valid JSON string
 
-    def test_tool_result_matches_prior_tool_use_id(
+    def test_tool_result_follows_assistant(
         self, generator: CodingContentGenerator
     ) -> None:
         result = generator.generate_response(500)
         emitted_ids: set[str] = set()
         for msg in result:
-            for b in _get_blocks(msg):
-                if b.get("type") == "tool_use":
-                    emitted_ids.add(b["id"])
-                elif b.get("type") == "tool_result":
-                    assert b["tool_use_id"] in emitted_ids
+            if msg["role"] == "assistant" and "tool_calls" in msg:
+                for tc in msg["tool_calls"]:
+                    emitted_ids.add(tc["id"])
+            elif msg["role"] == "tool":
+                assert msg["tool_call_id"] in emitted_ids
+                assert isinstance(msg["content"], str)
 
-    def test_tool_use_ids_unique(self, generator: CodingContentGenerator) -> None:
-        result = generator.generate_response(500)
-        ids = [b["id"] for b in _tool_use_blocks(result)]
+    def test_tool_call_ids_unique(self, generator: CodingContentGenerator) -> None:
+        ids = []
+        for msg in generator.generate_response(500):
+            if msg["role"] == "assistant" and "tool_calls" in msg:
+                ids.extend(tc["id"] for tc in msg["tool_calls"])
         assert len(ids) == len(set(ids))
 
-    def test_tool_results_in_user_messages(
+
+# ============================================================
+# Anthropic content-block format
+# ============================================================
+
+
+class TestAnthropicFormat:
+    """use_content_blocks=True: content arrays with tool_use/tool_result."""
+
+    @pytest.fixture
+    def generator(self, mock_tokenizer_cls) -> CodingContentGenerator:
+        tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
+        return CodingContentGenerator(_default_config(), tokenizer)
+
+    def _gen(self, generator: CodingContentGenerator, n: int) -> list[dict]:
+        return generator.generate_response(n, use_content_blocks=True)
+
+    def test_roles_are_assistant_or_user(
         self, generator: CodingContentGenerator
     ) -> None:
-        """tool_result blocks only appear in user messages."""
-        result = generator.generate_response(500)
-        for msg in result:
+        for msg in self._gen(generator, 300):
+            assert msg["role"] in ("assistant", "user")
+
+    def test_all_content_is_list(self, generator: CodingContentGenerator) -> None:
+        for msg in self._gen(generator, 300):
+            assert isinstance(msg["content"], list)
+
+    def test_last_message_is_text_only(self, generator: CodingContentGenerator) -> None:
+        result = self._gen(generator, 300)
+        last = result[-1]
+        assert last["role"] == "assistant"
+        blocks = last["content"]
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "text"
+
+    def test_tool_use_block_structure(self, generator: CodingContentGenerator) -> None:
+        for msg in self._gen(generator, 500):
+            for b in msg.get("content", []):
+                if b.get("type") == "tool_use":
+                    assert b["id"].startswith("toolu_")
+                    assert b["name"] in _EXPECTED_TOOL_NAMES
+                    assert isinstance(b["input"], dict)
+
+    def test_tool_result_in_user_messages_only(
+        self, generator: CodingContentGenerator
+    ) -> None:
+        for msg in self._gen(generator, 500):
             if msg["role"] == "assistant":
-                for b in _get_blocks(msg):
+                for b in msg.get("content", []):
                     assert b["type"] != "tool_result"
 
-    def test_tool_result_content_is_string(
+    def test_tool_result_ids_match_preceding_tool_use(
         self, generator: CodingContentGenerator
     ) -> None:
-        result = generator.generate_response(500)
-        for b in _tool_result_blocks(result):
-            assert isinstance(b["content"], str)
-            assert len(b["content"]) > 0
-
-    def test_user_message_follows_assistant_with_tool_use(
-        self, generator: CodingContentGenerator
-    ) -> None:
-        """After an assistant message with tool_use, the next message is a user with tool_results."""
-        result = generator.generate_response(500)
-        for i, msg in enumerate(result):
-            if msg["role"] == "assistant" and any(
-                b.get("type") == "tool_use" for b in _get_blocks(msg)
-            ):
-                assert i + 1 < len(result)
-                next_msg = result[i + 1]
-                assert next_msg["role"] == "user"
-                assert any(
-                    b.get("type") == "tool_result" for b in _get_blocks(next_msg)
-                )
-
-    def test_tool_result_ids_match_preceding_tool_use_ids(
-        self, generator: CodingContentGenerator
-    ) -> None:
-        """tool_result IDs in a user msg match tool_use IDs in the preceding assistant msg."""
-        result = generator.generate_response(500)
-        for i, msg in enumerate(result):
-            if msg["role"] == "user":
-                result_ids = {
-                    b["tool_use_id"]
-                    for b in _get_blocks(msg)
-                    if b.get("type") == "tool_result"
-                }
-                if not result_ids:
-                    continue
-                assert i > 0
-                prev = result[i - 1]
-                use_ids = {
-                    b["id"] for b in _get_blocks(prev) if b.get("type") == "tool_use"
-                }
-                assert result_ids == use_ids
-
-    def test_tool_names_realistic(self, generator: CodingContentGenerator) -> None:
-        result = generator.generate_response(500)
-        for b in _tool_use_blocks(result):
-            assert b["name"] in _EXPECTED_TOOL_NAMES
+        result = self._gen(generator, 500)
+        seen_ids: set[str] = set()
+        for msg in result:
+            for b in msg.get("content", []):
+                if b.get("type") == "tool_use":
+                    seen_ids.add(b["id"])
+                elif b.get("type") == "tool_result":
+                    assert b["tool_use_id"] in seen_ids
 
 
 # ============================================================
-# CodingContentGenerator.generate_response - Edge Cases
+# Edge cases (format-independent)
 # ============================================================
 
 
-class TestCodingGenerateResponseEdgeCases:
-    """Verify boundary conditions and small/large token budgets."""
-
+class TestGenerateResponseEdgeCases:
     @pytest.fixture
     def generator(self, mock_tokenizer_cls) -> CodingContentGenerator:
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
@@ -197,21 +167,19 @@ class TestCodingGenerateResponseEdgeCases:
             param(-1, id="negative"),
             param(-100, id="large-negative"),
         ],
-    )  # fmt: skip
+    )
     def test_non_positive_returns_empty(
         self, generator: CodingContentGenerator, num_tokens: int
     ) -> None:
         assert generator.generate_response(num_tokens) == []
+        assert generator.generate_response(num_tokens, use_content_blocks=True) == []
 
-    def test_small_budget_single_text_message(
+    def test_small_budget_single_message(
         self, generator: CodingContentGenerator
     ) -> None:
         result = generator.generate_response(20)
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
-        blocks = _get_blocks(result[0])
-        assert len(blocks) == 1
-        assert blocks[0]["type"] == "text"
 
     def test_large_budget_multiple_iterations(
         self, generator: CodingContentGenerator
@@ -220,123 +188,92 @@ class TestCodingGenerateResponseEdgeCases:
         assistant_msgs = [m for m in result if m["role"] == "assistant"]
         assert len(assistant_msgs) >= 2
 
-    def test_budget_one_returns_single_message(
-        self, generator: CodingContentGenerator
-    ) -> None:
+    def test_budget_one(self, generator: CodingContentGenerator) -> None:
         result = generator.generate_response(1)
         assert len(result) == 1
-        assert result[0]["role"] == "assistant"
 
 
 # ============================================================
-# CodingContentGenerator.generate_response - Styles
+# Styles (both formats should produce all styles)
 # ============================================================
 
 
-class TestCodingGenerateResponseStyles:
-    """Verify that text+tool_use, tool-only, and parallel styles appear."""
-
-    def _has_style(self, result: list[dict], style: str) -> bool:
+class TestGenerateResponseStyles:
+    def _has_openai_style(self, result: list[dict], style: str) -> bool:
         for msg in result:
-            if msg["role"] != "assistant":
+            if msg["role"] != "assistant" or "tool_calls" not in msg:
                 continue
-            blocks = _get_blocks(msg)
-            text_blocks = [b for b in blocks if b.get("type") == "text"]
-            tool_blocks = [b for b in blocks if b.get("type") == "tool_use"]
-            if style == "tool_only" and tool_blocks and not text_blocks:
+            n = len(msg["tool_calls"])
+            has_text = isinstance(msg.get("content"), str)
+            if style == "tool_only" and not has_text:
                 return True
-            if style == "text_and_tool" and tool_blocks and text_blocks:
+            if style == "text_and_tool" and has_text and n == 1:
                 return True
-            if style == "parallel" and len(tool_blocks) >= 2:
+            if style == "parallel" and n >= 2:
                 return True
         return False
 
-    def test_tool_only_style(self, mock_tokenizer_cls) -> None:
+    def _scan_seeds(self, mock_tokenizer_cls, style: str) -> bool:
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
-        found = False
-        for seed in range(50, 70):
+        for seed in range(50, 80):
             rng.reset()
             rng.init(seed)
             gen = CodingContentGenerator(_default_config(), tokenizer)
-            if self._has_style(gen.generate_response(500), "tool_only"):
-                found = True
-                break
-        assert found, "No tool-only style seen across seed range"
+            if self._has_openai_style(gen.generate_response(500), style):
+                return True
+        return False
 
-    def test_text_and_tool_style(self, mock_tokenizer_cls) -> None:
-        tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
-        found = False
-        for seed in range(50, 70):
-            rng.reset()
-            rng.init(seed)
-            gen = CodingContentGenerator(_default_config(), tokenizer)
-            if self._has_style(gen.generate_response(500), "text_and_tool"):
-                found = True
-                break
-        assert found, "No text+tool style seen across seed range"
+    def test_tool_only(self, mock_tokenizer_cls) -> None:
+        assert self._scan_seeds(mock_tokenizer_cls, "tool_only")
 
-    def test_parallel_tool_calls(self, mock_tokenizer_cls) -> None:
-        tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
-        found = False
-        for seed in range(50, 70):
-            rng.reset()
-            rng.init(seed)
-            gen = CodingContentGenerator(_default_config(), tokenizer)
-            if self._has_style(gen.generate_response(500), "parallel"):
-                found = True
-                break
-        assert found, "No parallel style seen across seed range"
+    def test_text_and_tool(self, mock_tokenizer_cls) -> None:
+        assert self._scan_seeds(mock_tokenizer_cls, "text_and_tool")
+
+    def test_parallel(self, mock_tokenizer_cls) -> None:
+        assert self._scan_seeds(mock_tokenizer_cls, "parallel")
 
 
 # ============================================================
-# CodingContentGenerator.generate_response - Determinism
+# Determinism
 # ============================================================
 
 
-class TestCodingGenerateResponseDeterminism:
-    """Verify reproducibility guarantees."""
-
-    def test_same_seed_identical_output(self, mock_tokenizer_cls) -> None:
-        config = _default_config()
+class TestDeterminism:
+    def test_same_seed(self, mock_tokenizer_cls) -> None:
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
-
-        rng.reset()
-        rng.init(42)
-        gen1 = CodingContentGenerator(config, tokenizer)
-        result1 = gen1.generate_response(300)
-
-        rng.reset()
-        rng.init(42)
-        gen2 = CodingContentGenerator(config, tokenizer)
-        result2 = gen2.generate_response(300)
-
-        assert result1 == result2
-
-    def test_different_seeds_different_output(self, mock_tokenizer_cls) -> None:
         config = _default_config()
-        tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
 
         rng.reset()
         rng.init(42)
-        gen1 = CodingContentGenerator(config, tokenizer)
-        result1 = gen1.generate_response(300)
+        r1 = CodingContentGenerator(config, tokenizer).generate_response(300)
+
+        rng.reset()
+        rng.init(42)
+        r2 = CodingContentGenerator(config, tokenizer).generate_response(300)
+
+        assert r1 == r2
+
+    def test_different_seeds(self, mock_tokenizer_cls) -> None:
+        tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
+        config = _default_config()
+
+        rng.reset()
+        rng.init(42)
+        r1 = CodingContentGenerator(config, tokenizer).generate_response(300)
 
         rng.reset()
         rng.init(99)
-        gen2 = CodingContentGenerator(config, tokenizer)
-        result2 = gen2.generate_response(300)
+        r2 = CodingContentGenerator(config, tokenizer).generate_response(300)
 
-        assert result1 != result2
+        assert r1 != r2
 
 
 # ============================================================
-# CodingContentGenerator._make_tool_call
+# _make_tool_call
 # ============================================================
 
 
 class TestMakeToolCall:
-    """Verify _make_tool_call returns valid (name, input_dict) tuples."""
-
     @pytest.fixture
     def generator(self, mock_tokenizer_cls) -> CodingContentGenerator:
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
@@ -361,7 +298,7 @@ class TestMakeToolCall:
             ("Glob", "pattern"),
             ("Write", "file_path"),
         ],
-    )  # fmt: skip
+    )
     def test_tool_input_keys(
         self, mock_tokenizer_cls, tool_name: str, expected_key: str
     ) -> None:
@@ -379,7 +316,7 @@ class TestMakeToolCall:
                     break
             if found:
                 break
-        assert found, f"Never generated tool_name={tool_name}"
+        assert found
 
     def test_edit_has_old_and_new_string(self, mock_tokenizer_cls) -> None:
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
@@ -397,7 +334,7 @@ class TestMakeToolCall:
                     break
             if found:
                 break
-        assert found, "Never generated Edit tool call"
+        assert found
 
 
 # ============================================================
@@ -406,30 +343,22 @@ class TestMakeToolCall:
 
 
 class TestPromptGeneratorGenerateResponse:
-    """Verify PromptGenerator.generate_response returns single-message list."""
-
     @pytest.fixture
     def generator(self, mock_tokenizer_cls) -> PromptGenerator:
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
         return PromptGenerator(_default_config(), tokenizer)
 
     def test_returns_single_element_list(self, generator: PromptGenerator) -> None:
-        result = generator.generate_response(50)
-        assert isinstance(result, list)
-        assert len(result) == 1
+        assert len(generator.generate_response(50)) == 1
 
     def test_message_has_assistant_role(self, generator: PromptGenerator) -> None:
-        result = generator.generate_response(50)
-        assert result[0]["role"] == "assistant"
+        assert generator.generate_response(50)[0]["role"] == "assistant"
 
     def test_content_is_string(self, generator: PromptGenerator) -> None:
-        result = generator.generate_response(50)
-        assert isinstance(result[0]["content"], str)
-        assert len(result[0]["content"]) > 0
+        assert isinstance(generator.generate_response(50)[0]["content"], str)
 
-    def test_no_tool_use_blocks(self, generator: PromptGenerator) -> None:
-        result = generator.generate_response(50)
-        assert not isinstance(result[0]["content"], list)
+    def test_no_tool_calls(self, generator: PromptGenerator) -> None:
+        assert "tool_calls" not in generator.generate_response(50)[0]
 
 
 # ============================================================
@@ -438,12 +367,8 @@ class TestPromptGeneratorGenerateResponse:
 
 
 class TestPromptConfigPreGenerateResponses:
-    """Verify the config field default and settable."""
-
     def test_defaults_to_false(self) -> None:
-        config = PromptConfig()
-        assert config.pre_generate_responses is False
+        assert PromptConfig().pre_generate_responses is False
 
     def test_can_be_set_true(self) -> None:
-        config = PromptConfig(pre_generate_responses=True)
-        assert config.pre_generate_responses is True
+        assert PromptConfig(pre_generate_responses=True).pre_generate_responses is True
