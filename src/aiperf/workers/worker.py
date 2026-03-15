@@ -47,6 +47,7 @@ from aiperf.common.protocols import (
     RequestClientProtocol,
     StreamingDealerClientProtocol,
 )
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -183,6 +184,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.memory_usage_before_profiling: float | None = None
 
         self.session_manager: UserSessionManager = UserSessionManager()
+        self._history_tokenizers: dict[str, Tokenizer] = {}
+        self._history_tokenizer_lock = asyncio.Lock()
 
         # Dataset client for direct data access (eliminates DatasetManager bottleneck)
         # Initialized when DatasetConfiguredNotification is received via factory
@@ -649,13 +652,88 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     output_texts.append(response.data.content)
             else:
                 output_texts.append(response.data.get_text())
-        resp_text = "".join(output_texts)
+        resp_text = await self._truncate_response_for_history(
+            record=record,
+            response_text="".join(output_texts),
+        )
 
         return (
             Turn(role="assistant", texts=[Text(contents=[resp_text])])
             if resp_text
             else None
         )
+
+    async def _truncate_response_for_history(
+        self,
+        *,
+        record: RequestRecord,
+        response_text: str,
+    ) -> str:
+        """Trim stored assistant history to requested OSL for multi-turn sessions.
+
+        This affects only session history used to build future turns. The original
+        RequestRecord and parsed metrics remain unchanged.
+        """
+        if not response_text:
+            return response_text
+
+        request_info = record.request_info
+        if request_info is None:
+            return response_text
+
+        # Single-turn requests do not accumulate assistant history into future prompts.
+        if len(request_info.turns) <= 1 and request_info.is_final_turn:
+            return response_text
+
+        requested_osl = request_info.turns[-1].max_tokens if request_info.turns else None
+        if requested_osl is None:
+            return response_text
+
+        model_name = (
+            record.model_name
+            or request_info.turns[-1].model
+            or self.model_endpoint.primary_model_name
+        )
+        if model_name is None:
+            return response_text
+
+        try:
+            tokenizer = await self._get_history_tokenizer(model_name)
+            token_ids = tokenizer.encode(response_text)
+        except Exception as exc:
+            err_repr = repr(exc)
+            self.debug(
+                lambda: (
+                    f"Skipping multi-turn history truncation for model {model_name}: {err_repr}"
+                )
+            )
+            return response_text
+
+        if len(token_ids) <= requested_osl:
+            return response_text
+
+        truncated_text = tokenizer.decode(token_ids[:requested_osl])
+        self.debug(
+            lambda: (
+                f"Clipped assistant history for {request_info.x_request_id}: "
+                f"{len(token_ids)} -> {requested_osl} tokens"
+            )
+        )
+        return truncated_text
+
+    async def _get_history_tokenizer(self, model_name: str) -> Tokenizer:
+        """Get or load tokenizer used for multi-turn history clipping."""
+        async with self._history_tokenizer_lock:
+            if model_name not in self._history_tokenizers:
+                tokenizer_config = self.user_config.tokenizer
+                self._history_tokenizers[model_name] = await asyncio.to_thread(
+                    Tokenizer.from_pretrained,
+                    tokenizer_config.get_tokenizer_name_for_model(model_name),
+                    trust_remote_code=tokenizer_config.trust_remote_code,
+                    revision=tokenizer_config.revision,
+                    resolve_alias=tokenizer_config.should_resolve_alias,
+                )
+            return self._history_tokenizers[model_name]
 
     async def _send_inference_result_message(self, record: RequestRecord) -> None:
         """Send RequestRecord to RecordProcessor for metric calculation.

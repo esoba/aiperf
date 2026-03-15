@@ -12,16 +12,16 @@ from aiperf.common.models import (
     Conversation,
     ParsedResponse,
     ReasoningResponseData,
+    RequestInfo,
     RequestRecord,
     SSEMessage,
+    Text,
     TextResponseData,
+    Turn,
 )
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.workers.worker import Worker
-from tests.harness.fake_communication import FakeCommunication as FakeCommunication
-from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
-from tests.harness.fake_tokenizer import FakeTokenizer
-from tests.harness.fake_transport import FakeTransport as FakeTransport
+from tests.harness.fake_tokenizer import TOKEN, FakeTokenizer
 
 
 @pytest.fixture
@@ -129,6 +129,164 @@ class TestWorker:
         monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
         turn = await mock_worker._process_response(RequestRecord())
         assert turn.texts[0].contents == ["HelloWorld"]
+
+    async def test_process_response_truncates_multi_turn_history_to_requested_osl(
+        self, monkeypatch, mock_worker
+    ):
+        """Ensure multi-turn assistant history is clipped to the requested OSL."""
+        long_text = "abcdefghijklmnop"
+        parsed_response = ParsedResponse(
+            perf_ns=0,
+            data=TextResponseData(text=long_text),
+        )
+        mock_endpoint = Mock()
+        mock_endpoint.extract_response_data = Mock(return_value=[parsed_response])
+        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
+
+        request_info = RequestInfo(
+            model_endpoint=mock_worker.model_endpoint,
+            turns=[
+                Turn(
+                    role="user",
+                    model="test-model",
+                    max_tokens=2,
+                    texts=[Text(contents=["turn 1"])],
+                )
+            ],
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="truncate-test",
+            x_correlation_id="truncate-session",
+            conversation_id="truncate-conversation",
+            is_final_turn=False,
+        )
+        record = RequestRecord(request_info=request_info, model_name="test-model")
+
+        turn = await mock_worker._process_response(record)
+
+        assert turn is not None
+        assert turn.texts[0].contents == [TOKEN * 2]
+        assert parsed_response.data.text == long_text
+
+    async def test_process_response_leaves_text_unchanged_without_requested_osl(
+        self, monkeypatch, mock_worker
+    ):
+        """Ensure clipping is skipped when no output token budget was requested."""
+        response_text = "abcdefghijklmnop"
+        parsed_response = ParsedResponse(
+            perf_ns=0,
+            data=TextResponseData(text=response_text),
+        )
+        mock_endpoint = Mock()
+        mock_endpoint.extract_response_data = Mock(return_value=[parsed_response])
+        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
+
+        request_info = RequestInfo(
+            model_endpoint=mock_worker.model_endpoint,
+            turns=[
+                Turn(
+                    role="user",
+                    model="test-model",
+                    texts=[Text(contents=["turn 1"])],
+                )
+            ],
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="no-osl-test",
+            x_correlation_id="no-osl-session",
+            conversation_id="no-osl-conversation",
+            is_final_turn=False,
+        )
+        record = RequestRecord(request_info=request_info, model_name="test-model")
+
+        turn = await mock_worker._process_response(record)
+
+        assert turn is not None
+        assert turn.texts[0].contents == [response_text]
+
+    async def test_clipped_history_is_used_in_follow_up_payload(
+        self, monkeypatch, mock_worker
+    ):
+        """Ensure the next turn payload uses clipped assistant history."""
+        long_text = "abcdefghijklmnop"
+        parsed_response = ParsedResponse(
+            perf_ns=0,
+            data=TextResponseData(text=long_text),
+        )
+        mock_endpoint = Mock(wraps=mock_worker.inference_client.endpoint)
+        mock_endpoint.extract_response_data = Mock(return_value=[parsed_response])
+        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
+
+        conversation = Conversation(
+            session_id="payload-session",
+            turns=[
+                Turn(
+                    role="user",
+                    model="test-model",
+                    max_tokens=2,
+                    texts=[Text(contents=["first turn"])],
+                ),
+                Turn(
+                    role="user",
+                    model="test-model",
+                    max_tokens=4,
+                    texts=[Text(contents=["second turn"])],
+                ),
+            ],
+        )
+        session = mock_worker.session_manager.create_and_store(
+            "payload-session",
+            conversation,
+            num_turns=2,
+        )
+        session.advance_turn(0)
+
+        first_request = RequestInfo(
+            model_endpoint=mock_worker.model_endpoint,
+            turns=session.turn_list,
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="payload-request-1",
+            x_correlation_id="payload-session",
+            conversation_id="payload-session",
+            is_final_turn=False,
+        )
+        first_record = RequestRecord(
+            request_info=first_request,
+            model_name="test-model",
+        )
+
+        response_turn = await mock_worker._process_response(first_record)
+        assert response_turn is not None
+        session.store_response(response_turn)
+        session.advance_turn(1)
+
+        second_credit_context = CreditContext(
+            credit=Credit(
+                id=2,
+                phase=CreditPhase.PROFILING,
+                conversation_id="payload-session",
+                x_correlation_id="payload-session",
+                turn_index=1,
+                num_turns=2,
+                issued_at_ns=1_000_000,
+            ),
+            drop_perf_ns=2_000_000,
+        )
+        second_request = mock_worker._create_request_info(
+            session=session,
+            credit_context=second_credit_context,
+            x_request_id="payload-request-2",
+        )
+
+        payload = mock_worker.inference_client.endpoint.format_payload(second_request)
+
+        assert payload["messages"][0]["content"] == "first turn"
+        assert payload["messages"][1]["content"] == TOKEN * 2
+        assert payload["messages"][2]["content"] == "second turn"
 
 
 # --- FirstToken Callback Test Helpers ---
