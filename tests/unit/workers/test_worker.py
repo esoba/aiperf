@@ -169,6 +169,82 @@ class TestWorker:
         assert turn.texts[0].contents == [TOKEN * 2]
         assert parsed_response.data.text == long_text
 
+    async def test_process_response_pads_multi_turn_history_to_requested_osl(
+        self, monkeypatch, mock_worker
+    ):
+        """Ensure multi-turn assistant history is padded to the requested OSL."""
+        response_text = TOKEN
+        parsed_response = ParsedResponse(
+            perf_ns=0,
+            data=TextResponseData(text=response_text),
+        )
+        mock_endpoint = Mock()
+        mock_endpoint.extract_response_data = Mock(return_value=[parsed_response])
+        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
+
+        request_info = RequestInfo(
+            model_endpoint=mock_worker.model_endpoint,
+            turns=[
+                Turn(
+                    role="user",
+                    model="test-model",
+                    max_tokens=4,
+                    texts=[Text(contents=["turn 1"])],
+                )
+            ],
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="pad-test",
+            x_correlation_id="pad-session",
+            conversation_id="pad-conversation",
+            is_final_turn=False,
+        )
+        record = RequestRecord(request_info=request_info, model_name="test-model")
+
+        turn = await mock_worker._process_response(record)
+
+        assert turn is not None
+        assert turn.texts[0].contents == [TOKEN * 4]
+        assert parsed_response.data.text == response_text
+
+    async def test_process_response_empty_output_uses_synthetic_padding(
+        self, monkeypatch, mock_worker
+    ):
+        """Ensure empty assistant output still grows history to requested OSL."""
+        parsed_response = ParsedResponse(
+            perf_ns=0,
+            data=TextResponseData(text=""),
+        )
+        mock_endpoint = Mock()
+        mock_endpoint.extract_response_data = Mock(return_value=[parsed_response])
+        monkeypatch.setattr(mock_worker.inference_client, "endpoint", mock_endpoint)
+
+        request_info = RequestInfo(
+            model_endpoint=mock_worker.model_endpoint,
+            turns=[
+                Turn(
+                    role="user",
+                    model="test-model",
+                    max_tokens=3,
+                    texts=[Text(contents=["turn 1"])],
+                )
+            ],
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="empty-pad-test",
+            x_correlation_id="empty-pad-session",
+            conversation_id="empty-pad-conversation",
+            is_final_turn=False,
+        )
+        record = RequestRecord(request_info=request_info, model_name="test-model")
+
+        turn = await mock_worker._process_response(record)
+
+        assert turn is not None
+        assert turn.texts[0].contents == [TOKEN * 3]
+
     async def test_process_response_leaves_text_unchanged_without_requested_osl(
         self, monkeypatch, mock_worker
     ):
@@ -206,14 +282,14 @@ class TestWorker:
         assert turn is not None
         assert turn.texts[0].contents == [response_text]
 
-    async def test_clipped_history_is_used_in_follow_up_payload(
+    async def test_normalized_history_is_used_in_follow_up_payload(
         self, monkeypatch, mock_worker
     ):
-        """Ensure the next turn payload uses clipped assistant history."""
-        long_text = "abcdefghijklmnop"
+        """Ensure the next turn payload uses normalized assistant history."""
+        short_text = TOKEN
         parsed_response = ParsedResponse(
             perf_ns=0,
-            data=TextResponseData(text=long_text),
+            data=TextResponseData(text=short_text),
         )
         mock_endpoint = Mock(wraps=mock_worker.inference_client.endpoint)
         mock_endpoint.extract_response_data = Mock(return_value=[parsed_response])

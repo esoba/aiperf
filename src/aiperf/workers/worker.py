@@ -652,7 +652,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     output_texts.append(response.data.content)
             else:
                 output_texts.append(response.data.get_text())
-        resp_text = await self._truncate_response_for_history(
+        resp_text = await self._normalize_response_for_history(
             record=record,
             response_text="".join(output_texts),
         )
@@ -663,20 +663,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             else None
         )
 
-    async def _truncate_response_for_history(
+    async def _normalize_response_for_history(
         self,
         *,
         record: RequestRecord,
         response_text: str,
     ) -> str:
-        """Trim stored assistant history to requested OSL for multi-turn sessions.
+        """Normalize stored assistant history to requested OSL for multi-turn sessions.
 
         This affects only session history used to build future turns. The original
         RequestRecord and parsed metrics remain unchanged.
         """
-        if not response_text:
-            return response_text
-
         request_info = record.request_info
         if request_info is None:
             return response_text
@@ -699,27 +696,44 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         try:
             tokenizer = await self._get_history_tokenizer(model_name)
-            token_ids = tokenizer.encode(response_text)
+            token_ids = tokenizer.encode(response_text) if response_text else []
         except Exception as exc:
             err_repr = repr(exc)
             self.debug(
                 lambda: (
-                    f"Skipping multi-turn history truncation for model {model_name}: {err_repr}"
+                    f"Skipping multi-turn history normalization for model {model_name}: {err_repr}"
                 )
             )
             return response_text
 
-        if len(token_ids) <= requested_osl:
+        actual_tokens = len(token_ids)
+        if actual_tokens == requested_osl:
             return response_text
 
-        truncated_text = tokenizer.decode(token_ids[:requested_osl])
+        if actual_tokens > requested_osl:
+            normalized_text = tokenizer.decode(token_ids[:requested_osl])
+            self.debug(
+                lambda: (
+                    f"Clipped assistant history for {request_info.x_request_id}: "
+                    f"{actual_tokens} -> {requested_osl} tokens"
+                )
+            )
+            return normalized_text
+
+        missing_tokens = requested_osl - actual_tokens
+        filler_token_id = tokenizer.block_separation_token_id
+        if filler_token_id is None:
+            return response_text
+
+        normalized_token_ids = [*token_ids, *([filler_token_id] * missing_tokens)]
+        normalized_text = tokenizer.decode(normalized_token_ids)
         self.debug(
             lambda: (
-                f"Clipped assistant history for {request_info.x_request_id}: "
-                f"{len(token_ids)} -> {requested_osl} tokens"
+                f"Padded assistant history for {request_info.x_request_id}: "
+                f"{actual_tokens} -> {requested_osl} tokens"
             )
         )
-        return truncated_text
+        return normalized_text
 
     async def _get_history_tokenizer(self, model_name: str) -> Tokenizer:
         """Get or load tokenizer used for multi-turn history clipping."""
