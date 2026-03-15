@@ -17,6 +17,8 @@ Generation uses window slicing from pre-built token pools, same as PromptGenerat
 
 from __future__ import annotations
 
+from typing import Any
+
 from aiperf.common import random_generator as rng
 from aiperf.common.config import PromptConfig
 from aiperf.common.exceptions import ConfigurationError, NotInitializedError
@@ -626,6 +628,52 @@ _FOLLOWUP_QUESTIONS = (
     "One more thing -- can you make {method}() idempotent?",
 )
 
+_ASSISTANT_PREAMBLES = (
+    "Let me read that file to understand the issue.",
+    "I'll check the current implementation.",
+    "Let me look at the relevant code.",
+    "I see — let me search for where that's defined.",
+    "Let me find the callers of {method}().",
+    "I'll run the tests to confirm.",
+    "Let me check the logs.",
+    "I'll fix that now.",
+    "I see the bug — the {var} isn't being cleaned up. Let me fix it.",
+    "The issue is in {module}.{method}(). Let me update it.",
+    "That error comes from {class_name}. Let me look.",
+    "Let me search for other places that use {var}.",
+    "I'll add proper error handling.",
+    "Let me verify the fix doesn't break anything.",
+    "I'll update the test to cover this case.",
+    "Let me check if {module} has the same problem.",
+    "I need to see the config first.",
+    "I'll grep for the pattern to find all occurrences.",
+    "Looking at the stack trace, the problem is in {method}(). Let me fix it.",
+    "Let me read the file and then make the change.",
+)
+
+_ASSISTANT_SUMMARIES = (
+    "Fixed. The issue was that {var} was never released after {method}() returned. "
+    "I added a try/finally block to ensure cleanup happens.",
+    "Done. I updated {class_name}.{method}() to handle the edge case where {var} is None. "
+    "The existing tests still pass.",
+    "The {module} service was missing validation on the {var} parameter. "
+    "I added a check and a clear error message.",
+    "I've fixed the race condition in {method}(). The lock was being acquired but not "
+    "released on the error path. All tests pass.",
+    "Updated. The change adds async support to {class_name}.{method}() and updates "
+    "all callers. No breaking changes to the public API.",
+    "The connection pool leak was caused by {method}() not closing the connection "
+    "when an exception occurred. Fixed with proper context manager usage.",
+    "Fixed the timeout handling in {module}. It was using a hard-coded value instead "
+    "of the configured {var}. I also added a test for the timeout path.",
+    "Done. I refactored {class_name} to use dependency injection for the {module} "
+    "client. This makes it testable and fixes the circular import.",
+    "The {var} was being mutated in place instead of copied. I changed {method}() "
+    "to work on a copy and return the result. Added a regression test.",
+    "I've added retry logic to {class_name}.{method}() with exponential backoff. "
+    "It retries up to 3 times on transient errors and logs each attempt.",
+)
+
 _LANGUAGES = ("python", "go", "rust", "typescript")
 
 _TEXT_POOL_BLOCKS = 200
@@ -739,6 +787,155 @@ class CodingContentGenerator(BaseGenerator):
     def generate_prompt(self, num_tokens: int) -> str:
         tokens = self._sample_tokens(num_tokens, self._tool_pool)
         return self.tokenizer.decode(tokens)
+
+    def generate_response(self, num_tokens: int) -> list[dict[str, Any]]:
+        """Generate a pre-canned coding assistant tool-use conversation.
+
+        Returns Anthropic-format messages using content-block arrays, matching
+        real Claude Code API traffic.  Each assistant message contains
+        ``text`` and ``tool_use`` content blocks; each user message contains
+        ``tool_result`` blocks (ordered before any text, per Anthropic rules).
+
+        Supports single calls, parallel calls (2-3 ``tool_use`` blocks in one
+        assistant message), and silent tool-only calls (no ``text`` block).
+
+        Args:
+            num_tokens: Target number of assistant output tokens.
+
+        Returns:
+            List of message dicts in Anthropic content-block format.
+        """
+        if num_tokens <= 0:
+            return []
+
+        r = self._template_rng
+        messages: list[dict[str, Any]] = []
+        remaining = num_tokens
+
+        max_iter = min(5, max(1, num_tokens // 60))
+        num_iter = r.randint(1, max_iter) if max_iter > 1 else 1
+
+        for i in range(num_iter):
+            is_last = i == num_iter - 1
+            fills = self._template_fills()
+
+            if is_last or remaining <= 40:
+                summary = r.choice(_ASSISTANT_SUMMARIES).format(**fills)
+                summary_tokens = self.tokenizer.encode(summary)
+                if len(summary_tokens) < remaining:
+                    pad = self._sample_tokens(
+                        remaining - len(summary_tokens), self._tool_pool
+                    )
+                    summary += " " + self.tokenizer.decode(pad)
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": summary}],
+                    }
+                )
+                break
+
+            iter_budget = r.randint(30, max(31, remaining - 20 * (num_iter - i - 1)))
+
+            # Style: text + tool (50%), tool-only (25%), parallel (25%)
+            roll = r.randint(1, 100)
+            if roll <= 50:
+                style = "text_and_tool"
+            elif roll <= 75:
+                style = "tool_only"
+            else:
+                style = "parallel"
+
+            num_calls = r.randint(2, 3) if style == "parallel" else 1
+
+            # Build assistant content blocks
+            assistant_content: list[dict[str, Any]] = []
+            tool_result_blocks: list[dict[str, Any]] = []
+
+            if style != "tool_only":
+                preamble = r.choice(_ASSISTANT_PREAMBLES).format(**fills)
+                assistant_content.append({"type": "text", "text": preamble})
+
+            for _ in range(num_calls):
+                tool_name, tool_input = self._make_tool_call()
+                tool_id = f"toolu_{r.randint(100000, 999999):06d}"
+                assistant_content.append(
+                    {
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": tool_name,
+                        "input": tool_input,
+                    }
+                )
+                result_tokens = r.randint(30, 200)
+                result_text = self.tokenizer.decode(
+                    self._sample_tokens(result_tokens, self._tool_pool)
+                )
+                tool_result_blocks.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": result_text,
+                    }
+                )
+
+            messages.append({"role": "assistant", "content": assistant_content})
+            remaining -= iter_budget
+
+            # User message: tool_result blocks first (Anthropic ordering rule)
+            messages.append({"role": "user", "content": tool_result_blocks})
+
+        return messages
+
+    def _template_fills(self) -> dict[str, str]:
+        """Random fill values for assistant narration templates."""
+        r = self._template_rng
+        return {
+            "method": r.choice(_METHODS),
+            "var": r.choice(_VARS),
+            "module": r.choice(_MODULES),
+            "class_name": r.choice(_CLASSES),
+        }
+
+    def _make_tool_call(self) -> tuple[str, dict[str, Any]]:
+        """Generate a realistic tool name and input dict.
+
+        Uses real Claude Code tool names (Read, Edit, Bash, Grep, Glob, Write)
+        with matching parameter schemas.
+
+        Returns:
+            (tool_name, input_dict)
+        """
+        r = self._template_rng
+        file_pool = self._file_pool(None)
+        f = r.choice(file_pool)
+
+        tool = r.choice(("Read", "Edit", "Bash", "Grep", "Glob", "Write"))
+        match tool:
+            case "Read":
+                return tool, {"file_path": f}
+            case "Edit":
+                m = r.choice(_METHODS)
+                v = r.choice(_VARS)
+                return tool, {
+                    "file_path": f,
+                    "old_string": f"    def {m}(self, {v}):",
+                    "new_string": f"    async def {m}(self, {v}: str) -> dict:",
+                }
+            case "Bash":
+                return tool, {"command": r.choice(_CLI_COMMANDS)}
+            case "Grep":
+                return tool, {"pattern": r.choice(_CLASSES), "path": "src/"}
+            case "Glob":
+                ext = r.choice(("py", "ts", "go", "rs"))
+                return tool, {"pattern": f"**/*.{ext}"}
+            case "Write":
+                m = r.choice(_METHODS)
+                cls = r.choice(_CLASSES)
+                return tool, {
+                    "file_path": f,
+                    "content": f"class {cls}:\n    def {m}(self):\n        pass\n",
+                }
 
     def calculate_num_tokens(
         self,

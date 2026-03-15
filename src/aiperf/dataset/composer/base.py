@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
+from typing import Any
 
 from aiperf.common import random_generator as rng
 from aiperf.common.config import UserConfig
@@ -154,10 +155,12 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
     def _finalize_conversation(
         self, conversation: Conversation, session_index: int
     ) -> None:
-        """Inject context prompts into a single conversation.
+        """Inject context prompts and pre-generated responses into a conversation.
 
         Sets the system_message and user_context_message fields, which
         endpoint formatters prepend to the first turn when creating payloads.
+        When ``--pre-generate-responses`` is enabled, also builds raw_messages
+        on subsequent turns with pre-generated assistant tool-use conversations.
 
         Args:
             conversation: Conversation to finalize.
@@ -179,6 +182,9 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 self.prompt_generator.generate_user_context_prompt(session_index)
             )
 
+        if self.config.input.prompt.pre_generate_responses:
+            self._apply_pregenerated_responses(conversation)
+
     def _get_shared_system_prompt(self) -> str | None:
         """Return the shared system prompt, computing and caching on first call."""
         if not hasattr(self, "_shared_system_prompt_cache"):
@@ -186,3 +192,78 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 self.prompt_generator.get_shared_system_prompt()
             )
         return self._shared_system_prompt_cache
+
+    # -- Pre-generated response support --
+
+    def _apply_pregenerated_responses(self, conversation: Conversation) -> None:
+        """Build raw_messages on multi-turn conversation turns with pre-generated responses.
+
+        For each turn after the first, generates a coding assistant response
+        (tool-use conversation) for the *previous* turn, then constructs
+        raw_messages containing the full conversation history up to that point.
+
+        Turns that already have raw_messages are left untouched.
+        """
+        if len(conversation.turns) <= 1:
+            return
+
+        # Generate assistant responses for each turn except the last
+        responses: list[list[dict[str, Any]] | None] = []
+        for turn in conversation.turns[:-1]:
+            if turn.max_tokens:
+                responses.append(
+                    self.prompt_generator.generate_response(turn.max_tokens)
+                )
+            else:
+                responses.append(None)
+
+        # Build raw_messages for turns 1..N (skip if already set)
+        for i in range(1, len(conversation.turns)):
+            if conversation.turns[i].raw_messages is not None:
+                continue
+
+            messages: list[dict] = []
+
+            if conversation.system_message:
+                messages.append(
+                    {"role": "system", "content": conversation.system_message}
+                )
+            if conversation.user_context_message:
+                messages.append(
+                    {"role": "user", "content": conversation.user_context_message}
+                )
+
+            # History: user turn + pre-generated response for turns 0..i-1
+            for j in range(i):
+                user_content = self._extract_turn_text(conversation.turns[j])
+                messages.append(
+                    {
+                        "role": conversation.turns[j].role or "user",
+                        "content": user_content,
+                    }
+                )
+                if j < len(responses) and responses[j] is not None:
+                    messages.extend(responses[j])
+
+            # Current user turn
+            user_content = self._extract_turn_text(conversation.turns[i])
+            messages.append(
+                {
+                    "role": conversation.turns[i].role or "user",
+                    "content": user_content,
+                }
+            )
+
+            conversation.turns[i].raw_messages = messages
+
+    @staticmethod
+    def _extract_turn_text(turn: Turn) -> str:
+        """Extract text content from a turn for raw_messages construction."""
+        if turn.raw_messages:
+            for msg in turn.raw_messages:
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        return content
+            return ""
+        return "".join(content for text in turn.texts for content in text.contents)

@@ -245,6 +245,16 @@ class PromptGenerator(BaseGenerator):
         """
         return self.tokenizer.decode(self._sample_tokens(num_tokens))
 
+    def generate_response(self, num_tokens: int) -> list[dict[str, str]]:
+        """Generate a pre-canned assistant response of exactly *num_tokens* tokens.
+
+        Returns a single-message list for interface compatibility with
+        ``CodingContentGenerator.generate_response`` which returns multi-message
+        tool-use conversations.
+        """
+        text = self.tokenizer.decode(self._sample_tokens(num_tokens))
+        return [{"role": "assistant", "content": text}]
+
     def _generate_cached_prompt(
         self,
         num_tokens: int,

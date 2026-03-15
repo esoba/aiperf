@@ -496,6 +496,11 @@ Number of text inputs to include in each request for batch processing endpoints.
 <br>_Constraints: ≥ 0_
 <br>_Default: `1`_
 
+#### `--pre-generate-responses`
+
+Pre-generate assistant responses for multi-turn conversations. When enabled, each turn's raw_messages will include a pre-generated assistant response from the previous turn, built at exactly max_tokens length. With '--prompt-corpus coding', responses contain realistic tool-use conversations (Read, Edit, Bash tool calls with results). With 'sonnet', responses are plain text.
+<br>_Flag (no value required)_
+
 #### `--prompt-corpus` `<str>`
 
 Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare sonnets (default). 'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs).

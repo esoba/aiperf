@@ -255,6 +255,21 @@ class PromptConfig(BaseConfig):
     output_tokens: OutputTokensConfig = OutputTokensConfig()
     prefix_prompt: PrefixPromptConfig = PrefixPromptConfig()
 
+    pre_generate_responses: Annotated[
+        bool,
+        Field(
+            description="Pre-generate assistant responses for multi-turn conversations. "
+            "When enabled, each turn's raw_messages will include a pre-generated assistant response "
+            "from the previous turn, built at exactly max_tokens length. "
+            "With '--prompt-corpus coding', responses contain realistic tool-use conversations "
+            "(Read, Edit, Bash tool calls with results). With 'sonnet', responses are plain text.",
+        ),
+        CLIParameter(
+            name=("--pre-generate-responses",),
+            group=_CLI_GROUP,
+        ),
+    ] = False
+
     prompt_corpus: Annotated[
         PromptCorpus,
         Field(
