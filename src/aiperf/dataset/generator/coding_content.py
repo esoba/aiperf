@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import orjson
+
 from aiperf.common import random_generator as rng
 from aiperf.common.config import PromptConfig
 from aiperf.common.exceptions import ConfigurationError, NotInitializedError
@@ -893,9 +895,9 @@ class CodingContentGenerator(BaseGenerator):
             else:
                 self._emit_openai(messages, calls, preamble, r)
 
-            # Measure actual assistant tokens emitted this iteration
-            import orjson
-
+            # Count actual tokens emitted. Preambles are short templates
+            # and tool args are small dicts — encoding is cheap relative to
+            # the corpus tokenization done at init time.
             iter_tokens = 0
             if preamble:
                 iter_tokens += len(self.tokenizer.encode(preamble))
@@ -922,7 +924,6 @@ class CodingContentGenerator(BaseGenerator):
         r: rng.RandomGenerator,
     ) -> None:
         """Append OpenAI chat-completions format messages."""
-        import orjson
 
         tool_calls = [
             {
