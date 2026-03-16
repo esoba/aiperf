@@ -788,21 +788,36 @@ class CodingContentGenerator(BaseGenerator):
         tokens = self._sample_tokens(num_tokens, self._tool_pool)
         return self.tokenizer.decode(tokens)
 
+    # -- Weights derived from real Claude Code MITM capture (1482 calls) --
+    # Style: 85.5% silent, 8.7% text+tool, 5.8% parallel
+    _STYLE_WEIGHTS = (85, 10, 5)  # silent, text+tool, parallel
+    # Tools: Bash 85%, Read 5%, Task 3%, Write 2%, Edit 2%, Grep 1%, Glob 1%, TodoWrite 1%
+    _TOOL_WEIGHTS = (
+        ("Bash", 85),
+        ("Read", 5),
+        ("Task", 3),
+        ("Write", 2),
+        ("Edit", 2),
+        ("Grep", 1),
+        ("Glob", 1),
+        ("TodoWrite", 1),
+    )
+
     def generate_response(
         self, num_tokens: int, *, use_content_blocks: bool = False
     ) -> list[dict[str, Any]]:
         """Generate a pre-canned coding assistant tool-use conversation.
 
         Produces a multi-turn conversation of tool calls matching real coding
-        agent traffic.  Supports single calls, parallel calls (2-3 in one
-        assistant message), and silent tool-only calls.
+        agent traffic captured via MITM proxy.  Weights are calibrated from
+        1,482 real Claude Code API calls: ~85% silent tool-only, ~10%
+        text+tool, ~5% parallel.  Tool distribution: ~85% Bash, ~5% Read.
 
         Args:
             num_tokens: Target number of assistant output tokens.
-            use_content_blocks: When True, emit Anthropic content-block format
-                (``tool_use``/``tool_result`` inside content arrays).  When
-                False (default), emit OpenAI chat-completions format
-                (``tool_calls`` array + ``role: "tool"`` messages).
+            use_content_blocks: When True (default), emit Anthropic
+                content-block format.  When False, emit OpenAI
+                chat-completions format.
 
         Returns:
             List of message dicts.
@@ -842,32 +857,42 @@ class CodingContentGenerator(BaseGenerator):
 
             iter_budget = r.randint(30, max(31, remaining - 20 * (num_iter - i - 1)))
 
-            # Style: text + tool (50%), tool-only (25%), parallel (25%)
+            # Style weighted to match real data: 85% silent, 10% text+tool, 5% parallel
+            s_silent, s_text, _ = self._STYLE_WEIGHTS
             roll = r.randint(1, 100)
-            if roll <= 50:
-                style = "text_and_tool"
-            elif roll <= 75:
+            if roll <= s_silent:
                 style = "tool_only"
+            elif roll <= s_silent + s_text:
+                style = "text_and_tool"
             else:
                 style = "parallel"
 
-            num_calls = r.randint(2, 3) if style == "parallel" else 1
+            # Parallel: 94% single, 3.5% double, 1.5% triple, 1% 4+
+            if style == "parallel":
+                p = r.randint(1, 100)
+                if p <= 60:
+                    num_calls = 2
+                elif p <= 85:
+                    num_calls = 3
+                else:
+                    num_calls = r.randint(4, 6)
+            else:
+                num_calls = 1
 
-            # Generate tool calls and results
             calls: list[tuple[str, str, dict[str, Any]]] = []
             for _ in range(num_calls):
                 tool_name, tool_input = self._make_tool_call()
-                tool_id = f"toolu_{r.randint(100000, 999999):06d}"
+                tool_id = self._make_tool_id(r)
                 calls.append((tool_id, tool_name, tool_input))
 
             preamble: str | None = None
-            if style != "tool_only":
+            if style == "text_and_tool":
                 preamble = r.choice(_ASSISTANT_PREAMBLES).format(**fills)
 
             if use_content_blocks:
-                self._emit_content_blocks(messages, calls, preamble, r, remaining)
+                self._emit_content_blocks(messages, calls, preamble, r)
             else:
-                self._emit_openai(messages, calls, preamble, r, remaining)
+                self._emit_openai(messages, calls, preamble, r)
 
             remaining -= iter_budget
 
@@ -875,13 +900,19 @@ class CodingContentGenerator(BaseGenerator):
 
     # -- Format helpers for generate_response --
 
+    @staticmethod
+    def _make_tool_id(r: rng.RandomGenerator) -> str:
+        """Generate a realistic Anthropic tool_use ID (toolu_01 + 20 hex-ish chars)."""
+        chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        suffix = "".join(r.choice(chars) for _ in range(20))
+        return f"toolu_01{suffix}"
+
     def _emit_openai(
         self,
         messages: list[dict[str, Any]],
         calls: list[tuple[str, str, dict[str, Any]]],
         preamble: str | None,
         r: rng.RandomGenerator,
-        remaining: int,
     ) -> None:
         """Append OpenAI chat-completions format messages."""
         import orjson
@@ -919,7 +950,6 @@ class CodingContentGenerator(BaseGenerator):
         calls: list[tuple[str, str, dict[str, Any]]],
         preamble: str | None,
         r: rng.RandomGenerator,
-        remaining: int,
     ) -> None:
         """Append Anthropic content-block format messages."""
         assistant_content: list[dict[str, Any]] = []
@@ -941,7 +971,6 @@ class CodingContentGenerator(BaseGenerator):
             )
 
         messages.append({"role": "assistant", "content": assistant_content})
-        # tool_result blocks first in user message (Anthropic ordering rule)
         messages.append({"role": "user", "content": tool_result_blocks})
 
     def _template_fills(self) -> dict[str, str]:
@@ -955,22 +984,44 @@ class CodingContentGenerator(BaseGenerator):
         }
 
     def _make_tool_call(self) -> tuple[str, dict[str, Any]]:
-        """Generate a realistic tool name and input dict.
+        """Generate a weighted tool name and realistic input dict.
 
-        Uses real Claude Code tool names (Read, Edit, Bash, Grep, Glob, Write)
-        with matching parameter schemas.
-
-        Returns:
-            (tool_name, input_dict)
+        Weights calibrated from real Claude Code MITM capture data.
         """
         r = self._template_rng
         file_pool = self._file_pool(None)
         f = r.choice(file_pool)
 
-        tool = r.choice(("Read", "Edit", "Bash", "Grep", "Glob", "Write"))
+        # Weighted selection from _TOOL_WEIGHTS
+        roll = r.randint(1, 100)
+        cumulative = 0
+        tool = "Bash"
+        for name, weight in self._TOOL_WEIGHTS:
+            cumulative += weight
+            if roll <= cumulative:
+                tool = name
+                break
+
         match tool:
+            case "Bash":
+                cmd = r.choice(_CLI_COMMANDS)
+                desc = f"Run {cmd.split()[0]} to check the output"
+                return tool, {"command": cmd, "description": desc}
             case "Read":
                 return tool, {"file_path": f}
+            case "Task":
+                prompt = r.choice(_ASSISTANT_PREAMBLES).format(**self._template_fills())
+                return tool, {
+                    "description": f"Investigate {r.choice(_MODULES)} module",
+                    "prompt": prompt,
+                }
+            case "Write":
+                m = r.choice(_METHODS)
+                cls = r.choice(_CLASSES)
+                return tool, {
+                    "file_path": f,
+                    "content": f"class {cls}:\n    def {m}(self):\n        pass\n",
+                }
             case "Edit":
                 m = r.choice(_METHODS)
                 v = r.choice(_VARS)
@@ -979,19 +1030,17 @@ class CodingContentGenerator(BaseGenerator):
                     "old_string": f"    def {m}(self, {v}):",
                     "new_string": f"    async def {m}(self, {v}: str) -> dict:",
                 }
-            case "Bash":
-                return tool, {"command": r.choice(_CLI_COMMANDS)}
             case "Grep":
                 return tool, {"pattern": r.choice(_CLASSES), "path": "src/"}
             case "Glob":
                 ext = r.choice(("py", "ts", "go", "rs"))
                 return tool, {"pattern": f"**/*.{ext}"}
-            case "Write":
-                m = r.choice(_METHODS)
-                cls = r.choice(_CLASSES)
+            case "TodoWrite":
                 return tool, {
-                    "file_path": f,
-                    "content": f"class {cls}:\n    def {m}(self):\n        pass\n",
+                    "todos": [
+                        f"Fix {r.choice(_METHODS)}() in {r.choice(_MODULES)}",
+                        f"Add tests for {r.choice(_CLASSES)}",
+                    ]
                 }
 
     def calculate_num_tokens(

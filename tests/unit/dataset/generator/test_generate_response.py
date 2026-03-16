@@ -16,7 +16,16 @@ from aiperf.common.config import PrefixPromptConfig, PromptConfig
 from aiperf.dataset.generator.coding_content import CodingContentGenerator
 from aiperf.dataset.generator.prompt import PromptGenerator
 
-_EXPECTED_TOOL_NAMES = {"Read", "Edit", "Bash", "Grep", "Glob", "Write"}
+_EXPECTED_TOOL_NAMES = {
+    "Read",
+    "Edit",
+    "Bash",
+    "Grep",
+    "Glob",
+    "Write",
+    "Task",
+    "TodoWrite",
+}
 
 
 def _default_config() -> PromptConfig:
@@ -215,7 +224,7 @@ class TestGenerateResponseStyles:
 
     def _scan_seeds(self, mock_tokenizer_cls, style: str) -> bool:
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
-        for seed in range(50, 80):
+        for seed in range(50, 150):
             rng.reset()
             rng.init(seed)
             gen = CodingContentGenerator(_default_config(), tokenizer)
@@ -292,11 +301,13 @@ class TestMakeToolCall:
     @pytest.mark.parametrize(
         "tool_name,expected_key",
         [
-            ("Read", "file_path"),
             ("Bash", "command"),
+            ("Read", "file_path"),
+            ("Write", "file_path"),
             ("Grep", "pattern"),
             ("Glob", "pattern"),
-            ("Write", "file_path"),
+            ("Task", "prompt"),
+            ("TodoWrite", "todos"),
         ],
     )
     def test_tool_input_keys(
@@ -304,7 +315,7 @@ class TestMakeToolCall:
     ) -> None:
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
         found = False
-        for seed in range(42, 200):
+        for seed in range(42, 500):
             rng.reset()
             rng.init(seed)
             gen = CodingContentGenerator(_default_config(), tokenizer)
@@ -318,10 +329,21 @@ class TestMakeToolCall:
                 break
         assert found
 
+    def test_bash_has_description(self, generator: CodingContentGenerator) -> None:
+        found = False
+        for _ in range(50):
+            name, inp = generator._make_tool_call()
+            if name == "Bash":
+                assert "command" in inp
+                assert "description" in inp
+                found = True
+                break
+        assert found
+
     def test_edit_has_old_and_new_string(self, mock_tokenizer_cls) -> None:
         tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
         found = False
-        for seed in range(42, 200):
+        for seed in range(42, 500):
             rng.reset()
             rng.init(seed)
             gen = CodingContentGenerator(_default_config(), tokenizer)

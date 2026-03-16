@@ -18,6 +18,8 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 
+import orjson
+
 from aiperf.common import random_generator as rng
 from aiperf.common.config import PromptConfig
 from aiperf.common.tokenizer import Tokenizer
@@ -34,29 +36,26 @@ def make_generator(seed: int) -> CodingContentGenerator:
     return CodingContentGenerator(config=PromptConfig(), tokenizer=tokenizer)
 
 
-def _get_blocks(msg: dict) -> list[dict]:
-    """Extract content blocks from a message (handles both str and list)."""
-    content = msg.get("content")
-    if isinstance(content, list):
-        return content
-    return []
-
-
 def classify_message(msg: dict) -> str:
     role = msg["role"]
-    blocks = _get_blocks(msg)
-    if role == "user":
-        has_results = any(b.get("type") == "tool_result" for b in blocks)
-        return "tool_results" if has_results else "user"
+    if role == "tool":
+        return "tool_result"
     if role == "assistant":
-        text_blocks = [b for b in blocks if b.get("type") == "text"]
-        tool_blocks = [b for b in blocks if b.get("type") == "tool_use"]
-        n = len(tool_blocks)
-        if n > 0 and text_blocks:
-            return f"text+{n}tool" if n == 1 else f"text+{n}tools"
-        if n > 0:
+        has_tc = "tool_calls" in msg
+        has_text = isinstance(msg.get("content"), str) and msg["content"]
+        if has_tc:
+            n = len(msg["tool_calls"])
+            if has_text:
+                return f"text+{n}tool" if n == 1 else f"text+{n}tools"
             return f"silent+{n}tool" if n == 1 else f"silent+{n}tools"
         return "text_only"
+    # Anthropic content-block format
+    if role == "user":
+        content = msg.get("content", [])
+        if isinstance(content, list) and any(
+            b.get("type") == "tool_result" for b in content
+        ):
+            return "tool_results"
     return role
 
 
@@ -80,39 +79,34 @@ def analyze_conversation(
     for msg in msgs:
         style = classify_message(msg)
         stats["styles"].append(style)
-        blocks = _get_blocks(msg)
 
         if msg["role"] == "assistant":
-            for b in blocks:
-                if b.get("type") == "text" and b.get("text"):
-                    stats["assistant_tokens"] += count_tokens(tokenizer, b["text"])
-                elif b.get("type") == "tool_use":
-                    stats["tool_names"].append(b["name"])
-            tool_uses = [b for b in blocks if b.get("type") == "tool_use"]
-            if len(tool_uses) > 1:
-                stats["parallel_calls"] += 1
+            content = msg.get("content")
+            if isinstance(content, str) and content:
+                stats["assistant_tokens"] += count_tokens(tokenizer, content)
+            if "tool_calls" in msg:
+                for tc in msg["tool_calls"]:
+                    stats["tool_names"].append(tc["function"]["name"])
+                if len(msg["tool_calls"]) > 1:
+                    stats["parallel_calls"] += 1
 
-        elif msg["role"] == "user":
-            for b in blocks:
-                if b.get("type") == "tool_result" and isinstance(b.get("content"), str):
-                    stats["tool_result_tokens"] += count_tokens(tokenizer, b["content"])
+        elif msg["role"] == "tool":
+            content = msg.get("content", "")
+            if content:
+                stats["tool_result_tokens"] += count_tokens(tokenizer, content)
 
     # Verify ordering: tool results follow their assistant message
-    tool_use_ids_seen = set()
+    emitted_ids: set[str] = set()
     ordering_ok = True
     for msg in msgs:
-        blocks = _get_blocks(msg)
-        for b in blocks:
-            if b.get("type") == "tool_use":
-                tool_use_ids_seen.add(b["id"])
-            elif (
-                b.get("type") == "tool_result"
-                and b["tool_use_id"] not in tool_use_ids_seen
-            ):
-                ordering_ok = False
+        if msg["role"] == "assistant" and "tool_calls" in msg:
+            for tc in msg["tool_calls"]:
+                emitted_ids.add(tc["id"])
+        elif msg["role"] == "tool" and msg.get("tool_call_id") not in emitted_ids:
+            ordering_ok = False
 
     stats["ordering_valid"] = ordering_ok
-    stats["unique_call_ids"] = len(tool_use_ids_seen)
+    stats["unique_call_ids"] = len(emitted_ids)
     return stats
 
 
@@ -123,51 +117,38 @@ def print_conversation(
     for i, msg in enumerate(msgs):
         role = msg["role"]
         style = classify_message(msg)
-        blocks = _get_blocks(msg)
 
-        if role == "assistant" and any(b.get("type") == "tool_use" for b in blocks):
-            text_parts = [b["text"] for b in blocks if b.get("type") == "text"]
-            text_preview = repr(text_parts[0][:80]) + "..." if text_parts else "None"
+        if role == "assistant" and "tool_calls" in msg:
+            content = msg.get("content") or ""
+            text_preview = (
+                repr(content[:80]) + "..." if len(content) > 80 else repr(content)
+            )
             print(f"  [{i}] {role} ({style})")
             print(f"       text: {text_preview}")
-            for b in blocks:
-                if b.get("type") == "tool_use":
-                    inp = b["input"]
-                    inp_short = {
-                        k: (v[:40] + "..." if isinstance(v, str) and len(v) > 40 else v)
-                        for k, v in inp.items()
-                    }
-                    print(f"       call: {b['name']}({inp_short})  id={b['id']}")
+            for tc in msg["tool_calls"]:
+                fn = tc["function"]
+                args = orjson.loads(fn["arguments"])
+                args_short = {
+                    k: (v[:40] + "..." if isinstance(v, str) and len(v) > 40 else v)
+                    for k, v in args.items()
+                }
+                print(f"       call: {fn['name']}({args_short})  id={tc['id']}")
 
-        elif role == "user":
-            for b in blocks:
-                if b.get("type") == "tool_result":
-                    content = b.get("content", "")
-                    tokens = (
-                        count_tokens(tokenizer, content)
-                        if isinstance(content, str)
-                        else 0
-                    )
-                    print(
-                        f"  [{i}] tool_result -> {b['tool_use_id']}  ({tokens} tokens)"
-                    )
-                    if full:
-                        preview = (
-                            repr(content[:60]) + "..."
-                            if len(str(content)) > 60
-                            else repr(content)
-                        )
-                        print(f"       {preview}")
+        elif role == "tool":
+            content = msg.get("content", "")
+            tokens = count_tokens(tokenizer, content) if content else 0
+            print(f"  [{i}] tool_result -> {msg['tool_call_id']}  ({tokens} tokens)")
+            if full:
+                preview = (
+                    repr(content[:60]) + "..." if len(content) > 60 else repr(content)
+                )
+                print(f"       {preview}")
 
         elif role == "assistant":
-            text_parts = [b["text"] for b in blocks if b.get("type") == "text"]
-            text = text_parts[0] if text_parts else ""
-            tokens = count_tokens(tokenizer, text) if text else 0
+            content = msg.get("content", "")
+            tokens = count_tokens(tokenizer, content) if content else 0
             print(f"  [{i}] {role} ({style}, {tokens} tokens)")
-            if full:
-                print(f"       {repr(text[:100])}...")
-            else:
-                print(f"       {repr(text[:80])}...")
+            print(f"       {repr(content[:80])}...")
 
         else:
             print(f"  [{i}] {role}: {repr(str(msg.get('content', ''))[:60])}...")
@@ -226,20 +207,23 @@ def run_demo(token_budgets: list[int], seeds: int, full: bool) -> None:
         pct = count / sum(all_tool_names.values()) * 100
         print(f"  {name:<20} {count:>4}  ({pct:.1f}%)")
 
-    # Validate tool_use input dicts
+    # Validate tool call arguments
     print()
-    input_errors = 0
+    arg_errors = 0
     for seed in range(seeds):
         for budget in token_budgets:
             gen = make_generator(seed)
             for msg in gen.generate_response(budget):
-                for b in _get_blocks(msg):
-                    if b.get("type") == "tool_use" and not isinstance(
-                        b.get("input"), dict
-                    ):
-                        input_errors += 1
+                if msg.get("role") == "assistant" and "tool_calls" in msg:
+                    for tc in msg["tool_calls"]:
+                        try:
+                            parsed = orjson.loads(tc["function"]["arguments"])
+                            if not isinstance(parsed, dict):
+                                arg_errors += 1
+                        except Exception:
+                            arg_errors += 1
     print(
-        f"Tool input validation: {'ALL VALID' if input_errors == 0 else f'{input_errors} ERRORS'}"
+        f"Tool argument validation: {'ALL VALID' if arg_errors == 0 else f'{arg_errors} ERRORS'}"
     )
 
 
