@@ -207,10 +207,14 @@ class CustomDatasetComposer(BaseDatasetComposer):
                     CodingContentGenerator,
                 )
 
-                kwargs["prompt_generator"] = CodingContentGenerator(
+                coding_gen = CodingContentGenerator(
                     config=self.config.input.prompt,
                     tokenizer=self.prompt_generator.tokenizer,
                 )
+                kwargs["prompt_generator"] = coding_gen
+                # Also update the composer's generator so _apply_pregenerated_responses
+                # uses the coding corpus for response generation.
+                self.prompt_generator = coding_gen
             else:
                 kwargs["prompt_generator"] = self.prompt_generator
 
