@@ -5,6 +5,7 @@
 
 from pydantic import Field
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Conversation, Turn
 
@@ -36,6 +37,11 @@ class UserSession(AIPerfBaseModel):
     turn_index: int = Field(
         default=0, ge=0, description="The index of the current turn in the conversation"
     )
+    context_mode: ConversationContextMode = Field(
+        default=ConversationContextMode.ACCUMULATE_ALL,
+        description="Resolved context mode for this session. "
+        "Set at creation from conversation-level override, dataset default, or ACCUMULATE_ALL.",
+    )
 
     def advance_turn(self, turn_index: int) -> Turn:
         """
@@ -54,9 +60,17 @@ class UserSession(AIPerfBaseModel):
                 f"Turn index {turn_index} is out of range for conversation with {self.num_turns} turns"
             )
 
-        self.turn_list.append(self.conversation.turns[turn_index])
+        turn = self.conversation.turns[turn_index]
+        if self.context_mode == ConversationContextMode.STANDALONE:
+            self.turn_list = [turn]
+        else:
+            self.turn_list.append(turn)
         self.turn_index = turn_index
-        return self.turn_list[-1]
+        return turn
+
+    def should_store_response(self) -> bool:
+        """Whether assistant responses should be stored based on context mode."""
+        return self.context_mode == ConversationContextMode.ACCUMULATE_ALL
 
     def store_response(self, response_turn: Turn) -> None:
         """
@@ -73,6 +87,11 @@ class UserSessionManager:
 
     def __init__(self) -> None:
         self._cache: dict[str, UserSession] = {}
+        self._default_context_mode: ConversationContextMode | None = None
+
+    def set_default_context_mode(self, mode: ConversationContextMode | None) -> None:
+        """Set the dataset-level default context mode from the loader."""
+        self._default_context_mode = mode
 
     def create_and_store(
         self,
@@ -99,12 +118,18 @@ class UserSessionManager:
             raise ValueError(
                 f"num_turns ({num_turns}) exceeds conversation length ({len(conversation.turns)})"
             )
+        context_mode = (
+            conversation.context_mode
+            or self._default_context_mode
+            or ConversationContextMode.ACCUMULATE_ALL
+        )
         user_session = UserSession(
             x_correlation_id=x_correlation_id,
             num_turns=num_turns,
             url_index=url_index,
             conversation=conversation,
             turn_list=[],
+            context_mode=context_mode,
         )
         self.store(x_correlation_id, user_session)
         return user_session

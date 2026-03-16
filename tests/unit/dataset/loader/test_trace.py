@@ -497,6 +497,27 @@ class TestMooncakeTraceDatasetLoader:
         assert conversation.turns[1].raw_messages == messages_turn2
         assert conversation.turns[1].max_tokens == 20
 
+    def test_infer_context_mode_mixed_messages_raises(
+        self, mock_prompt_generator, default_user_config
+    ):
+        """Test that mixed sessions with both messages and synthesized prompts raise."""
+        traces = [
+            MooncakeTrace(
+                messages=[{"role": "user", "content": "Hello"}],
+                output_length=10,
+                timestamp=1000,
+            ),
+            MooncakeTrace(input_length=100, hash_ids=[1, 2], timestamp=2000),
+        ]
+
+        loader = MooncakeTraceDatasetLoader(
+            filename="dummy.jsonl",
+            user_config=default_user_config,
+            prompt_generator=mock_prompt_generator,
+        )
+        with pytest.raises(ValueError, match="Mixed Mooncake sessions"):
+            loader._infer_context_mode(traces)
+
     def test_convert_to_conversations_messages_with_tools(
         self, mock_prompt_generator, default_user_config
     ):
