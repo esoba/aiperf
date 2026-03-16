@@ -837,6 +837,7 @@ class CodingContentGenerator(BaseGenerator):
             fills = self._template_fills()
 
             if is_last or remaining <= 40:
+                # Final summary: consume ALL remaining budget
                 summary = r.choice(_ASSISTANT_SUMMARIES).format(**fills)
                 summary_tokens = self.tokenizer.encode(summary)
                 if len(summary_tokens) < remaining:
@@ -854,8 +855,6 @@ class CodingContentGenerator(BaseGenerator):
                 else:
                     messages.append({"role": "assistant", "content": summary})
                 break
-
-            iter_budget = r.randint(30, max(31, remaining - 20 * (num_iter - i - 1)))
 
             # Style weighted to match real data: 85% silent, 10% text+tool, 5% parallel
             s_silent, s_text, _ = self._STYLE_WEIGHTS
@@ -894,7 +893,15 @@ class CodingContentGenerator(BaseGenerator):
             else:
                 self._emit_openai(messages, calls, preamble, r)
 
-            remaining -= iter_budget
+            # Measure actual assistant tokens emitted this iteration
+            import orjson
+
+            iter_tokens = 0
+            if preamble:
+                iter_tokens += len(self.tokenizer.encode(preamble))
+            for _, _, inp in calls:
+                iter_tokens += len(self.tokenizer.encode(orjson.dumps(inp).decode()))
+            remaining -= iter_tokens
 
         return messages
 
