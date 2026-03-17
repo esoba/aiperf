@@ -4,7 +4,7 @@
 
 Exercises the full lifecycle:
   DatasetMetadata -> ConversationSource -> SubagentOrchestrator
-  -> spawn resolution -> child dispatch -> child completion -> join dispatch
+  -> spawn resolution -> child dispatch -> child completion -> gated turn dispatch
 
 Uses real dataset generation (no mocks for data model) with a capturing dispatch_fn
 to verify the orchestrator state machine end-to-end.
@@ -14,12 +14,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, PrerequisiteKind
 from aiperf.common.models import (
     ConversationMetadata,
     DatasetMetadata,
     SubagentSpawnInfo,
     TurnMetadata,
+    TurnPrerequisite,
 )
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin import plugins
@@ -83,29 +84,36 @@ def _make_handcrafted_dataset(
     *,
     parent_turns: int = 6,
     spawn_at: int = 2,
+    join_at: int | None = None,
     num_children: int = 2,
     child_turns: int = 3,
     is_background: bool = False,
 ) -> DatasetMetadata:
     """Create a handcrafted dataset with one parent and N children."""
+    join_at = spawn_at + 1 if join_at is None else join_at
+    child_conv_ids = [f"conv_0_s0_c{ci}" for ci in range(num_children)]
+    spawn = SubagentSpawnInfo(
+        spawn_id="s0",
+        child_conversation_ids=child_conv_ids,
+        is_background=is_background,
+    )
+
     turns = []
     for i in range(parent_turns):
         spawn_ids = ["s0"] if i == spawn_at else []
+        prereqs = []
+        if i == join_at and not is_background:
+            prereqs = [
+                TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, spawn_id="s0")
+            ]
         turns.append(
             TurnMetadata(
                 delay_ms=200.0 if i > 0 else None,
                 input_tokens=500 + i * 100,
                 subagent_spawn_ids=spawn_ids,
+                prerequisites=prereqs,
             )
         )
-
-    child_conv_ids = [f"conv_0_s0_c{ci}" for ci in range(num_children)]
-    spawn = SubagentSpawnInfo(
-        spawn_id="s0",
-        child_conversation_ids=child_conv_ids,
-        join_turn_index=spawn_at + 1,
-        is_background=is_background,
-    )
 
     convs = [
         ConversationMetadata(
@@ -141,7 +149,7 @@ class TestSubagentOrchestratorFullLifecycle:
     """Walk through the full orchestrator lifecycle with a handcrafted dataset."""
 
     def test_full_lifecycle_blocking_spawn(self):
-        """Root -> spawn turn -> children dispatched -> children complete -> join dispatched."""
+        """Root -> spawn turn -> children dispatched -> children complete -> gated turn dispatched."""
         ds = _make_handcrafted_dataset(
             parent_turns=6, spawn_at=2, num_children=2, child_turns=3
         )
@@ -174,17 +182,17 @@ class TestSubagentOrchestratorFullLifecycle:
         assert orch._stats.children_spawned == 2
         assert orch._stats.parents_suspended == 1
 
-        # Pending join created
-        assert "parent-1" in orch._pending_joins
-        pending = orch._pending_joins["parent-1"]
-        assert pending.expected_count == 2
-        assert pending.join_turn_index == 3
+        # Pending gate created
+        assert "parent-1" in orch._gated_turns
+        gate = orch._gated_turns["parent-1"]
+        assert gate.outstanding == {"spawn_join:s0": [2, 0]}
+        assert gate.gated_turn_index == 3
 
-        # Child-to-parent mapping
-        child_corr_ids = list(orch._child_to_parent.keys())
+        # Child-to-gate mapping
+        child_corr_ids = list(orch._child_to_gate.keys())
         assert len(child_corr_ids) == 2
-        for v in orch._child_to_parent.values():
-            assert v == "parent-1"
+        for entry in orch._child_to_gate.values():
+            assert entry.parent_corr_id == "parent-1"
 
         child_conv_ids = ["conv_0_s0_c0", "conv_0_s0_c1"]
 
@@ -213,7 +221,7 @@ class TestSubagentOrchestratorFullLifecycle:
         assert len(dispatched) == 2
         assert dispatched[1].turn_index == 2
 
-        # Step 5: Child 0 final turn -> join accounting
+        # Step 5: Child 0 final turn -> gate accounting
         child0_t2 = _make_credit(
             conv_id=child_conv_ids[0],
             corr_id=child_corr_ids[0],
@@ -223,8 +231,8 @@ class TestSubagentOrchestratorFullLifecycle:
         )
         orch.intercept(child0_t2)
         assert orch._stats.children_completed == 1
-        assert pending.completed_count == 1
-        # No join yet (1 of 2)
+        assert gate.outstanding["spawn_join:s0"][1] == 1
+        # No gated turn yet (1 of 2)
         join_dispatches = [d for d in dispatched if d.conversation_id == "conv_0"]
         assert len(join_dispatches) == 0
 
@@ -238,10 +246,10 @@ class TestSubagentOrchestratorFullLifecycle:
         )
         orch.intercept(child1_final)
 
-        # Step 7: All children done -> join dispatched
+        # Step 7: All children done -> gated turn dispatched
         assert orch._stats.children_completed == 2
         assert orch._stats.parents_resumed == 1
-        assert "parent-1" not in orch._pending_joins
+        assert "parent-1" not in orch._gated_turns
 
         join_dispatches = [d for d in dispatched if d.conversation_id == "conv_0"]
         assert len(join_dispatches) == 1
@@ -258,6 +266,64 @@ class TestSubagentOrchestratorFullLifecycle:
         assert stats["subagent_parents_suspended"] == 1
         assert stats["subagent_parents_resumed"] == 1
         assert stats["subagent_joins_suppressed"] == 0
+
+    def test_full_lifecycle_delayed_join_blocks_on_target_turn(self):
+        """A later spawn_join blocks only when the parent reaches that turn."""
+        ds = _make_handcrafted_dataset(
+            parent_turns=7,
+            spawn_at=2,
+            join_at=5,
+            num_children=2,
+            child_turns=3,
+        )
+        orch, dispatched, scheduler = _build_orchestrator_from_metadata(ds)
+
+        credit_t2 = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=7
+        )
+        handled = orch.intercept(credit_t2)
+        assert handled is False
+        assert scheduler.execute_async.call_count == 2
+        assert orch._stats.parents_suspended == 0
+        assert orch._future_gates["parent-1"][5].outstanding == {
+            "spawn_join:s0": [2, 0]
+        }
+
+        credit_t3 = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=3, num_turns=7
+        )
+        assert orch.intercept(credit_t3) is False
+
+        credit_t4 = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=4, num_turns=7
+        )
+        assert orch.intercept(credit_t4) is True
+        assert orch._stats.parents_suspended == 1
+        assert orch._gated_turns["parent-1"].gated_turn_index == 5
+
+        child_corr_ids = list(orch._child_to_gate.keys())
+        child_conv_ids = ["conv_0_s0_c0", "conv_0_s0_c1"]
+        for i, corr_id in enumerate(child_corr_ids):
+            child_credit = _make_credit(
+                conv_id=child_conv_ids[i],
+                corr_id=corr_id,
+                turn_index=2,
+                num_turns=3,
+                agent_depth=1,
+            )
+            orch.intercept(child_credit)
+
+        assert "parent-1" not in orch._gated_turns
+        assert orch._stats.parents_resumed == 1
+
+        join_dispatches = [d for d in dispatched if d.conversation_id == "conv_0"]
+        assert len(join_dispatches) == 1
+        assert join_dispatches[0].turn_index == 5
+        stats = orch.get_stats()
+        assert stats["subagent_children_spawned"] == 2
+        assert stats["subagent_children_completed"] == 2
+        assert stats["subagent_parents_suspended"] == 1
+        assert stats["subagent_parents_resumed"] == 1
 
     def test_full_lifecycle_background_spawn(self):
         """Background spawn: parent not suspended, children dispatched via dispatch_fn."""
@@ -277,8 +343,8 @@ class TestSubagentOrchestratorFullLifecycle:
 
         # Background: parent not suspended
         assert handled is False
-        assert "parent-1" not in orch._pending_joins
-        assert len(orch._child_to_parent) == 0
+        assert "parent-1" not in orch._gated_turns
+        assert len(orch._child_to_gate) == 0
 
         # Background children dispatched via dispatch_fn
         bg_dispatches = [d for d in dispatched if d.agent_depth == 1]
@@ -307,8 +373,9 @@ class TestSubagentOrchestratorFullLifecycle:
         # Cleanup without completing children
         orch.cleanup()
 
-        assert len(orch._pending_joins) == 0
-        assert len(orch._child_to_parent) == 0
+        assert len(orch._gated_turns) == 0
+        assert len(orch._future_gates) == 0
+        assert len(orch._child_to_gate) == 0
         assert len(orch._terminated_children) == 0
         assert orch._cleaning_up is True
 

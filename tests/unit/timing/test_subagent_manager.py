@@ -8,12 +8,13 @@ Uses the composition API: intercept(), terminate_child(), cleanup(), get_stats()
 
 from unittest.mock import AsyncMock, MagicMock
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, PrerequisiteKind
 from aiperf.common.models import (
     ConversationMetadata,
     DatasetMetadata,
     SubagentSpawnInfo,
     TurnMetadata,
+    TurnPrerequisite,
 )
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -49,28 +50,35 @@ def _make_credit(
 def _make_dataset_and_source(
     *,
     spawn_at: int = 2,
+    join_at: int | None = None,
     num_children: int = 2,
     child_turns: int = 3,
     is_background: bool = False,
 ) -> tuple[ConversationSource, list[str]]:
+    join_at = spawn_at + 1 if join_at is None else join_at
+    child_conv_ids = [f"conv_0_s0_c{ci}" for ci in range(num_children)]
+    spawn = SubagentSpawnInfo(
+        spawn_id="s0",
+        child_conversation_ids=child_conv_ids,
+        is_background=is_background,
+    )
+
     parent_turns = []
     for i in range(6):
         spawn_ids = ["s0"] if i == spawn_at else []
+        prereqs = []
+        if i == join_at and not is_background:
+            prereqs = [
+                TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, spawn_id="s0")
+            ]
         parent_turns.append(
             TurnMetadata(
                 delay_ms=200.0 if i > 0 else None,
                 input_tokens=500 + i * 100,
                 subagent_spawn_ids=spawn_ids,
+                prerequisites=prereqs,
             )
         )
-
-    child_conv_ids = [f"conv_0_s0_c{ci}" for ci in range(num_children)]
-    spawn = SubagentSpawnInfo(
-        spawn_id="s0",
-        child_conversation_ids=child_conv_ids,
-        join_turn_index=spawn_at + 1,
-        is_background=is_background,
-    )
 
     convs = [
         ConversationMetadata(
@@ -102,11 +110,13 @@ def _make_dataset_and_source(
 def _make_orchestrator(
     *,
     spawn_at: int = 2,
+    join_at: int | None = None,
     num_children: int = 2,
     is_background: bool = False,
 ) -> tuple[SubagentOrchestrator, MagicMock, MagicMock, MagicMock, list[str]]:
     src, child_conv_ids = _make_dataset_and_source(
         spawn_at=spawn_at,
+        join_at=join_at,
         num_children=num_children,
         is_background=is_background,
     )
@@ -138,7 +148,7 @@ def _spawn_children(orch):
         conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
     )
     orch.intercept(credit)
-    child_corr_ids = list(orch._child_to_parent.keys())
+    child_corr_ids = list(orch._child_to_gate.keys())
     return credit, child_corr_ids
 
 
@@ -162,17 +172,17 @@ class TestSubagentSpawnAndJoin:
         )
         assert orch.intercept(credit) is True
 
-    def test_spawn_creates_pending_join(self):
+    def test_spawn_creates_pending_gate(self):
         orch, _, _, _, _ = _make_orchestrator()
         credit = _make_credit(
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
         orch.intercept(credit)
 
-        assert "parent-1" in orch._pending_joins
-        pending = orch._pending_joins["parent-1"]
-        assert pending.expected_count == 2
-        assert pending.join_turn_index == 3
+        assert "parent-1" in orch._gated_turns
+        gate = orch._gated_turns["parent-1"]
+        assert gate.outstanding == {"spawn_join:s0": [2, 0]}
+        assert gate.gated_turn_index == 3
 
     def test_spawn_dispatches_children_via_scheduler(self):
         orch, _, _, scheduler, _ = _make_orchestrator()
@@ -202,7 +212,7 @@ class TestSubagentSpawnAndJoin:
         assert dispatched[0].conversation_id == child_ids[0]
         assert dispatched[0].turn_index == 1
 
-    def test_child_final_completes_join(self):
+    def test_child_final_completes_gate(self):
         orch, _, _, _, child_ids = _make_orchestrator()
         _, child_corr_ids = _spawn_children(orch)
 
@@ -219,7 +229,7 @@ class TestSubagentSpawnAndJoin:
 
         assert orch._stats.children_completed == 2
         assert orch._stats.parents_resumed == 1
-        assert "parent-1" not in orch._pending_joins
+        assert "parent-1" not in orch._gated_turns
 
         dispatched = orch._test_dispatched  # type: ignore[attr-defined]
         join_turns = [t for t in dispatched if t.conversation_id == "conv_0"]
@@ -234,13 +244,95 @@ class TestSubagentSpawnAndJoin:
         handled = orch.intercept(credit)
 
         assert handled is False
-        assert "parent-1" not in orch._pending_joins
-        assert len(orch._child_to_parent) == 0
+        assert "parent-1" not in orch._gated_turns
+        assert len(orch._child_to_gate) == 0
 
         dispatched = orch._test_dispatched  # type: ignore[attr-defined]
         bg_dispatches = [d for d in dispatched if d.agent_depth == 1]
         assert len(bg_dispatches) == 2
         assert scheduler.execute_async.call_count == 0
+
+    def test_delayed_join_does_not_suspend_until_gated_turn(self):
+        orch, _, _, scheduler, _ = _make_orchestrator(join_at=5)
+        spawn_credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
+        )
+
+        assert orch.intercept(spawn_credit) is False
+        assert "parent-1" not in orch._gated_turns
+        assert orch._future_gates["parent-1"][5].outstanding == {
+            "spawn_join:s0": [2, 0]
+        }
+        assert orch._stats.parents_suspended == 0
+        assert scheduler.execute_async.call_count == 2
+
+        mid_credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=3, num_turns=6
+        )
+        assert orch.intercept(mid_credit) is False
+        assert "parent-1" not in orch._gated_turns
+
+        pre_join_credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=4, num_turns=6
+        )
+        assert orch.intercept(pre_join_credit) is True
+        assert orch._gated_turns["parent-1"].gated_turn_index == 5
+        assert orch._stats.parents_suspended == 1
+
+    def test_delayed_join_completion_before_gate_does_not_dispatch_early(self):
+        orch, _, _, _, child_ids = _make_orchestrator(join_at=5)
+        _, child_corr_ids = _spawn_children(orch)
+
+        for i, corr_id in enumerate(child_corr_ids):
+            child_credit = _make_credit(
+                conv_id=child_ids[i],
+                corr_id=corr_id,
+                turn_index=2,
+                num_turns=3,
+                agent_depth=1,
+            )
+            orch.intercept(child_credit)
+
+        assert "parent-1" not in orch._gated_turns
+        assert "parent-1" not in orch._future_gates
+        assert orch._stats.parents_suspended == 0
+        assert orch._stats.parents_resumed == 0
+
+        dispatched = orch._test_dispatched  # type: ignore[attr-defined]
+        join_turns = [t for t in dispatched if t.conversation_id == "conv_0"]
+        assert len(join_turns) == 0
+
+    def test_delayed_join_dispatches_when_children_finish_after_block(self):
+        orch, _, _, _, child_ids = _make_orchestrator(join_at=5)
+        _, child_corr_ids = _spawn_children(orch)
+
+        mid_credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=3, num_turns=6
+        )
+        orch.intercept(mid_credit)
+
+        pre_join_credit = _make_credit(
+            conv_id="conv_0", corr_id="parent-1", turn_index=4, num_turns=6
+        )
+        assert orch.intercept(pre_join_credit) is True
+
+        for i, corr_id in enumerate(child_corr_ids):
+            child_credit = _make_credit(
+                conv_id=child_ids[i],
+                corr_id=corr_id,
+                turn_index=2,
+                num_turns=3,
+                agent_depth=1,
+            )
+            orch.intercept(child_credit)
+
+        assert "parent-1" not in orch._gated_turns
+        assert orch._stats.parents_resumed == 1
+
+        dispatched = orch._test_dispatched  # type: ignore[attr-defined]
+        join_turns = [t for t in dispatched if t.conversation_id == "conv_0"]
+        assert len(join_turns) == 1
+        assert join_turns[0].turn_index == 5
 
 
 # =============================================================================
@@ -298,8 +390,8 @@ class TestSubagentCleanup:
 
         orch.cleanup()
 
-        assert len(orch._pending_joins) == 0
-        assert len(orch._child_to_parent) == 0
+        assert len(orch._gated_turns) == 0
+        assert len(orch._child_to_gate) == 0
         assert len(orch._terminated_children) == 0
         assert orch._cleaning_up is True
 
@@ -311,6 +403,16 @@ class TestSubagentCleanup:
             conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
         )
         assert orch.intercept(credit) is False
+
+    def test_cleanup_clears_future_gates(self):
+        orch, _, _, _, _ = _make_orchestrator(join_at=5)
+        _spawn_children(orch)
+
+        assert "parent-1" in orch._future_gates
+
+        orch.cleanup()
+
+        assert len(orch._future_gates) == 0
 
 
 # =============================================================================
@@ -372,6 +474,13 @@ class TestTurn0BackgroundSpawns:
 
     def test_dispatch_turn0_background_spawns(self):
         """Background children on turn 0 are pre-dispatched."""
+        child_conv_ids = ["conv_0_s0_c0", "conv_0_s0_c1"]
+        spawn = SubagentSpawnInfo(
+            spawn_id="s0",
+            child_conversation_ids=child_conv_ids,
+            is_background=True,
+        )
+
         parent_turns = []
         for i in range(4):
             spawn_ids = ["s0"] if i == 0 else []
@@ -381,14 +490,6 @@ class TestTurn0BackgroundSpawns:
                     subagent_spawn_ids=spawn_ids,
                 )
             )
-
-        child_conv_ids = ["conv_0_s0_c0", "conv_0_s0_c1"]
-        spawn = SubagentSpawnInfo(
-            spawn_id="s0",
-            child_conversation_ids=child_conv_ids,
-            join_turn_index=1,
-            is_background=True,
-        )
 
         convs = [
             ConversationMetadata(

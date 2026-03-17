@@ -96,6 +96,13 @@ class CommandResponseStatus(CaseInsensitiveStrEnum):
     UNHANDLED = "unhandled"  # The command was received but not handled by any hook
 
 
+class PrerequisiteKind(CaseInsensitiveStrEnum):
+    """Type of prerequisite that gates a turn from dispatching."""
+
+    SPAWN_JOIN = "spawn_join"
+    """All blocking children from a spawn must complete before the gated turn dispatches."""
+
+
 class TurnThreadingMode(CaseInsensitiveStrEnum):
     """Controls how prior turns are accumulated in multi-turn conversations.
 

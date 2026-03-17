@@ -26,6 +26,7 @@ from aiperf.common.models.dataset_models import (
     Turn,
     TurnGroundTruth,
     TurnMetadata,
+    TurnPrerequisite,
     Video,
 )
 from aiperf.common.models.error_models import (
@@ -248,6 +249,7 @@ __all__ = [
     "Turn",
     "TurnGroundTruth",
     "TurnMetadata",
+    "TurnPrerequisite",
     "Usage",
     "Video",
     "VideoResponseData",

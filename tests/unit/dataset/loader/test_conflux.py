@@ -14,7 +14,19 @@ from aiperf.common.config import (
     PromptConfig,
     UserConfig,
 )
-from aiperf.dataset.loader.conflux import ConfluxLoader, _parse_timestamp_ms
+from aiperf.common.enums import PrerequisiteKind, TurnThreadingMode
+from aiperf.dataset.loader.conflux import (
+    ConfluxLoader,
+    _build_spawn_tuid_to_agent_id,
+    _detect_join_turn_from_content,
+    _extract_notification_joins,
+    _find_join_turn_index,
+    _iter_message_blocks,
+    _new_messages,
+    _parse_timestamp_ms,
+    _record_end_ms,
+    _stringify_block_content,
+)
 from aiperf.dataset.loader.models import ConfluxRecord
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
@@ -172,6 +184,83 @@ def _build_team_session(tmp_path) -> str:
             messages=[{"role": "user", "content": "tool check"}],
         )
     )
+
+    return _build_session_file(tmp_path, records)
+
+
+def _build_delayed_join_session(tmp_path, *, with_content_signals: bool) -> str:
+    """Build a parent/child session where the join happens at parent turn 3."""
+    if with_content_signals:
+        turn0_messages = [{"role": "user", "content": "parent turn 0"}]
+        agent_tool_use = {
+            "type": "tool_use",
+            "id": "toolu_spawn_1",
+            "name": "Agent",
+            "input": {"task": "inspect auth flow"},
+        }
+        queued_result = {
+            "type": "tool_result",
+            "tool_use_id": "toolu_spawn_1",
+            "content": "queued for running",
+        }
+        full_result = {
+            "type": "tool_result",
+            "tool_use_id": "toolu_spawn_1",
+            "content": "child finished and found the root cause",
+        }
+        turn1_messages = turn0_messages + [
+            {"role": "assistant", "content": [agent_tool_use]},
+            {"role": "user", "content": [queued_result]},
+            {"role": "user", "content": "parent turn 1"},
+        ]
+        turn2_messages = turn1_messages + [
+            {"role": "assistant", "content": "doing unrelated work"},
+            {"role": "user", "content": "parent turn 2"},
+        ]
+        turn3_messages = turn2_messages + [
+            {"role": "assistant", "content": "ready to use child output"},
+            {"role": "user", "content": [full_result]},
+            {"role": "user", "content": "parent turn 3"},
+        ]
+        parent_messages = [
+            turn0_messages,
+            turn1_messages,
+            turn2_messages,
+            turn3_messages,
+        ]
+    else:
+        parent_messages = [
+            [{"role": "user", "content": f"parent turn {i}"}] for i in range(4)
+        ]
+
+    records = []
+    parent_offsets = [0, 2, 4, 8]
+    for i, offset in enumerate(parent_offsets):
+        records.append(
+            _make_record(
+                record_id=f"req_parent_delayed_{i:03d}",
+                agent_id="claude",
+                is_subagent=False,
+                timestamp=_ts(offset),
+                messages=parent_messages[i],
+                tools=PARENT_TOOLS,
+                duration_ms=1000,
+            )
+        )
+
+    child_offsets = [0.5, 3, 6]
+    for i, offset in enumerate(child_offsets):
+        records.append(
+            _make_record(
+                record_id=f"req_child_delayed_{i:03d}",
+                agent_id="sub_delayed",
+                is_subagent=True,
+                timestamp=_ts(offset),
+                messages=[{"role": "user", "content": f"child turn {i}"}],
+                tools=CHILD_TOOLS,
+                duration_ms=1000,
+            )
+        )
 
     return _build_session_file(tmp_path, records)
 
@@ -547,6 +636,50 @@ class TestConvertToConversations:
         assert len(all_spawn_ids) == 3  # 2 explicit + 1 orphan
         for sid in all_spawn_ids:
             assert sid.startswith("s")
+
+    def test_delayed_join_prerequisite_inferred_from_content(
+        self, tmp_path, default_user_config
+    ):
+        path = _build_delayed_join_session(tmp_path, with_content_signals=True)
+        loader = ConfluxLoader(filename=path, user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        parent = conversations[0]
+
+        blocking_spawns = [
+            spawn for spawn in parent.subagent_spawns if not spawn.is_background
+        ]
+        assert len(blocking_spawns) == 1
+        spawn_id = blocking_spawns[0].spawn_id
+
+        assert parent.turns[0].subagent_spawn_ids == [spawn_id]
+        assert parent.turns[1].prerequisites == []
+        assert parent.turns[2].prerequisites == []
+        assert len(parent.turns[3].prerequisites) == 1
+        assert parent.turns[3].prerequisites[0].kind == PrerequisiteKind.SPAWN_JOIN
+        assert parent.turns[3].prerequisites[0].spawn_id == spawn_id
+
+    def test_delayed_join_prerequisite_inferred_from_timing_fallback(
+        self, tmp_path, default_user_config
+    ):
+        path = _build_delayed_join_session(tmp_path, with_content_signals=False)
+        loader = ConfluxLoader(filename=path, user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        parent = conversations[0]
+
+        blocking_spawns = [
+            spawn for spawn in parent.subagent_spawns if not spawn.is_background
+        ]
+        assert len(blocking_spawns) == 1
+        spawn_id = blocking_spawns[0].spawn_id
+
+        assert parent.turns[0].subagent_spawn_ids == [spawn_id]
+        assert parent.turns[1].prerequisites == []
+        assert parent.turns[2].prerequisites == []
+        assert len(parent.turns[3].prerequisites) == 1
+        assert parent.turns[3].prerequisites[0].kind == PrerequisiteKind.SPAWN_JOIN
+        assert parent.turns[3].prerequisites[0].spawn_id == spawn_id
 
     def test_empty_data(self, tmp_path, default_user_config):
         """Empty dict produces no conversations."""
@@ -1096,3 +1229,867 @@ class TestPropagatedFields:
         ]
         convs = self._load_conversations(tmp_path, records, default_user_config)
         assert convs[0].origin.original_request_ids == ["req_1"]
+
+
+# =========================================================================
+# get_default_threading_mode tests
+# =========================================================================
+
+
+class TestDefaultThreadingMode:
+    def test_returns_isolated_turns(self) -> None:
+        assert (
+            ConfluxLoader.get_default_threading_mode()
+            == TurnThreadingMode.ISOLATED_TURNS
+        )
+
+
+# =========================================================================
+# _new_messages helper tests
+# =========================================================================
+
+
+class TestNewMessages:
+    def test_identical_prefix_returns_appended(self) -> None:
+        prev = [{"role": "user", "content": "a"}]
+        curr = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]
+        result = _new_messages(prev, curr)
+        assert result == [{"role": "assistant", "content": "b"}]
+
+    def test_no_common_prefix(self) -> None:
+        prev = [{"role": "user", "content": "x"}]
+        curr = [{"role": "user", "content": "y"}]
+        result = _new_messages(prev, curr)
+        assert result == [{"role": "user", "content": "y"}]
+
+    def test_empty_previous(self) -> None:
+        curr = [{"role": "user", "content": "a"}]
+        result = _new_messages([], curr)
+        assert result == curr
+
+    def test_empty_current(self) -> None:
+        prev = [{"role": "user", "content": "a"}]
+        result = _new_messages(prev, [])
+        assert result == []
+
+    def test_both_empty(self) -> None:
+        assert _new_messages([], []) == []
+
+    def test_full_prefix_match(self) -> None:
+        msgs = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]
+        result = _new_messages(msgs, list(msgs))
+        assert result == []
+
+
+# =========================================================================
+# _iter_message_blocks helper tests
+# =========================================================================
+
+
+class TestIterMessageBlocks:
+    def test_extracts_dict_blocks_from_list_content(self) -> None:
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "Agent"},
+                    {"type": "text", "text": "hello"},
+                ],
+            },
+        ]
+        blocks = _iter_message_blocks(messages)
+        assert len(blocks) == 2
+        assert blocks[0]["type"] == "tool_use"
+
+    def test_skips_string_content(self) -> None:
+        messages = [{"role": "user", "content": "just a string"}]
+        blocks = _iter_message_blocks(messages)
+        assert blocks == []
+
+    def test_skips_non_dict_items_in_list(self) -> None:
+        messages = [{"role": "user", "content": ["string_item", 42, {"type": "text"}]}]
+        blocks = _iter_message_blocks(messages)
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "text"
+
+    def test_empty_messages(self) -> None:
+        assert _iter_message_blocks([]) == []
+
+
+# =========================================================================
+# _stringify_block_content helper tests
+# =========================================================================
+
+
+class TestStringifyBlockContent:
+    def test_string_passthrough(self) -> None:
+        assert _stringify_block_content("hello") == "hello"
+
+    def test_list_joins(self) -> None:
+        result = _stringify_block_content(["a", "b"])
+        assert result == "a b"
+
+    def test_dict_with_text_key(self) -> None:
+        assert _stringify_block_content({"text": "found it"}) == "found it"
+
+    def test_dict_with_content_key_recurses(self) -> None:
+        nested = {"content": [{"text": "inner"}]}
+        result = _stringify_block_content(nested)
+        assert "inner" in result
+
+    def test_dict_fallback_to_json(self) -> None:
+        result = _stringify_block_content({"key": "value"})
+        assert "key" in result
+        assert "value" in result
+
+    def test_non_standard_type(self) -> None:
+        assert _stringify_block_content(42) == "42"
+
+    def test_nested_list_with_dicts(self) -> None:
+        data = [{"text": "a"}, "b"]
+        result = _stringify_block_content(data)
+        assert "a" in result
+        assert "b" in result
+
+
+# =========================================================================
+# _record_end_ms helper tests
+# =========================================================================
+
+
+class TestRecordEndMs:
+    def test_uses_completed_at_when_available(self) -> None:
+        record = ConfluxRecord.model_validate(
+            _make_record(timestamp=_ts(0), duration_ms=5000) | {"completed_at": _ts(10)}
+        )
+        end = _record_end_ms(record)
+        start = _parse_timestamp_ms(_ts(0))
+        expected = _parse_timestamp_ms(_ts(10))
+        assert end == expected
+        assert end != start + 5000
+
+    def test_uses_duration_ms_when_no_completed_at(self) -> None:
+        record = ConfluxRecord.model_validate(
+            _make_record(timestamp=_ts(0), duration_ms=3000)
+        )
+        end = _record_end_ms(record)
+        start = _parse_timestamp_ms(_ts(0))
+        assert end == pytest.approx(start + 3000, abs=1)
+
+    def test_returns_start_when_no_timing_data(self) -> None:
+        record = ConfluxRecord.model_validate(
+            _make_record(timestamp=_ts(5), duration_ms=0)
+        )
+        end = _record_end_ms(record)
+        start = _parse_timestamp_ms(_ts(5))
+        assert end == start
+
+
+# =========================================================================
+# _detect_join_turn_from_content tests
+# =========================================================================
+
+
+def _make_content_records(
+    *,
+    spawn_tool_use_id: str = "toolu_spawn_x",
+    queued_text: str = "queued for running",
+    result_text: str = "child finished",
+    result_at_turn: int = 3,
+    num_turns: int = 4,
+    background_only: bool = False,
+) -> list[ConfluxRecord]:
+    """Build parent records with Agent tool_use / tool_result signals."""
+    turn0_msgs = [{"role": "user", "content": "turn 0"}]
+    agent_block = {
+        "type": "tool_use",
+        "id": spawn_tool_use_id,
+        "name": "Agent",
+        "input": {"task": "do something"},
+    }
+    queued_block = {
+        "type": "tool_result",
+        "tool_use_id": spawn_tool_use_id,
+        "content": queued_text,
+    }
+    result_block = {
+        "type": "tool_result",
+        "tool_use_id": spawn_tool_use_id,
+        "content": result_text,
+    }
+
+    all_messages: list[list[dict]] = [turn0_msgs]
+    for i in range(1, num_turns):
+        prev = all_messages[i - 1]
+        if i == 1:
+            new = prev + [
+                {"role": "assistant", "content": [agent_block]},
+                {"role": "user", "content": [queued_block]},
+                {"role": "user", "content": f"turn {i}"},
+            ]
+        elif not background_only and i == result_at_turn:
+            new = prev + [
+                {"role": "assistant", "content": f"work at turn {i}"},
+                {"role": "user", "content": [result_block]},
+                {"role": "user", "content": f"turn {i}"},
+            ]
+        else:
+            new = prev + [
+                {"role": "assistant", "content": f"work at turn {i}"},
+                {"role": "user", "content": f"turn {i}"},
+            ]
+        all_messages.append(new)
+
+    records = []
+    for i, msgs in enumerate(all_messages):
+        records.append(
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id=f"p{i}",
+                    agent_id="claude",
+                    is_subagent=False,
+                    timestamp=_ts(i * 5),
+                    messages=msgs,
+                    duration_ms=2000,
+                )
+            )
+        )
+    return records
+
+
+class TestDetectJoinTurnFromContent:
+    def test_finds_join_at_result_turn(self) -> None:
+        records = _make_content_records(result_at_turn=3)
+        join_idx, saw_bg = _detect_join_turn_from_content(records, spawn_turn_index=0)
+        assert join_idx == 3
+        assert saw_bg is False
+
+    def test_background_signal_when_only_queued(self) -> None:
+        records = _make_content_records(background_only=True)
+        join_idx, saw_bg = _detect_join_turn_from_content(records, spawn_turn_index=0)
+        assert join_idx is None
+        assert saw_bg is True
+
+    def test_spawn_at_last_turn_returns_none(self) -> None:
+        records = _make_content_records(num_turns=2)
+        join_idx, saw_bg = _detect_join_turn_from_content(records, spawn_turn_index=1)
+        assert join_idx is None
+        assert saw_bg is False
+
+    def test_ignores_existing_agent_ids(self) -> None:
+        """Pre-existing Agent tool_use IDs in the spawn turn's history are not treated as new spawns."""
+        old_agent_block = {
+            "type": "tool_use",
+            "id": "toolu_old",
+            "name": "Agent",
+            "input": {"task": "old task"},
+        }
+        turn0_msgs = [
+            {"role": "user", "content": "start"},
+            {"role": "assistant", "content": [old_agent_block]},
+        ]
+        # Turn 1 re-surfaces the old tool_use (common-prefix diff edge case)
+        turn1_msgs = turn0_msgs + [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_old",
+                        "content": "old result",
+                    },
+                ],
+            },
+            {"role": "user", "content": "turn 1"},
+        ]
+        records = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p0",
+                    timestamp=_ts(0),
+                    messages=turn0_msgs,
+                    duration_ms=1000,
+                )
+            ),
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p1",
+                    timestamp=_ts(5),
+                    messages=turn1_msgs,
+                    duration_ms=1000,
+                )
+            ),
+        ]
+        join_idx, saw_bg = _detect_join_turn_from_content(records, spawn_turn_index=0)
+        assert join_idx is None
+        assert saw_bg is False
+
+
+# =========================================================================
+# _find_join_turn_index tests
+# =========================================================================
+
+
+class TestFindJoinTurnIndex:
+    def test_content_based_join_preferred(self) -> None:
+        """Content-based detection takes priority over timing."""
+        records = _make_content_records(result_at_turn=3, num_turns=5)
+        child_records = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="c0",
+                    agent_id="sub",
+                    is_subagent=True,
+                    timestamp=_ts(1),
+                    duration_ms=1000,
+                )
+            )
+        ]
+        from aiperf.common.models import Conversation
+
+        child_conv = Conversation(session_id="conflux_sub")
+        children = [("sub", child_records, child_conv)]
+        result = _find_join_turn_index(records, 0, children)
+        assert result == 3
+
+    def test_timing_fallback_when_no_content(self) -> None:
+        """Falls back to timing when no content signals exist."""
+        parent_records = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id=f"p{i}",
+                    timestamp=_ts(i * 10),
+                    duration_ms=2000,
+                )
+                | {"completed_at": _ts(i * 10 + 2)}
+            )
+            for i in range(4)
+        ]
+        # Child completes at t=15
+        child_records = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="c0",
+                    agent_id="sub",
+                    is_subagent=True,
+                    timestamp=_ts(1),
+                    duration_ms=14000,
+                )
+                | {"completed_at": _ts(15)}
+            )
+        ]
+        from aiperf.common.models import Conversation
+
+        child_conv = Conversation(session_id="conflux_sub")
+        children = [("sub", child_records, child_conv)]
+        # Parent turn 2 starts at t=20, which is after child ends at t=15
+        result = _find_join_turn_index(parent_records, 0, children)
+        assert result == 2
+
+    def test_returns_none_when_background_signal(self) -> None:
+        """Returns None when content signals indicate background-only spawn."""
+        records = _make_content_records(background_only=True, num_turns=4)
+        child_records = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="c0",
+                    agent_id="sub",
+                    is_subagent=True,
+                    timestamp=_ts(1),
+                    duration_ms=500,
+                )
+            )
+        ]
+        from aiperf.common.models import Conversation
+
+        child_conv = Conversation(session_id="conflux_sub")
+        children = [("sub", child_records, child_conv)]
+        result = _find_join_turn_index(records, 0, children)
+        assert result is None
+
+
+# =========================================================================
+# _extract_notification_joins tests
+# =========================================================================
+
+
+class TestExtractNotificationJoins:
+    def test_finds_task_notification(self) -> None:
+        turn0_msgs = [{"role": "user", "content": "start"}]
+        notification_text = (
+            "Some preamble <task-notification>"
+            "<tool-use-id>toolu_abc123</tool-use-id>"
+            "</task-notification> more text"
+        )
+        turn1_msgs = turn0_msgs + [
+            {"role": "assistant", "content": "working"},
+            {"role": "user", "content": notification_text},
+        ]
+        records = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p0",
+                    timestamp=_ts(0),
+                    messages=turn0_msgs,
+                    duration_ms=1000,
+                )
+            ),
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p1",
+                    timestamp=_ts(5),
+                    messages=turn1_msgs,
+                    duration_ms=1000,
+                )
+            ),
+        ]
+        joins = _extract_notification_joins(records)
+        assert joins == {"toolu_abc123": 1}
+
+    def test_no_notifications(self) -> None:
+        records = [
+            ConfluxRecord.model_validate(
+                _make_record(record_id="p0", timestamp=_ts(0), duration_ms=1000)
+            ),
+        ]
+        joins = _extract_notification_joins(records)
+        assert joins == {}
+
+    def test_multiple_notifications_first_wins(self) -> None:
+        """First occurrence of a tool_use_id is kept."""
+        turn0_msgs = [{"role": "user", "content": "start"}]
+        notif = (
+            "<task-notification><tool-use-id>toolu_x</tool-use-id></task-notification>"
+        )
+        turn1_msgs = turn0_msgs + [{"role": "user", "content": notif}]
+        turn2_msgs = turn1_msgs + [{"role": "user", "content": notif}]
+        records = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p0",
+                    timestamp=_ts(0),
+                    messages=turn0_msgs,
+                    duration_ms=1000,
+                )
+            ),
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p1",
+                    timestamp=_ts(5),
+                    messages=turn1_msgs,
+                    duration_ms=1000,
+                )
+            ),
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p2",
+                    timestamp=_ts(10),
+                    messages=turn2_msgs,
+                    duration_ms=1000,
+                )
+            ),
+        ]
+        joins = _extract_notification_joins(records)
+        assert joins["toolu_x"] == 1
+
+    def test_notification_in_list_content_block(self) -> None:
+        """Handles notifications inside structured content blocks."""
+        turn0_msgs = [{"role": "user", "content": "start"}]
+        notif_block = {
+            "type": "text",
+            "text": "<task-notification><tool-use-id>toolu_y</tool-use-id></task-notification>",
+        }
+        turn1_msgs = turn0_msgs + [{"role": "user", "content": [notif_block]}]
+        records = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p0",
+                    timestamp=_ts(0),
+                    messages=turn0_msgs,
+                    duration_ms=1000,
+                )
+            ),
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p1",
+                    timestamp=_ts(5),
+                    messages=turn1_msgs,
+                    duration_ms=1000,
+                )
+            ),
+        ]
+        joins = _extract_notification_joins(records)
+        assert joins == {"toolu_y": 1}
+
+
+# =========================================================================
+# _build_spawn_tuid_to_agent_id tests
+# =========================================================================
+
+
+class TestBuildSpawnTuidToAgentId:
+    def test_maps_async_agent_launched(self) -> None:
+        turn0_msgs = [{"role": "user", "content": "start"}]
+        agent_block = {
+            "type": "tool_use",
+            "id": "toolu_new_1",
+            "name": "Agent",
+            "input": {"task": "do work"},
+        }
+        result_block = {
+            "type": "tool_result",
+            "tool_use_id": "toolu_new_1",
+            "content": "Async agent launched, agentId: agent_abc",
+        }
+        turn1_msgs = turn0_msgs + [
+            {"role": "assistant", "content": [agent_block]},
+            {"role": "user", "content": [result_block]},
+        ]
+        records = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p0",
+                    timestamp=_ts(0),
+                    messages=turn0_msgs,
+                    duration_ms=1000,
+                )
+            ),
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p1",
+                    timestamp=_ts(5),
+                    messages=turn1_msgs,
+                    duration_ms=1000,
+                )
+            ),
+        ]
+        mapping = _build_spawn_tuid_to_agent_id(records, spawn_turn_index=0)
+        assert mapping == {"toolu_new_1": "agent_abc"}
+
+    def test_ignores_pre_existing_agent_ids(self) -> None:
+        old_agent = {
+            "type": "tool_use",
+            "id": "toolu_old",
+            "name": "Agent",
+            "input": {"task": "old"},
+        }
+        turn0_msgs = [
+            {"role": "user", "content": "start"},
+            {"role": "assistant", "content": [old_agent]},
+        ]
+        # Turn 1: old agent completes (not a new spawn)
+        result_block = {
+            "type": "tool_result",
+            "tool_use_id": "toolu_old",
+            "content": "Async agent launched, agentId: old_agent",
+        }
+        turn1_msgs = turn0_msgs + [
+            {"role": "user", "content": [result_block]},
+        ]
+        records = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p0",
+                    timestamp=_ts(0),
+                    messages=turn0_msgs,
+                    duration_ms=1000,
+                )
+            ),
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p1",
+                    timestamp=_ts(5),
+                    messages=turn1_msgs,
+                    duration_ms=1000,
+                )
+            ),
+        ]
+        mapping = _build_spawn_tuid_to_agent_id(records, spawn_turn_index=0)
+        assert mapping == {}
+
+    def test_spawn_at_last_turn_returns_empty(self) -> None:
+        records = [
+            ConfluxRecord.model_validate(
+                _make_record(record_id="p0", timestamp=_ts(0), duration_ms=1000)
+            ),
+        ]
+        mapping = _build_spawn_tuid_to_agent_id(records, spawn_turn_index=0)
+        assert mapping == {}
+
+
+# =========================================================================
+# Orphan filtering tests
+# =========================================================================
+
+
+class TestOrphanFiltering:
+    @pytest.fixture
+    def no_orphan_config(self):
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                conflux_include_utility_calls=False,
+            ),
+        )
+
+    def test_orphans_excluded_when_disabled(self, tmp_path, no_orphan_config) -> None:
+        """Orphan records are filtered out when conflux_include_utility_calls=False."""
+        records = [
+            _make_record(
+                record_id="p0", agent_id="claude", is_subagent=False, timestamp=_ts(0)
+            ),
+            _make_record(record_id="orphan0", agent_id=None, timestamp=_ts(5)),
+        ]
+        path = _build_session_file(tmp_path, records)
+        loader = ConfluxLoader(filename=path, user_config=no_orphan_config)
+        data = loader.load_dataset()
+        assert len(data) == 1
+        assert "claude" in data
+
+    def test_orphans_excluded_produce_no_child_conversations(
+        self, tmp_path, no_orphan_config
+    ) -> None:
+        records = [
+            _make_record(
+                record_id="p0", agent_id="claude", is_subagent=False, timestamp=_ts(0)
+            ),
+            _make_record(record_id="orphan0", agent_id=None, timestamp=_ts(5)),
+        ]
+        path = _build_session_file(tmp_path, records)
+        loader = ConfluxLoader(filename=path, user_config=no_orphan_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        assert conversations[0].agent_depth == 0
+        assert conversations[0].subagent_spawns == []
+
+
+# =========================================================================
+# _find_spawn_point tier 2 (post-completion gap) tests
+# =========================================================================
+
+
+class TestFindSpawnPointPostCompletionGap:
+    def test_gap_via_completed_at(self) -> None:
+        """Child spawned in gap between turn 0 completing and turn 1 starting."""
+        parent = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p0",
+                    timestamp=_ts(0),
+                    is_subagent=False,
+                    duration_ms=2000,
+                )
+                | {"completed_at": _ts(2)}
+            ),
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p1",
+                    timestamp=_ts(10),
+                    is_subagent=False,
+                    duration_ms=2000,
+                )
+                | {"completed_at": _ts(12)}
+            ),
+        ]
+        # Child at t=3 is in gap (t=2 to t=10)
+        child = [
+            ConfluxRecord.model_validate(
+                _make_record(record_id="c0", timestamp=_ts(3), is_subagent=True)
+            )
+        ]
+        assert ConfluxLoader._find_spawn_point(parent, child) == 0
+
+    def test_gap_via_duration_ms(self) -> None:
+        """Gap detection using duration_ms when completed_at is absent."""
+        parent = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p0",
+                    timestamp=_ts(0),
+                    is_subagent=False,
+                    duration_ms=2000,
+                )
+            ),
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p1",
+                    timestamp=_ts(10),
+                    is_subagent=False,
+                    duration_ms=2000,
+                )
+            ),
+        ]
+        child = [
+            ConfluxRecord.model_validate(
+                _make_record(record_id="c0", timestamp=_ts(5), is_subagent=True)
+            )
+        ]
+        assert ConfluxLoader._find_spawn_point(parent, child) == 0
+
+    def test_gap_after_last_parent_turn(self) -> None:
+        """Child spawned after the last parent turn completes (open-ended gap)."""
+        parent = [
+            ConfluxRecord.model_validate(
+                _make_record(
+                    record_id="p0",
+                    timestamp=_ts(0),
+                    is_subagent=False,
+                    duration_ms=2000,
+                )
+                | {"completed_at": _ts(2)}
+            ),
+        ]
+        child = [
+            ConfluxRecord.model_validate(
+                _make_record(record_id="c0", timestamp=_ts(5), is_subagent=True)
+            )
+        ]
+        assert ConfluxLoader._find_spawn_point(parent, child) == 0
+
+
+# =========================================================================
+# Notification-based join splitting integration test
+# =========================================================================
+
+
+def _build_notification_join_session(tmp_path) -> str:
+    """Build a session where async spawns complete via <task-notification>."""
+    agent_tool_use_1 = {
+        "type": "tool_use",
+        "id": "toolu_async_1",
+        "name": "Agent",
+        "input": {"task": "research auth"},
+    }
+    agent_tool_use_2 = {
+        "type": "tool_use",
+        "id": "toolu_async_2",
+        "name": "Agent",
+        "input": {"task": "research db"},
+    }
+    async_result_1 = {
+        "type": "tool_result",
+        "tool_use_id": "toolu_async_1",
+        "content": "Async agent launched, agentId: sub_a",
+    }
+    async_result_2 = {
+        "type": "tool_result",
+        "tool_use_id": "toolu_async_2",
+        "content": "Async agent launched, agentId: sub_b",
+    }
+
+    turn0_msgs = [{"role": "user", "content": "turn 0"}]
+    turn1_msgs = turn0_msgs + [
+        {"role": "assistant", "content": [agent_tool_use_1, agent_tool_use_2]},
+        {"role": "user", "content": [async_result_1, async_result_2]},
+        {"role": "user", "content": "turn 1"},
+    ]
+    notif_a = (
+        "<task-notification>"
+        "<tool-use-id>toolu_async_1</tool-use-id>"
+        "</task-notification>"
+    )
+    turn2_msgs = turn1_msgs + [
+        {"role": "assistant", "content": "working"},
+        {"role": "user", "content": notif_a},
+        {"role": "user", "content": "turn 2"},
+    ]
+    notif_b = (
+        "<task-notification>"
+        "<tool-use-id>toolu_async_2</tool-use-id>"
+        "</task-notification>"
+    )
+    turn3_msgs = turn2_msgs + [
+        {"role": "assistant", "content": "more work"},
+        {"role": "user", "content": notif_b},
+        {"role": "user", "content": "turn 3"},
+    ]
+
+    records = []
+    parent_msgs = [turn0_msgs, turn1_msgs, turn2_msgs, turn3_msgs]
+    for i, msgs in enumerate(parent_msgs):
+        records.append(
+            _make_record(
+                record_id=f"p{i}",
+                agent_id="claude",
+                is_subagent=False,
+                timestamp=_ts(i * 5),
+                messages=msgs,
+                duration_ms=2000,
+            )
+        )
+
+    # Child A: spawned at t=1
+    records.append(
+        _make_record(
+            record_id="ca0",
+            agent_id="sub_a",
+            is_subagent=True,
+            timestamp=_ts(1),
+            duration_ms=8000,
+        )
+    )
+
+    # Child B: spawned at t=2
+    records.append(
+        _make_record(
+            record_id="cb0",
+            agent_id="sub_b",
+            is_subagent=True,
+            timestamp=_ts(2),
+            duration_ms=12000,
+        )
+    )
+
+    return _build_session_file(tmp_path, records)
+
+
+class TestNotificationJoinIntegration:
+    @pytest.fixture
+    def default_user_config(self):
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+            ),
+        )
+
+    def test_notification_splits_into_per_child_blocking_spawns(
+        self, tmp_path, default_user_config
+    ) -> None:
+        """Async spawns with <task-notification> produce per-child blocking spawns."""
+        path = _build_notification_join_session(tmp_path)
+        loader = ConfluxLoader(filename=path, user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        parent = conversations[0]
+        # Two children => two separate blocking spawns (not one grouped background)
+        blocking = [s for s in parent.subagent_spawns if not s.is_background]
+        assert len(blocking) == 2
+        for spawn in blocking:
+            assert len(spawn.child_conversation_ids) == 1
+
+    def test_notification_join_prerequisites_on_correct_turns(
+        self, tmp_path, default_user_config
+    ) -> None:
+        """Each notification-based join creates a prerequisite on the notification turn."""
+        path = _build_notification_join_session(tmp_path)
+        loader = ConfluxLoader(filename=path, user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        parent = conversations[0]
+        # Turn 0: spawn_ids should be set
+        assert len(parent.turns[0].subagent_spawn_ids) == 2
+        # Turn 2: sub_a notification -> prerequisite
+        prereqs_2 = parent.turns[2].prerequisites
+        assert len(prereqs_2) == 1
+        assert prereqs_2[0].kind == PrerequisiteKind.SPAWN_JOIN
+        # Turn 3: sub_b notification -> prerequisite
+        prereqs_3 = parent.turns[3].prerequisites
+        assert len(prereqs_3) == 1
+        assert prereqs_3[0].kind == PrerequisiteKind.SPAWN_JOIN
+        # The two spawns should reference different spawn_ids
+        assert prereqs_2[0].spawn_id != prereqs_3[0].spawn_id

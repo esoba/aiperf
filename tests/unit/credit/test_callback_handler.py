@@ -10,6 +10,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.callback_handler import CreditCallbackHandler
@@ -62,6 +63,7 @@ def mock_strategy():
     """Mock timing strategy."""
     mock = MagicMock()
     mock.handle_credit_return = AsyncMock()
+    mock.on_failed_credit = MagicMock()
     return mock
 
 
@@ -113,12 +115,14 @@ def make_credit_return(
     credit: Credit,
     cancelled: bool = False,
     first_token_sent: bool = True,
+    error: str | None = None,
 ) -> CreditReturn:
     """Create a CreditReturn for testing."""
     return CreditReturn(
         credit=credit,
         cancelled=cancelled,
         first_token_sent=first_token_sent,
+        error=error,
     )
 
 
@@ -397,3 +401,102 @@ class TestEdgeCases:
             mock_concurrency.release_prefill_slot.assert_called_once()
         else:
             mock_concurrency.release_prefill_slot.assert_not_called()
+
+
+# =============================================================================
+# Test: on_failed_credit Notification
+# =============================================================================
+
+
+class TestOnFailedCreditNotification:
+    """Tests for strategy.on_failed_credit notification on errored/cancelled returns."""
+
+    async def test_on_credit_return_error_calls_on_failed_credit(
+        self, registered_handler, mock_strategy
+    ) -> None:
+        """on_failed_credit is called when credit_return has an error."""
+        credit = make_credit()
+        credit_return = make_credit_return(credit, error="connection refused")
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_strategy.on_failed_credit.assert_called_once_with(credit_return)
+
+    async def test_on_credit_return_cancelled_calls_on_failed_credit(
+        self, registered_handler, mock_strategy
+    ) -> None:
+        """on_failed_credit is called when credit_return is cancelled."""
+        credit = make_credit()
+        credit_return = make_credit_return(credit, cancelled=True)
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_strategy.on_failed_credit.assert_called_once_with(credit_return)
+
+    async def test_on_credit_return_success_does_not_call_on_failed_credit(
+        self, registered_handler, mock_strategy
+    ) -> None:
+        """on_failed_credit is NOT called for successful returns."""
+        credit = make_credit()
+        credit_return = make_credit_return(credit)  # no error, not cancelled
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_strategy.on_failed_credit.assert_not_called()
+
+    async def test_on_failed_credit_called_before_handle_credit_return(
+        self, registered_handler, mock_strategy
+    ) -> None:
+        """on_failed_credit must be called BEFORE handle_credit_return (ordering)."""
+        call_order: list[str] = []
+        mock_strategy.on_failed_credit.side_effect = lambda cr: call_order.append(
+            "on_failed_credit"
+        )
+        mock_strategy.handle_credit_return.side_effect = lambda c: call_order.append(
+            "handle_credit_return"
+        )
+
+        credit = make_credit()
+        credit_return = make_credit_return(credit, error="timeout")
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        assert call_order == ["on_failed_credit", "handle_credit_return"]
+
+    async def test_on_failed_credit_called_regardless_of_can_send_any_turn(
+        self, registered_handler, mock_strategy, mock_stop_checker
+    ) -> None:
+        """on_failed_credit fires even when can_send_any_turn is False."""
+        mock_stop_checker.can_send_any_turn.return_value = False
+
+        credit = make_credit()
+        credit_return = make_credit_return(credit, cancelled=True)
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_strategy.on_failed_credit.assert_called_once_with(credit_return)
+        # handle_credit_return should NOT be called (gated by can_send_any_turn)
+        mock_strategy.handle_credit_return.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "error,cancelled",
+        [
+            param("connection refused", False, id="error-only"),
+            param(None, True, id="cancelled-only"),
+            param("timeout", True, id="error-and-cancelled"),
+        ],
+    )  # fmt: skip
+    async def test_on_failed_credit_called_for_all_failure_combinations(
+        self,
+        registered_handler,
+        mock_strategy,
+        error: str | None,
+        cancelled: bool,
+    ) -> None:
+        """on_failed_credit fires for any combination of error/cancelled."""
+        credit = make_credit()
+        credit_return = make_credit_return(credit, error=error, cancelled=cancelled)
+
+        await registered_handler.on_credit_return("worker-1", credit_return)
+
+        mock_strategy.on_failed_credit.assert_called_once_with(credit_return)

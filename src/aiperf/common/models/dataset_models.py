@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 
 from pydantic import Field
 
-from aiperf.common.enums import MediaType, TurnThreadingMode
+from aiperf.common.enums import MediaType, PrerequisiteKind, TurnThreadingMode
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import MediaTypeT
 from aiperf.plugin.enums import DatasetClientStoreType, DatasetSamplingStrategy
@@ -103,6 +103,23 @@ class Video(Media):
     media_type: ClassVar[MediaTypeT] = MediaType.VIDEO
 
 
+class TurnPrerequisite(AIPerfBaseModel):
+    """A condition that must be satisfied before a turn dispatches.
+
+    Used by the SubagentOrchestrator to gate turn dispatch on prerequisite
+    completion. Currently supports 'spawn_join' (all blocking children from
+    a spawn must complete). Extensible to other gate types.
+    """
+
+    kind: PrerequisiteKind = Field(
+        description="Prerequisite type.",
+    )
+    spawn_id: str | None = Field(
+        default=None,
+        description="For spawn_join: which spawn's children must complete.",
+    )
+
+
 class TurnMetadata(AIPerfBaseModel):
     """Metadata of a turn."""
 
@@ -122,6 +139,10 @@ class TurnMetadata(AIPerfBaseModel):
     subagent_spawn_ids: list[str] = Field(
         default_factory=list,
         description="Spawn IDs if this turn is blocked by subagent spawns.",
+    )
+    prerequisites: list[TurnPrerequisite] = Field(
+        default_factory=list,
+        description="Conditions that must be met before this turn dispatches.",
     )
 
 
@@ -205,6 +226,10 @@ class Turn(AIPerfBaseModel):
         default_factory=list,
         description="Spawn IDs if this turn is blocked by subagent spawns.",
     )
+    prerequisites: list[TurnPrerequisite] = Field(
+        default_factory=list,
+        description="Conditions that must be met before this turn dispatches.",
+    )
     extra_params: dict[str, Any] | None = Field(
         default=None,
         description="Per-turn hyperparameter overrides merged into the API payload "
@@ -223,6 +248,7 @@ class Turn(AIPerfBaseModel):
             delay_ms=self.delay,
             input_tokens=self.input_tokens,
             subagent_spawn_ids=list(self.subagent_spawn_ids),
+            prerequisites=list(self.prerequisites),
         )
 
     def copy_with_stripped_media(self) -> "Turn":
@@ -270,6 +296,7 @@ class Turn(AIPerfBaseModel):
             ],
             input_tokens=self.input_tokens,
             subagent_spawn_ids=list(self.subagent_spawn_ids),
+            prerequisites=list(self.prerequisites),
             extra_params=dict(self.extra_params) if self.extra_params else None,
             ground_truth=self.ground_truth,
         )
@@ -278,8 +305,8 @@ class Turn(AIPerfBaseModel):
 class SubagentSpawnInfo(AIPerfBaseModel):
     """Describes a subagent spawn point linking parent to child conversations.
 
-    When a parent conversation spawns subagents, the parent pauses at
-    the spawn turn and resumes at join_turn_index after all children complete.
+    When a parent conversation spawns subagents, blocking children must
+    complete before the gated turn (declared via TurnPrerequisite) dispatches.
     Children are separate Conversations with independent hash_ids and sessions.
     """
 
@@ -288,9 +315,6 @@ class SubagentSpawnInfo(AIPerfBaseModel):
     )
     child_conversation_ids: list[str] = Field(
         description="Conversation IDs of child subagent sessions to start.",
-    )
-    join_turn_index: int = Field(
-        description="Parent turn index to resume after all children complete.",
     )
     is_background: bool = Field(
         default=False,

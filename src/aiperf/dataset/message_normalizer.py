@@ -23,13 +23,10 @@ Extended fields (underscore-prefixed) preserved for round-trip fidelity:
 
 from __future__ import annotations
 
-import logging
 import re
 from typing import Any
 
 import orjson
-
-_logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants

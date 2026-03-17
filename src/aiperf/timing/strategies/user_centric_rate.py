@@ -66,11 +66,11 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.credit.structs import Credit, TurnToSend
+from aiperf.timing.strategies.subagent_mixin import SubagentMixin
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
-    from aiperf.credit.messages import CreditReturn
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource, SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
@@ -120,7 +120,7 @@ class User:
         return self.sampled.build_first_turn(max_turns=self.max_turns)
 
 
-class UserCentricStrategy(AIPerfLoggerMixin):
+class UserCentricStrategy(SubagentMixin, AIPerfLoggerMixin):
     """User-centric timing strategy for KV cache benchmarking with realistic multi-user patterns."""
 
     def __init__(
@@ -143,10 +143,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         self._stop_checker = stop_checker
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
-        self._subagents = subagents
-
-        if self._subagents is not None:
-            self._subagents.set_dispatch(self._dispatch_turn)
+        self._init_subagents(subagents)
 
         self._num_users = self._config.num_users
         self._request_rate = self._config.request_rate
@@ -166,8 +163,8 @@ class UserCentricStrategy(AIPerfLoggerMixin):
 
         # Computed in setup_phase
         self._turn_gap: float = 0.0
+        self._session_turns: int = 0
         self._session_to_user: dict[str, User] = {}
-        self._child_to_parent_corr: dict[str, str] = {}
         self._initial_users: list[User] = []
         self._next_user_id: int = 1
 
@@ -208,9 +205,10 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         num_users = self._num_users
         qps = self._request_rate
         # We allow varying turn counts per conversation, so we use the average across the whole dataset.
-        session_turns = round(
+        self._session_turns = round(
             self._conversation_source.dataset_metadata.average_turn_count
         )
+        session_turns = self._session_turns
         # num_users firing once per turn_gap gives: qps = num_users / turn_gap
         self._turn_gap = num_users / qps  # Time between each user's consecutive turns
 
@@ -280,7 +278,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             f"User-centric mode: "
             f"qps={self._request_rate}, "
             f"{self._num_users} users, "
-            f"session_turns={round(self._conversation_source.dataset_metadata.average_turn_count)}, "
+            f"session_turns={self._session_turns}, "
             f"stagger={self._stagger:.3f}s, "
             f"turn_gap={self._turn_gap:.3f}s"
         )
@@ -314,7 +312,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         # Continuously spawn new users at discrete intervals to maintain the target QPS.
         while True:
             spawn_sec = heapq.heappop(spawn_queue)
-            await asyncio.sleep(spawn_sec - time.perf_counter())
+            await asyncio.sleep(max(0.0, spawn_sec - time.perf_counter()))
 
             user = self._generate_next_user(spawn_sec)
             turn = user.build_first_turn()
@@ -338,12 +336,9 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         response is late, the max() re-aligns to current time (sends immediately).
         """
         if self._subagents and self._subagents.intercept(credit):
-            if credit.agent_depth > 0 and credit.is_final_turn:
-                self._child_to_parent_corr.pop(credit.x_correlation_id, None)
             return
 
         if credit.is_final_turn:
-            self._child_to_parent_corr.pop(credit.x_correlation_id, None)
             self._session_to_user.pop(credit.x_correlation_id, None)
             return
 
@@ -366,28 +361,3 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         self._scheduler.execute_async(
             self._credit_issuer.issue_credit(turn),
         )
-
-    def on_child_session_started(
-        self, corr_id: str, depth: int, parent_corr_id: str
-    ) -> None:
-        """Map child session to parent user for rate-limited scheduling."""
-        self._child_to_parent_corr[corr_id] = parent_corr_id
-
-    def on_request_complete(self, credit_return: CreditReturn) -> None:
-        if self._subagents and credit_return.error:
-            self._subagents.terminate_child(credit_return.credit)
-
-    def on_cancelled_return(self, credit: Credit) -> None:
-        if self._subagents:
-            self._subagents.terminate_child(credit)
-
-    def on_child_stopped(self, credit: Credit) -> None:
-        if self._subagents:
-            self._subagents.terminate_child(credit)
-
-    def cleanup(self) -> None:
-        if self._subagents:
-            self._subagents.cleanup()
-
-    def get_subagent_stats(self) -> dict[str, int]:
-        return self._subagents.get_stats() if self._subagents else {}

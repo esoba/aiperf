@@ -228,7 +228,6 @@ class CreditIssuer:
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
             agent_depth=turn.agent_depth,
-            subagent_type=turn.subagent_type,
             parent_correlation_id=turn.parent_correlation_id,
         )
 

@@ -270,6 +270,7 @@ class PhaseRunner(TaskManagerMixin):
                     self._lifecycle.mark_complete(grace_period_triggered=True)
                     self._progress.freeze_completed_counts()
                 self._progress.all_credits_returned_event.set()
+                strategy.cleanup()
                 return self._progress.create_stats(self._lifecycle)
 
             # 11. Seamless mode: phase flows into next without waiting for returns
@@ -286,15 +287,12 @@ class PhaseRunner(TaskManagerMixin):
             for ramper in self._rampers:
                 ramper.stop()
             self._scheduler.cancel_all()
+            strategy.cleanup()
 
             return self._progress.create_stats(self._lifecycle)
 
         except Exception as e:
-            # TODO: This can be improved a bit by having a better way to notify other services
-            # and the system controller of a failure in the benchmark.
-            # If there is an error while setting up or executing the phase,
-            # we need to flush it through the lifecycle to ensure the other services
-            # are notified that the phase has ended, and the benchmark does not hang forever.
+            # Flush through the lifecycle so other services are notified the phase ended.
             self.error(f"Error executing phase {self._config.phase.title}: {e!r}")
             if not self._was_cancelled:
                 self.cancel()
@@ -318,7 +316,31 @@ class PhaseRunner(TaskManagerMixin):
                 stats = self._progress.create_stats(self._lifecycle)
                 await self._phase_publisher.publish_phase_complete(stats)
 
+            strategy.cleanup()
             raise e
+
+    def _add_concurrency_ramper(
+        self,
+        label: str,
+        duration_sec: float,
+        target: int,
+        setter: Callable[[float], None],
+    ) -> None:
+        """Create and register a stepped concurrency ramper."""
+        self.info(
+            f"Starting {label} concurrency ramp: 1 → {target} over {duration_sec}s"
+        )
+        self._rampers.append(
+            Ramper(
+                setter=setter,
+                config=RampConfig(
+                    ramp_type=RampType.LINEAR,
+                    start=1,
+                    target=target,
+                    duration_sec=duration_sec,
+                ),
+            )
+        )
 
     def _create_rampers(self, strategy: TimingStrategyProtocol) -> None:
         """Create rampers for concurrency and rate if ramp durations are configured.
@@ -332,43 +354,25 @@ class PhaseRunner(TaskManagerMixin):
 
         # Session concurrency ramper (stepped mode)
         if config.concurrency_ramp_duration_sec and config.concurrency:
-            self.info(
-                f"Starting session concurrency ramp: 1 → {config.concurrency} "
-                f"over {config.concurrency_ramp_duration_sec}s"
-            )
-            ramp_config = RampConfig(
-                ramp_type=RampType.LINEAR,
-                start=1,
-                target=config.concurrency,
-                duration_sec=config.concurrency_ramp_duration_sec,
-            )
-
-            def setter(limit: float) -> None:
-                return self._concurrency_manager.set_session_limit(
+            self._add_concurrency_ramper(
+                "session",
+                config.concurrency_ramp_duration_sec,
+                config.concurrency,
+                lambda limit: self._concurrency_manager.set_session_limit(
                     config.phase, int(limit)
-                )
-
-            self._rampers.append(Ramper(setter=setter, config=ramp_config))
+                ),
+            )
 
         # Prefill concurrency ramper (stepped mode)
         if config.prefill_concurrency_ramp_duration_sec and config.prefill_concurrency:
-            self.info(
-                f"Starting prefill concurrency ramp: 1 → {config.prefill_concurrency} "
-                f"over {config.prefill_concurrency_ramp_duration_sec}s"
-            )
-            ramp_config = RampConfig(
-                ramp_type=RampType.LINEAR,
-                start=1,
-                target=config.prefill_concurrency,
-                duration_sec=config.prefill_concurrency_ramp_duration_sec,
-            )
-
-            def setter(limit: float) -> None:
-                return self._concurrency_manager.set_prefill_limit(
+            self._add_concurrency_ramper(
+                "prefill",
+                config.prefill_concurrency_ramp_duration_sec,
+                config.prefill_concurrency,
+                lambda limit: self._concurrency_manager.set_prefill_limit(
                     config.phase, int(limit)
-                )
-
-            self._rampers.append(Ramper(setter=setter, config=ramp_config))
+                ),
+            )
 
         # Request rate ramper (continuous mode via update_interval)
         if config.request_rate_ramp_duration_sec and config.request_rate:

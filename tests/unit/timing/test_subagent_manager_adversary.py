@@ -12,18 +12,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, PrerequisiteKind
 from aiperf.common.models import (
     ConversationMetadata,
     DatasetMetadata,
     SubagentSpawnInfo,
     TurnMetadata,
+    TurnPrerequisite,
 )
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.subagent_orchestrator import (
-    PendingSubagentJoin,
+    PendingTurnGate,
     SubagentOrchestrator,
 )
 from tests.unit.timing.conftest import make_sampler
@@ -60,24 +61,29 @@ def _make_dataset_and_source(
     child_turns: int = 3,
     is_background: bool = False,
 ) -> tuple[ConversationSource, list[str]]:
+    child_conv_ids = [f"conv_0_s0_c{ci}" for ci in range(num_children)]
+    spawn = SubagentSpawnInfo(
+        spawn_id="s0",
+        child_conversation_ids=child_conv_ids,
+        is_background=is_background,
+    )
+
     parent_turns = []
     for i in range(6):
         spawn_ids = ["s0"] if i == spawn_at else []
+        prereqs = []
+        if i == spawn_at + 1 and not is_background:
+            prereqs = [
+                TurnPrerequisite(kind=PrerequisiteKind.SPAWN_JOIN, spawn_id="s0")
+            ]
         parent_turns.append(
             TurnMetadata(
                 delay_ms=200.0 if i > 0 else None,
                 input_tokens=500 + i * 100,
                 subagent_spawn_ids=spawn_ids,
+                prerequisites=prereqs,
             )
         )
-
-    child_conv_ids = [f"conv_0_s0_c{ci}" for ci in range(num_children)]
-    spawn = SubagentSpawnInfo(
-        spawn_id="s0",
-        child_conversation_ids=child_conv_ids,
-        join_turn_index=spawn_at + 1,
-        is_background=is_background,
-    )
 
     convs = [
         ConversationMetadata(
@@ -145,7 +151,7 @@ def _spawn_children(orch):
         conv_id="conv_0", corr_id="parent-1", turn_index=2, num_turns=6
     )
     orch.intercept(credit)
-    child_corr_ids = list(orch._child_to_parent.keys())
+    child_corr_ids = list(orch._child_to_gate.keys())
     return credit, child_corr_ids
 
 
@@ -172,7 +178,7 @@ class TestDoubleTerminationRace:
         orch.terminate_child(child_credit)
         assert child_credit.x_correlation_id in orch._terminated_children
 
-        # Second terminate: child already popped from _child_to_parent
+        # Second terminate: child already popped from _child_to_gate
         orch.terminate_child(child_credit)
 
         assert orch._terminated_children == {child_credit.x_correlation_id}
@@ -204,55 +210,53 @@ class TestCleanupBoundary:
     """Attack cleanup with boundary conditions."""
 
     def test_cleanup_clears_all_state(self):
-        orch, _, _, _, child_ids = _make_orchestrator()
+        orch, _, _, _, _ = _make_orchestrator()
         _spawn_children(orch)
 
         orch.cleanup()
 
-        assert len(orch._pending_joins) == 0
-        assert len(orch._child_to_parent) == 0
+        assert len(orch._gated_turns) == 0
+        assert len(orch._child_to_gate) == 0
         assert len(orch._terminated_children) == 0
 
     def test_double_cleanup_is_safe(self):
-        orch, _, _, _, child_ids = _make_orchestrator()
+        orch, _, _, _, _ = _make_orchestrator()
         _spawn_children(orch)
 
         orch.cleanup()
         orch.cleanup()
 
-        assert len(orch._pending_joins) == 0
-        assert len(orch._child_to_parent) == 0
+        assert len(orch._gated_turns) == 0
+        assert len(orch._child_to_gate) == 0
 
-    def test_cleanup_multiple_leaked_joins_all_abandoned(self):
+    def test_cleanup_multiple_leaked_gates_all_abandoned(self):
         orch, _, _, _, _ = _make_orchestrator()
 
         for i in range(5):
-            orch._pending_joins[f"p-{i}"] = PendingSubagentJoin(
+            orch._gated_turns[f"p-{i}"] = PendingTurnGate(
                 parent_conversation_id=f"conv_{i}",
                 parent_correlation_id=f"p-{i}",
-                expected_count=3,
-                completed_count=i,
-                join_turn_index=2,
+                gated_turn_index=2,
                 parent_num_turns=6,
                 parent_agent_depth=0,
                 created_at_ns=0,
+                outstanding={"spawn_join:s0": [3, i]},
             )
 
         orch.cleanup()
-        assert len(orch._pending_joins) == 0
+        assert len(orch._gated_turns) == 0
 
     def test_cleanup_with_created_at_ns_zero_does_not_crash(self):
         orch, _, _, _, _ = _make_orchestrator()
 
-        orch._pending_joins["p-1"] = PendingSubagentJoin(
+        orch._gated_turns["p-1"] = PendingTurnGate(
             parent_conversation_id="conv_0",
             parent_correlation_id="p-1",
-            expected_count=1,
-            completed_count=0,
-            join_turn_index=3,
+            gated_turn_index=3,
             parent_num_turns=6,
             parent_agent_depth=0,
             created_at_ns=0,
+            outstanding={"spawn_join:s0": [1, 0]},
         )
 
         orch.cleanup()
@@ -357,7 +361,7 @@ class TestFinalTurnTerminationGuard:
 
 
 # =============================================================================
-# Untracked child: error on a child NOT in _child_to_parent
+# Untracked child: error on a child NOT in _child_to_gate
 # =============================================================================
 
 
@@ -385,9 +389,9 @@ class TestUntrackedChildTermination:
 
 
 class TestStopConditionSuppression:
-    """Join dispatch suppressed when stop condition fires."""
+    """Gated turn dispatch suppressed when stop condition fires."""
 
-    def test_join_suppressed_when_stop_fired(self):
+    def test_gate_suppressed_when_stop_fired(self):
         orch, _, stop_checker, _, child_ids = _make_orchestrator()
         _, child_corr_ids = _spawn_children(orch)
 
@@ -405,7 +409,7 @@ class TestStopConditionSuppression:
 
         assert orch._stats.joins_suppressed == 1
 
-    def test_terminate_all_children_with_stop_fired_suppresses_join(self):
+    def test_terminate_all_children_with_stop_fired_suppresses_gate(self):
         orch, _, stop_checker, _, child_ids = _make_orchestrator()
         _, child_corr_ids = _spawn_children(orch)
 
@@ -433,7 +437,7 @@ class TestTerminateThenIntercept:
     """Race between terminate_child and subsequent intercept for the same child."""
 
     def test_terminate_then_intercept_child_final(self):
-        """Error a child via terminate, then its final turn arrives. Join accounting
+        """Error a child via terminate, then its final turn arrives. Gate accounting
         should count the child once (from terminate), not double-count."""
         orch, _, _, _, child_ids = _make_orchestrator()
         _, child_corr_ids = _spawn_children(orch)
@@ -460,11 +464,13 @@ class TestTerminateThenIntercept:
         )
         orch.intercept(child_credit_final)
 
-        # Child already popped from _child_to_parent by terminate,
+        # Child already popped from _child_to_gate by terminate,
         # so final intercept does not double-count
-        parent_pending = list(orch._pending_joins.values())
-        assert len(parent_pending) == 1
-        assert parent_pending[0].completed_count == 1  # only from terminate
+        parent_gates = list(orch._gated_turns.values())
+        assert len(parent_gates) == 1
+        assert (
+            parent_gates[0].outstanding["spawn_join:s0"][1] == 1
+        )  # only from terminate
 
     def test_terminate_then_non_final_intercept_suppressed(self):
         """After terminate, the next non-final intercept for that child
@@ -520,7 +526,7 @@ class TestStopMidSpawn:
 
     def test_stop_fires_mid_spawn_resolution(self):
         """Stop fires after children dispatched. When children complete,
-        join suppressed because can_send_any_turn is False."""
+        gated turn suppressed because can_send_any_turn is False."""
         orch, _, stop_checker, _, child_ids = _make_orchestrator()
         _, child_corr_ids = _spawn_children(orch)
 
@@ -540,7 +546,7 @@ class TestStopMidSpawn:
             )
             orch.intercept(child_credit)
 
-        # Join should be suppressed (no new dispatch for parent)
+        # Gated turn should be suppressed (no new dispatch for parent)
         assert orch._stats.joins_suppressed == 1
         parent_dispatches = [
             t
@@ -559,35 +565,41 @@ class TestConcurrentSpawnsOnDifferentParents:
     """Two parents spawn children simultaneously; each tracked independently."""
 
     def test_concurrent_spawns_on_different_parents(self):
-        """Two parents each spawn children. Their joins tracked independently."""
+        """Two parents each spawn children. Their gates tracked independently."""
         parent_ids = ["parent_A", "parent_B"]
         convs = []
         all_child_ids: dict[str, list[str]] = {}
 
         for pid in parent_ids:
+            child_ids = [f"{pid}_s0_c0", f"{pid}_s0_c1"]
+            all_child_ids[pid] = child_ids
+            spawn = SubagentSpawnInfo(
+                spawn_id="s0",
+                child_conversation_ids=child_ids,
+            )
             turns = []
             for i in range(5):
                 spawn_ids = ["s0"] if i == 2 else []
+                prereqs = []
+                if i == 3:
+                    prereqs = [
+                        TurnPrerequisite(
+                            kind=PrerequisiteKind.SPAWN_JOIN, spawn_id="s0"
+                        )
+                    ]
                 turns.append(
                     TurnMetadata(
                         delay_ms=200.0 if i > 0 else None,
                         input_tokens=500,
                         subagent_spawn_ids=spawn_ids,
+                        prerequisites=prereqs,
                     )
                 )
-            child_ids = [f"{pid}_s0_c0", f"{pid}_s0_c1"]
-            all_child_ids[pid] = child_ids
             convs.append(
                 ConversationMetadata(
                     conversation_id=pid,
                     turns=turns,
-                    subagent_spawns=[
-                        SubagentSpawnInfo(
-                            spawn_id="s0",
-                            child_conversation_ids=child_ids,
-                            join_turn_index=3,
-                        )
-                    ],
+                    subagent_spawns=[spawn],
                 )
             )
             for cid in child_ids:
@@ -634,14 +646,14 @@ class TestConcurrentSpawnsOnDifferentParents:
         )
         assert orch.intercept(credit_b) is True
 
-        assert "corr-A" in orch._pending_joins
-        assert "corr-B" in orch._pending_joins
-        assert orch._pending_joins["corr-A"].expected_count == 2
-        assert orch._pending_joins["corr-B"].expected_count == 2
+        assert "corr-A" in orch._gated_turns
+        assert "corr-B" in orch._gated_turns
+        assert orch._gated_turns["corr-A"].outstanding == {"spawn_join:s0": [2, 0]}
+        assert orch._gated_turns["corr-B"].outstanding == {"spawn_join:s0": [2, 0]}
 
         # Complete parent A's children
         a_child_corr_ids = [
-            k for k, v in orch._child_to_parent.items() if v == "corr-A"
+            k for k, v in orch._child_to_gate.items() if v.parent_corr_id == "corr-A"
         ]
         for i, corr_id in enumerate(a_child_corr_ids):
             child_credit = _make_credit(
@@ -653,16 +665,16 @@ class TestConcurrentSpawnsOnDifferentParents:
             )
             orch.intercept(child_credit)
 
-        # A joined, B still pending
-        assert "corr-A" not in orch._pending_joins
-        assert "corr-B" in orch._pending_joins
+        # A's gate satisfied, B still pending
+        assert "corr-A" not in orch._gated_turns
+        assert "corr-B" in orch._gated_turns
         join_a = [t for t in dispatched if t.conversation_id == "parent_A"]
         assert len(join_a) == 1
         assert join_a[0].turn_index == 3
 
         # Complete parent B's children
         b_child_corr_ids = [
-            k for k, v in orch._child_to_parent.items() if v == "corr-B"
+            k for k, v in orch._child_to_gate.items() if v.parent_corr_id == "corr-B"
         ]
         for i, corr_id in enumerate(b_child_corr_ids):
             child_credit = _make_credit(
@@ -674,7 +686,7 @@ class TestConcurrentSpawnsOnDifferentParents:
             )
             orch.intercept(child_credit)
 
-        assert "corr-B" not in orch._pending_joins
+        assert "corr-B" not in orch._gated_turns
         join_b = [t for t in dispatched if t.conversation_id == "parent_B"]
         assert len(join_b) == 1
 
@@ -685,13 +697,13 @@ class TestConcurrentSpawnsOnDifferentParents:
 
 
 class TestBackgroundChildErrorIsolation:
-    """Background child errors must not corrupt join tracking."""
+    """Background child errors must not corrupt gate tracking."""
 
-    def test_background_child_error_does_not_affect_join(self):
-        """A background child that errors should not touch pending joins
-        or child_to_parent mappings."""
-        orch, _, _, _, child_ids = _make_orchestrator()
-        _, child_corr_ids = _spawn_children(orch)
+    def test_background_child_error_does_not_affect_gate(self):
+        """A background child that errors should not touch gated turns
+        or child_to_gate mappings."""
+        orch, _, _, _, _ = _make_orchestrator()
+        _spawn_children(orch)
 
         # Create a background child credit (not tracked)
         bg_credit = _make_credit(
@@ -702,16 +714,16 @@ class TestBackgroundChildErrorIsolation:
             agent_depth=1,
         )
 
-        pending_before = dict(orch._pending_joins)
-        c2p_before = dict(orch._child_to_parent)
+        gates_before = dict(orch._gated_turns)
+        c2g_before = dict(orch._child_to_gate)
 
-        # Terminate the background child -- it's not in _child_to_parent
+        # Terminate the background child -- it's not in _child_to_gate
         orch.terminate_child(bg_credit)
 
         # No state change
         assert orch._stats.children_errored == 0
-        assert dict(orch._pending_joins) == pending_before
-        assert dict(orch._child_to_parent) == c2p_before
+        assert dict(orch._gated_turns) == gates_before
+        assert dict(orch._child_to_gate) == c2g_before
 
 
 # =============================================================================
@@ -720,7 +732,7 @@ class TestBackgroundChildErrorIsolation:
 
 
 class TestAllBlockingChildrenFailToIssue:
-    """If ALL blocking children fail credit issuance, parent join completes
+    """If ALL blocking children fail credit issuance, parent gate completes
     with all errored."""
 
     @pytest.mark.asyncio
@@ -743,22 +755,22 @@ class TestAllBlockingChildrenFailToIssue:
         # All children errored
         assert orch._stats.children_errored == 2
 
-        # Parent join should have completed (all children released)
-        assert len(orch._pending_joins) == 0
+        # Parent gate should have completed (all children released)
+        assert len(orch._gated_turns) == 0
 
         # Parents resumed counter incremented
         assert orch._stats.parents_resumed == 1
 
-        # Join turn dispatched via dispatch_fn
+        # Gated turn dispatched via dispatch_fn
         dispatched = orch._test_dispatched  # type: ignore[attr-defined]
         join_turns = [t for t in dispatched if t.conversation_id == "conv_0"]
         assert len(join_turns) == 1
         assert join_turns[0].turn_index == 3  # spawn_at(2) + 1
 
     @pytest.mark.asyncio
-    async def test_issue_credit_exception_releases_child_from_join(self):
-        """If issue_credit raises, the child is released from join tracking
-        instead of leaking a pending join forever."""
+    async def test_issue_credit_exception_releases_child_from_gate(self):
+        """If issue_credit raises, the child is released from gate tracking
+        instead of leaking a pending gate forever."""
         orch, issuer, _, _, child_ids = _make_orchestrator(num_children=1)
         _, child_corr_ids = _spawn_children(orch)
 
@@ -773,7 +785,7 @@ class TestAllBlockingChildrenFailToIssue:
         await orch._issue_child_credit_or_release(turn, child_corr_ids[0])
 
         assert orch._stats.children_errored == 1
-        assert len(orch._pending_joins) == 0
+        assert len(orch._gated_turns) == 0
         assert orch._stats.parents_resumed == 1
 
         dispatched = orch._test_dispatched  # type: ignore[attr-defined]

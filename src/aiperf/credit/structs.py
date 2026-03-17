@@ -47,7 +47,6 @@ class Credit(
     cancel_after_ns: int | None = None
     url_index: int | None = None
     agent_depth: int = 0
-    subagent_type: str | None = None
     parent_correlation_id: str | None = None
 
     @property
@@ -97,7 +96,6 @@ class TurnToSend(Struct, frozen=True):
     turn_index: int
     num_turns: int
     agent_depth: int = 0
-    subagent_type: str | None = None
     parent_correlation_id: str | None = None
 
     @property
@@ -113,6 +111,5 @@ class TurnToSend(Struct, frozen=True):
             turn_index=credit.turn_index + 1,
             num_turns=credit.num_turns,
             agent_depth=credit.agent_depth,
-            subagent_type=credit.subagent_type,
             parent_correlation_id=credit.parent_correlation_id,
         )

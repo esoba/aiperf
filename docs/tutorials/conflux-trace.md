@@ -51,7 +51,7 @@ The **parent agent** is the main conversation thread that the user interacts wit
 AIPerf preserves this structure during replay:
 
 1. Each agent thread becomes a separate **conversation** with its own sequence of turns
-2. Subagent conversations are linked to the parent via **spawn points** (the parent turn that triggered them)
+2. Subagent conversations are linked to the parent via **spawn points** and, for blocking work, a later **join point** where the parent consumes the child result
 3. Turns within each conversation replay in order with the original timing gaps between them
 
 There are also **utility calls** -- lightweight API calls for housekeeping tasks like generating conversation titles or detecting topics. These lack an `agent_id` and are excluded by default since they happen outside the main coding workflow.
@@ -180,10 +180,88 @@ For each API call in the trace, AIPerf sends:
 - **Tools**: All tool definitions that were available to the model
 - **Model**: The model identifier from the trace (override with `--model` if targeting a different model)
 - **Hyperparameters**: Per-turn settings like temperature, top_p, and reasoning effort, sent as request parameters
-- **Timing**: Original inter-request delays preserved via `--fixed-schedule`
+- **Timing**: Original inter-request delays preserved via `--fixed-schedule`, including later subagent joins when a child result is consumed several parent turns after it was spawned
 - **Max tokens**: The generation limit from the original request
 
 AIPerf also records **ground truth** metadata from the trace (original token counts, TTFT, duration) so you can compare your server's performance against the captured baseline.
+
+---
+
+## Spawn and Join Patterns
+
+Across real Claude Code sessions, two distinct subagent coordination patterns appear:
+
+### Blocking immediate (gap = 1 parent turn)
+
+The parent spawns agents via the `Agent` tool and the results come back inline — the tool_result containing the child's output is already present in the cumulative message history by the time the parent makes its next API call. AIPerf detects this by finding the first parent turn whose new messages contain a non-acknowledgement tool_result for the spawn's `Agent` tool_use ID.
+
+```
+Parent turn N:   Agent tool_use  ──► child runs
+                 tool_result: "child output here"
+Parent turn N+1: JOIN — reads child result, continues
+```
+
+This is the most common pattern. Children often take longer to complete than the gap implies — the parent reads an early partial result or the child was fast enough. The join turn is N+1 regardless of child wall-clock completion time.
+
+### Blocking notification (gap = 1 to 183 parent turns)
+
+The parent spawns agents asynchronously (`"Async agent launched successfully"` acknowledgement) and continues doing other work. When each child finishes, Claude Code injects a `<task-notification>` user message into the parent's context:
+
+```xml
+<task-notification>
+  <task-id>ae2c5aa3243b040ea</task-id>
+  <tool-use-id>toolu_019BxppEYd3m7AaX5Hc8BLJq</tool-use-id>
+  <output-file>/tmp/.../tasks/ae2c5aa3243b040ea.output</output-file>
+</task-notification>
+```
+
+The `tool-use-id` matches the original `Agent` tool_use, allowing AIPerf to identify which spawn each notification belongs to. Each child gets its own join turn — the first parent turn where its notification appears.
+
+Two sub-cases observed in the wild:
+
+- **Parent idle** (e.g. pr-review): parent had nothing else to do, so each child's completion immediately triggered a new parent turn (~135 ms gap). Four children → four separate join turns spaced 6–9 parent turns after spawn.
+- **Parent busy** (e.g. long-horizon): parent continued active work (182 turns of code porting across files) while children ran in parallel. Notifications all arrived at the final summary turn once the parent finished its own work.
+
+### Join gate behavior during replay
+
+When replaying, AIPerf fires the join turn at:
+
+```
+join_dispatch = max(last_child_end, ideal_join_timestamp) + ~few ms
+```
+
+Whether the gate or the original schedule is the binding constraint depends on how
+fast the server responds relative to the inter-turn gaps.
+
+```
+GATE-bound  (slow server: response time > inter-turn gap, children can't keep up)
+
+  PARENT  ──[spawn]──────────────────────────────[gate: waiting]──[JOIN]──▶
+                │                                                     ↑
+  CHILD         └──[=======================================done]──────┘
+                                          ↑
+               ideal join timestamp ──────┘  (already passed, irrelevant)
+
+
+SCHED-bound  (fast server: response time < inter-turn gap, children finish early)
+
+  PARENT  ──[spawn]──────────────────[sched wait]──[JOIN]──▶
+                │                                ↑
+  CHILD         └──[================done]........│
+                          child early,           │
+                      wait for schedule          │
+                                                 │
+               ideal join timestamp ─────────────┘
+```
+
+With a slow server, children cannot finish within the inter-turn gaps and the gate
+drives the join. With a fast server, children finish with time to spare and the join
+waits for the original timestamp. The crossover point is when
+`server_response_time ≈ original_inter_turn_gap / speedup`.
+
+### Why timestamps alone are insufficient
+
+For idle-parent notification joins, timestamp detection (first parent turn starting after child ends) gives the correct answer since the gap is ~135 ms. For busy-parent notification joins it gives the wrong turn — the parent was actively running and the notification arrived much later. AIPerf uses `<task-notification>` content matching as the authoritative signal.
 
 ---
 

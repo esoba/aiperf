@@ -175,13 +175,19 @@ class CreditCallbackHandler:
             phase, credit, credit_return, is_final_returned, handler
         )
 
-        # 4. Signal completion if this was the final return
+        # 4. Notify strategy of errored/cancelled child credits for join tracking.
+        # Must run BEFORE handle_credit_return so terminate_child marks the child
+        # as terminated before intercept -> _handle_child_credit checks _is_terminated.
+        # Not gated by can_send_any_turn — the orchestrator's _maybe_complete_join
+        # checks that internally before dispatching any join turn.
+        if credit_return.error or credit_return.cancelled:
+            handler.strategy.on_failed_credit(credit_return)
+
+        # 5. Signal completion if this was the final return
         if is_final_returned:
             handler.progress.all_credits_returned_event.set()
 
-        # 5. Notify timing strategy for subsequent turns when phase can still send
-        # Timing strategy queues subsequent turns for rate-limited issuance.
-        # Skipped when phase can't send
+        # 6. Notify timing strategy for subsequent turns when phase can still send
         if handler.stop_checker.can_send_any_turn():
             await handler.strategy.handle_credit_return(credit)
 

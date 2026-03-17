@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,12 +20,13 @@ from typing import Any
 import orjson
 
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import TurnThreadingMode
+from aiperf.common.enums import PrerequisiteKind, TurnThreadingMode
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.models.dataset_models import (
     ConversationOrigin,
     SubagentSpawnInfo,
     TurnGroundTruth,
+    TurnPrerequisite,
 )
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.models import ConfluxRecord
@@ -39,70 +41,294 @@ def _parse_timestamp_ms(iso_str: str) -> float:
     return dt.timestamp() * 1000
 
 
+def _messages_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build messages list from a decoded request payload, prepending system when present."""
+    msgs = list(payload.get("messages", []))
+    system = payload.get("system")
+    if system is not None:
+        msgs.insert(0, {"role": "system", "content": system})
+    return msgs
+
+
 def _decode_messages(record: ConfluxRecord) -> list[dict[str, Any]]:
     """Decode the messages array from a ConfluxRecord, preferring base64 payload."""
     if record.base64 and record.base64.get("request_body"):
         payload: dict[str, Any] = orjson.loads(
             base64.b64decode(record.base64["request_body"])
         )
-        msgs = list(payload.get("messages", []))
-        system = payload.get("system")
-        if system is not None:
-            msgs.insert(0, {"role": "system", "content": system})
-        return msgs
+        return _messages_from_payload(payload)
     return list(record.messages)
 
 
-def _detect_blocking_from_content(
+def _record_end_ms(record: ConfluxRecord) -> float:
+    """Best-effort completion timestamp for a Conflux record."""
+    start_ms = _parse_timestamp_ms(record.timestamp)
+    if record.completed_at:
+        return _parse_timestamp_ms(record.completed_at)
+    if record.duration_ms > 0:
+        return start_ms + record.duration_ms
+    return start_ms
+
+
+def _new_messages(
+    previous_messages: list[dict[str, Any]],
+    current_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return messages appended between two consecutive parent turns."""
+    common_prefix_len = 0
+    for previous, current in zip(previous_messages, current_messages, strict=False):
+        if previous != current:
+            break
+        common_prefix_len += 1
+    return current_messages[common_prefix_len:]
+
+
+def _iter_message_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract structured content blocks from appended messages."""
+    blocks: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content", "")
+        if isinstance(content, list):
+            blocks.extend(block for block in content if isinstance(block, dict))
+    return blocks
+
+
+def _stringify_block_content(content: Any) -> str:
+    """Flatten nested tool-result payloads for heuristic inspection."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(_stringify_block_content(item) for item in content)
+    if isinstance(content, dict):
+        if isinstance(content.get("text"), str):
+            return content["text"]
+        if "content" in content:
+            return _stringify_block_content(content["content"])
+        return orjson.dumps(content).decode()
+    return str(content)
+
+
+def _detect_join_turn_from_content(
     parent_records: list[ConfluxRecord],
     spawn_turn_index: int,
-) -> bool | None:
-    """Detect blocking vs background by inspecting message content.
-
-    Looks at the assistant response at spawn_turn_index for Agent tool_use
-    blocks, then checks the next turn's user message for whether tool_results
-    contain full child output (blocking) or a "queued" acknowledgement (background).
+) -> tuple[int | None, bool]:
+    """Infer a later join turn from appended Agent tool_result messages.
 
     Returns:
-        True if background, False if blocking, None if inconclusive.
+        (join_turn_index, saw_background_signal)
+        - join_turn_index: first parent turn whose new messages contain the
+          result for the Agent tool_use emitted by ``spawn_turn_index``.
+        - saw_background_signal: True when only queued/async acknowledgements
+          were observed for that spawn and no later full result was found.
     """
     if spawn_turn_index + 1 >= len(parent_records):
+        return None, False
+
+    # Collect all Agent tool_use IDs already present in the cumulative messages
+    # at spawn_turn_index. Any such ID appearing at spawn_turn_index+1 is a
+    # completion of a *previous* blocking spawn (possibly re-surfaced due to
+    # metadata drift re-rooting the common-prefix diff), not a new launch.
+    spawn_msgs = _decode_messages(parent_records[spawn_turn_index])
+    existing_agent_ids: set[str] = set()
+    for msg in spawn_msgs:
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "tool_use"
+                    and block.get("name") == "Agent"
+                ):
+                    bid = block.get("id")
+                    if isinstance(bid, str):
+                        existing_agent_ids.add(bid)
+
+    spawn_tool_use_ids: set[str] = set()
+    saw_queued_result = False
+
+    prev_msgs = spawn_msgs
+    for turn_index in range(spawn_turn_index + 1, len(parent_records)):
+        current_messages = _decode_messages(parent_records[turn_index])
+        appended_messages = _new_messages(prev_msgs, current_messages)
+        prev_msgs = current_messages
+
+        for block in _iter_message_blocks(appended_messages):
+            if (
+                turn_index == spawn_turn_index + 1
+                and block.get("type") == "tool_use"
+                and block.get("name") == "Agent"
+            ):
+                block_id = block.get("id")
+                if not isinstance(block_id, str):
+                    continue
+                if block_id in existing_agent_ids:
+                    # This tool_use was already in the history — it's a previous
+                    # blocking spawn completing here, not a new launch.
+                    continue
+                spawn_tool_use_ids.add(block_id)
+                continue
+
+            if block.get("type") != "tool_result":
+                continue
+
+            tool_use_id = block.get("tool_use_id")
+            matches_spawn = (
+                isinstance(tool_use_id, str) and tool_use_id in spawn_tool_use_ids
+            )
+            if not matches_spawn:
+                continue
+
+            result_text = _stringify_block_content(block.get("content", ""))
+            if (
+                "queued for running" in result_text
+                or "Async agent launched" in result_text
+            ):
+                saw_queued_result = True
+                continue
+
+            return turn_index, False
+
+    return None, saw_queued_result
+
+
+def _find_join_turn_index(
+    parent_records: list[ConfluxRecord],
+    spawn_turn_index: int,
+    children: list[tuple[str, list[ConfluxRecord], Conversation]],
+) -> int | None:
+    """Infer which parent turn waits for/consumes a spawn's child results.
+
+    Preference order:
+    1. Explicit tool_result content matched to the Agent tool_use.
+    2. First later parent turn that starts after all children have completed.
+    3. None if the children outlive the parent thread or content explicitly
+       marks the spawn as background-only.
+    """
+    join_turn_from_content, saw_background_signal = _detect_join_turn_from_content(
+        parent_records, spawn_turn_index
+    )
+    if join_turn_from_content is not None:
+        return join_turn_from_content
+    if saw_background_signal:
         return None
 
-    curr_msgs = _decode_messages(parent_records[spawn_turn_index])
-    next_msgs = _decode_messages(parent_records[spawn_turn_index + 1])
+    latest_child_end_ms = max(
+        _record_end_ms(child_records[-1]) for _, child_records, _ in children
+    )
 
-    if len(next_msgs) <= len(curr_msgs):
-        return None
+    for turn_index in range(spawn_turn_index + 1, len(parent_records)):
+        parent_turn_start_ms = _parse_timestamp_ms(parent_records[turn_index].timestamp)
+        if parent_turn_start_ms >= latest_child_end_ms:
+            return turn_index
 
-    new_msgs = next_msgs[len(curr_msgs) :]
+    return None
 
-    has_agent_spawn = False
-    has_full_result = False
-    has_queued_result = False
 
+_TASK_NOTIFICATION_RE = re.compile(
+    r"<task-notification>.*?<tool-use-id>(.*?)</tool-use-id>",
+    re.DOTALL,
+)
+_AGENT_ID_RE = re.compile(r"agentId:\s*(\S+)")
+
+
+def _extract_notification_joins(
+    parent_records: list[ConfluxRecord],
+) -> dict[str, int]:
+    """Scan parent turns for <task-notification> completion signals.
+
+    Returns {Agent_tool_use_id: first_turn_index} for each child whose
+    completion was signalled via a <task-notification> user message injected
+    by Claude Code when the background agent finished.
+    """
+    joins: dict[str, int] = {}
+    prev_msgs: list[dict[str, Any]] = []
+    for ti, record in enumerate(parent_records):
+        curr_msgs = _decode_messages(record)
+        new_msgs = _new_messages(prev_msgs, curr_msgs)
+        prev_msgs = curr_msgs
+        for msg in new_msgs:
+            content = msg.get("content", "")
+            texts: list[str] = []
+            if isinstance(content, str):
+                texts.append(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        t = block.get("text", "")
+                        if t:
+                            texts.append(t)
+            for text in texts:
+                if "<task-notification>" not in text:
+                    continue
+                for m in _TASK_NOTIFICATION_RE.finditer(text):
+                    tuid = m.group(1).strip()
+                    if tuid not in joins:
+                        joins[tuid] = ti
+    return joins
+
+
+def _build_spawn_tuid_to_agent_id(
+    parent_records: list[ConfluxRecord],
+    spawn_turn_index: int,
+) -> dict[str, str]:
+    """Build tool_use_id -> agent_id for newly-spawned async agents.
+
+    At spawn_turn_index+1, finds "Async agent launched" tool_results and
+    extracts the agentId for each new Agent tool_use (not previously in the
+    message history).
+    """
+    if spawn_turn_index + 1 >= len(parent_records):
+        return {}
+
+    existing_ids: set[str] = set()
+    for msg in _decode_messages(parent_records[spawn_turn_index]):
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "tool_use"
+                    and block.get("name") == "Agent"
+                ):
+                    bid = block.get("id")
+                    if isinstance(bid, str):
+                        existing_ids.add(bid)
+
+    prev = _decode_messages(parent_records[spawn_turn_index])
+    curr = _decode_messages(parent_records[spawn_turn_index + 1])
+    new_msgs = _new_messages(prev, curr)
+
+    new_spawn_ids: set[str] = set()
     for msg in new_msgs:
         content = msg.get("content", "")
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            block_type = block.get("type")
-            if block_type == "tool_use" and block.get("name") == "Agent":
-                has_agent_spawn = True
-            elif block_type == "tool_result" and has_agent_spawn:
-                result_text = str(block.get("content", ""))
-                if "queued for running" in result_text:
-                    has_queued_result = True
-                elif len(result_text) > 500:
-                    has_full_result = True
+        if isinstance(content, list):
+            for block in content:
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "tool_use"
+                    and block.get("name") == "Agent"
+                ):
+                    bid = block.get("id")
+                    if isinstance(bid, str) and bid not in existing_ids:
+                        new_spawn_ids.add(bid)
 
-    if not has_agent_spawn:
-        return None
-    if has_queued_result and not has_full_result:
-        return True
-    if has_full_result:
-        return False
-    return None
+    tuid_to_agent: dict[str, str] = {}
+    for msg in new_msgs:
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                if not (isinstance(block, dict) and block.get("type") == "tool_result"):
+                    continue
+                tuid = block.get("tool_use_id")
+                if not isinstance(tuid, str) or tuid not in new_spawn_ids:
+                    continue
+                result_text = _stringify_block_content(block.get("content", ""))
+                if "Async agent launched" not in result_text:
+                    continue
+                m = _AGENT_ID_RE.search(result_text)
+                if m:
+                    tuid_to_agent[tuid] = m.group(1)
+    return tuid_to_agent
 
 
 _CAN_LOAD_PROBE_BYTES = 1 << 20  # 1 MB probe limit for format detection
@@ -231,9 +457,10 @@ class ConfluxLoader(BaseFileLoader):
         - The group with is_subagent=False is the parent agent thread.
         - Groups with is_subagent=True are children linked via SubagentSpawnInfo.
           Children spawned at the same parent turn are grouped into a single
-          SubagentSpawnInfo. Blocking vs background is detected from timestamps:
-          if all children at a spawn point finish before the next parent turn
-          starts, the spawn is blocking (parent waited for them).
+          SubagentSpawnInfo. Blocking joins are attached to the first later
+          parent turn that consumes the child result, inferred from Agent
+          tool_result content when available and child-completion timing
+          otherwise.
         - Orphan groups (no agent_id) become single-turn background subagent
           children, each spawned at the closest parent turn by timestamp.
         """
@@ -302,11 +529,84 @@ class ConfluxLoader(BaseFileLoader):
             spawn_counter = 0
             blocking_count = 0
             background_count = 0
+            notification_joins = _extract_notification_joins(parent_records)
             for spawn_turn_index in sorted(spawn_turn_to_children):
                 children_at_turn = spawn_turn_to_children[spawn_turn_index]
-                is_background = self._is_background_spawn(
+                join_turn_index = _find_join_turn_index(
                     parent_records, spawn_turn_index, children_at_turn
                 )
+                is_background = join_turn_index is None
+
+                # For background spawns, check if each child reports back via
+                # <task-notification>. If so, split into per-child blocking
+                # spawns with per-child join turns derived from the notification.
+                if is_background and notification_joins:
+                    tuid_to_agent = _build_spawn_tuid_to_agent_id(
+                        parent_records, spawn_turn_index
+                    )
+                    agent_to_join: dict[str, int] = {
+                        agent_id: notification_joins[tuid]
+                        for tuid, agent_id in tuid_to_agent.items()
+                        if tuid in notification_joins
+                    }
+                    if agent_to_join:
+                        notification_children = [
+                            (aid, recs, conv, agent_to_join[aid])
+                            for aid, recs, conv in children_at_turn
+                            if aid in agent_to_join
+                        ]
+                        bg_children = [
+                            (aid, recs, conv)
+                            for aid, recs, conv in children_at_turn
+                            if aid not in agent_to_join
+                        ]
+                        for (
+                            _,
+                            _,
+                            child_conv,
+                            notification_turn,
+                        ) in notification_children:
+                            spawn_id = f"s{spawn_counter}"
+                            spawn_counter += 1
+                            parent_conv.subagent_spawns.append(
+                                SubagentSpawnInfo(
+                                    spawn_id=spawn_id,
+                                    child_conversation_ids=[child_conv.session_id],
+                                    is_background=False,
+                                )
+                            )
+                            if spawn_turn_index < len(parent_conv.turns):
+                                parent_conv.turns[
+                                    spawn_turn_index
+                                ].subagent_spawn_ids.append(spawn_id)
+                            if notification_turn < len(parent_conv.turns):
+                                parent_conv.turns[
+                                    notification_turn
+                                ].prerequisites.append(
+                                    TurnPrerequisite(
+                                        kind=PrerequisiteKind.SPAWN_JOIN,
+                                        spawn_id=spawn_id,
+                                    )
+                                )
+                            child_conversations.append(child_conv)
+                            blocking_count += 1
+                        for _, _, child_conv in bg_children:
+                            spawn_id = f"s{spawn_counter}"
+                            spawn_counter += 1
+                            parent_conv.subagent_spawns.append(
+                                SubagentSpawnInfo(
+                                    spawn_id=spawn_id,
+                                    child_conversation_ids=[child_conv.session_id],
+                                    is_background=True,
+                                )
+                            )
+                            if spawn_turn_index < len(parent_conv.turns):
+                                parent_conv.turns[
+                                    spawn_turn_index
+                                ].subagent_spawn_ids.append(spawn_id)
+                            child_conversations.append(child_conv)
+                            background_count += 1
+                        continue
 
                 child_conv_ids = [conv.session_id for _, _, conv in children_at_turn]
                 spawn_id = f"s{spawn_counter}"
@@ -316,9 +616,6 @@ class ConfluxLoader(BaseFileLoader):
                     SubagentSpawnInfo(
                         spawn_id=spawn_id,
                         child_conversation_ids=child_conv_ids,
-                        join_turn_index=spawn_turn_index + 1
-                        if not is_background
-                        else spawn_turn_index,
                         is_background=is_background,
                     )
                 )
@@ -326,6 +623,16 @@ class ConfluxLoader(BaseFileLoader):
                 if spawn_turn_index < len(parent_conv.turns):
                     parent_conv.turns[spawn_turn_index].subagent_spawn_ids.append(
                         spawn_id
+                    )
+
+                if join_turn_index is not None and join_turn_index < len(
+                    parent_conv.turns
+                ):
+                    parent_conv.turns[join_turn_index].prerequisites.append(
+                        TurnPrerequisite(
+                            kind=PrerequisiteKind.SPAWN_JOIN,
+                            spawn_id=spawn_id,
+                        )
                     )
 
                 for _, _, child_conv in children_at_turn:
@@ -355,7 +662,6 @@ class ConfluxLoader(BaseFileLoader):
                     SubagentSpawnInfo(
                         spawn_id=spawn_id,
                         child_conversation_ids=[child_conv.session_id],
-                        join_turn_index=spawn_turn_index,
                         is_background=True,
                     )
                 )
@@ -524,13 +830,7 @@ class ConfluxLoader(BaseFileLoader):
                 base64.b64decode(record.base64["request_body"])  # type: ignore[index]
             )
             payload.pop("metadata", None)
-
-            # Reconstruct full messages array with system message inline
-            messages = list(payload.get("messages", []))
-            system = payload.get("system")
-            if system is not None:
-                messages.insert(0, {"role": "system", "content": system})
-
+            messages = _messages_from_payload(payload)
             tools = payload.get("tools") or None
             max_tokens = payload.get("max_tokens")
             return messages, tools, max_tokens
@@ -560,57 +860,6 @@ class ConfluxLoader(BaseFileLoader):
         if record.client == "codex":
             return "openai"
         return None
-
-    @staticmethod
-    def _is_background_spawn(
-        parent_records: list[ConfluxRecord],
-        spawn_turn_index: int,
-        children: list[tuple[str, list[ConfluxRecord], Conversation]],
-    ) -> bool:
-        """Detect whether a spawn point is blocking or background.
-
-        Primary signal is structural (timestamps): did the parent wait for
-        children before continuing? This is robust across client versions.
-
-        Content inspection is used as a tiebreaker when timing is ambiguous
-        (children finish close to the next parent turn start).
-        """
-        if spawn_turn_index + 1 >= len(parent_records):
-            return True
-
-        next_parent_start_ms = _parse_timestamp_ms(
-            parent_records[spawn_turn_index + 1].timestamp
-        )
-
-        latest_child_end_ms = 0.0
-        for _, child_records, _ in children:
-            last_record = child_records[-1]
-            if last_record.completed_at:
-                end_ms = _parse_timestamp_ms(last_record.completed_at)
-            elif last_record.duration_ms > 0:
-                end_ms = (
-                    _parse_timestamp_ms(last_record.timestamp) + last_record.duration_ms
-                )
-            else:
-                end_ms = _parse_timestamp_ms(last_record.timestamp)
-            latest_child_end_ms = max(latest_child_end_ms, end_ms)
-
-        gap_ms = latest_child_end_ms - next_parent_start_ms
-
-        # Clear-cut cases: no ambiguity
-        if gap_ms > 5000:
-            return True  # Children outlive parent by >5s — background
-        if gap_ms < -5000:
-            return False  # Children finish >5s before parent resumes — blocking
-
-        # Ambiguous: children finish close to the next parent turn.
-        # Use content inspection as a tiebreaker.
-        content_result = _detect_blocking_from_content(parent_records, spawn_turn_index)
-        if content_result is not None:
-            return content_result
-
-        # Final fallback: 2s tolerance
-        return gap_ms > 2000
 
     @staticmethod
     def _find_spawn_point(

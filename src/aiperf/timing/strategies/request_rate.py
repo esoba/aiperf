@@ -15,11 +15,11 @@ from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.timing.intervals import IntervalGeneratorConfig
+from aiperf.timing.strategies.subagent_mixin import SubagentMixin
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
-    from aiperf.credit.messages import CreditReturn
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from aiperf.timing.subagent_orchestrator import SubagentOrchestrator
 
 
-class RequestRateStrategy(AIPerfLoggerMixin):
+class RequestRateStrategy(SubagentMixin, AIPerfLoggerMixin):
     """Issues credits at a target average rate with configurable arrival patterns.
 
     The arrival pattern (Constant, Poisson, Gamma, ConcurrencyBurst) determines
@@ -104,10 +104,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         self._stop_checker = stop_checker
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
-        self._subagents = subagents
-
-        if self._subagents is not None:
-            self._subagents.set_dispatch(self._dispatch_turn)
+        self._init_subagents(subagents)
 
         # Queue for subsequent turns (turn_index > 0) waiting to be issued.
         # Populated by handle_credit_return when workers complete turns.
@@ -125,8 +122,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         self._rate_generator = GeneratorClass(interval_config)
 
     async def setup_phase(self) -> None:
-        """Setup the phase."""
-        pass  # Already setup in __init__
+        pass
 
     async def execute_phase(self) -> None:
         """Execute request rate main loop until stop condition reached.
@@ -253,25 +249,6 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             )
         else:
             self._continuation_turns.put_nowait(turn)
-
-    def on_request_complete(self, credit_return: CreditReturn) -> None:
-        if self._subagents and credit_return.error:
-            self._subagents.terminate_child(credit_return.credit)
-
-    def on_cancelled_return(self, credit: Credit) -> None:
-        if self._subagents:
-            self._subagents.terminate_child(credit)
-
-    def on_child_stopped(self, credit: Credit) -> None:
-        if self._subagents:
-            self._subagents.terminate_child(credit)
-
-    def cleanup(self) -> None:
-        if self._subagents:
-            self._subagents.cleanup()
-
-    def get_subagent_stats(self) -> dict[str, int]:
-        return self._subagents.get_stats() if self._subagents else {}
 
     def set_request_rate(self, new_rate: float) -> None:
         """Update the request rate dynamically.

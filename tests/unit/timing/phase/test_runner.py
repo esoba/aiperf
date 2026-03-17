@@ -59,6 +59,12 @@ class MockStrategy:
     async def handle_credit_return(self, credit: Credit) -> None:
         self.handle_credit_return_calls.append(credit)
 
+    def on_failed_credit(self, credit_return: object) -> None:
+        pass
+
+    def cleanup(self) -> None:
+        pass
+
 
 def mock_conc_mgr() -> MagicMock:
     m = MagicMock()
@@ -650,6 +656,134 @@ class TestEdgeCases:
             with pytest.raises(RuntimeError):
                 await r.run(is_final_phase=True)
             mock_ramper.stop.assert_called_once()
+
+
+class TestStrategyCleanup:
+    """Verify strategy.cleanup() is called at every exit point of run()."""
+
+    async def test_cleanup_called_on_normal_completion(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        strategy = MockStrategy()
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: strategy,
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=True)
+        # MockStrategy.cleanup is a no-op; use a spy to verify it was called
+        strategy_spy = MagicMock(wraps=MockStrategy())
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: strategy_spy,
+        ):
+            r2 = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+            r2._progress.all_credits_sent_event.set()
+            r2._progress.all_credits_returned_event.set()
+            await r2.run(is_final_phase=True)
+            strategy_spy.cleanup.assert_called_once()
+
+    async def test_cleanup_called_on_cancellation(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """When phase is cancelled, strategy.cleanup() is still called."""
+        strategy = MagicMock(wraps=MockStrategy())
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: strategy,
+        ):
+            # Pre-set sent event, simulate cancellation before returns
+            r._progress.all_credits_sent_event.set()
+            r._was_cancelled = True
+            result = await r.run(is_final_phase=True)
+            strategy.cleanup.assert_called_once()
+            assert isinstance(result, CreditPhaseStats)
+
+    async def test_cleanup_called_on_exception(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """When an exception occurs during run(), strategy.cleanup() is called before re-raise."""
+        strategy = MagicMock()
+        strategy.setup_phase = AsyncMock(side_effect=RuntimeError("boom"))
+        strategy.cleanup = MagicMock()
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: strategy,
+        ):
+            r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+            with pytest.raises(RuntimeError, match="boom"):
+                await r.run(is_final_phase=True)
+            strategy.cleanup.assert_called_once()
+
+
+@pytest.mark.asyncio
+class TestAddConcurrencyRamper:
+    """Verify _add_concurrency_ramper creates and registers rampers correctly."""
+
+    async def test_adds_ramper_to_list(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(conc=10), conv_src, pub, router, conc, cancel, cb)
+        assert len(r._rampers) == 0
+        r._add_concurrency_ramper("session", 5.0, 10, lambda v: None)
+        assert len(r._rampers) == 1
+
+    async def test_ramper_config_start_at_one(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        r._add_concurrency_ramper("prefill", 3.0, 8, lambda v: None)
+        ramper = r._rampers[0]
+        assert ramper._config.start == 1
+        assert ramper._config.target == 8
+        assert ramper._config.duration_sec == 3.0
+
+    async def test_multiple_rampers_accumulate(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        r._add_concurrency_ramper("session", 5.0, 10, lambda v: None)
+        r._add_concurrency_ramper("prefill", 3.0, 5, lambda v: None)
+        assert len(r._rampers) == 2
 
 
 class TestFixedScheduleConfigCorrection:

@@ -15,11 +15,11 @@ from typing import TYPE_CHECKING, NamedTuple
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.credit.structs import Credit, TurnToSend
+from aiperf.timing.strategies.subagent_mixin import SubagentMixin
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
-    from aiperf.credit.messages import CreditReturn
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
@@ -34,7 +34,7 @@ class ScheduleEntry(NamedTuple):
     turn: TurnToSend
 
 
-class FixedScheduleStrategy(AIPerfLoggerMixin):
+class FixedScheduleStrategy(SubagentMixin, AIPerfLoggerMixin):
     """Timing strategy for replaying conversation traces with absolute timestamps.
 
     Sends first turns at precise timestamps from conversation metadata.
@@ -59,14 +59,11 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         self._scheduler = scheduler
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
-        self._subagents = subagents
+        self._init_subagents(subagents)
         self._time_scale = 1.0 / (config.fixed_schedule_speedup or 1.0)
 
         self._absolute_schedule: list[ScheduleEntry] = []
         self._schedule_zero_ms: float = 0.0
-
-        if self._subagents is not None:
-            self._subagents.set_dispatch(self._dispatch_turn)
 
     def _timestamp_to_perf_sec(self, timestamp_ms: int | float) -> float:
         """Convert trace timestamp in milliseconds to perf counter seconds."""
@@ -145,25 +142,6 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         next_meta = self._conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit)
         self._dispatch_by_timing(turn, next_meta.timestamp_ms, next_meta.delay_ms)
-
-    def on_request_complete(self, credit_return: CreditReturn) -> None:
-        if self._subagents and credit_return.error:
-            self._subagents.terminate_child(credit_return.credit)
-
-    def on_cancelled_return(self, credit: Credit) -> None:
-        if self._subagents:
-            self._subagents.terminate_child(credit)
-
-    def on_child_stopped(self, credit: Credit) -> None:
-        if self._subagents:
-            self._subagents.terminate_child(credit)
-
-    def cleanup(self) -> None:
-        if self._subagents:
-            self._subagents.cleanup()
-
-    def get_subagent_stats(self) -> dict[str, int]:
-        return self._subagents.get_stats() if self._subagents else {}
 
     def _dispatch_turn(self, turn: TurnToSend) -> None:
         """Dispatch callback for SubagentOrchestrator: look up timing and schedule."""

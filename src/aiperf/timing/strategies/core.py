@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
+    from aiperf.credit.messages import CreditReturn
     from aiperf.credit.structs import Credit
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
@@ -77,6 +78,23 @@ class TimingStrategyProtocol(Protocol):
 
         Args:
             credit: Completed credit with conversation/turn info
+        """
+        ...
+
+    def on_failed_credit(self, credit_return: CreditReturn) -> None:
+        """Handle errored or cancelled credit returns for subagent join tracking.
+
+        Called by CreditCallbackHandler for every errored/cancelled return,
+        BEFORE handle_credit_return and regardless of can_send_any_turn().
+        Default implementation is a no-op for strategies without subagents.
+        """
+        ...
+
+    def cleanup(self) -> None:
+        """Release resources at phase end.
+
+        Called by PhaseRunner after the phase completes. Strategies with
+        subagent orchestrators use this to log leaked state and clear tracking.
         """
         ...
 
