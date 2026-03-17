@@ -581,6 +581,12 @@ image_latency = request_latency_ms / num_images
 
 ---
 
+## Multimodal Input Metrics
+
+<Note>
+These metrics provide per-modality input token breakdowns for requests that contain non-text modalities (e.g., images in prompts). They are distinct from the Image Metrics above, which measure image generation endpoints. All metrics in this section are file-only (not shown in console) and require image-bearing input data.
+</Note>
+
 ### Image Input Token Count
 
 **Type:** [Record Metric](#record-metrics)

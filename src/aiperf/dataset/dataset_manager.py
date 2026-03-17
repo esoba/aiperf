@@ -328,8 +328,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         else:
             conversations = self._load_synthetic_dataset()
 
-        # Estimate per-modality input token counts when --tokenize-input is enabled
-        if self.user_config.tokenizer.tokenize_input:
+        # Estimate per-modality input token counts when images are present
+        has_images = any(
+            img.contents
+            for conv in conversations
+            for turn in conv.turns
+            for img in turn.images
+        )
+        if has_images:
             await self._estimate_modality_counts(conversations)
 
         self.dataset = {conv.session_id: conv for conv in conversations}
