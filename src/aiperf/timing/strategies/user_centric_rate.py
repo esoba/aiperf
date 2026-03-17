@@ -146,7 +146,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         self._subagents = subagents
 
         if self._subagents is not None:
-            self._subagents._dispatch = self._dispatch_turn
+            self._subagents.set_dispatch(self._dispatch_turn)
 
         self._num_users = self._config.num_users
         self._request_rate = self._config.request_rate

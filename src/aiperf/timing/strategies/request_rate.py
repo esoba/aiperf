@@ -107,7 +107,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         self._subagents = subagents
 
         if self._subagents is not None:
-            self._subagents._dispatch = self._dispatch_turn
+            self._subagents.set_dispatch(self._dispatch_turn)
 
         # Queue for subsequent turns (turn_index > 0) waiting to be issued.
         # Populated by handle_credit_return when workers complete turns.

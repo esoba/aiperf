@@ -66,7 +66,7 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         self._schedule_zero_ms: float = 0.0
 
         if self._subagents is not None:
-            self._subagents._dispatch = self._dispatch_turn
+            self._subagents.set_dispatch(self._dispatch_turn)
 
     def _timestamp_to_perf_sec(self, timestamp_ms: int | float) -> float:
         """Convert trace timestamp in milliseconds to perf counter seconds."""

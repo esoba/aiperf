@@ -1355,7 +1355,7 @@ class TestToAnthropicMessages:
         assert len(result) == 1
         assert result[0]["role"] == "user"
 
-    def test_multiple_system_messages_last_wins(self) -> None:
+    def test_multiple_system_messages_merged(self) -> None:
         msgs = [
             {"role": "system", "content": "first"},
             {"role": "user", "content": "q"},
@@ -1363,16 +1363,16 @@ class TestToAnthropicMessages:
             {"role": "user", "content": "q2"},
         ]
         _, system = to_anthropic_messages(msgs)
-        assert system == "second"
+        assert system == "first\n\nsecond"
 
-    def test_developer_overrides_system(self) -> None:
+    def test_developer_merged_with_system(self) -> None:
         msgs = [
             {"role": "system", "content": "old"},
             {"role": "developer", "content": "new"},
             {"role": "user", "content": "q"},
         ]
         _, system = to_anthropic_messages(msgs)
-        assert system == "new"
+        assert system == "old\n\nnew"
 
     def test_no_system_returns_none(self) -> None:
         msgs = [{"role": "user", "content": "hi"}]

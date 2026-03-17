@@ -129,6 +129,14 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
         self._cleaning_up: bool = False
         self._stats = SubagentStats()
 
+    def set_dispatch(self, dispatch_fn: Callable[[TurnToSend], None]) -> None:
+        """Set the strategy-provided dispatch callback.
+
+        Called by timing strategies during __init__ when the orchestrator
+        is constructed by the runner before the strategy exists.
+        """
+        self._dispatch = dispatch_fn
+
     # =========================================================================
     # Primary entry point: intercept credit returns
     # =========================================================================

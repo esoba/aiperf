@@ -305,10 +305,12 @@ class InputConfig(BaseConfig):
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
-            "`mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
+            "`mooncake_trace`/`bailian_trace` (timestamped trace files), `conflux` (Conflux proxy capture with "
+            "agent threading and subagent orchestration), `random_pool` (directory of reusable prompts; "
             "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
             "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
             "per-entry associations — use `single_turn` if paired modalities must stay together). "
+            "If omitted, the format is auto-detected from file contents. "
             "Requires `--input-file`. Mutually exclusive with `--public-dataset`.",
         ),
         CLIParameter(
@@ -374,7 +376,8 @@ class InputConfig(BaseConfig):
             description="Include unattributed utility calls when loading Conflux proxy captures. "
             "These are lightweight model calls made by the client for housekeeping tasks "
             "(topic detection, title generation) that lack an agent_id and may fall outside "
-            "the main session timeline. Only applies to --custom-dataset-type conflux.",
+            "the main session timeline. Applies when Conflux format is specified via "
+            "--custom-dataset-type conflux or auto-detected from file contents.",
         ),
         CLIParameter(
             name=("--conflux-include-utility-calls",),

@@ -38,6 +38,9 @@ def _ts(offset_s: float) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
+_UNSET = object()
+
+
 def _make_record(
     *,
     record_id: str = "req_001",
@@ -45,15 +48,15 @@ def _make_record(
     is_subagent: bool = False,
     timestamp: str = BASE_TS,
     model: str = "claude-sonnet-4-6",
-    messages: list | None = None,
-    tools: list | None = None,
-    tokens: dict | None = None,
-    hyperparameters: dict | None = None,
+    messages: list | object = _UNSET,
+    tools: list | object = _UNSET,
+    tokens: dict | object = _UNSET,
+    hyperparameters: dict | None | object = _UNSET,
     is_streaming: bool | None = True,
     duration_ms: int = 1000,
 ) -> dict:
     """Build a raw Conflux record dict."""
-    return {
+    record: dict = {
         "id": record_id,
         "session_id": "sess-001",
         "agent_id": agent_id,
@@ -61,20 +64,29 @@ def _make_record(
         "timestamp": timestamp,
         "duration_ms": duration_ms,
         "model": model,
-        "tokens": tokens
-        or {
-            "input": 1000,
-            "input_cached": 800,
-            "input_cache_write": 100,
-            "output": 200,
-        },
-        "tools": tools or [],
-        "messages": messages or [{"role": "user", "content": "Hello"}],
+        "tokens": (
+            {
+                "input": 1000,
+                "input_cached": 800,
+                "input_cache_write": 100,
+                "output": 200,
+            }
+            if tokens is _UNSET
+            else tokens
+        ),
+        "tools": [] if tools is _UNSET else tools,
+        "messages": (
+            [{"role": "user", "content": "Hello"}] if messages is _UNSET else messages
+        ),
         "output": [{"type": "text", "text": "Hi there"}],
-        "hyperparameters": hyperparameters or {"max_tokens": 4096},
         "is_streaming": is_streaming,
         "ttft_ms": 150,
     }
+    if hyperparameters is not _UNSET:
+        record["hyperparameters"] = hyperparameters
+    else:
+        record["hyperparameters"] = {"max_tokens": 4096}
+    return record
 
 
 def _build_session_file(tmp_path, records: list[dict]) -> str:

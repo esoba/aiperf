@@ -235,7 +235,7 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 
 #### `--custom-dataset-type` `<str>`
 
-Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations — use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
+Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `conflux` (Conflux proxy capture with agent threading and subagent orchestration), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations — use `single_turn` if paired modalities must stay together). If omitted, the format is auto-detected from file contents. Requires `--input-file`. Mutually exclusive with `--public-dataset`.
 <br/>_Choices: [`bailian_trace`, `conflux`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
@@ -253,7 +253,7 @@ Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALU
 
 #### `--conflux-include-utility-calls`
 
-Include unattributed utility calls when loading Conflux proxy captures. These are lightweight model calls made by the client for housekeeping tasks (topic detection, title generation) that lack an agent_id and may fall outside the main session timeline. Only applies to --custom-dataset-type conflux.
+Include unattributed utility calls when loading Conflux proxy captures. These are lightweight model calls made by the client for housekeeping tasks (topic detection, title generation) that lack an agent_id and may fall outside the main session timeline. Applies when Conflux format is specified via --custom-dataset-type conflux or auto-detected from file contents.
 <br/>_Flag (no value required)_
 
 ### Audio Input

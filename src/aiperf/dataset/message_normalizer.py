@@ -166,6 +166,10 @@ def _detect_provider(
                     return "anthropic"
                 if block_type in _ALL_PASSTHROUGH_BLOCK_TYPES:
                     return "anthropic"
+            # Assistant messages with list-of-blocks content are Anthropic-native;
+            # OpenAI assistant messages use plain string content.
+            if msg.get("role") == "assistant":
+                return "anthropic"
         if msg.get("tool_calls") is not None:
             return "openai"
         if msg.get("role") == "tool" and "tool_call_id" in msg:
@@ -301,10 +305,22 @@ def _normalize_anthropic_user(msg: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(content, list):
         return [msg]
 
-    tool_results: list[dict[str, Any]] = []
     text_parts: list[str] = []
     content_parts: list[dict[str, Any]] = []
     has_unconvertible_blocks = False
+    result: list[dict[str, Any]] = []
+
+    # Build result preserving original interleaved order of user content and
+    # tool_results. Flush accumulated user text/content before each tool_result.
+    def _flush_user() -> None:
+        if text_parts and not content_parts and not has_unconvertible_blocks:
+            result.append({"role": "user", "content": "\n\n".join(text_parts)})
+        elif text_parts or content_parts:
+            combined = [{"type": "text", "text": t} for t in text_parts]
+            combined.extend(content_parts)
+            result.append({"role": "user", "content": combined})
+        text_parts.clear()
+        content_parts.clear()
 
     for block in content:
         if not isinstance(block, dict):
@@ -314,6 +330,7 @@ def _normalize_anthropic_user(msg: dict[str, Any]) -> list[dict[str, Any]]:
         block_type = block.get("type")
 
         if block_type == "tool_result":
+            _flush_user()
             tool_msg: dict[str, Any] = {
                 "role": "tool",
                 "tool_call_id": block.get("tool_use_id", ""),
@@ -323,7 +340,7 @@ def _normalize_anthropic_user(msg: dict[str, Any]) -> list[dict[str, Any]]:
                 tool_msg["_is_error"] = True
             if "cache_control" in block:
                 tool_msg["_cache_control"] = block["cache_control"]
-            tool_results.append(tool_msg)
+            result.append(tool_msg)
         elif block_type == "text":
             text = block.get("text", "")
             if text:
@@ -336,16 +353,7 @@ def _normalize_anthropic_user(msg: dict[str, Any]) -> list[dict[str, Any]]:
             content_parts.append(block)
             has_unconvertible_blocks = True
 
-    result: list[dict[str, Any]] = []
-
-    if text_parts and not content_parts and not has_unconvertible_blocks:
-        result.append({"role": "user", "content": "\n\n".join(text_parts)})
-    elif text_parts or content_parts:
-        combined = [{"type": "text", "text": t} for t in text_parts]
-        combined.extend(content_parts)
-        result.append({"role": "user", "content": combined})
-
-    result.extend(tool_results)
+    _flush_user()
     return result if result else [msg]
 
 
@@ -485,7 +493,24 @@ def to_anthropic_messages(
         role = msg.get("role", "")
 
         if role in ("system", "developer"):
-            system = msg.get("content")
+            new_content = msg.get("content")
+            if system is None:
+                system = new_content
+            elif isinstance(system, str) and isinstance(new_content, str):
+                system = system + "\n\n" + new_content
+            else:
+                # Mixed types (str + list or list + list): merge into list
+                a = (
+                    [{"type": "text", "text": system}]
+                    if isinstance(system, str)
+                    else (system or [])
+                )
+                b = (
+                    [{"type": "text", "text": new_content}]
+                    if isinstance(new_content, str)
+                    else (new_content or [])
+                )
+                system = a + b
         elif role == "assistant":
             raw.append(_emit_anthropic_assistant(msg))
         elif role == "tool":
@@ -608,7 +633,7 @@ def _tool_call_to_anthropic_block(tc: dict[str, Any]) -> dict[str, Any]:
     if isinstance(arguments, str):
         try:
             input_val = orjson.loads(arguments)
-        except Exception:
+        except orjson.JSONDecodeError:
             input_val = arguments
     else:
         input_val = arguments
