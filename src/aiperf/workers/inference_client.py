@@ -99,6 +99,17 @@ class InferenceClient(AIPerfLifecycleMixin):
         request_info.endpoint_headers = self.endpoint.get_endpoint_headers(request_info)
         request_info.endpoint_params = self.endpoint.get_endpoint_params(request_info)
         formatted_payload = self.endpoint.format_payload(request_info)
+
+        current_turn = request_info.turns[-1] if request_info.turns else None
+        if (
+            current_turn
+            and current_turn.extra_params
+            and isinstance(formatted_payload, dict)
+        ):
+            formatted_payload = self.endpoint.merge_turn_params(
+                formatted_payload, current_turn.extra_params
+            )
+
         return await self.transport.send_request(
             request_info,
             payload=formatted_payload,
@@ -162,9 +173,7 @@ class InferenceClient(AIPerfLifecycleMixin):
             RequestRecord containing the response data and metadata.
         """
         if self.is_trace_enabled:
-            self.trace(
-                f"Calling inference API for turn: {request_info.turns[request_info.turn_index]}"
-            )
+            self.trace(f"Calling inference API for turn: {request_info.turns[-1]}")
         record = await self._send_request_internal(request_info, first_token_callback)
         return self._enrich_request_record(record=record, request_info=request_info)
 
@@ -176,8 +185,7 @@ class InferenceClient(AIPerfLifecycleMixin):
     ) -> RequestRecord:
         """Enrich a RequestRecord with the original request info."""
         record.model_name = (
-            request_info.turns[request_info.turn_index].model
-            or self.model_endpoint.primary_model_name
+            request_info.turns[-1].model or self.model_endpoint.primary_model_name
         )
         record.request_info = request_info
 

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 if TYPE_CHECKING:
     from aiperf.plugin.schema.schemas import EndpointMetadata
 
+import orjson
 from orjson import JSONDecodeError
 from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
@@ -28,7 +29,6 @@ from aiperf.common.config.loadgen_config import LoadGeneratorConfig
 from aiperf.common.config.output_config import OutputConfig
 from aiperf.common.config.tokenizer_config import TokenizerConfig
 from aiperf.common.enums import GPUTelemetryMode, ServerMetricsFormat
-from aiperf.common.utils import load_json_str
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ArrivalPattern,
@@ -118,7 +118,7 @@ class UserConfig(BaseConfig):
                 _logger.info(
                     f"No request count value provided for fixed schedule mode, setting to dataset entry count: {self.loadgen.request_count}"
                 )
-        elif self._should_use_fixed_schedule_for_trace_dataset():
+        elif self._should_auto_enable_fixed_schedule():
             self._timing_mode = TimingMode.FIXED_SCHEDULE
             _logger.info(
                 f"Automatically enabling fixed schedule mode for {self.input.custom_dataset_type} dataset with timestamps"
@@ -348,13 +348,17 @@ class UserConfig(BaseConfig):
 
         return self
 
-    def _should_use_fixed_schedule_for_trace_dataset(self) -> bool:
-        """Check if a trace dataset has timestamps and should use fixed schedule.
+    def _should_auto_enable_fixed_schedule(self) -> bool:
+        """Check if a dataset has timestamps and should use fixed schedule.
+
+        Returns True for any custom dataset loader whose plugin metadata
+        declares ``supports_timing: true``, provided the actual file
+        contains timestamp data.
 
         Returns:
-            True if fixed schedule should be enabled for this trace dataset.
+            True if fixed schedule should be enabled for this dataset.
         """
-        if self.input.custom_dataset_type is None or not plugins.is_trace_dataset(
+        if self.input.custom_dataset_type is None or not plugins.supports_timing(
             self.input.custom_dataset_type
         ):
             return False
@@ -363,21 +367,49 @@ class UserConfig(BaseConfig):
             return False
 
         try:
-            with open(self.input.file) as f:
-                for line in f:
-                    if not (line := line.strip()):
-                        continue
-                    try:
-                        data = load_json_str(line)
-                        return "timestamp" in data and data["timestamp"] is not None
-                    except (JSONDecodeError, KeyError):
-                        continue
+            first_record = self._read_first_record(self.input.file)
+            return (
+                first_record is not None and first_record.get("timestamp") is not None
+            )
         except (OSError, FileNotFoundError):
             _logger.warning(
                 f"Could not read dataset file {self.input.file} to check for timestamps"
             )
+            return False
 
-        return False
+    @staticmethod
+    def _read_first_record(file_path: str) -> dict | None:
+        """Read the first JSON record from a dataset file.
+
+        Uses file extension to pick the parsing strategy:
+        ``.json`` files are parsed as JSON arrays, ``.jsonl`` files
+        are parsed line-by-line.
+        """
+        path = Path(file_path)
+        with open(path) as f:
+            if path.suffix == ".json":
+                try:
+                    data = orjson.loads(f.read())
+                except JSONDecodeError:
+                    return None
+                if isinstance(data, dict):
+                    return data
+                if isinstance(data, list) and data and isinstance(data[0], dict):
+                    return data[0]
+                return None
+
+            # JSONL: first non-empty line
+            for line in f:
+                if not (line := line.strip()):
+                    continue
+                try:
+                    record = orjson.loads(line)
+                    if isinstance(record, dict):
+                        return record
+                except JSONDecodeError:
+                    continue
+
+        return None
 
     def _count_dataset_entries(self) -> int:
         """Count the number of valid entries in a custom dataset file.

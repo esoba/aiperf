@@ -336,8 +336,183 @@ class BailianTrace(AIPerfBaseModel):
     )
 
 
+class ConfluxTokens(AIPerfBaseModel):
+    """Normalized token counts across providers."""
+
+    input: int = Field(
+        default=0,
+        description="Total input tokens processed (all input the model saw). "
+        "For Anthropic: input_tokens + cache_creation_input_tokens + cache_read_input_tokens. "
+        "For OpenAI: prompt_tokens (already includes cached).",
+    )
+    input_cached: int = Field(
+        default=0,
+        description="Tokens read from cache. "
+        "For Anthropic: cache_read_input_tokens. For OpenAI: equivalent cached tokens.",
+    )
+    input_cache_write: int = Field(
+        default=0,
+        description="Tokens written to cache. For Anthropic: cache_creation_input_tokens.",
+    )
+    output: int = Field(default=0, description="Total output tokens generated.")
+    output_reasoning: int = Field(
+        default=0,
+        description="Output tokens used for reasoning/thinking, when available from the provider.",
+    )
+
+
+class ConfluxHyperparameters(AIPerfBaseModel):
+    """Normalized generation hyperparameters extracted from the request body.
+
+    Matches the canonical keys defined in Conflux's hyperparameters.rs
+    normalization layer. Unknown keys are dropped during normalization;
+    null values are omitted.
+    """
+
+    max_tokens: int | None = Field(
+        default=None, description="Maximum tokens to generate (Anthropic max_tokens)."
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        description="Maximum output tokens (OpenAI max_completion_tokens).",
+    )
+    temperature: float | None = Field(default=None, description="Sampling temperature.")
+    top_p: float | None = Field(default=None, description="Nucleus sampling cutoff.")
+    top_k: int | None = Field(default=None, description="Top-k sampling cutoff.")
+    presence_penalty: float | None = Field(
+        default=None, description="Presence penalty for repeated tokens."
+    )
+    frequency_penalty: float | None = Field(
+        default=None, description="Frequency penalty for repeated tokens."
+    )
+    seed: int | None = Field(
+        default=None, description="Random seed for deterministic generation."
+    )
+    stop: Any = Field(default=None, description="Stop sequences or tokens.")
+    reasoning_effort: str | None = Field(
+        default=None, description="Reasoning effort level (e.g. low, medium, high)."
+    )
+    reasoning_summary: str | None = Field(
+        default=None, description="Reasoning summary mode (OpenAI-specific)."
+    )
+    text_verbosity: str | None = Field(
+        default=None, description="Text verbosity mode (OpenAI-specific)."
+    )
+
+
+class ConfluxRecord(AIPerfBaseModel):
+    """A single unified API call from a Conflux proxy capture.
+
+    Conforms to the Conflux unified canonical schema. Each record represents
+    one API request/response cycle captured via MITM proxy intercept, with
+    agent threading metadata and full request payload for verbatim replay.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    type: Literal[CustomDatasetType.CONFLUX] = CustomDatasetType.CONFLUX
+
+    id: str = Field(
+        description="Unique identifier for this API call. "
+        "Typically the provider request ID (e.g. req_...) or a synthesized key.",
+    )
+    source: str | None = Field(
+        default=None,
+        description="How this record was captured (e.g. 'proxy' for MITM proxy intercept).",
+    )
+    client: str | None = Field(
+        default=None,
+        description="Which AI coding tool made this API call (claude, codex, unknown).",
+    )
+    request_id: str | None = Field(
+        default=None,
+        description="Provider-assigned request identifier "
+        "(e.g. Anthropic req_... or OpenAI chatcmpl-...).",
+    )
+    session_id: str = Field(
+        description="Session identifier grouping related API calls in a single coding session.",
+    )
+    agent_id: str | None = Field(
+        default=None,
+        description="Identifier of the agent/persona that made this call.",
+    )
+    is_subagent: bool | None = Field(
+        default=None,
+        description="Whether this call was made by a sub-agent (e.g. a tool-spawned background task). "
+        "None means un-enriched (not yet classified by the adapter pipeline).",
+    )
+    timestamp: str = Field(
+        description="ISO 8601 timestamp when the API request was sent.",
+    )
+    duration_ms: int | float = Field(
+        default=0,
+        description="Time in milliseconds from request start to response completion.",
+    )
+    completed_at: str | None = Field(
+        default=None,
+        description="ISO 8601 timestamp when the API response completed. "
+        "Derived from timestamp + duration_ms.",
+    )
+    provider: str | None = Field(
+        default=None,
+        description="The LLM provider that served this request (anthropic, openai, unknown).",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Model identifier (e.g. claude-opus-4-6, gpt-4o).",
+    )
+    client_version: str | None = Field(
+        default=None,
+        description="Client CLI/runtime version for the calling tool (e.g. Claude Code 2.1.39).",
+    )
+    tokens: ConfluxTokens | None = Field(
+        default=None,
+        description="Normalized token counts across providers.",
+    )
+    tools: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Full tool definitions available to the model for this API call. "
+        "Each element is the complete tool object from the provider request body.",
+    )
+    messages: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Input messages from the request "
+        "(system, user, tool results, prior assistant turns).",
+    )
+    output: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="The assistant's output messages extracted from the API response "
+        "(text, tool calls, etc.).",
+    )
+    hyperparameters: ConfluxHyperparameters | None = Field(
+        default=None,
+        description="Normalized generation hyperparameters extracted from the request body.",
+    )
+    is_streaming: bool | None = Field(
+        default=None,
+        description="Whether this API call used SSE streaming. "
+        "Inferred from response Content-Type or response body format.",
+    )
+    ttft_ms: int | float | None = Field(
+        default=None,
+        description="Time to first token in milliseconds. Only present for streaming API calls. "
+        "Measured from request sent to first SSE data chunk received.",
+    )
+    base64: dict[str, str] | None = Field(
+        default=None,
+        description="Raw base64-encoded artifacts captured by the proxy. "
+        "Keys: request_body, response_body, provider_usage. "
+        "May be gzip or zstd compressed before encoding.",
+    )
+
+
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
-    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | BailianTrace,
+    bound=SingleTurn
+    | MultiTurn
+    | RandomPool
+    | MooncakeTrace
+    | BailianTrace
+    | ConfluxRecord,
 )
 """A union type of all custom data types."""

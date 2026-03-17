@@ -223,6 +223,11 @@ Start offset in milliseconds for fixed schedule replay. Skips all requests befor
 End offset in milliseconds for fixed schedule replay. Stops issuing requests after this timestamp, allowing benchmark of specific trace subsets. Requests at exactly the end offset are included. Defaults to last timestamp in dataset. Must be ≥ `--fixed-schedule-start-offset` if both specified.
 <br/>_Constraints: ≥ 0_
 
+#### `--fixed-schedule-speedup` `<float>`
+
+Scaling factor for fixed schedule timestamps. A value of 2.0 replays the schedule twice as fast (halving inter-request delays), while 0.5 replays at half speed (doubling delays). Applied at the timing layer to any dataset using `--fixed-schedule`.
+<br/>_Constraints: > 0_
+
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets.
@@ -231,7 +236,7 @@ Pre-configured public dataset to download and use for benchmarking (e.g., `share
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `mooncake_trace`/`bailian_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations — use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`bailian_trace`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
+<br/>_Choices: [`bailian_trace`, `conflux`, `mooncake_trace`, `multi_turn`, `random_pool`, `single_turn`]_
 
 #### `--dataset-sampling-strategy` `<str>`
 
@@ -245,6 +250,11 @@ Random seed for deterministic data generation. When set, makes synthetic prompts
 #### `--goodput` `<str>`
 
 Specify service level objectives (SLOs) for goodput as space-separated 'KEY:VALUE' pairs, where KEY is a metric tag and VALUE is a number in the metric's display unit (falls back to its base unit if no display unit is defined). Examples: 'request_latency:250' (ms), 'inter_token_latency:10' (ms), `output_token_throughput_per_user:600` (tokens/s). Only metrics applicable to the current endpoint/config are considered. For more context on the definition of goodput, refer to DistServe paper: https://arxiv.org/pdf/2401.09670 and the blog: https://hao-ai-lab.github.io/blogs/distserve.
+
+#### `--conflux-include-utility-calls`
+
+Include unattributed utility calls when loading Conflux proxy captures. These are lightweight model calls made by the client for housekeeping tasks (topic detection, title generation) that lack an agent_id and may fall outside the main session timeline. Only applies to --custom-dataset-type conflux.
+<br/>_Flag (no value required)_
 
 ### Audio Input
 

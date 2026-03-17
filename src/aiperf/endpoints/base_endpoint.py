@@ -45,6 +45,25 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         cfg = self.model_endpoint.endpoint
         return dict(cfg.url_params) if cfg.url_params else {}
 
+    def merge_turn_params(
+        self, payload: dict[str, Any], extra_params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Merge per-turn extra parameters into a formatted payload.
+
+        Called after format_payload() when the current turn has extra_params set.
+        Default behavior is a flat update; endpoints with nested parameter
+        structures (e.g. HuggingFace TGI) should override.
+
+        Args:
+            payload: The formatted payload dict from format_payload().
+            extra_params: Per-turn hyperparameter overrides to merge.
+
+        Returns:
+            The updated payload dict.
+        """
+        payload.update(extra_params)
+        return payload
+
     @abstractmethod
     def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
         """Format request payload from RequestInfo.

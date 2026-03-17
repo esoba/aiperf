@@ -26,8 +26,8 @@ Example: 15 users, 20 turns, 1.0 QPS
 -------------------------------------------
  User | Turns | Time | Turn Visualization
 -------------------------------------------
-    1 |     - |    - | (All turns completed before t=0) ← User 1 is "virtually done"
-   16 |    20 |   0s | ████████████████████ ← New user at t=0 with all turns remaining
+    1 |     - |    - | (All turns completed before t=0) <- User 1 is "virtually done"
+   16 |    20 |   0s | ████████████████████ <- New user at t=0 with all turns remaining
     5 |     6 |   1s | ██████
     9 |    11 |   2s | ███████████
    13 |    16 |   3s | ████████████████
@@ -70,10 +70,12 @@ from aiperf.credit.structs import Credit, TurnToSend
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
+    from aiperf.credit.messages import CreditReturn
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource, SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
+    from aiperf.timing.subagent_orchestrator import SubagentOrchestrator
 
 
 def _find_alternate_spacing_step(n: int) -> int:
@@ -130,6 +132,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         stop_checker: StopConditionChecker,
         credit_issuer: CreditIssuer,
         lifecycle: PhaseLifecycle,
+        subagents: SubagentOrchestrator | None = None,
         **kwargs,
     ):
         """Initialize user-centric timing strategy with all dependencies."""
@@ -140,6 +143,10 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         self._stop_checker = stop_checker
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
+        self._subagents = subagents
+
+        if self._subagents is not None:
+            self._subagents._dispatch = self._dispatch_turn
 
         self._num_users = self._config.num_users
         self._request_rate = self._config.request_rate
@@ -160,6 +167,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         # Computed in setup_phase
         self._turn_gap: float = 0.0
         self._session_to_user: dict[str, User] = {}
+        self._child_to_parent_corr: dict[str, str] = {}
         self._initial_users: list[User] = []
         self._next_user_id: int = 1
 
@@ -329,8 +337,13 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         This maintains ideal pacing when responses arrive on time, but if the
         response is late, the max() re-aligns to current time (sends immediately).
         """
+        if self._subagents and self._subagents.intercept(credit):
+            if credit.agent_depth > 0 and credit.is_final_turn:
+                self._child_to_parent_corr.pop(credit.x_correlation_id, None)
+            return
+
         if credit.is_final_turn:
-            # User finished all their turns. New users continue spawning in execute_phase.
+            self._child_to_parent_corr.pop(credit.x_correlation_id, None)
             self._session_to_user.pop(credit.x_correlation_id, None)
             return
 
@@ -342,10 +355,39 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             )
         turn = TurnToSend.from_previous_credit(credit)
 
-        # If the next turn time already passed, the max() will
-        # re-align their schedule to account for the delay.
         user.next_send_time = max(current_sec, user.next_send_time + self._turn_gap)
         self._scheduler.schedule_at_perf_sec(
             user.next_send_time,
             self._credit_issuer.issue_credit(turn),
         )
+
+    def _dispatch_turn(self, turn: TurnToSend) -> None:
+        """Dispatch callback for SubagentOrchestrator: schedule turn immediately."""
+        self._scheduler.execute_async(
+            self._credit_issuer.issue_credit(turn),
+        )
+
+    def on_child_session_started(
+        self, corr_id: str, depth: int, parent_corr_id: str
+    ) -> None:
+        """Map child session to parent user for rate-limited scheduling."""
+        self._child_to_parent_corr[corr_id] = parent_corr_id
+
+    def on_request_complete(self, credit_return: CreditReturn) -> None:
+        if self._subagents and credit_return.error:
+            self._subagents.terminate_child(credit_return.credit)
+
+    def on_cancelled_return(self, credit: Credit) -> None:
+        if self._subagents:
+            self._subagents.terminate_child(credit)
+
+    def on_child_stopped(self, credit: Credit) -> None:
+        if self._subagents:
+            self._subagents.terminate_child(credit)
+
+    def cleanup(self) -> None:
+        if self._subagents:
+            self._subagents.cleanup()
+
+    def get_subagent_stats(self) -> dict[str, int]:
+        return self._subagents.get_stats() if self._subagents else {}

@@ -1201,6 +1201,18 @@ def is_trace_dataset(name: str) -> bool:
     return get_dataset_loader_metadata(name).is_trace
 
 
+def supports_timing(name: str) -> bool:
+    """Check if a custom dataset loader declares timing support.
+
+    Args:
+        name: Dataset loader plugin name.
+
+    Returns:
+        True if the loader declares ``supports_timing: true`` in plugin metadata.
+    """
+    return get_dataset_loader_metadata(name).supports_timing
+
+
 # Mapping of categories to their metadata classes (for categories with typed metadata)
 _CATEGORY_METADATA_CLASSES: dict[str, type] = {
     "endpoint": EndpointMetadata,

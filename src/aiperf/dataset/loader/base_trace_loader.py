@@ -6,6 +6,7 @@ from typing import Any, Generic, TypeVar
 
 from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.config.user_config import UserConfig
+from aiperf.common.enums import TurnThreadingMode
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.generator.prompt import PromptGenerator
@@ -215,6 +216,14 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         """
         return getattr(trace, "text_input", None)
 
+    def _infer_threading_mode(self, traces: list[TraceT]) -> TurnThreadingMode | None:
+        """Infer turn_threading_mode from trace data when not explicitly set.
+
+        Override in subclasses to auto-detect based on trace content.
+        Default returns None (falls through to global THREAD_ASSISTANT_RESPONSES default).
+        """
+        return None
+
     def _build_turn(self, trace: TraceT, prompt: str) -> Turn:
         """Build a :class:`Turn` from trace data and a generated prompt.
 
@@ -299,7 +308,12 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         # Phase 3: Build final conversation objects
         conversations: list[Conversation] = []
         for session_id, trace_prompt_pairs in conversations_data.items():
-            conversation = Conversation(session_id=session_id)
+            traces_in_session = [trace for trace, _ in trace_prompt_pairs]
+            threading_mode = self._infer_threading_mode(traces_in_session)
+
+            conversation = Conversation(
+                session_id=session_id, turn_threading_mode=threading_mode
+            )
             for trace, prompt in trace_prompt_pairs:
                 conversation.turns.append(self._build_turn(trace, prompt))
             conversations.append(conversation)

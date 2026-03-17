@@ -89,6 +89,19 @@ class InputConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def validate_no_double_speedup(self) -> Self:
+        """Reject combining synthesis speedup with fixed-schedule speedup."""
+        if (
+            self.synthesis.speedup_ratio != 1.0
+            and self.fixed_schedule_speedup is not None
+        ):
+            raise ValueError(
+                "--synthesis-speedup-ratio and --fixed-schedule-speedup cannot be used together. "
+                "Use --fixed-schedule-speedup to control replay speed at the timing layer."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_dataset_type(self) -> Self:
         """Validate the different dataset type configuration."""
         if self.public_dataset is not None and self.custom_dataset_type is not None:
@@ -260,6 +273,20 @@ class InputConfig(BaseConfig):
         ),
     ] = InputDefaults.FIXED_SCHEDULE_END_OFFSET
 
+    fixed_schedule_speedup: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Scaling factor for fixed schedule timestamps. A value of 2.0 replays the schedule twice as fast "
+            "(halving inter-request delays), while 0.5 replays at half speed (doubling delays). "
+            "Applied at the timing layer to any dataset using `--fixed-schedule`.",
+        ),
+        CLIParameter(
+            name=("--fixed-schedule-speedup",),
+            group=_CLI_GROUP,
+        ),
+    ] = InputDefaults.FIXED_SCHEDULE_SPEEDUP
+
     public_dataset: Annotated[
         PublicDatasetType | None,
         Field(
@@ -340,6 +367,20 @@ class InputConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = InputDefaults.GOODPUT
+
+    conflux_include_utility_calls: Annotated[
+        bool,
+        Field(
+            description="Include unattributed utility calls when loading Conflux proxy captures. "
+            "These are lightweight model calls made by the client for housekeeping tasks "
+            "(topic detection, title generation) that lack an agent_id and may fall outside "
+            "the main session timeline. Only applies to --custom-dataset-type conflux.",
+        ),
+        CLIParameter(
+            name=("--conflux-include-utility-calls",),
+            group=_CLI_GROUP,
+        ),
+    ] = False
 
     audio: AudioConfig = AudioConfig()
     image: ImageConfig = ImageConfig()

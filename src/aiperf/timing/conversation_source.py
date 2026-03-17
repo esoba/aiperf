@@ -18,7 +18,12 @@ Terminology:
 import uuid
 from dataclasses import dataclass
 
-from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
+from aiperf.common.models import (
+    ConversationMetadata,
+    DatasetMetadata,
+    SubagentSpawnInfo,
+    TurnMetadata,
+)
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
 
@@ -41,18 +46,28 @@ class SampledSession:
     metadata: ConversationMetadata
     x_correlation_id: str
 
-    def build_first_turn(self, max_turns: int | None = None) -> TurnToSend:
+    def build_first_turn(
+        self,
+        max_turns: int | None = None,
+        agent_depth: int = 0,
+        parent_correlation_id: str | None = None,
+    ) -> TurnToSend:
         """Build first turn (turn_index=0) from sampled conversation.
 
         Args:
             max_turns: The maximum number of turns to send for this user. Simulates a user that is partially through a conversation.
                 If None, the number of turns is determined by the conversation metadata.
+            agent_depth: Nesting depth of this session. 0=root, 1=child, 2=grandchild.
+                Non-zero depth sessions skip session slot acquisition.
+            parent_correlation_id: Runtime x_correlation_id of the parent session. None for root sessions.
         """
         return TurnToSend(
             conversation_id=self.conversation_id,
             x_correlation_id=self.x_correlation_id,
             turn_index=0,
             num_turns=max_turns or len(self.metadata.turns),
+            agent_depth=agent_depth,
+            parent_correlation_id=parent_correlation_id,
         )
 
 
@@ -112,3 +127,36 @@ class ConversationSource:
                 f"(only {len(metadata.turns)} turns exist)"
             )
         return metadata.turns[next_index]
+
+    def get_turn_metadata_at(
+        self, conversation_id: str, turn_index: int
+    ) -> TurnMetadata:
+        """Get metadata for a specific turn by index."""
+        metadata = self.get_metadata(conversation_id)
+        if turn_index < 0 or turn_index >= len(metadata.turns):
+            raise ValueError(
+                f"No turn {turn_index} in conversation {conversation_id} "
+                f"(only {len(metadata.turns)} turns exist)"
+            )
+        return metadata.turns[turn_index]
+
+    def start_child_session(self, conversation_id: str) -> SampledSession:
+        """Start a specific child conversation as a new session (for subagent spawns)."""
+        metadata = self.get_metadata(conversation_id)
+        return SampledSession(
+            conversation_id=conversation_id,
+            metadata=metadata,
+            x_correlation_id=str(uuid.uuid4()),
+        )
+
+    def get_subagent_spawn(
+        self, conversation_id: str, spawn_id: str
+    ) -> SubagentSpawnInfo | None:
+        """Look up a SubagentSpawnInfo by conversation and spawn ID."""
+        metadata = self._metadata_lookup.get(conversation_id)
+        if metadata is None:
+            return None
+        for spawn in metadata.subagent_spawns:
+            if spawn.spawn_id == spawn_id:
+                return spawn
+        return None

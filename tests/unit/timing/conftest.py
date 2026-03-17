@@ -143,6 +143,7 @@ def create_orchestrator_harness(mock_zmq, time_traveler):
         timing_mode: TimingMode | None = None,
         auto_offset_timestamps: bool = False,
         fixed_schedule_start_offset: int | None = None,
+        fixed_schedule_speedup: float | None = None,
     ) -> OrchestratorHarness:
         if schedule is not None:
             dataset = make_dataset_with_schedule(schedule, sampling_strategy)
@@ -182,6 +183,7 @@ def create_orchestrator_harness(mock_zmq, time_traveler):
             random_seed=random_seed,
             auto_offset_timestamps=auto_offset_timestamps,
             fixed_schedule_start_offset=fixed_schedule_start_offset,
+            fixed_schedule_speedup=fixed_schedule_speedup,
         )
         router = MockCreditRouter()
         pub = MagicMock()
@@ -320,6 +322,7 @@ def make_phase_config(
     auto_offset_timestamps: bool = False,
     fixed_schedule_start_offset: int | None = None,
     fixed_schedule_end_offset: int | None = None,
+    fixed_schedule_speedup: float | None = None,
     concurrency_ramp_duration_sec: float | None = None,
     prefill_concurrency_ramp_duration_sec: float | None = None,
     request_rate_ramp_duration_sec: float | None = None,
@@ -340,6 +343,7 @@ def make_phase_config(
         auto_offset_timestamps=auto_offset_timestamps,
         fixed_schedule_start_offset=fixed_schedule_start_offset,
         fixed_schedule_end_offset=fixed_schedule_end_offset,
+        fixed_schedule_speedup=fixed_schedule_speedup,
         concurrency_ramp_duration_sec=concurrency_ramp_duration_sec,
         prefill_concurrency_ramp_duration_sec=prefill_concurrency_ramp_duration_sec,
         request_rate_ramp_duration_sec=request_rate_ramp_duration_sec,
@@ -364,6 +368,7 @@ def make_timing_config(
     auto_offset_timestamps: bool = False,
     fixed_schedule_start_offset: int | None = None,
     fixed_schedule_end_offset: int | None = None,
+    fixed_schedule_speedup: float | None = None,
     phase_configs: list[CreditPhaseConfig] | None = None,
     concurrency_ramp_duration_sec: float | None = None,
     prefill_concurrency_ramp_duration_sec: float | None = None,
@@ -386,6 +391,7 @@ def make_timing_config(
                 auto_offset_timestamps=auto_offset_timestamps,
                 fixed_schedule_start_offset=fixed_schedule_start_offset,
                 fixed_schedule_end_offset=fixed_schedule_end_offset,
+                fixed_schedule_speedup=fixed_schedule_speedup,
                 concurrency_ramp_duration_sec=concurrency_ramp_duration_sec,
                 prefill_concurrency_ramp_duration_sec=prefill_concurrency_ramp_duration_sec,
                 request_rate_ramp_duration_sec=request_rate_ramp_duration_sec,

@@ -188,7 +188,7 @@ class TestMooncakeTraceRequestCount:
 
 
 class TestTraceDatasetTimingDetection:
-    """Test _should_use_fixed_schedule_for_trace_dataset() for automatic timing detection."""
+    """Test _should_auto_enable_fixed_schedule() for automatic timing detection."""
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
@@ -210,7 +210,7 @@ class TestTraceDatasetTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config._should_use_fixed_schedule_for_trace_dataset()
+            result = config._should_auto_enable_fixed_schedule()
             assert result is True
 
     @patch("pathlib.Path.exists", return_value=True)
@@ -233,7 +233,7 @@ class TestTraceDatasetTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config._should_use_fixed_schedule_for_trace_dataset()
+            result = config._should_auto_enable_fixed_schedule()
             assert result is False
 
     @patch("pathlib.Path.exists", return_value=True)
@@ -251,7 +251,7 @@ class TestTraceDatasetTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            result = config._should_use_fixed_schedule_for_trace_dataset()
+            result = config._should_auto_enable_fixed_schedule()
             assert result is False
 
     @patch("pathlib.Path.exists", return_value=True)
@@ -281,7 +281,7 @@ class TestTraceDatasetTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            has_timestamps = config._should_use_fixed_schedule_for_trace_dataset()
+            has_timestamps = config._should_auto_enable_fixed_schedule()
             assert has_timestamps is True
 
     @patch("pathlib.Path.exists", return_value=True)
@@ -299,7 +299,7 @@ class TestTraceDatasetTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            assert config._should_use_fixed_schedule_for_trace_dataset() is False
+            assert config._should_auto_enable_fixed_schedule() is False
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.is_file", return_value=True)
@@ -321,4 +321,4 @@ class TestTraceDatasetTimingDetection:
         )
 
         with patch("builtins.open", mock_open(read_data=mock_file_content)):
-            assert config._should_use_fixed_schedule_for_trace_dataset() is False
+            assert config._should_auto_enable_fixed_schedule() is False

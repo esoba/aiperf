@@ -202,6 +202,22 @@ class PhaseRunner(TaskManagerMixin):
         StrategyClass = plugins.get_class(
             PluginType.TIMING_STRATEGY, self._config.timing_mode
         )
+        strategy_kwargs: dict = {}
+
+        has_subagents = any(
+            c.subagent_spawns
+            for c in self._conversation_source.dataset_metadata.conversations
+        )
+        if has_subagents:
+            from aiperf.timing.subagent_orchestrator import SubagentOrchestrator
+
+            strategy_kwargs["subagents"] = SubagentOrchestrator(
+                conversation_source=self._conversation_source,
+                credit_issuer=self._credit_issuer,
+                stop_checker=self._stop_checker,
+                scheduler=self._scheduler,
+            )
+
         strategy: TimingStrategyProtocol = StrategyClass(
             config=self._config,
             conversation_source=self._conversation_source,
@@ -209,6 +225,7 @@ class PhaseRunner(TaskManagerMixin):
             stop_checker=self._stop_checker,
             credit_issuer=self._credit_issuer,
             lifecycle=self._lifecycle,
+            **strategy_kwargs,
         )
 
         try:

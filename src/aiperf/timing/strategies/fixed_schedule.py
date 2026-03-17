@@ -19,10 +19,12 @@ from aiperf.credit.structs import Credit, TurnToSend
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
+    from aiperf.credit.messages import CreditReturn
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
+    from aiperf.timing.subagent_orchestrator import SubagentOrchestrator
 
 
 class ScheduleEntry(NamedTuple):
@@ -37,9 +39,6 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
 
     Sends first turns at precise timestamps from conversation metadata.
     Subsequent turns dispatched immediately or after calculated delay.
-
-    This is a pure timing strategy - no lifecycle or orchestration concerns.
-    The PhaseRunner handles all orchestration.
     """
 
     def __init__(
@@ -51,47 +50,41 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         credit_issuer: CreditIssuer,
         lifecycle: PhaseLifecycle,
         stop_checker: StopConditionChecker,
+        subagents: SubagentOrchestrator | None = None,
         **kwargs,
     ):
-        """Initialize fixed schedule timing strategy with all dependencies."""
         super().__init__(logger_name="FixedScheduleTiming")
         self._config = config
         self._conversation_source = conversation_source
         self._scheduler = scheduler
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
+        self._subagents = subagents
+        self._time_scale = 1.0 / (config.fixed_schedule_speedup or 1.0)
 
-        # Computed in setup_phase
         self._absolute_schedule: list[ScheduleEntry] = []
         self._schedule_zero_ms: float = 0.0
 
-    def _timestamp_to_perf_sec(self, timestamp_ms: int | float) -> float:
-        """Convert trace timestamp in milliseconds to perf counter seconds.
+        if self._subagents is not None:
+            self._subagents._dispatch = self._dispatch_turn
 
-        Uses the offset from the schedule zero to calculate the target performance seconds.
-        """
-        target_offset_sec = (timestamp_ms - self._schedule_zero_ms) / MILLIS_PER_SECOND
+    def _timestamp_to_perf_sec(self, timestamp_ms: int | float) -> float:
+        """Convert trace timestamp in milliseconds to perf counter seconds."""
+        scaled_offset_ms = (timestamp_ms - self._schedule_zero_ms) * self._time_scale
+        target_offset_sec = scaled_offset_ms / MILLIS_PER_SECOND
         return self._lifecycle.started_at_perf_sec + target_offset_sec
 
     async def setup_phase(self) -> None:
-        """Build absolute schedule from dataset metadata.
+        """Build absolute schedule from dataset metadata."""
+        self._absolute_schedule = []
 
-        Dataset is already filtered by loader (e.g., mooncake_trace._timestamp_within_offsets),
-        so we just validate and build the schedule.
-        """
-        self._absolute_schedule = []  # Fresh schedule for each phase
-
-        # Validate and build schedule
         for conv in self._conversation_source.dataset_metadata.conversations:
-            if not conv.turns:
+            if not conv.turns or conv.agent_depth > 0:
                 continue
-
-            # Validate first turn has timestamp (required for fixed schedule mode)
             if conv.turns[0].timestamp_ms is None:
                 raise ValueError(
                     f"First turn of {conv.conversation_id} missing timestamp_ms"
                 )
-
             self._absolute_schedule.append(
                 ScheduleEntry(
                     timestamp_ms=conv.turns[0].timestamp_ms,
@@ -108,7 +101,6 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
             raise ValueError("No conversations with valid first-turn timestamps found")
 
         self._absolute_schedule.sort(key=lambda x: x.timestamp_ms)
-        # Calculate schedule zero (dataset already filtered by loader)
         if self._config.auto_offset_timestamps:
             self._schedule_zero_ms = self._absolute_schedule[0].timestamp_ms
         elif self._config.fixed_schedule_start_offset is not None:
@@ -116,20 +108,20 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         else:
             self._schedule_zero_ms = 0.0
 
+        speedup_msg = (
+            f", speedup={self._config.fixed_schedule_speedup}x"
+            if self._config.fixed_schedule_speedup
+            else ""
+        )
         self.info(
             f"Built schedule with {len(self._absolute_schedule)} timestamps, "
             f"zero_ms={self._schedule_zero_ms:.0f}, "
             f"auto_offset={self._config.auto_offset_timestamps}"
+            f"{speedup_msg}"
         )
 
     async def execute_phase(self) -> None:
-        """Execute absolute schedule: send first turns at precise timestamps.
-
-        Note: Subsequent turns are handled by handle_credit_return.
-
-        Raises:
-            RuntimeError: If started_at_perf_ns is not set in the lifecycle
-        """
+        """Execute absolute schedule: send first turns at precise timestamps."""
         if self._lifecycle.started_at_perf_ns is None:
             raise RuntimeError("started_at_perf_ns is not set in the lifecycle")
 
@@ -139,30 +131,62 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
                 self._credit_issuer.issue_credit(entry.turn),
             )
 
-    async def handle_credit_return(
-        self,
-        credit: Credit,
-    ) -> None:
-        """Handle credit return: dispatch next turn based on trace timing.
+        if self._subagents:
+            self._subagents.dispatch_turn0_background_spawns()
 
-        Calculates delay from timestamp_ms or delay_ms metadata, then issues
-        credit immediately (delay=0) or schedules for later (delay>0).
-        """
+    async def handle_credit_return(self, credit: Credit) -> None:
+        """Handle credit return: dispatch next turn based on trace timing."""
+        if self._subagents and self._subagents.intercept(credit):
+            return
+
         if credit.is_final_turn:
             return
 
-        # This contains the delay_ms or timestamp_ms for the next turn
         next_meta = self._conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit)
+        self._dispatch_by_timing(turn, next_meta.timestamp_ms, next_meta.delay_ms)
 
-        if next_meta.timestamp_ms is not None:
+    def on_request_complete(self, credit_return: CreditReturn) -> None:
+        if self._subagents and credit_return.error:
+            self._subagents.terminate_child(credit_return.credit)
+
+    def on_cancelled_return(self, credit: Credit) -> None:
+        if self._subagents:
+            self._subagents.terminate_child(credit)
+
+    def on_child_stopped(self, credit: Credit) -> None:
+        if self._subagents:
+            self._subagents.terminate_child(credit)
+
+    def cleanup(self) -> None:
+        if self._subagents:
+            self._subagents.cleanup()
+
+    def get_subagent_stats(self) -> dict[str, int]:
+        return self._subagents.get_stats() if self._subagents else {}
+
+    def _dispatch_turn(self, turn: TurnToSend) -> None:
+        """Dispatch callback for SubagentOrchestrator: look up timing and schedule."""
+        meta = self._conversation_source.get_turn_metadata_at(
+            turn.conversation_id, turn.turn_index
+        )
+        self._dispatch_by_timing(turn, meta.timestamp_ms, meta.delay_ms)
+
+    def _dispatch_by_timing(
+        self,
+        turn: TurnToSend,
+        timestamp_ms: int | float | None,
+        delay_ms: int | float | None,
+    ) -> None:
+        """Dispatch a turn using timestamp, delay, or immediate execution."""
+        if timestamp_ms is not None:
             self._scheduler.schedule_at_perf_sec(
-                self._timestamp_to_perf_sec(next_meta.timestamp_ms),
+                self._timestamp_to_perf_sec(timestamp_ms),
                 self._credit_issuer.issue_credit(turn),
             )
-        elif next_meta.delay_ms is not None:
+        elif delay_ms is not None:
             self._scheduler.schedule_later(
-                next_meta.delay_ms / MILLIS_PER_SECOND,
+                delay_ms * self._time_scale / MILLIS_PER_SECOND,
                 self._credit_issuer.issue_credit(turn),
             )
         else:

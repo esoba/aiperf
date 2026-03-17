@@ -56,6 +56,8 @@ navigation:
       path: ../../docs/tutorials/sequence-distributions.md
     - page: Prefix Data Synthesis Tutorial
       path: ../../docs/tutorials/prefix-synthesis.md
+    - page: Replaying AI Coding Sessions with Conflux Traces
+      path: ../../docs/tutorials/conflux-trace.md
   - section: Load Patterns & Scheduling
     collapsed: true
     contents:

@@ -96,6 +96,23 @@ class CommandResponseStatus(CaseInsensitiveStrEnum):
     UNHANDLED = "unhandled"  # The command was received but not handled by any hook
 
 
+class TurnThreadingMode(CaseInsensitiveStrEnum):
+    """Controls how prior turns are accumulated in multi-turn conversations.
+
+    The threading mode is a property of how the dataset was constructed.
+    It determines what conversation history is included in each request.
+    """
+
+    THREAD_ASSISTANT_RESPONSES = "thread_assistant_responses"
+    """Standard multi-turn chat. Both user and assistant turns are kept in history."""
+
+    SKIP_ASSISTANT_RESPONSES = "skip_assistant_responses"
+    """Delta-compressed prompts. Dataset turns accumulate but live inference responses are discarded."""
+
+    ISOLATED_TURNS = "isolated_turns"
+    """Self-contained prompts. Each turn already has full context; no prior turns included."""
+
+
 class ConnectionReuseStrategy(CaseInsensitiveStrEnum):
     """Transport connection reuse strategy. Controls how and when connections are reused across requests."""
 

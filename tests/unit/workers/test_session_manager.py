@@ -1,13 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for UserSessionManager to ensure Credit.num_turns is respected.
+"""Unit tests for UserSessionManager.
 
-These tests ensure that the worker properly uses Credit.num_turns instead of
-len(conversation.turns), which is critical for ramp-up users who start mid-session.
+Tests ensure:
+- Credit.num_turns is respected (ramp-up users who start mid-session)
+- TurnThreadingMode controls history accumulation and response storage
 """
 
 import pytest
 
+from aiperf.common.enums import TurnThreadingMode
 from aiperf.common.models import Conversation, Turn
 from aiperf.workers.session_manager import UserSessionManager
 
@@ -179,3 +181,298 @@ class TestUserSessionManager:
         )
 
         assert session.url_index is None
+
+
+# =========================================================================
+# TurnThreadingMode resolution tests
+# =========================================================================
+
+
+class TestTurnThreadingModeResolution:
+    """Tests for TurnThreadingMode precedence: conversation > dataset default > global."""
+
+    @pytest.fixture
+    def session_manager(self):
+        return UserSessionManager()
+
+    @pytest.fixture
+    def conversation_3_turns(self):
+        return Conversation(
+            session_id="mode-test",
+            turns=[
+                Turn(texts=[], role="user"),
+                Turn(texts=[], role="user"),
+                Turn(texts=[], role="user"),
+            ],
+        )
+
+    @pytest.mark.parametrize(
+        "mode",
+        [
+            TurnThreadingMode.THREAD_ASSISTANT_RESPONSES,
+            TurnThreadingMode.SKIP_ASSISTANT_RESPONSES,
+            TurnThreadingMode.ISOLATED_TURNS,
+        ],
+    )
+    def test_conversation_override_takes_precedence(
+        self, session_manager, conversation_3_turns, mode
+    ):
+        conversation_3_turns.turn_threading_mode = mode
+        session = session_manager.create_and_store(
+            x_correlation_id="c1",
+            conversation=conversation_3_turns,
+            num_turns=3,
+        )
+        assert session.turn_threading_mode == mode
+
+    def test_dataset_default_used_when_conversation_has_none(
+        self, session_manager, conversation_3_turns
+    ):
+        session_manager.set_default_threading_mode(TurnThreadingMode.ISOLATED_TURNS)
+        session = session_manager.create_and_store(
+            x_correlation_id="c2",
+            conversation=conversation_3_turns,
+            num_turns=3,
+        )
+        assert session.turn_threading_mode == TurnThreadingMode.ISOLATED_TURNS
+
+    def test_conversation_overrides_dataset_default(
+        self, session_manager, conversation_3_turns
+    ):
+        session_manager.set_default_threading_mode(
+            TurnThreadingMode.SKIP_ASSISTANT_RESPONSES
+        )
+        conversation_3_turns.turn_threading_mode = (
+            TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="c3",
+            conversation=conversation_3_turns,
+            num_turns=3,
+        )
+        assert (
+            session.turn_threading_mode == TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
+        )
+
+    def test_global_default_when_both_none(self, session_manager, conversation_3_turns):
+        session = session_manager.create_and_store(
+            x_correlation_id="c4",
+            conversation=conversation_3_turns,
+            num_turns=3,
+        )
+        assert (
+            session.turn_threading_mode == TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
+        )
+
+
+# =========================================================================
+# should_store_response tests
+# =========================================================================
+
+
+class TestShouldStoreResponse:
+    """Tests for should_store_response() gating per threading mode."""
+
+    @pytest.fixture
+    def session_manager(self):
+        return UserSessionManager()
+
+    @pytest.fixture
+    def conversation_3_turns(self):
+        return Conversation(
+            session_id="store-test",
+            turns=[
+                Turn(texts=[], role="user"),
+                Turn(texts=[], role="user"),
+                Turn(texts=[], role="user"),
+            ],
+        )
+
+    @pytest.mark.parametrize(
+        "mode,expected",
+        [
+            (TurnThreadingMode.THREAD_ASSISTANT_RESPONSES, True),
+            (TurnThreadingMode.SKIP_ASSISTANT_RESPONSES, False),
+            (TurnThreadingMode.ISOLATED_TURNS, False),
+        ],
+    )
+    def test_store_response_per_mode(
+        self, session_manager, conversation_3_turns, mode, expected
+    ):
+        conversation_3_turns.turn_threading_mode = mode
+        session = session_manager.create_and_store(
+            x_correlation_id="sr1",
+            conversation=conversation_3_turns,
+            num_turns=3,
+        )
+        assert session.should_store_response() is expected
+
+
+# =========================================================================
+# Turn list accumulation tests per threading mode
+# =========================================================================
+
+
+class TestTurnListAccumulation:
+    """Tests for turn_list contents under each threading mode."""
+
+    @pytest.fixture
+    def session_manager(self):
+        return UserSessionManager()
+
+    @pytest.fixture
+    def conversation_3_turns(self):
+        return Conversation(
+            session_id="acc-test",
+            turns=[
+                Turn(texts=[], role="user"),
+                Turn(texts=[], role="user"),
+                Turn(texts=[], role="user"),
+            ],
+        )
+
+    def _make_response_turn(self) -> Turn:
+        return Turn(texts=[], role="assistant")
+
+    def test_thread_assistant_responses_full_history(
+        self, session_manager, conversation_3_turns
+    ):
+        """THREAD_ASSISTANT_RESPONSES: turn_list accumulates all user + assistant turns."""
+        conversation_3_turns.turn_threading_mode = (
+            TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="ta1",
+            conversation=conversation_3_turns,
+            num_turns=3,
+        )
+        session.advance_turn(0)
+        session.store_response(self._make_response_turn())
+        session.advance_turn(1)
+        session.store_response(self._make_response_turn())
+        session.advance_turn(2)
+
+        assert len(session.turn_list) == 5  # Q0, A0, Q1, A1, Q2
+
+    def test_skip_assistant_responses_user_turns_only(
+        self, session_manager, conversation_3_turns
+    ):
+        """SKIP_ASSISTANT_RESPONSES: turn_list has user turns only (responses not stored)."""
+        conversation_3_turns.turn_threading_mode = (
+            TurnThreadingMode.SKIP_ASSISTANT_RESPONSES
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="sa1",
+            conversation=conversation_3_turns,
+            num_turns=3,
+        )
+        session.advance_turn(0)
+        # should_store_response() is False, so worker would skip store_response
+        assert not session.should_store_response()
+        session.advance_turn(1)
+        session.advance_turn(2)
+
+        assert len(session.turn_list) == 3  # Q0, Q1, Q2
+
+    def test_isolated_turns_only_current(self, session_manager, conversation_3_turns):
+        """ISOLATED_TURNS: turn_list always has exactly the current turn."""
+        conversation_3_turns.turn_threading_mode = TurnThreadingMode.ISOLATED_TURNS
+        session = session_manager.create_and_store(
+            x_correlation_id="it1",
+            conversation=conversation_3_turns,
+            num_turns=3,
+        )
+        session.advance_turn(0)
+        assert len(session.turn_list) == 1
+        first = session.turn_list[0]
+
+        session.advance_turn(1)
+        assert len(session.turn_list) == 1
+        assert session.turn_list[0] is not first  # replaced, not accumulated
+
+        session.advance_turn(2)
+        assert len(session.turn_list) == 1
+
+
+# =========================================================================
+# Integration: threading mode + response storage workflow
+# =========================================================================
+
+
+class TestThreadingModeWorkflow:
+    """Integration tests combining threading mode with should_store_response."""
+
+    @pytest.fixture
+    def session_manager(self):
+        return UserSessionManager()
+
+    @pytest.fixture
+    def conversation_3_turns(self):
+        return Conversation(
+            session_id="wf-test",
+            turns=[
+                Turn(texts=[], role="user"),
+                Turn(texts=[], role="user"),
+                Turn(texts=[], role="user"),
+            ],
+        )
+
+    def _make_response_turn(self) -> Turn:
+        return Turn(texts=[], role="assistant")
+
+    def test_accumulate_stores_responses_and_sends_full_history(
+        self, session_manager, conversation_3_turns
+    ):
+        conversation_3_turns.turn_threading_mode = (
+            TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="wf1",
+            conversation=conversation_3_turns,
+            num_turns=2,
+        )
+
+        session.advance_turn(0)
+        assert session.should_store_response()
+        session.store_response(self._make_response_turn())
+        assert len(session.turn_list) == 2  # Q0, A0
+
+        session.advance_turn(1)
+        assert len(session.turn_list) == 3  # Q0, A0, Q1
+
+    def test_skip_responses_sends_user_turns_only(
+        self, session_manager, conversation_3_turns
+    ):
+        conversation_3_turns.turn_threading_mode = (
+            TurnThreadingMode.SKIP_ASSISTANT_RESPONSES
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="wf2",
+            conversation=conversation_3_turns,
+            num_turns=2,
+        )
+
+        session.advance_turn(0)
+        assert not session.should_store_response()
+        # Worker skips store_response
+        assert len(session.turn_list) == 1  # Q0
+
+        session.advance_turn(1)
+        assert len(session.turn_list) == 2  # Q0, Q1
+
+    def test_standalone_sends_only_current_turn(
+        self, session_manager, conversation_3_turns
+    ):
+        conversation_3_turns.turn_threading_mode = TurnThreadingMode.ISOLATED_TURNS
+        session = session_manager.create_and_store(
+            x_correlation_id="wf3",
+            conversation=conversation_3_turns,
+            num_turns=2,
+        )
+
+        session.advance_turn(0)
+        assert not session.should_store_response()
+        assert len(session.turn_list) == 1
+
+        session.advance_turn(1)
+        assert len(session.turn_list) == 1

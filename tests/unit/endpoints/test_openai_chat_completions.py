@@ -2,16 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
-from aiperf.common.enums import ModelSelectionStrategy
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
+from aiperf.common.models import Text, Turn
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
-from tests.unit.endpoints.conftest import create_request_info
+from tests.unit.endpoints.conftest import (
+    create_endpoint_with_mock_transport,
+    create_model_endpoint,
+    create_request_info,
+)
 
 
 class TestChatEndpoint:
@@ -19,21 +17,13 @@ class TestChatEndpoint:
 
     @pytest.fixture
     def model_endpoint(self):
-        return ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.RANDOM,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000",
-                custom_endpoint="/v1/chat/completions",
-                api_key="test-api-key",
-            ),
-        )
+        return create_model_endpoint(EndpointType.CHAT)
 
-    def test_format_payload_basic(self, model_endpoint, sample_conversations):
-        endpoint = ChatEndpoint(model_endpoint)
+    @pytest.fixture
+    def endpoint(self, model_endpoint):
+        return ChatEndpoint(model_endpoint)
+
+    def test_format_payload_basic(self, endpoint, model_endpoint, sample_conversations):
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
@@ -52,9 +42,8 @@ class TestChatEndpoint:
         assert payload == expected_payload
 
     def test_format_payload_with_max_tokens_and_streaming(
-        self, model_endpoint, sample_conversations
+        self, endpoint, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         turns[0].max_tokens = 42
@@ -76,9 +65,8 @@ class TestChatEndpoint:
         assert payload == expected_payload
 
     def test_format_payload_with_extra_options(
-        self, model_endpoint, sample_conversations
+        self, endpoint, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         model_endpoint.endpoint.extra = {"ignore_eos": True, "temperature": 0.7}
@@ -100,9 +88,8 @@ class TestChatEndpoint:
         assert payload == expected_payload
 
     def test_format_payload_multiple_turns_with_text_and_image(
-        self, model_endpoint, sample_conversations
+        self, endpoint, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
         # Create a turn with both text and image
         turns = sample_conversations["session_1"].turns
         turns[0].images = type("ImageList", (), {})()
@@ -134,8 +121,9 @@ class TestChatEndpoint:
         }
         assert payload == expected_payload
 
-    def test_format_payload_with_audio(self, model_endpoint, sample_conversations):
-        endpoint = ChatEndpoint(model_endpoint)
+    def test_format_payload_with_audio(
+        self, endpoint, model_endpoint, sample_conversations
+    ):
         turn = sample_conversations["session_1"].turns[0]
         turn.audios = [type("Audio", (), {"contents": ["mp3,ZmFrZV9hdWRpbw=="]})()]
         turns = [turn]
@@ -162,8 +150,7 @@ class TestChatEndpoint:
         }
         assert payload == expected_payload
 
-    def test_create_messages_hotfix(self, model_endpoint, sample_conversations):
-        endpoint = ChatEndpoint(model_endpoint)
+    def test_create_messages_hotfix(self, endpoint, sample_conversations):
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         messages = endpoint._create_messages(turns, None, None)
@@ -171,10 +158,7 @@ class TestChatEndpoint:
         assert messages[0]["name"] == turn.texts[0].name
         assert messages[0]["content"] == turn.texts[0].contents[0]
 
-    def test_create_messages_with_empty_content(
-        self, model_endpoint, sample_conversations
-    ):
-        endpoint = ChatEndpoint(model_endpoint)
+    def test_create_messages_with_empty_content(self, endpoint, sample_conversations):
         turn = sample_conversations["session_1"].turns[0]
         turn.texts[0].contents = [""]
         turns = [turn]
@@ -183,10 +167,7 @@ class TestChatEndpoint:
         assert messages[0]["name"] == turn.texts[0].name
         assert messages[0]["content"] == ""
 
-    def test_create_messages_audio_format_error(
-        self, model_endpoint, sample_conversations
-    ):
-        endpoint = ChatEndpoint(model_endpoint)
+    def test_create_messages_audio_format_error(self, endpoint, sample_conversations):
         turn = sample_conversations["session_1"].turns[0]
         turn.audios = [type("Audio", (), {"contents": ["not_base64_audio"]})()]
         turns = [turn]
@@ -212,6 +193,7 @@ class TestChatEndpoint:
     )  # fmt: skip
     def test_stream_options_auto_configuration(
         self,
+        endpoint,
         model_endpoint,
         sample_conversations,
         streaming,
@@ -220,7 +202,6 @@ class TestChatEndpoint:
         expected_stream_options,
     ):
         """Verify stream_options.include_usage is automatically configured based on flags and user settings."""
-        endpoint = ChatEndpoint(model_endpoint)
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         model_endpoint.endpoint.streaming = streaming
@@ -237,10 +218,7 @@ class TestChatEndpoint:
             assert payload["stream_options"] == expected_stream_options
             endpoint._create_messages(turns, None, None)
 
-    def test_create_messages_with_system_message(
-        self, model_endpoint, sample_conversations
-    ):
-        endpoint = ChatEndpoint(model_endpoint)
+    def test_create_messages_with_system_message(self, endpoint, sample_conversations):
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
@@ -254,9 +232,8 @@ class TestChatEndpoint:
         assert messages[1]["content"] == turn.texts[0].contents[0]
 
     def test_create_messages_with_user_context_message(
-        self, model_endpoint, sample_conversations
+        self, endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         user_context = "The user is working on a Python project."
@@ -270,9 +247,8 @@ class TestChatEndpoint:
         assert messages[1]["content"] == turn.texts[0].contents[0]
 
     def test_create_messages_with_both_context_messages(
-        self, model_endpoint, sample_conversations
+        self, endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
@@ -290,9 +266,8 @@ class TestChatEndpoint:
         assert messages[2]["content"] == turn.texts[0].contents[0]
 
     def test_create_messages_with_context_and_multiple_turns(
-        self, model_endpoint, sample_conversations
+        self, endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
         turns = sample_conversations["session_1"].turns
         system_message = "You are a helpful AI assistant."
         user_context = "The user is working on a Python project."
@@ -311,9 +286,8 @@ class TestChatEndpoint:
         assert messages[3]["role"] == turns[1].role
 
     def test_format_payload_with_context_messages(
-        self, model_endpoint, sample_conversations
+        self, endpoint, model_endpoint, sample_conversations
     ):
-        endpoint = ChatEndpoint(model_endpoint)
         turn = sample_conversations["session_1"].turns[0]
         turns = [turn]
         system_message = "You are a helpful AI assistant."
@@ -338,3 +312,205 @@ class TestChatEndpoint:
         assert payload["messages"][1]["content"] == user_context
         # Third message should be the turn
         assert payload["messages"][2]["role"] == (turn.role or "user")
+
+
+class TestChatEndpointRawMessages:
+    """Tests for raw_messages verbatim replay in ChatEndpoint."""
+
+    @pytest.fixture
+    def model_endpoint(self):
+        return create_model_endpoint(EndpointType.CHAT)
+
+    @pytest.fixture
+    def endpoint(self, model_endpoint):
+        return create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+
+    def test_raw_messages_replaces_entire_message(self, endpoint, model_endpoint):
+        """Turn with raw_messages produces those exact dicts in the messages list."""
+        raw = {
+            "role": "assistant",
+            "content": "hi",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_file", "arguments": '{"path": "a.py"}'},
+                }
+            ],
+        }
+        turn = Turn(raw_messages=[raw], model="test-model")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"] == [raw]
+
+    def test_raw_messages_with_tool_role(self, endpoint, model_endpoint):
+        """Turn with raw_messages for a tool result message works."""
+        raw = {"role": "tool", "tool_call_id": "call_1", "content": "file contents"}
+        turn = Turn(raw_messages=[raw], model="test-model")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"] == [raw]
+        assert payload["messages"][0]["role"] == "tool"
+        assert payload["messages"][0]["tool_call_id"] == "call_1"
+
+    def test_raw_messages_string_content(self, endpoint, model_endpoint):
+        """raw_messages with string content works."""
+        turn = Turn(
+            raw_messages=[{"role": "user", "content": "verbatim content"}],
+            model="test-model",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"][0]["role"] == "user"
+        assert payload["messages"][0]["content"] == "verbatim content"
+
+    def test_raw_messages_mixed_with_normal_turns(self, endpoint, model_endpoint):
+        """raw_messages turns can be mixed with normal turns."""
+        raw = {"role": "tool", "tool_call_id": "call_1", "content": "result"}
+        turns = [
+            Turn(texts=[Text(contents=["Hello"])], role="user", model="test-model"),
+            Turn(raw_messages=[raw], model="test-model"),
+            Turn(texts=[Text(contents=["Thanks"])], role="user", model="test-model"),
+        ]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 3
+        assert payload["messages"][0]["role"] == "user"
+        assert payload["messages"][0]["content"] == "Hello"
+        assert payload["messages"][1] == raw
+        assert payload["messages"][2]["role"] == "user"
+        assert payload["messages"][2]["content"] == "Thanks"
+
+    def test_raw_tools_included_in_payload(self, endpoint, model_endpoint):
+        """Tool definitions from Turn.raw_tools are included in the payload."""
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_file",
+                    "description": "Read a file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}},
+                        "required": ["path"],
+                    },
+                },
+            }
+        ]
+        turn = Turn(
+            texts=[Text(contents=["Read a.py"])],
+            role="user",
+            model="test-model",
+            raw_tools=tools,
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["tools"] == tools
+
+    def test_raw_tools_omitted_when_none(self, endpoint, model_endpoint):
+        """No tools key in payload when raw_tools is None."""
+        turn = Turn(texts=[Text(contents=["Hello"])], role="user", model="test-model")
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert "tools" not in payload
+
+    def test_raw_messages_multi_message_extends_into_messages_list(
+        self, endpoint, model_endpoint
+    ):
+        """A single turn with 3 raw_messages expands to 3 entries in messages list."""
+        turn = Turn(
+            raw_messages=[
+                {"role": "user", "content": "Hello"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": '{"path": "a.py"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "file data"},
+            ],
+            model="test-model",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 3
+        assert payload["messages"][0]["role"] == "user"
+        assert payload["messages"][1]["role"] == "assistant"
+        assert payload["messages"][2]["role"] == "tool"
+
+    def test_raw_messages_empty_list_adds_nothing(self, endpoint, model_endpoint):
+        """Turn with raw_messages=[] contributes zero messages."""
+        turns = [
+            Turn(texts=[Text(contents=["Before"])], role="user", model="test-model"),
+            Turn(raw_messages=[], model="test-model"),
+            Turn(texts=[Text(contents=["After"])], role="user", model="test-model"),
+        ]
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 2
+        assert payload["messages"][0]["content"] == "Before"
+        assert payload["messages"][1]["content"] == "After"
+
+    def test_raw_messages_with_system_and_user_context(self, endpoint, model_endpoint):
+        """System and user_context are prepended before raw_messages turns."""
+        turn = Turn(
+            raw_messages=[
+                {"role": "user", "content": "verbatim user"},
+                {"role": "assistant", "content": "verbatim assistant"},
+            ],
+            model="test-model",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            system_message="System prompt",
+            user_context_message="User context",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert len(payload["messages"]) == 4
+        assert payload["messages"][0] == {"role": "system", "content": "System prompt"}
+        assert payload["messages"][1] == {"role": "user", "content": "User context"}
+        assert payload["messages"][2] == {"role": "user", "content": "verbatim user"}
+        assert payload["messages"][3] == {
+            "role": "assistant",
+            "content": "verbatim assistant",
+        }
+
+    def test_raw_messages_takes_precedence_over_texts(self, endpoint, model_endpoint):
+        """When raw_messages is set, texts are ignored."""
+        turn = Turn(
+            raw_messages=[{"role": "user", "content": "raw wins"}],
+            texts=[Text(contents=["should be ignored"])],
+            model="test-model",
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"][0]["content"] == "raw wins"

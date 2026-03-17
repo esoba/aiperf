@@ -359,3 +359,41 @@ def test_synthesis_max_osl_requires_trace_dataset(dataset_type):
             )
 
         assert "require a trace dataset type" in str(exc.value)
+
+
+def test_double_speedup_raises_error():
+    """Test that combining synthesis speedup with fixed-schedule speedup is rejected."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        with pytest.raises(ValidationError) as exc:
+            InputConfig(
+                file=temp_file.name,
+                custom_dataset_type="mooncake_trace",
+                synthesis=SynthesisConfig(speedup_ratio=2.0),
+                fixed_schedule_speedup=2.0,
+            )
+
+        assert "--synthesis-speedup-ratio and --fixed-schedule-speedup" in str(
+            exc.value
+        )
+
+
+def test_fixed_schedule_speedup_alone_succeeds():
+    """Test that fixed-schedule speedup without synthesis speedup is fine."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = InputConfig(
+            file=temp_file.name,
+            fixed_schedule=True,
+            fixed_schedule_speedup=2.0,
+        )
+        assert config.fixed_schedule_speedup == 2.0
+
+
+def test_synthesis_speedup_alone_succeeds():
+    """Test that synthesis speedup without fixed-schedule speedup is fine."""
+    with tempfile.NamedTemporaryFile(suffix=".jsonl") as temp_file:
+        config = InputConfig(
+            file=temp_file.name,
+            custom_dataset_type="mooncake_trace",
+            synthesis=SynthesisConfig(speedup_ratio=2.0),
+        )
+        assert config.synthesis.speedup_ratio == 2.0

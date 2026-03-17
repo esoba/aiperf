@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
-from aiperf.credit.structs import Credit
+from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.conversation_source import ConversationSource
@@ -42,6 +42,7 @@ def make_strategy(
     schedule: list[tuple[int, str]],
     auto_offset: bool = True,
     manual_offset: int | None = None,
+    speedup: float | None = None,
 ) -> tuple[FixedScheduleStrategy, MagicMock, MagicMock]:
     scheduler = MagicMock()
     scheduler.schedule_at_perf_ns = MagicMock()
@@ -66,6 +67,7 @@ def make_strategy(
         total_expected_requests=len(schedule),
         auto_offset_timestamps=auto_offset,
         fixed_schedule_start_offset=manual_offset,
+        fixed_schedule_speedup=speedup,
     )
     strategy = FixedScheduleStrategy(
         config=cfg,
@@ -330,3 +332,126 @@ class TestFixedScheduleEdgeCases:
         await strategy.setup_phase()
         assert len(strategy._absolute_schedule) == 1
         assert strategy._absolute_schedule[0][0] == 0
+
+
+@pytest.mark.asyncio
+class TestFixedScheduleSpeedup:
+    @pytest.mark.parametrize(
+        "speedup,expected_time_scale",
+        [
+            (None, 1.0),
+            (1.0, 1.0),
+            (2.0, 0.5),
+            (0.5, 2.0),
+            (10.0, 0.1),
+        ],
+    )  # fmt: skip
+    async def test_time_scale_calculation(
+        self, speedup: float | None, expected_time_scale: float
+    ) -> None:
+        """Verify speedup correctly computes internal time scale."""
+        strategy, _, _ = make_strategy([(0, "c1")], speedup=speedup)
+        assert strategy._time_scale == pytest.approx(expected_time_scale)
+
+    async def test_speedup_scales_absolute_timestamps(self) -> None:
+        """Verify speedup scales the offset in _timestamp_to_perf_sec."""
+        strategy, _, lifecycle = make_strategy(
+            [(0, "c1"), (1000, "c2")], auto_offset=True, speedup=2.0
+        )
+        lifecycle.started_at_perf_sec = 1.0
+        await strategy.setup_phase()
+        # At 2x speed, 1000ms offset becomes 500ms offset
+        perf_sec = strategy._timestamp_to_perf_sec(1000)
+        assert perf_sec == pytest.approx(1.5)
+
+    async def test_speedup_scales_delay_ms(self) -> None:
+        """Verify speedup scales delay_ms in _dispatch_by_timing."""
+        strategy, scheduler, lifecycle = make_strategy([(0, "c1")], speedup=4.0)
+        lifecycle.started_at_perf_sec = 1.0
+        await strategy.setup_phase()
+        turn = TurnToSend(
+            conversation_id="c1",
+            x_correlation_id="corr-c1",
+            turn_index=1,
+            num_turns=2,
+        )
+        # Call _dispatch_by_timing directly with delay_ms only
+        strategy._dispatch_by_timing(turn, timestamp_ms=None, delay_ms=200)
+        # delay_ms=200, at 4x speed: 200 * 0.25 / 1000 = 0.05s
+        scheduler.schedule_later.assert_called_once()
+        actual_delay = scheduler.schedule_later.call_args[0][0]
+        assert actual_delay == pytest.approx(0.05)
+
+    async def test_speedup_with_auto_offset(self) -> None:
+        """Verify speedup works with auto offset (scales relative to shifted zero)."""
+        strategy, scheduler, lifecycle = make_strategy(
+            [(1000, "c1"), (1200, "c2")], auto_offset=True, speedup=2.0
+        )
+        lifecycle.started_at_perf_sec = 1.0
+        await strategy.setup_phase()
+        await strategy.execute_phase()
+        # First call: (1000 - 1000) * 0.5 / 1000 = 0s offset
+        # Second call: (1200 - 1000) * 0.5 / 1000 = 0.1s offset
+        calls = scheduler.schedule_at_perf_sec.call_args_list
+        assert len(calls) == 2
+        base = strategy._lifecycle.started_at_perf_sec
+        assert calls[0][0][0] == pytest.approx(base + 0.0)
+        assert calls[1][0][0] == pytest.approx(base + 0.1)
+
+    async def test_speedup_with_manual_offset(self) -> None:
+        """Verify speedup works with manual offset."""
+        strategy, scheduler, lifecycle = make_strategy(
+            [(1000, "c1"), (1200, "c2")],
+            auto_offset=False,
+            manual_offset=500,
+            speedup=2.0,
+        )
+        lifecycle.started_at_perf_sec = 1.0
+        await strategy.setup_phase()
+        await strategy.execute_phase()
+        # First call: (1000 - 500) * 0.5 / 1000 = 0.25s offset
+        # Second call: (1200 - 500) * 0.5 / 1000 = 0.35s offset
+        calls = scheduler.schedule_at_perf_sec.call_args_list
+        base = strategy._lifecycle.started_at_perf_sec
+        assert calls[0][0][0] == pytest.approx(base + 0.25)
+        assert calls[1][0][0] == pytest.approx(base + 0.35)
+
+    async def test_no_speedup_unchanged(self) -> None:
+        """Verify None speedup produces same results as no speedup."""
+        strategy_none, sched_none, lc_none = make_strategy(
+            [(0, "c1"), (100, "c2")], speedup=None
+        )
+        strategy_one, sched_one, lc_one = make_strategy(
+            [(0, "c1"), (100, "c2")], speedup=1.0
+        )
+        lc_none.started_at_perf_sec = 1.0
+        lc_one.started_at_perf_sec = 1.0
+        await strategy_none.setup_phase()
+        await strategy_one.setup_phase()
+        await strategy_none.execute_phase()
+        await strategy_one.execute_phase()
+        calls_none = [c[0][0] for c in sched_none.schedule_at_perf_sec.call_args_list]
+        calls_one = [c[0][0] for c in sched_one.schedule_at_perf_sec.call_args_list]
+        assert calls_none == pytest.approx(calls_one)
+
+    @pytest.mark.parametrize(
+        "speedup,expected_duration_sec",
+        [
+            (None, 0.2),   # No speedup: 200ms range = 0.2s
+            (1.0, 0.2),    # 1x: same as no speedup
+            (2.0, 0.1),    # 2x: 200ms / 2 = 0.1s
+            (4.0, 0.05),   # 4x: 200ms / 4 = 0.05s
+            (0.5, 0.4),    # 0.5x: 200ms / 0.5 = 0.4s
+        ],
+    )  # fmt: skip
+    async def test_execution_timing_with_speedup(
+        self, create_orchestrator_harness, time_traveler, speedup, expected_duration_sec
+    ) -> None:
+        """Verify speedup scales virtual execution time proportionally."""
+        schedule = [(0, "c1"), (100, "c2"), (200, "c3")]
+        h: OrchestratorHarness = create_orchestrator_harness(
+            schedule=schedule, fixed_schedule_speedup=speedup
+        )
+        with time_traveler.travels_for(expected_duration_sec, tolerance=0.05):
+            await h.run_with_auto_return()
+        assert len(h.sent_credits) == 3

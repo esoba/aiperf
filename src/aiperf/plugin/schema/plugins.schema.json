@@ -587,6 +587,12 @@
               "title": "Is Trace",
               "type": "boolean"
             },
+            "supports_timing": {
+              "default": false,
+              "description": "Whether this loader produces datasets with embedded timing data (timestamps or delays). When True, fixed_schedule timing mode is auto-enabled if the file contains timestamp fields.",
+              "title": "Supports Timing",
+              "type": "boolean"
+            },
             "default_block_size": {
               "anyOf": [
                 {

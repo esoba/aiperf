@@ -335,6 +335,14 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "options, and prefer sequential sampling with fixed_schedule timing."
         ),
     )
+    supports_timing: bool = Field(
+        default=False,
+        description=(
+            "Whether this loader produces datasets with embedded timing data "
+            "(timestamps or delays). When True, fixed_schedule timing mode is "
+            "auto-enabled if the file contains timestamp fields."
+        ),
+    )
     default_block_size: int | None = Field(
         default=None,
         ge=1,

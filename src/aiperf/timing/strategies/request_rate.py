@@ -19,10 +19,12 @@ from aiperf.timing.intervals import IntervalGeneratorConfig
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
+    from aiperf.credit.messages import CreditReturn
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.stop_conditions import StopConditionChecker
+    from aiperf.timing.subagent_orchestrator import SubagentOrchestrator
 
 
 class RequestRateStrategy(AIPerfLoggerMixin):
@@ -91,6 +93,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         stop_checker: StopConditionChecker,
         credit_issuer: CreditIssuer,
         lifecycle: PhaseLifecycle,
+        subagents: SubagentOrchestrator | None = None,
         **kwargs,
     ):
         """Initialize rate timing strategy with all dependencies."""
@@ -101,6 +104,10 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         self._stop_checker = stop_checker
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
+        self._subagents = subagents
+
+        if self._subagents is not None:
+            self._subagents._dispatch = self._dispatch_turn
 
         # Queue for subsequent turns (turn_index > 0) waiting to be issued.
         # Populated by handle_credit_return when workers complete turns.
@@ -217,13 +224,15 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         The delay_ms from turn metadata (if present) is honored before queuing,
         simulating user "think time" between turns in a conversation.
         """
+        if self._subagents and self._subagents.intercept(credit):
+            return
+
         if credit.is_final_turn:
             return
 
         meta = self._conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit)
 
-        # Honor think-time delay from dataset metadata before queuing
         if meta.delay_ms is not None:
             self._scheduler.schedule_later(
                 meta.delay_ms / MILLIS_PER_SECOND,
@@ -231,6 +240,38 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             )
         else:
             self._continuation_turns.put_nowait(turn)
+
+    def _dispatch_turn(self, turn: TurnToSend) -> None:
+        """Dispatch callback for SubagentOrchestrator: queue turn for rate-limited issuance."""
+        meta = self._conversation_source.get_turn_metadata_at(
+            turn.conversation_id, turn.turn_index
+        )
+        if meta.delay_ms is not None:
+            self._scheduler.schedule_later(
+                meta.delay_ms / MILLIS_PER_SECOND,
+                self._continuation_turns.put(turn),
+            )
+        else:
+            self._continuation_turns.put_nowait(turn)
+
+    def on_request_complete(self, credit_return: CreditReturn) -> None:
+        if self._subagents and credit_return.error:
+            self._subagents.terminate_child(credit_return.credit)
+
+    def on_cancelled_return(self, credit: Credit) -> None:
+        if self._subagents:
+            self._subagents.terminate_child(credit)
+
+    def on_child_stopped(self, credit: Credit) -> None:
+        if self._subagents:
+            self._subagents.terminate_child(credit)
+
+    def cleanup(self) -> None:
+        if self._subagents:
+            self._subagents.cleanup()
+
+    def get_subagent_stats(self) -> dict[str, int]:
+        return self._subagents.get_stats() if self._subagents else {}
 
     def set_request_rate(self, new_rate: float) -> None:
         """Update the request rate dynamically.
