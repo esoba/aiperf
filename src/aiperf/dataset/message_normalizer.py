@@ -161,7 +161,10 @@ def normalize_messages(
         provider = _detect_provider(messages, tools)
 
     # Strip Conflux metadata
-    messages = [{k: v for k, v in m.items() if k != "tokens"} for m in messages]
+    messages = [
+        {k: v for k, v in m.items() if k != "tokens"} if "tokens" in m else m
+        for m in messages
+    ]
 
     if provider == "anthropic":
         messages = _normalize_anthropic_messages(messages)

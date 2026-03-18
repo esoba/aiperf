@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +18,7 @@ import orjson
 from pydantic import Field
 
 from aiperf.common.models import AIPerfBaseModel
+from aiperf.dataset.loader.conflux import _parse_timestamp_s
 from aiperf.dataset.synthesis.models import MetricStats
 
 # ── Internal helpers ──
@@ -60,10 +60,6 @@ class _TokenAccum:
     @property
     def primary_model(self) -> str:
         return self.models.most_common(1)[0][0] if self.models else "unknown"
-
-
-def _parse_ts(iso_str: str) -> float:
-    return datetime.fromisoformat(iso_str.replace("Z", "+00:00")).timestamp()
 
 
 def _safe_pct(num: int | float, denom: int | float) -> float:
@@ -231,12 +227,12 @@ def analyze_conflux(input_path: Path) -> ConfluxAnalysisStats:
         ts_str = r.get("timestamp")
         if not ts_str:
             continue
-        start_s = _parse_ts(ts_str)
+        start_s = _parse_timestamp_s(ts_str)
         completed_str = r.get("completed_at")
         dur_s = (r.get("duration_ms", 0) or 0) / 1000.0
 
         if completed_str:
-            end_s = _parse_ts(completed_str)
+            end_s = _parse_timestamp_s(completed_str)
         elif dur_s > 0:
             end_s = start_s + dur_s
         else:

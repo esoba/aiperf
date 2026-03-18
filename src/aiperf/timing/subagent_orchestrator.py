@@ -720,7 +720,7 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
                     self._child_to_gate[session.x_correlation_id] = ChildGateEntry(
                         parent_corr_id=parent_corr_id,
                         gated_turn_index=gated_turn_index,
-                        prereq_key=f"spawn_join:{spawn_id}",
+                        prereq_key=f"{PrerequisiteKind.SPAWN_JOIN}:{spawn_id}",
                     )
                 self._stats.children_spawned += 1
 

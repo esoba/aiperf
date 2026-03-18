@@ -36,10 +36,14 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
 @functools.lru_cache(maxsize=4096)
+def _parse_timestamp_s(iso_str: str) -> float:
+    """Parse an ISO timestamp string to seconds since epoch (cached)."""
+    return datetime.fromisoformat(iso_str.replace("Z", "+00:00")).timestamp()
+
+
 def _parse_timestamp_ms(iso_str: str) -> float:
     """Parse an ISO timestamp string to milliseconds since epoch."""
-    dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-    return dt.timestamp() * 1000
+    return _parse_timestamp_s(iso_str) * 1000
 
 
 def _decode_base64_payload(encoded: str) -> bytes:
@@ -76,12 +80,17 @@ def _messages_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return msgs
 
 
+def _decode_request_payload(record: ConfluxRecord) -> dict[str, Any] | None:
+    """Decode the base64 request body from a ConfluxRecord, or None if absent."""
+    if record.base64 and record.base64.get("request_body"):
+        return orjson.loads(_decode_base64_payload(record.base64["request_body"]))
+    return None
+
+
 def _decode_messages(record: ConfluxRecord) -> list[dict[str, Any]]:
     """Decode the messages array from a ConfluxRecord, preferring base64 payload."""
-    if record.base64 and record.base64.get("request_body"):
-        payload: dict[str, Any] = orjson.loads(
-            _decode_base64_payload(record.base64["request_body"])
-        )
+    payload = _decode_request_payload(record)
+    if payload is not None:
         return _messages_from_payload(payload)
     return list(record.messages)
 
@@ -544,7 +553,46 @@ class ConfluxLoader(BaseFileLoader):
             self._zero_align_timestamps(convs)
             all_conversations.extend(convs)
 
+        _parse_timestamp_s.cache_clear()
         return all_conversations
+
+    @staticmethod
+    def _register_spawn(
+        parent_conv: Conversation,
+        spawn_counter: int,
+        child_session_ids: list[str],
+        spawn_turn_index: int,
+        *,
+        is_background: bool,
+        join_turn_index: int | None = None,
+    ) -> str:
+        """Wire up a SubagentSpawnInfo on the parent and return the spawn_id.
+
+        Handles spawn info creation, spawn_id annotation on the spawn turn,
+        and optional prerequisite on the join turn.
+        """
+        spawn_id = f"s{spawn_counter}"
+        parent_conv.subagent_spawns.append(
+            SubagentSpawnInfo(
+                spawn_id=spawn_id,
+                child_conversation_ids=child_session_ids,
+                is_background=is_background,
+            )
+        )
+        if spawn_turn_index < len(parent_conv.turns):
+            parent_conv.turns[spawn_turn_index].subagent_spawn_ids.append(spawn_id)
+        if (
+            join_turn_index is not None
+            and not is_background
+            and join_turn_index < len(parent_conv.turns)
+        ):
+            parent_conv.turns[join_turn_index].prerequisites.append(
+                TurnPrerequisite(
+                    kind=PrerequisiteKind.SPAWN_JOIN,
+                    spawn_id=spawn_id,
+                )
+            )
+        return spawn_id
 
     def _convert_file_groups(
         self, data: dict[str, list[ConfluxRecord]]
@@ -705,74 +753,40 @@ class ConfluxLoader(BaseFileLoader):
                             child_conv,
                             notification_turn,
                         ) in notification_children:
-                            spawn_id = f"s{spawn_counter}"
-                            spawn_counter += 1
-                            parent_conv.subagent_spawns.append(
-                                SubagentSpawnInfo(
-                                    spawn_id=spawn_id,
-                                    child_conversation_ids=[child_conv.session_id],
-                                    is_background=False,
-                                )
+                            self._register_spawn(
+                                parent_conv,
+                                spawn_counter,
+                                [child_conv.session_id],
+                                spawn_turn_index,
+                                is_background=False,
+                                join_turn_index=notification_turn,
                             )
-                            if spawn_turn_index < len(parent_conv.turns):
-                                parent_conv.turns[
-                                    spawn_turn_index
-                                ].subagent_spawn_ids.append(spawn_id)
-                            if notification_turn < len(parent_conv.turns):
-                                parent_conv.turns[
-                                    notification_turn
-                                ].prerequisites.append(
-                                    TurnPrerequisite(
-                                        kind=PrerequisiteKind.SPAWN_JOIN,
-                                        spawn_id=spawn_id,
-                                    )
-                                )
+                            spawn_counter += 1
                             child_conversations.append(child_conv)
                             blocking_count += 1
                         for _, _, child_conv in bg_children:
-                            spawn_id = f"s{spawn_counter}"
-                            spawn_counter += 1
-                            parent_conv.subagent_spawns.append(
-                                SubagentSpawnInfo(
-                                    spawn_id=spawn_id,
-                                    child_conversation_ids=[child_conv.session_id],
-                                    is_background=True,
-                                )
+                            self._register_spawn(
+                                parent_conv,
+                                spawn_counter,
+                                [child_conv.session_id],
+                                spawn_turn_index,
+                                is_background=True,
                             )
-                            if spawn_turn_index < len(parent_conv.turns):
-                                parent_conv.turns[
-                                    spawn_turn_index
-                                ].subagent_spawn_ids.append(spawn_id)
+                            spawn_counter += 1
                             child_conversations.append(child_conv)
                             background_count += 1
                         continue
 
                 child_conv_ids = [conv.session_id for _, _, conv in children_at_turn]
-                spawn_id = f"s{spawn_counter}"
-                spawn_counter += 1
-
-                parent_conv.subagent_spawns.append(
-                    SubagentSpawnInfo(
-                        spawn_id=spawn_id,
-                        child_conversation_ids=child_conv_ids,
-                        is_background=is_background,
-                    )
+                self._register_spawn(
+                    parent_conv,
+                    spawn_counter,
+                    child_conv_ids,
+                    spawn_turn_index,
+                    is_background=is_background,
+                    join_turn_index=join_turn_index,
                 )
-
-                if spawn_turn_index < len(parent_conv.turns):
-                    parent_conv.turns[spawn_turn_index].subagent_spawn_ids.append(
-                        spawn_id
-                    )
-
-                if join_turn_index is not None and join_turn_index < len(
-                    parent_conv.turns
-                ):
-                    parent_conv.turns[join_turn_index].prerequisites.append(
-                        TurnPrerequisite(
-                            kind=PrerequisiteKind.SPAWN_JOIN,
-                            spawn_id=spawn_id,
-                        )
-                    )
+                spawn_counter += 1
 
                 for _, _, child_conv in children_at_turn:
                     child_conversations.append(child_conv)
@@ -794,22 +808,14 @@ class ConfluxLoader(BaseFileLoader):
                 spawn_turn_index = self._find_spawn_point(
                     parent_records, orphan_records
                 )
-                spawn_id = f"s{spawn_counter}"
-                spawn_counter += 1
-
-                parent_conv.subagent_spawns.append(
-                    SubagentSpawnInfo(
-                        spawn_id=spawn_id,
-                        child_conversation_ids=[child_conv.session_id],
-                        is_background=True,
-                    )
+                self._register_spawn(
+                    parent_conv,
+                    spawn_counter,
+                    [child_conv.session_id],
+                    spawn_turn_index,
+                    is_background=True,
                 )
-
-                if spawn_turn_index < len(parent_conv.turns):
-                    parent_conv.turns[spawn_turn_index].subagent_spawn_ids.append(
-                        spawn_id
-                    )
-
+                spawn_counter += 1
                 child_conversations.append(child_conv)
                 background_count += 1
 
@@ -914,29 +920,22 @@ class ConfluxLoader(BaseFileLoader):
 
         return conversation
 
+    _EXTRA_PARAMS_SKIP = frozenset({"max_tokens", "max_output_tokens"})
+
     @staticmethod
     def _extract_extra_params(record: ConfluxRecord) -> dict[str, Any] | None:
         """Extract per-turn hyperparameter overrides from a ConfluxRecord.
 
-        Excludes max_tokens (already on Turn.max_tokens) and null values.
+        Excludes max_tokens fields (already on Turn.max_tokens) and null values.
         Returns None if no non-null hyperparameters remain.
         """
         if not record.hyperparameters:
             return None
         hp = record.hyperparameters
         params: dict[str, Any] = {}
-        for field_name in (
-            "temperature",
-            "top_p",
-            "top_k",
-            "presence_penalty",
-            "frequency_penalty",
-            "seed",
-            "stop",
-            "reasoning_effort",
-            "reasoning_summary",
-            "text_verbosity",
-        ):
+        for field_name in type(hp).model_fields:
+            if field_name in ConfluxLoader._EXTRA_PARAMS_SKIP:
+                continue
             value = getattr(hp, field_name, None)
             if value is not None:
                 params[field_name] = value
@@ -983,10 +982,8 @@ class ConfluxLoader(BaseFileLoader):
         Returns:
             (messages, tools, max_tokens)
         """
-        if record.base64 and record.base64.get("request_body"):
-            payload: dict[str, Any] = orjson.loads(
-                _decode_base64_payload(record.base64["request_body"])
-            )
+        payload = _decode_request_payload(record)
+        if payload is not None:
             payload.pop("metadata", None)
             messages = _messages_from_payload(payload)
             # Don't collapse [] to None -- tools=[] means "no tools" vs absent.
