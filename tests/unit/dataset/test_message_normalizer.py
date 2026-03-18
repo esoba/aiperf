@@ -628,6 +628,47 @@ class TestNormalizeAnthropicUser:
         assert result[1]["role"] == "tool"
         assert result[1]["tool_call_id"] == "toolu_01"
 
+    def test_tool_result_then_text_preserves_order(self) -> None:
+        """tool_result before text should keep tool entries first."""
+        msg = {
+            "role": "user",
+            "content": [
+                _tool_result_block("toolu_01", "result data"),
+                _text_block("Follow-up context"),
+            ],
+        }
+        result = _normalize_anthropic_user(msg)
+        assert len(result) == 2
+        assert result[0]["role"] == "tool"
+        assert result[0]["tool_call_id"] == "toolu_01"
+        assert result[1] == {"role": "user", "content": "Follow-up context"}
+
+        # Round-trip through to_anthropic_messages
+        assistant = {
+            "role": "assistant",
+            "content": [
+                _tool_use_block("toolu_01", "Read", {"path": "/tmp/f"}),
+            ],
+        }
+        canonical = [assistant] + result
+        roundtrip_msgs, _ = to_anthropic_messages(canonical)
+        # tool_result should precede user text in the reconstructed Anthropic message
+        user_msgs = [m for m in roundtrip_msgs if m["role"] == "user"]
+        assert len(user_msgs) == 1
+        content = user_msgs[0]["content"]
+        assert isinstance(content, list)
+        tool_result_indices = [
+            i
+            for i, b in enumerate(content)
+            if isinstance(b, dict) and b.get("type") == "tool_result"
+        ]
+        text_indices = [
+            i
+            for i, b in enumerate(content)
+            if isinstance(b, dict) and b.get("type") == "text"
+        ]
+        assert tool_result_indices[0] < text_indices[0]
+
     def test_multiple_tool_results(self) -> None:
         msg = {
             "role": "user",

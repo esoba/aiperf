@@ -35,6 +35,8 @@ class Credit(
                          Note: this is NOT the same as the credit being cancelled!
         url_index: Index of the URL to use when multiple --url values are configured (optional).
                    None means use the default (first) URL.
+        agent_depth: Nesting depth of this agent in the subagent hierarchy (0 = top-level).
+        parent_correlation_id: Correlation ID of the parent conversation for subagent tracking.
     """
 
     id: int

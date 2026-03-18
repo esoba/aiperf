@@ -33,15 +33,15 @@ Each trace file is a JSON array where every element represents one API call. The
 
 A coding session typically has a tree-shaped structure:
 
-```
-Parent Agent (main conversation)
-  Turn 1: User asks "refactor the auth module"
-  Turn 2: Agent reads files, thinks about approach
-    +-- Subagent A: searches codebase for auth references
-    +-- Subagent B: runs existing tests to check current behavior
-  Turn 3: Agent writes new code
-    +-- Subagent C: runs updated tests
-  Turn 4: Agent summarizes changes
+```mermaid
+graph TD
+    P[Parent Agent] --> T1[Turn 1: User asks 'refactor the auth module']
+    T1 --> T2[Turn 2: Agent reads files, plans approach]
+    T2 --> T3[Turn 3: Agent writes new code]
+    T3 --> T4[Turn 4: Agent summarizes changes]
+    T2 --> SA[Subagent A: search auth references]
+    T2 --> SB[Subagent B: run existing tests]
+    T3 --> SC[Subagent C: run updated tests]
 ```
 
 The **parent agent** is the main conversation thread that the user interacts with. It has multiple turns, each representing one API call in sequence.
@@ -195,7 +195,7 @@ Across real Claude Code sessions, two distinct subagent coordination patterns ap
 
 The parent spawns agents via the `Agent` tool and the results come back inline — the tool_result containing the child's output is already present in the cumulative message history by the time the parent makes its next API call. AIPerf detects this by finding the first parent turn whose new messages contain a non-acknowledgement tool_result for the spawn's `Agent` tool_use ID.
 
-```
+```text
 Parent turn N:   Agent tool_use  ──► child runs
                  tool_result: "child output here"
 Parent turn N+1: JOIN — reads child result, continues
@@ -226,14 +226,14 @@ Two sub-cases observed in the wild:
 
 When replaying, AIPerf fires the join turn at:
 
-```
+```text
 join_dispatch = max(last_child_end, ideal_join_timestamp) + ~few ms
 ```
 
 Whether the gate or the original schedule is the binding constraint depends on how
 fast the server responds relative to the inter-turn gaps.
 
-```
+```text
 GATE-bound  (slow server: response time > inter-turn gap, children can't keep up)
 
   PARENT  ──[spawn]──────────────────────────────[gate: waiting]──[JOIN]──▶
@@ -269,7 +269,7 @@ For idle-parent notification joins, timestamp detection (first parent turn start
 
 When AIPerf loads a Conflux trace, it reports the conversation structure:
 
-```
+```text
 Loaded 3 agent threads + 5 utility calls skipped (28 total records)
 Converted 3 conversations (28 total turns, 2 subagent children incl. 0 orphans)
 ```

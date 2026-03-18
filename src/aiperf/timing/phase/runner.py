@@ -204,9 +204,9 @@ class PhaseRunner(TaskManagerMixin):
         )
         strategy_kwargs: dict = {}
 
-        has_subagents = any(
-            c.subagent_spawns
-            for c in self._conversation_source.dataset_metadata.conversations
+        metadata = self._conversation_source.dataset_metadata
+        has_subagents = bool(
+            metadata and any(c.subagent_spawns for c in metadata.conversations)
         )
         if has_subagents:
             from aiperf.timing.subagent_orchestrator import SubagentOrchestrator
