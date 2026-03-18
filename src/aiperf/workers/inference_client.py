@@ -172,10 +172,13 @@ class InferenceClient(AIPerfLifecycleMixin):
         Returns:
             RequestRecord containing the response data and metadata.
         """
-        if self.is_trace_enabled:
-            self.trace(
-                lambda: f"Calling inference API for turn_index={request_info.turn_index} x_correlation_id={request_info.x_correlation_id}"
+        if not request_info.turns:
+            raise ValueError(
+                f"RequestInfo has no turns (credit_num={request_info.credit_num}, "
+                f"conversation_id={request_info.conversation_id})"
             )
+        if self.is_trace_enabled:
+            self.trace(f"Calling inference API for turn: {request_info.turns[-1]}")
         record = await self._send_request_internal(request_info, first_token_callback)
         return self._enrich_request_record(record=record, request_info=request_info)
 
@@ -186,11 +189,9 @@ class InferenceClient(AIPerfLifecycleMixin):
         request_info: RequestInfo,
     ) -> RequestRecord:
         """Enrich a RequestRecord with the original request info."""
-        current_turn = request_info.turns[-1]
-        effective_model = current_turn.model or self.model_endpoint.primary_model_name
-        if current_turn.extra_params and "model" in current_turn.extra_params:
-            effective_model = current_turn.extra_params["model"]
-        record.model_name = effective_model
+        record.model_name = (
+            request_info.turns[-1].model or self.model_endpoint.primary_model_name
+        )
         record.request_info = request_info
 
         # Copy turns with stripped multimodal data to avoid mutating original session

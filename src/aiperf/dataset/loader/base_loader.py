@@ -4,7 +4,7 @@
 from abc import ABC, abstractmethod
 
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import TurnThreadingMode
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation
 from aiperf.common.session_id_generator import SessionIDGenerator
@@ -33,11 +33,11 @@ class BaseLoader(AIPerfLoggerMixin, ABC):
         )
 
     @classmethod
-    def get_default_threading_mode(cls) -> TurnThreadingMode | None:
+    def get_default_context_mode(cls) -> ConversationContextMode | None:
         """Dataset-level default context mode for conversations without an explicit one.
 
         Override in subclasses when the dataset format implies a specific mode.
-        Returns None to fall through to the global THREAD_ASSISTANT_RESPONSES default.
+        Returns None to fall through to the global DELTAS_WITHOUT_RESPONSES default.
         """
         return None
 

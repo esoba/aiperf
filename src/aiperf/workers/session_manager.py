@@ -5,7 +5,7 @@
 
 from pydantic import Field
 
-from aiperf.common.enums import TurnThreadingMode
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Conversation, Turn
 
@@ -37,10 +37,10 @@ class UserSession(AIPerfBaseModel):
     turn_index: int = Field(
         default=0, ge=0, description="The index of the current turn in the conversation"
     )
-    turn_threading_mode: TurnThreadingMode = Field(
-        default=TurnThreadingMode.THREAD_ASSISTANT_RESPONSES,
-        description="Resolved threading mode for this session. "
-        "Set at creation from conversation-level override, dataset default, or THREAD_ASSISTANT_RESPONSES.",
+    context_mode: ConversationContextMode = Field(
+        default=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+        description="Resolved context mode for this session. "
+        "Set at creation from conversation-level override, dataset default, or DELTAS_WITHOUT_RESPONSES.",
     )
 
     def advance_turn(self, turn_index: int) -> Turn:
@@ -61,7 +61,7 @@ class UserSession(AIPerfBaseModel):
             )
 
         turn = self.conversation.turns[turn_index]
-        if self.turn_threading_mode == TurnThreadingMode.ISOLATED_TURNS:
+        if self.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES:
             self.turn_list = [turn]
         else:
             self.turn_list.append(turn)
@@ -69,8 +69,12 @@ class UserSession(AIPerfBaseModel):
         return turn
 
     def should_store_response(self) -> bool:
-        """Whether assistant responses should be stored based on threading mode."""
-        return self.turn_threading_mode == TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
+        """Whether assistant responses should be stored based on context mode.
+
+        Responses are stored when the dataset does not include them (WITHOUT_RESPONSES),
+        so AIPerf must capture them live.
+        """
+        return self.context_mode == ConversationContextMode.DELTAS_WITHOUT_RESPONSES
 
     def store_response(self, response_turn: Turn) -> None:
         """
@@ -87,11 +91,11 @@ class UserSessionManager:
 
     def __init__(self) -> None:
         self._cache: dict[str, UserSession] = {}
-        self._default_threading_mode: TurnThreadingMode | None = None
+        self._default_context_mode: ConversationContextMode | None = None
 
-    def set_default_threading_mode(self, mode: TurnThreadingMode | None) -> None:
-        """Set the dataset-level default threading mode from the loader."""
-        self._default_threading_mode = mode
+    def set_default_context_mode(self, mode: ConversationContextMode | None) -> None:
+        """Set the dataset-level default context mode from the loader."""
+        self._default_context_mode = mode
 
     def create_and_store(
         self,
@@ -118,10 +122,10 @@ class UserSessionManager:
             raise ValueError(
                 f"num_turns ({num_turns}) exceeds conversation length ({len(conversation.turns)})"
             )
-        turn_threading_mode = (
-            conversation.turn_threading_mode
-            or self._default_threading_mode
-            or TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
+        context_mode = (
+            conversation.context_mode
+            or self._default_context_mode
+            or ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         )
         user_session = UserSession(
             x_correlation_id=x_correlation_id,
@@ -129,7 +133,7 @@ class UserSessionManager:
             url_index=url_index,
             conversation=conversation,
             turn_list=[],
-            turn_threading_mode=turn_threading_mode,
+            context_mode=context_mode,
         )
         self.store(x_correlation_id, user_session)
         return user_session

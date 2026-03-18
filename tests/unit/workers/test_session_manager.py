@@ -4,14 +4,18 @@
 
 Tests ensure:
 - Credit.num_turns is respected (ramp-up users who start mid-session)
-- TurnThreadingMode controls history accumulation and response storage
+- ConversationContextMode controls history accumulation and response storage
 """
 
 import pytest
+from pydantic import ValidationError
+from pytest import param
 
-from aiperf.common.enums import TurnThreadingMode
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Turn
-from aiperf.workers.session_manager import UserSessionManager
+from aiperf.common.models.dataset_models import DatasetMetadata
+from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 
 @pytest.fixture
@@ -183,296 +187,238 @@ class TestUserSessionManager:
         assert session.url_index is None
 
 
-# =========================================================================
-# TurnThreadingMode resolution tests
-# =========================================================================
+# ============================================================
+# Fixtures for context mode tests
+# ============================================================
 
 
-class TestTurnThreadingModeResolution:
-    """Tests for TurnThreadingMode precedence: conversation > dataset default > global."""
-
-    @pytest.fixture
-    def session_manager(self):
-        return UserSessionManager()
-
-    @pytest.fixture
-    def conversation_3_turns(self):
-        return Conversation(
-            session_id="mode-test",
-            turns=[
-                Turn(texts=[], role="user"),
-                Turn(texts=[], role="user"),
-                Turn(texts=[], role="user"),
-            ],
-        )
-
-    @pytest.mark.parametrize(
-        "mode",
-        [
-            TurnThreadingMode.THREAD_ASSISTANT_RESPONSES,
-            TurnThreadingMode.SKIP_ASSISTANT_RESPONSES,
-            TurnThreadingMode.ISOLATED_TURNS,
+def _make_session(
+    context_mode: ConversationContextMode | None = None,
+    num_turns: int = 3,
+    default_context_mode: ConversationContextMode | None = None,
+) -> UserSession:
+    """Create a UserSession with the given context_mode on its conversation."""
+    conversation = Conversation(
+        conversation_id="ctx-conv",
+        context_mode=context_mode,
+        turns=[
+            Turn(messages=[{"role": "user", "content": f"Q{i}"}])
+            for i in range(num_turns)
         ],
     )
-    def test_conversation_override_takes_precedence(
-        self, session_manager, conversation_3_turns, mode
-    ):
-        conversation_3_turns.turn_threading_mode = mode
-        session = session_manager.create_and_store(
-            x_correlation_id="c1",
-            conversation=conversation_3_turns,
-            num_turns=3,
-        )
-        assert session.turn_threading_mode == mode
+    mgr = UserSessionManager()
+    mgr.set_default_context_mode(default_context_mode)
+    return mgr.create_and_store(
+        x_correlation_id="ctx-test",
+        conversation=conversation,
+        num_turns=num_turns,
+    )
 
-    def test_dataset_default_used_when_conversation_has_none(
-        self, session_manager, conversation_3_turns
-    ):
-        session_manager.set_default_threading_mode(TurnThreadingMode.ISOLATED_TURNS)
-        session = session_manager.create_and_store(
-            x_correlation_id="c2",
-            conversation=conversation_3_turns,
-            num_turns=3,
-        )
-        assert session.turn_threading_mode == TurnThreadingMode.ISOLATED_TURNS
 
-    def test_conversation_overrides_dataset_default(
-        self, session_manager, conversation_3_turns
-    ):
-        session_manager.set_default_threading_mode(
-            TurnThreadingMode.SKIP_ASSISTANT_RESPONSES
-        )
-        conversation_3_turns.turn_threading_mode = (
-            TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
-        )
-        session = session_manager.create_and_store(
-            x_correlation_id="c3",
-            conversation=conversation_3_turns,
-            num_turns=3,
-        )
-        assert (
-            session.turn_threading_mode == TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
-        )
+# ============================================================
+# Context Mode Resolution
+# ============================================================
 
-    def test_global_default_when_both_none(self, session_manager, conversation_3_turns):
-        session = session_manager.create_and_store(
-            x_correlation_id="c4",
-            conversation=conversation_3_turns,
-            num_turns=3,
+
+class TestUserSessionContextModeResolution:
+    """Verify context_mode resolves: conversation > dataset default > DELTAS_WITHOUT_RESPONSES."""
+
+    @pytest.mark.parametrize(
+        "conversation_mode,expected",
+        [
+            (None, ConversationContextMode.DELTAS_WITHOUT_RESPONSES),
+            (ConversationContextMode.DELTAS_WITHOUT_RESPONSES, ConversationContextMode.DELTAS_WITHOUT_RESPONSES),
+            (ConversationContextMode.DELTAS_WITH_RESPONSES, ConversationContextMode.DELTAS_WITH_RESPONSES),
+            (ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES, ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES),
+        ],
+    )  # fmt: skip
+    def test_context_mode_resolves_correctly(
+        self,
+        conversation_mode: ConversationContextMode | None,
+        expected: ConversationContextMode,
+    ) -> None:
+        session = _make_session(context_mode=conversation_mode)
+        assert session.context_mode == expected
+
+    def test_dataset_default_used_when_conversation_has_none(self) -> None:
+        session = _make_session(
+            context_mode=None,
+            default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
         )
         assert (
-            session.turn_threading_mode == TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
+            session.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         )
 
-
-# =========================================================================
-# should_store_response tests
-# =========================================================================
-
-
-class TestShouldStoreResponse:
-    """Tests for should_store_response() gating per threading mode."""
-
-    @pytest.fixture
-    def session_manager(self):
-        return UserSessionManager()
-
-    @pytest.fixture
-    def conversation_3_turns(self):
-        return Conversation(
-            session_id="store-test",
-            turns=[
-                Turn(texts=[], role="user"),
-                Turn(texts=[], role="user"),
-                Turn(texts=[], role="user"),
-            ],
+    def test_conversation_overrides_dataset_default(self) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES,
+            default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
         )
+        assert session.context_mode == ConversationContextMode.DELTAS_WITH_RESPONSES
+
+    def test_global_default_when_both_none(self) -> None:
+        session = _make_session(context_mode=None, default_context_mode=None)
+        assert session.context_mode == ConversationContextMode.DELTAS_WITHOUT_RESPONSES
+
+
+# ============================================================
+# should_store_response
+# ============================================================
+
+
+class TestUserSessionShouldStoreResponse:
+    """Verify should_store_response gates on context mode."""
 
     @pytest.mark.parametrize(
         "mode,expected",
         [
-            (TurnThreadingMode.THREAD_ASSISTANT_RESPONSES, True),
-            (TurnThreadingMode.SKIP_ASSISTANT_RESPONSES, False),
-            (TurnThreadingMode.ISOLATED_TURNS, False),
+            (ConversationContextMode.DELTAS_WITHOUT_RESPONSES, True),
+            (ConversationContextMode.DELTAS_WITH_RESPONSES, False),
+            (ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES, False),
+            param(None, True, id="default-deltas-without-responses"),
         ],
-    )
-    def test_store_response_per_mode(
-        self, session_manager, conversation_3_turns, mode, expected
-    ):
-        conversation_3_turns.turn_threading_mode = mode
-        session = session_manager.create_and_store(
-            x_correlation_id="sr1",
-            conversation=conversation_3_turns,
-            num_turns=3,
-        )
+    )  # fmt: skip
+    def test_should_store_response_per_mode(
+        self, mode: ConversationContextMode | None, expected: bool
+    ) -> None:
+        session = _make_session(context_mode=mode)
         assert session.should_store_response() is expected
 
 
-# =========================================================================
-# Turn list accumulation tests per threading mode
-# =========================================================================
+# ============================================================
+# turn_list with context mode
+# ============================================================
 
 
-class TestTurnListAccumulation:
-    """Tests for turn_list contents under each threading mode."""
+class TestUserSessionTurnList:
+    """Verify turn_list contains correct turns based on context mode."""
 
-    @pytest.fixture
-    def session_manager(self):
-        return UserSessionManager()
-
-    @pytest.fixture
-    def conversation_3_turns(self):
-        return Conversation(
-            session_id="acc-test",
-            turns=[
-                Turn(texts=[], role="user"),
-                Turn(texts=[], role="user"),
-                Turn(texts=[], role="user"),
-            ],
-        )
-
-    def _make_response_turn(self) -> Turn:
-        return Turn(texts=[], role="assistant")
-
-    def test_thread_assistant_responses_full_history(
-        self, session_manager, conversation_3_turns
-    ):
-        """THREAD_ASSISTANT_RESPONSES: turn_list accumulates all user + assistant turns."""
-        conversation_3_turns.turn_threading_mode = (
-            TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
-        )
-        session = session_manager.create_and_store(
-            x_correlation_id="ta1",
-            conversation=conversation_3_turns,
-            num_turns=3,
+    def test_deltas_without_responses_returns_full_history(self) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         )
         session.advance_turn(0)
-        session.store_response(self._make_response_turn())
+        session.store_response(Turn(messages=[{"role": "assistant", "content": "A0"}]))
         session.advance_turn(1)
-        session.store_response(self._make_response_turn())
-        session.advance_turn(2)
 
-        assert len(session.turn_list) == 5  # Q0, A0, Q1, A1, Q2
+        turns = session.turn_list
+        assert len(turns) == 3  # Q0, A0, Q1
+        assert turns[0].messages[0]["content"] == "Q0"
+        assert turns[1].messages[0]["content"] == "A0"
+        assert turns[2].messages[0]["content"] == "Q1"
 
-    def test_skip_assistant_responses_user_turns_only(
-        self, session_manager, conversation_3_turns
-    ):
-        """SKIP_ASSISTANT_RESPONSES: turn_list has user turns only (responses not stored)."""
-        conversation_3_turns.turn_threading_mode = (
-            TurnThreadingMode.SKIP_ASSISTANT_RESPONSES
-        )
-        session = session_manager.create_and_store(
-            x_correlation_id="sa1",
-            conversation=conversation_3_turns,
-            num_turns=3,
+    def test_deltas_with_responses_returns_dataset_turns_only(self) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES
         )
         session.advance_turn(0)
-        # should_store_response() is False, so worker would skip store_response
-        assert not session.should_store_response()
+        session.advance_turn(1)
+
+        turns = session.turn_list
+        assert len(turns) == 2  # Q0, Q1 (no assistant responses stored)
+        assert turns[0].messages[0]["content"] == "Q0"
+        assert turns[1].messages[0]["content"] == "Q1"
+
+    def test_message_array_returns_only_last(self) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+        session.advance_turn(0)
         session.advance_turn(1)
         session.advance_turn(2)
 
-        assert len(session.turn_list) == 3  # Q0, Q1, Q2
+        turns = session.turn_list
+        assert len(turns) == 1
+        assert turns[0].messages[0]["content"] == "Q2"
 
-    def test_isolated_turns_only_current(self, session_manager, conversation_3_turns):
-        """ISOLATED_TURNS: turn_list always has exactly the current turn."""
-        conversation_3_turns.turn_threading_mode = TurnThreadingMode.ISOLATED_TURNS
-        session = session_manager.create_and_store(
-            x_correlation_id="it1",
-            conversation=conversation_3_turns,
-            num_turns=3,
+    def test_message_array_single_turn(self) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
+            num_turns=1,
         )
         session.advance_turn(0)
-        assert len(session.turn_list) == 1
-        first = session.turn_list[0]
 
+        turns = session.turn_list
+        assert len(turns) == 1
+        assert turns[0].messages[0]["content"] == "Q0"
+
+    def test_default_mode_returns_full_history(self) -> None:
+        session = _make_session(context_mode=None)
+        session.advance_turn(0)
+        session.store_response(Turn(messages=[{"role": "assistant", "content": "A0"}]))
         session.advance_turn(1)
-        assert len(session.turn_list) == 1
-        assert session.turn_list[0] is not first  # replaced, not accumulated
 
-        session.advance_turn(2)
-        assert len(session.turn_list) == 1
+        turns = session.turn_list
+        assert len(turns) == 3
 
 
-# =========================================================================
-# Integration: threading mode + response storage workflow
-# =========================================================================
+# ============================================================
+# Integration: context mode + should_store_response together
+# ============================================================
 
 
-class TestThreadingModeWorkflow:
-    """Integration tests combining threading mode with should_store_response."""
+class TestUserSessionContextModeWorkflow:
+    """Verify the full workflow of context mode with store_response gating."""
 
-    @pytest.fixture
-    def session_manager(self):
-        return UserSessionManager()
-
-    @pytest.fixture
-    def conversation_3_turns(self):
-        return Conversation(
-            session_id="wf-test",
-            turns=[
-                Turn(texts=[], role="user"),
-                Turn(texts=[], role="user"),
-                Turn(texts=[], role="user"),
-            ],
+    def test_deltas_without_responses_stores_responses_and_sends_full_history(
+        self,
+    ) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES, num_turns=2
         )
+        session.advance_turn(0)
+        assert session.should_store_response() is True
+        session.store_response(Turn(messages=[{"role": "assistant", "content": "A0"}]))
+        session.advance_turn(1)
 
-    def _make_response_turn(self) -> Turn:
-        return Turn(texts=[], role="assistant")
+        assert len(session.turn_list) == 3
 
-    def test_accumulate_stores_responses_and_sends_full_history(
-        self, session_manager, conversation_3_turns
-    ):
-        conversation_3_turns.turn_threading_mode = (
-            TurnThreadingMode.THREAD_ASSISTANT_RESPONSES
+    def test_deltas_with_responses_skips_live_responses_sends_dataset_turns(
+        self,
+    ) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.DELTAS_WITH_RESPONSES, num_turns=2
         )
-        session = session_manager.create_and_store(
-            x_correlation_id="wf1",
-            conversation=conversation_3_turns,
+        session.advance_turn(0)
+        assert session.should_store_response() is False
+        # Worker would NOT call store_response based on should_store_response()
+        session.advance_turn(1)
+
+        turns = session.turn_list
+        assert len(turns) == 2
+        assert all(t.messages[0]["role"] == "user" for t in turns)
+
+    def test_message_array_skips_responses_sends_only_current_turn(self) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES,
             num_turns=2,
         )
-
         session.advance_turn(0)
-        assert session.should_store_response()
-        session.store_response(self._make_response_turn())
-        assert len(session.turn_list) == 2  # Q0, A0
-
+        assert session.should_store_response() is False
         session.advance_turn(1)
-        assert len(session.turn_list) == 3  # Q0, A0, Q1
 
-    def test_skip_responses_sends_user_turns_only(
-        self, session_manager, conversation_3_turns
-    ):
-        conversation_3_turns.turn_threading_mode = (
-            TurnThreadingMode.SKIP_ASSISTANT_RESPONSES
-        )
-        session = session_manager.create_and_store(
-            x_correlation_id="wf2",
-            conversation=conversation_3_turns,
-            num_turns=2,
-        )
+        turns = session.turn_list
+        assert len(turns) == 1
+        assert turns[0].messages[0]["content"] == "Q1"
 
-        session.advance_turn(0)
-        assert not session.should_store_response()
-        # Worker skips store_response
-        assert len(session.turn_list) == 1  # Q0
 
-        session.advance_turn(1)
-        assert len(session.turn_list) == 2  # Q0, Q1
+# ============================================================
+# message_array_without_responses rejected
+# ============================================================
 
-    def test_standalone_sends_only_current_turn(
-        self, session_manager, conversation_3_turns
-    ):
-        conversation_3_turns.turn_threading_mode = TurnThreadingMode.ISOLATED_TURNS
-        session = session_manager.create_and_store(
-            x_correlation_id="wf3",
-            conversation=conversation_3_turns,
-            num_turns=2,
-        )
 
-        session.advance_turn(0)
-        assert not session.should_store_response()
-        assert len(session.turn_list) == 1
+class TestMessageArrayWithoutResponsesRejected:
+    """MESSAGE_ARRAY_WITHOUT_RESPONSES is reserved and must be rejected early."""
 
-        session.advance_turn(1)
-        assert len(session.turn_list) == 1
+    def test_conversation_rejects_unsupported_mode(self) -> None:
+        with pytest.raises(ValidationError, match="not yet supported"):
+            Conversation(
+                context_mode=ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
+            )
+
+    def test_dataset_metadata_rejects_unsupported_default_mode(self) -> None:
+        with pytest.raises(ValidationError, match="not yet supported"):
+            DatasetMetadata(
+                sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+                default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
+            )

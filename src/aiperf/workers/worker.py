@@ -226,9 +226,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
         await self._dataset_client.initialize()
-        self.session_manager.set_default_threading_mode(
-            msg.metadata.default_threading_mode
-        )
+        self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
         self._dataset_configured_event.set()
         self.debug(
             lambda: (

@@ -14,9 +14,9 @@ from aiperf.common.config import OutputDefaults, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
+    ConversationContextMode,
     CreditPhase,
     MessageType,
-    TurnThreadingMode,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_request, on_stop
@@ -107,7 +107,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             compress_only=self._compress_only,
         )
         self._dataset_client: DatasetClientStoreProtocol | None = None
-        self._default_threading_mode: TurnThreadingMode | None = None
+        self._default_context_mode: ConversationContextMode | None = None
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _profile_configure_command(
@@ -286,7 +286,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             )
 
         data = await loader.load_dataset()
-        self._default_threading_mode = loader.get_default_threading_mode()
+        self._default_context_mode = loader.get_default_context_mode()
         return await loader.convert_to_conversations(data)
 
     def _load_custom_dataset(self) -> list[Conversation]:
@@ -295,11 +295,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
         conversations = composer.create_dataset()
-        self._default_threading_mode = (
-            composer.loader.get_default_threading_mode()
-            if composer.loader is not None
-            else None
-        )
+        self._default_context_mode = composer.get_default_context_mode()
         return conversations
 
     def _is_rankings_endpoint(self, endpoint_type: str) -> bool:
@@ -315,7 +311,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         ComposerClass = plugins.get_class(PluginType.DATASET_COMPOSER, composer_type)
         composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
-        return composer.create_dataset()
+        conversations = composer.create_dataset()
+        self._default_context_mode = composer.get_default_context_mode()
+        return conversations
 
     async def _configure_dataset(self) -> None:
         if self.user_config is None:
@@ -323,7 +321,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         self.dataset_configured.clear()
 
-        self._default_threading_mode = None
+        self._default_context_mode = None
         if self.user_config.input.public_dataset is not None:
             conversations = await self._load_public_dataset()
         elif (
@@ -372,7 +370,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self.dataset_metadata = DatasetMetadata(
             conversations=[conversation.metadata() for conversation in conversations],
             sampling_strategy=self.user_config.input.dataset_sampling_strategy,
-            default_threading_mode=self._default_threading_mode,
+            default_context_mode=self._default_context_mode,
             has_timing_data=has_timing,
         )
         self.info(

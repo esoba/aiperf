@@ -14,7 +14,7 @@ from aiperf.common.config import (
     PromptConfig,
     UserConfig,
 )
-from aiperf.common.enums import PrerequisiteKind, TurnThreadingMode
+from aiperf.common.enums import ConversationContextMode, PrerequisiteKind
 from aiperf.dataset.loader.conflux import (
     ConfluxLoader,
     _build_spawn_tuid_to_agent_id,
@@ -1232,15 +1232,15 @@ class TestPropagatedFields:
 
 
 # =========================================================================
-# get_default_threading_mode tests
+# get_default_context_mode tests
 # =========================================================================
 
 
-class TestDefaultThreadingMode:
-    def test_returns_isolated_turns(self) -> None:
+class TestDefaultContextMode:
+    def test_returns_message_array_with_responses(self) -> None:
         assert (
-            ConfluxLoader.get_default_threading_mode()
-            == TurnThreadingMode.ISOLATED_TURNS
+            ConfluxLoader.get_default_context_mode()
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         )
 
 

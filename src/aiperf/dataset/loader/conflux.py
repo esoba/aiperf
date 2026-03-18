@@ -21,7 +21,7 @@ from typing import Any
 import orjson
 
 from aiperf.common.config.user_config import UserConfig
-from aiperf.common.enums import PrerequisiteKind, TurnThreadingMode
+from aiperf.common.enums import ConversationContextMode, PrerequisiteKind
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.models.dataset_models import (
     ConversationOrigin,
@@ -407,8 +407,8 @@ class ConfluxLoader(BaseFileLoader):
             return False
 
     @classmethod
-    def get_default_threading_mode(cls) -> TurnThreadingMode:
-        return TurnThreadingMode.ISOLATED_TURNS
+    def get_default_context_mode(cls) -> ConversationContextMode:
+        return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
