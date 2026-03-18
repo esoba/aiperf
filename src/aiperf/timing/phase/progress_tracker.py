@@ -106,12 +106,15 @@ class PhaseProgressTracker:
         self,
         is_final_turn: bool,
         cancelled: bool,
+        agent_depth: int = 0,
     ) -> bool:
         """Atomically increment returned count.
 
         Args:
             is_final_turn: Whether this turn is the final turn of a session.
             cancelled: Whether the credit was cancelled.
+            agent_depth: Agent depth of the returned credit. Child sessions (depth > 0)
+                are excluded from session completion/cancellation counts.
 
         Returns:
             True if ALL credits returned (this was the final return).
@@ -123,7 +126,7 @@ class PhaseProgressTracker:
         Note: Late arrivals (after phase complete) are handled by caller
         checking lifecycle.is_complete before calling this method.
         """
-        return self._counter.increment_returned(is_final_turn, cancelled)
+        return self._counter.increment_returned(is_final_turn, cancelled, agent_depth)
 
     def increment_prefill_released(self) -> None:
         """Increment prefill released count.

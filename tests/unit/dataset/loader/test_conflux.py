@@ -695,16 +695,16 @@ class TestConvertToConversations:
         for conv in conversations:
             assert conv.session_id.startswith("conflux_")
 
-    def test_no_hyperparameters_defaults_max_tokens(
+    def test_no_hyperparameters_leaves_max_tokens_none(
         self, tmp_path, default_user_config
     ):
-        """When hyperparameters is None, max_tokens defaults to 4096."""
+        """When hyperparameters is None, max_tokens is None (server default)."""
         records = [_make_record(hyperparameters=None)]
         path = _build_session_file(tmp_path, records)
         loader = ConfluxLoader(filename=path, user_config=default_user_config)
         data = loader.load_dataset()
         conversations = loader.convert_to_conversations(data)
-        assert conversations[0].turns[0].max_tokens == 4096
+        assert conversations[0].turns[0].max_tokens is None
 
     def test_fallback_uses_raw_messages_single_record(
         self, tmp_path, default_user_config
@@ -2093,3 +2093,397 @@ class TestNotificationJoinIntegration:
         assert prereqs_3[0].kind == PrerequisiteKind.SPAWN_JOIN
         # The two spawns should reference different spawn_ids
         assert prereqs_2[0].spawn_id != prereqs_3[0].spawn_id
+
+
+class TestZeroAlignTimestamps:
+    """Tests for zero-aligning timestamps in convert_to_conversations."""
+
+    @pytest.fixture()
+    def default_user_config(self):
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+            ),
+        )
+
+    def test_single_conversation_timestamps_start_at_zero(
+        self, tmp_path, default_user_config
+    ) -> None:
+        """All timestamps shift so the earliest becomes 0."""
+        records = [
+            _make_record(
+                record_id=f"req_{i}",
+                agent_id="claude",
+                is_subagent=False,
+                timestamp=_ts(i * 10),
+            )
+            for i in range(4)
+        ]
+        path = _build_session_file(tmp_path, records)
+        loader = ConfluxLoader(filename=path, user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        timestamps = [t.timestamp for t in conversations[0].turns]
+        assert timestamps[0] == 0.0
+        assert timestamps[1] == 10_000.0
+        assert timestamps[2] == 20_000.0
+        assert timestamps[3] == 30_000.0
+
+    def test_parent_and_children_all_zero_aligned(
+        self, tmp_path, default_user_config
+    ) -> None:
+        """Parent and subagent timestamps are shifted by the same global minimum."""
+        path = _build_team_session(tmp_path)
+        loader = ConfluxLoader(filename=path, user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        all_timestamps = [
+            t.timestamp
+            for c in conversations
+            for t in c.turns
+            if t.timestamp is not None
+        ]
+        assert min(all_timestamps) == 0.0
+        # Parent turn 0 is the global minimum (_ts(0)), so it should be 0
+        parent = conversations[0]
+        assert parent.turns[0].timestamp == 0.0
+
+    def test_relative_spacing_preserved(self, tmp_path, default_user_config) -> None:
+        """Inter-turn gaps are identical before and after alignment."""
+        records = [
+            _make_record(
+                record_id=f"req_{i}",
+                agent_id="claude",
+                is_subagent=False,
+                timestamp=_ts(i * 7),
+            )
+            for i in range(3)
+        ]
+        path = _build_session_file(tmp_path, records)
+        loader = ConfluxLoader(filename=path, user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        ts = [t.timestamp for t in conversations[0].turns]
+        gaps = [ts[i + 1] - ts[i] for i in range(len(ts) - 1)]
+        assert gaps == [7_000.0, 7_000.0]
+
+    def test_child_earlier_than_parent_becomes_zero(
+        self, tmp_path, default_user_config
+    ) -> None:
+        """When a child timestamp precedes the parent, the child becomes 0."""
+        records = [
+            _make_record(
+                record_id="req_parent_0",
+                agent_id="claude",
+                is_subagent=False,
+                timestamp=_ts(10),
+                duration_ms=2000,
+            ),
+            _make_record(
+                record_id="req_child_0",
+                agent_id="sub_a",
+                is_subagent=True,
+                timestamp=_ts(5),
+            ),
+        ]
+        path = _build_session_file(tmp_path, records)
+        loader = ConfluxLoader(filename=path, user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+
+        all_timestamps = [
+            t.timestamp
+            for c in conversations
+            for t in c.turns
+            if t.timestamp is not None
+        ]
+        assert min(all_timestamps) == 0.0
+        # Child at _ts(5) is earliest -> becomes 0; parent at _ts(10) -> 5000
+        child = next(c for c in conversations if c.agent_depth == 1)
+        parent = next(c for c in conversations if c.agent_depth == 0)
+        assert child.turns[0].timestamp == 0.0
+        assert parent.turns[0].timestamp == 5_000.0
+
+    def test_already_zero_aligned_is_noop(self) -> None:
+        """If earliest timestamp is already 0, nothing changes."""
+        from aiperf.common.models import Conversation, Turn
+
+        conv = Conversation(session_id="test")
+        conv.turns = [
+            Turn(role="user", timestamp=0.0, max_tokens=100),
+            Turn(role="user", timestamp=5_000.0, max_tokens=100),
+        ]
+        ConfluxLoader._zero_align_timestamps([conv])
+        assert conv.turns[0].timestamp == 0.0
+        assert conv.turns[1].timestamp == 5_000.0
+
+    def test_empty_conversations_no_error(self) -> None:
+        """Empty conversation list does not raise."""
+        ConfluxLoader._zero_align_timestamps([])
+
+    def test_single_turn_becomes_zero(self) -> None:
+        """A single-turn session normalizes to timestamp 0."""
+        from aiperf.common.models import Conversation, Turn
+
+        conv = Conversation(session_id="test")
+        conv.turns = [Turn(role="user", timestamp=999_999.0, max_tokens=100)]
+        ConfluxLoader._zero_align_timestamps([conv])
+        assert conv.turns[0].timestamp == 0.0
+
+
+# =========================================================================
+# Directory loading tests
+# =========================================================================
+
+
+class TestDirectoryCanLoad:
+    """Test can_load with directories."""
+
+    def test_directory_with_conflux_json(self, tmp_path):
+        """Directory containing a valid Conflux JSON file is accepted."""
+        f = tmp_path / "session1.json"
+        f.write_bytes(orjson.dumps([_make_record()]))
+        assert ConfluxLoader.can_load(filename=str(tmp_path))
+
+    def test_empty_directory(self, tmp_path):
+        """Directory with no JSON files is rejected."""
+        assert not ConfluxLoader.can_load(filename=str(tmp_path))
+
+    def test_directory_with_non_conflux_json(self, tmp_path):
+        """Directory with non-Conflux JSON files is rejected."""
+        f = tmp_path / "other.json"
+        f.write_bytes(orjson.dumps({"key": "value"}))
+        assert not ConfluxLoader.can_load(filename=str(tmp_path))
+
+    def test_directory_with_mixed_files(self, tmp_path):
+        """Directory with one valid and one non-JSON file is accepted."""
+        (tmp_path / "session.json").write_bytes(orjson.dumps([_make_record()]))
+        (tmp_path / "readme.txt").write_text("not json")
+        assert ConfluxLoader.can_load(filename=str(tmp_path))
+
+
+class TestDirectoryLoadDataset:
+    """Test load_dataset and convert_to_conversations with directory input.
+
+    Each file in a directory is an independent session (separate capture).
+    Agent IDs are prefixed with ``f<idx>_`` to avoid cross-file collisions,
+    and each file is zero-aligned independently.
+    """
+
+    @pytest.fixture
+    def default_user_config(self):
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                prompt=PromptConfig(input_tokens=InputTokensConfig(mean=100)),
+                conflux_include_utility_calls=True,
+            ),
+        )
+
+    def _write_session(self, tmp_path, filename, records):
+        (tmp_path / filename).write_bytes(orjson.dumps(records))
+
+    def test_loads_records_from_multiple_files(self, tmp_path, default_user_config):
+        """Each file is an independent session with prefixed agent_ids."""
+        # File 0: session with 3 turns
+        self._write_session(
+            tmp_path,
+            "session_a.json",
+            [
+                _make_record(
+                    record_id=f"req_a{i}",
+                    agent_id="claude",
+                    is_subagent=False,
+                    timestamp=_ts(i * 5),
+                )
+                for i in range(3)
+            ],
+        )
+        # File 1: separate session with 2 turns (same agent_id, different file)
+        self._write_session(
+            tmp_path,
+            "session_b.json",
+            [
+                _make_record(
+                    record_id=f"req_b{i}",
+                    agent_id="claude",
+                    is_subagent=False,
+                    timestamp=_ts(100 + i * 5),
+                )
+                for i in range(2)
+            ],
+        )
+
+        loader = ConfluxLoader(filename=str(tmp_path), user_config=default_user_config)
+        data = loader.load_dataset()
+        assert "f0_claude" in data
+        assert "f1_claude" in data
+        assert len(data["f0_claude"]) == 3
+        assert len(data["f1_claude"]) == 2
+
+    def test_converts_directory_to_independent_conversations(
+        self, tmp_path, default_user_config
+    ):
+        """Each file produces its own parent+children conversations."""
+        # File 0: parent + child session
+        self._write_session(
+            tmp_path,
+            "session_a.json",
+            [
+                _make_record(
+                    record_id=f"req_p{i}",
+                    agent_id="claude",
+                    is_subagent=False,
+                    timestamp=_ts(i * 5),
+                )
+                for i in range(3)
+            ]
+            + [
+                _make_record(
+                    record_id=f"req_c{i}",
+                    agent_id="sub_a",
+                    is_subagent=True,
+                    timestamp=_ts(5 + i * 3),
+                )
+                for i in range(2)
+            ],
+        )
+        # File 1: standalone session
+        self._write_session(
+            tmp_path,
+            "session_b.json",
+            [
+                _make_record(
+                    record_id=f"req_x{i}",
+                    agent_id="claude",
+                    is_subagent=False,
+                    timestamp=_ts(200 + i * 5),
+                )
+                for i in range(2)
+            ],
+        )
+
+        loader = ConfluxLoader(filename=str(tmp_path), user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        # File 0: parent + child = 2 conversations
+        # File 1: standalone parent = 1 conversation
+        assert len(conversations) == 3
+
+    def test_per_file_zero_alignment(self, tmp_path, default_user_config):
+        """Each file's timestamps are zero-aligned independently."""
+        # File 0: starts at t=1000s
+        self._write_session(
+            tmp_path,
+            "early.json",
+            [
+                _make_record(
+                    record_id=f"req_e{i}",
+                    agent_id="claude",
+                    is_subagent=False,
+                    timestamp=_ts(1000 + i * 10),
+                )
+                for i in range(3)
+            ],
+        )
+        # File 1: starts at t=5000s (completely different time origin)
+        self._write_session(
+            tmp_path,
+            "late.json",
+            [
+                _make_record(
+                    record_id=f"req_l{i}",
+                    agent_id="claude",
+                    is_subagent=False,
+                    timestamp=_ts(5000 + i * 10),
+                )
+                for i in range(3)
+            ],
+        )
+
+        loader = ConfluxLoader(filename=str(tmp_path), user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+
+        # Both files should start at timestamp 0 independently
+        for conv in conversations:
+            assert conv.turns[0].timestamp == 0.0
+
+    def test_empty_directory_raises(self, tmp_path, default_user_config):
+        """Loading from an empty directory raises FileNotFoundError."""
+        loader = ConfluxLoader(filename=str(tmp_path), user_config=default_user_config)
+        with pytest.raises(FileNotFoundError, match="No .json files found"):
+            loader.load_dataset()
+
+    def test_skips_non_json_files(self, tmp_path, default_user_config):
+        """Non-JSON files in the directory are ignored."""
+        self._write_session(
+            tmp_path,
+            "session.json",
+            [
+                _make_record(
+                    record_id=f"req_{i}",
+                    agent_id="claude",
+                    is_subagent=False,
+                    timestamp=_ts(i * 5),
+                )
+                for i in range(2)
+            ],
+        )
+        (tmp_path / "notes.txt").write_text("not json")
+        (tmp_path / "data.csv").write_text("a,b,c")
+
+        loader = ConfluxLoader(filename=str(tmp_path), user_config=default_user_config)
+        data = loader.load_dataset()
+        assert len(data["f0_claude"]) == 2
+
+    def test_single_file_directory(self, tmp_path, default_user_config):
+        """Directory with one file behaves like a single session."""
+        self._write_session(
+            tmp_path,
+            "all.json",
+            [
+                _make_record(
+                    record_id=f"req_{i}",
+                    agent_id="claude",
+                    is_subagent=False,
+                    timestamp=_ts(i * 5),
+                )
+                for i in range(4)
+            ],
+        )
+
+        loader = ConfluxLoader(filename=str(tmp_path), user_config=default_user_config)
+        data = loader.load_dataset()
+        assert len(data["f0_claude"]) == 4
+
+    def test_same_agent_ids_across_files_no_collision(
+        self, tmp_path, default_user_config
+    ):
+        """Two files with identical agent_ids produce separate conversations."""
+        for i, name in enumerate(["file_a.json", "file_b.json"]):
+            self._write_session(
+                tmp_path,
+                name,
+                [
+                    _make_record(
+                        record_id=f"req_{name}_{j}",
+                        agent_id="claude",
+                        is_subagent=False,
+                        timestamp=_ts(i * 1000 + j * 5),
+                    )
+                    for j in range(3)
+                ],
+            )
+
+        loader = ConfluxLoader(filename=str(tmp_path), user_config=default_user_config)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+        session_ids = {c.session_id for c in conversations}
+        assert len(session_ids) == 2

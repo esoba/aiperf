@@ -20,6 +20,15 @@ class SubagentMixin:
     Subclasses must:
     - Call ``_init_subagents(subagents)`` in their ``__init__``
     - Implement ``_dispatch_turn(turn)`` (strategy-specific dispatch callback)
+
+    The dispatch callback is how the orchestrator re-enters the strategy to
+    schedule work. It receives a TurnToSend and must schedule it via the
+    strategy's own timing mechanism (e.g., schedule_at_perf_sec for
+    FixedSchedule, continuation queue for RequestRate, immediate for
+    UserCentric). The orchestrator calls this for:
+    - Gated parent turns (after all children complete)
+    - Non-final child next turns (continuing a child conversation)
+    - Background child first turns (fire-and-forget)
     """
 
     _subagents: SubagentOrchestrator | None
@@ -27,15 +36,17 @@ class SubagentMixin:
     def _init_subagents(self, subagents: SubagentOrchestrator | None) -> None:
         self._subagents = subagents
         if self._subagents is not None:
+            # Wire the dispatch callback. The orchestrator is created by
+            # PhaseRunner before the strategy, so it can't receive the
+            # callback at construction time.
             self._subagents.set_dispatch(self._dispatch_turn)
 
     def on_failed_credit(self, credit_return: CreditReturn) -> None:
-        """Handle errored or cancelled child credit returns.
+        """Release errored/cancelled non-final children from gate tracking.
 
-        Called by CreditCallbackHandler for every errored/cancelled return,
-        regardless of can_send_any_turn() — this is gate-tracking cleanup,
-        not new work dispatch. The orchestrator's _satisfy_prerequisite checks
-        can_send_any_turn() internally before dispatching gated turns.
+        Only non-final children: final turns do gate accounting in
+        _handle_child_credit. Calling terminate_child for final turns
+        would double-release from _child_to_gate.
         """
         if not self._subagents:
             return

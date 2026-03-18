@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
@@ -101,12 +101,18 @@ class PhaseRunner(TaskManagerMixin):
         # For FIXED_SCHEDULE mode, use actual dataset size instead of config values.
         # Config values may reflect pre-filtered file size, but dataset_metadata
         # reflects the actual filtered dataset after start/end offset filtering.
+        #
+        # Counts include ALL conversations (root + children). Child turns are
+        # dispatched dynamically by SubagentOrchestrator and go through
+        # issue_credit -> increment_sent, so they contribute to the total.
+        # The sending phase completes when all turns (root + child) are sent.
         metadata = conversation_source.dataset_metadata
         if config.timing_mode == TimingMode.FIXED_SCHEDULE and metadata:
+            root_convs = [c for c in metadata.conversations if c.agent_depth == 0]
             self._config = config.model_copy(
                 update={
                     "total_expected_requests": metadata.total_turn_count,
-                    "expected_num_sessions": len(metadata.conversations),
+                    "expected_num_sessions": len(root_convs),
                 }
             )
         self._phase_publisher = phase_publisher
@@ -202,7 +208,7 @@ class PhaseRunner(TaskManagerMixin):
         StrategyClass = plugins.get_class(
             PluginType.TIMING_STRATEGY, self._config.timing_mode
         )
-        strategy_kwargs: dict = {}
+        strategy_kwargs: dict[str, Any] = {}
 
         metadata = self._conversation_source.dataset_metadata
         has_subagents = bool(

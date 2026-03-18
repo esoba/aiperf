@@ -181,7 +181,7 @@ class CreditCounter:
         new_sent_sessions_count = self._sent_sessions
         new_total_session_turns = self._total_session_turns
 
-        if turn_to_send.turn_index == 0:
+        if turn_to_send.turn_index == 0 and turn_to_send.agent_depth == 0:
             new_sent_sessions_count += 1
             new_total_session_turns += turn_to_send.num_turns
 
@@ -200,7 +200,9 @@ class CreditCounter:
 
         return credit_index, is_final_credit
 
-    def increment_returned(self, is_final_turn: bool, cancelled: bool) -> bool:
+    def increment_returned(
+        self, is_final_turn: bool, cancelled: bool, agent_depth: int = 0
+    ) -> bool:
         """Atomically increment returned count and check phase completion.
 
         Lock-free: no async calls.
@@ -208,6 +210,8 @@ class CreditCounter:
         Args:
             is_final_turn: Whether the returned turn is the final turn of its session
             cancelled: Whether the credit was cancelled
+            agent_depth: Agent depth of the returned credit. Child sessions (depth > 0)
+                are excluded from session completion/cancellation counts.
 
         Returns:
             True if ALL sent credits have now been returned or cancelled
@@ -215,11 +219,11 @@ class CreditCounter:
         """
         if cancelled:
             self._requests_cancelled += 1
-            if is_final_turn:
+            if is_final_turn and agent_depth == 0:
                 self._cancelled_sessions += 1
         else:
             self._requests_completed += 1
-            if is_final_turn:
+            if is_final_turn and agent_depth == 0:
                 self._completed_sessions += 1
 
         return self.check_all_returned_or_cancelled()

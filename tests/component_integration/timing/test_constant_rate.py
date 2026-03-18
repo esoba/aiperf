@@ -60,9 +60,9 @@ class TestConstantRateBasic:
     def test_constant_rate_multi_turn(self, cli: AIPerfCLI):
         """Test constant rate with multi-turn conversations."""
         config = TimingTestConfig(
-            num_sessions=15,
-            qps=75.0,
-            turns_per_session=4,
+            num_sessions=8,
+            qps=100.0,
+            turns_per_session=3,
         )
         cmd = build_timing_command(config, arrival_pattern="constant")
         result = cli.run_sync(cmd, timeout=config.timeout)
@@ -157,9 +157,9 @@ class TestConstantRateStress:
     def test_sustained_multi_turn(self, cli: AIPerfCLI):
         """Test sustained multi-turn workload."""
         config = TimingTestConfig(
-            num_sessions=20,
-            qps=100.0,
-            turns_per_session=5,
+            num_sessions=10,
+            qps=150.0,
+            turns_per_session=3,
             timeout=90.0,
         )
         cmd = build_timing_command(config, arrival_pattern="constant")

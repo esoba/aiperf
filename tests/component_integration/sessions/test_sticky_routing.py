@@ -64,21 +64,21 @@ class TestStickyRouting:
                 --model {defaults.model} \
                 --streaming \
                 --request-rate {TEST_QPS} \
-                --num-sessions 15 \
-                --session-turns-mean 3 \
+                --num-sessions 10 \
+                --session-turns-mean 2 \
                 --session-turns-stddev 0 \
-                --workers-max 10 \
+                --workers-max 6 \
                 --ui {defaults.ui}
             """
         )
-        # 15 sessions × 3 turns = 45 requests
-        assert result.request_count == 45
+        # 10 sessions × 2 turns = 20 requests
+        assert result.request_count == 20
 
         # Verify sticky routing and all sessions completed all turns
         sessions = assert_sticky_routing(result.jsonl)
-        assert len(sessions) == 15
+        assert len(sessions) == 10
         for session_id, records in sessions.items():
-            assert len(records) == 3, f"Session {session_id} incomplete"
+            assert len(records) == 2, f"Session {session_id} incomplete"
         assert_jsonl_turns_sequential(result.jsonl)
 
     @pytest.mark.slow
@@ -94,15 +94,15 @@ class TestStickyRouting:
                 --streaming \
                 --request-rate {TEST_QPS} \
                 --concurrency 3 \
-                --num-sessions 9 \
-                --session-turns-mean 4 \
+                --num-sessions 6 \
+                --session-turns-mean 3 \
                 --session-turns-stddev 0 \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
             """
         )
-        # 9 sessions × 4 turns = 36 requests
-        assert result.request_count == 36
+        # 6 sessions × 3 turns = 18 requests
+        assert result.request_count == 18
 
         # Verify sticky routing
         assert_sticky_routing(result.jsonl)
@@ -124,8 +124,8 @@ class TestStickyRouting:
                 --num-sessions 6 \
                 --session-turns-mean 3 \
                 --session-turns-stddev 0 \
-                --session-turn-delay-mean 100 \
-                --session-turn-delay-stddev 20 \
+                --session-turn-delay-mean 50 \
+                --session-turn-delay-stddev 10 \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}
             """

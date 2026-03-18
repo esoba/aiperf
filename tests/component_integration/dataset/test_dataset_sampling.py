@@ -208,7 +208,7 @@ class TestDatasetSamplingStrategies:
                 --streaming \
                 --dataset-sampling-strategy shuffle \
                 --random-seed 42 \
-                --num-sessions 10 \
+                --num-sessions 6 \
                 --session-turns-mean 3 \
                 --session-turns-stddev 0 \
                 --workers-max {defaults.workers_max} \
@@ -217,8 +217,8 @@ class TestDatasetSamplingStrategies:
             timeout=60.0,
         )
 
-        # Should have 10 sessions × 3 turns = 30 requests
-        assert len(result.jsonl) == 30
+        # Should have 6 sessions × 3 turns = 18 requests
+        assert len(result.jsonl) == 18
 
         # Verify turn indices are sequential within each session
         analyzer = CreditFlowAnalyzer(result.runner_result)

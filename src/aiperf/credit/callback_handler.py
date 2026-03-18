@@ -4,11 +4,15 @@
 
 Handles ALL credit lifecycle callbacks (returns + TTFT) directly from CreditRouter.
 
-Key responsibilities:
-- Track credit returns (increment_returned, release slots)
-- Handle TTFT events (increment_prefill_released, release prefill slot)
-- Dispatch next turn to timing strategy (handle_credit_return)
-- Cleanup in-flight sessions on phase end
+Processing order for credit returns (see SubagentOrchestrator module docstring
+for why this ordering is load-bearing for subagent correctness)::
+
+    1. Atomic counting (increment_returned)
+    2. Track prefill release if TTFT never arrived
+    3. Release concurrency slots
+    4. on_failed_credit for errored/cancelled child gate cleanup
+    5. Signal all_credits_returned_event if final return
+    6. handle_credit_return → strategy dispatch (with child bypass)
 """
 
 from __future__ import annotations
@@ -54,24 +58,10 @@ class PhaseCallbackContext:
 class CreditCallbackHandler:
     """Handles credit lifecycle callbacks from CreditRouter.
 
-    Unified callback handler for all phases.
-
     Callback flow:
-        Worker → CreditRouter → CreditCallbackHandler → [count, release slots, dispatch]
+        Worker -> CreditRouter -> CreditCallbackHandler -> [count, release, dispatch]
 
-    Processing order for credit returns:
-        1. Atomic counting (increment_returned)
-        2. Track prefill release if TTFT never arrived
-        3. Release concurrency slots
-        4. Dispatch next turn via timing strategy (if applicable)
-
-    Processing order for TTFT:
-        1. Track prefill release (increment_prefill_released)
-        2. Release prefill slot
-
-    Phase Registration:
-        PhaseRunner calls register_phase() BEFORE any credits are sent.
-        This ensures callbacks work from the first credit.
+    PhaseRunner calls register_phase() BEFORE any credits are sent.
     """
 
     def __init__(self, concurrency_manager: ConcurrencyManager) -> None:
@@ -128,18 +118,7 @@ class CreditCallbackHandler:
     async def on_credit_return(
         self, worker_id: str, credit_return: CreditReturn
     ) -> None:
-        """Handle credit return from worker.
-
-        Processing order:
-        1. Atomic counting (increment_returned)
-        2. Track prefill release if TTFT never arrived
-        3. Release concurrency slots
-        4. Dispatch next turn via strategy (if applicable)
-
-        Args:
-            worker_id: ID of the worker returning the credit.
-            credit_return: Return details including credit and status.
-        """
+        """Handle credit return from worker. See module docstring for step ordering."""
         credit = credit_return.credit
         phase = credit.phase
 
@@ -164,6 +143,7 @@ class CreditCallbackHandler:
         is_final_returned = handler.progress.increment_returned(
             credit.is_final_turn,
             credit_return.cancelled,
+            agent_depth=credit.agent_depth,
         )
 
         # 2. Track prefill release if TTFT never arrived
@@ -175,20 +155,25 @@ class CreditCallbackHandler:
             phase, credit, credit_return, is_final_returned, handler
         )
 
-        # 4. Notify strategy of errored/cancelled child credits for join tracking.
-        # Must run BEFORE handle_credit_return so terminate_child marks the child
-        # as terminated before intercept -> _handle_child_credit checks _is_terminated.
-        # Not gated by can_send_any_turn — the orchestrator's _maybe_complete_join
-        # checks that internally before dispatching any join turn.
+        # 4. on_failed_credit for errored/cancelled child gate cleanup.
+        # ORDER MATTERS: Must run BEFORE handle_credit_return (step 6) so
+        # terminate_child marks the child before _handle_child_credit checks
+        # _is_terminated. Reversing steps 4 and 6 causes zombie child dispatch.
+        # Not gated by can_send_any_turn -- this is bookkeeping, not new work.
         if credit_return.error or credit_return.cancelled:
             handler.strategy.on_failed_credit(credit_return)
 
-        # 5. Signal completion if this was the final return
+        # 5. Signal all_credits_returned_event if final return
         if is_final_returned:
             handler.progress.all_credits_returned_event.set()
 
-        # 6. Notify timing strategy for subsequent turns when phase can still send
-        if handler.stop_checker.can_send_any_turn():
+        # 6. handle_credit_return with child bypass.
+        # Child returns (depth > 0) MUST always reach the orchestrator for gate
+        # accounting, even after stop fires. Without this bypass, child final
+        # returns are silently dropped, leaving parent gates permanently stuck.
+        # The orchestrator has its own guards against post-stop dispatch
+        # (see SubagentOrchestrator module docstring "Stop Condition Interaction").
+        if handler.stop_checker.can_send_any_turn() or credit.agent_depth > 0:
             await handler.strategy.handle_credit_return(credit)
 
     def _release_slots_for_return(
@@ -215,8 +200,9 @@ class CreditCallbackHandler:
         """
         concurrency = handler.concurrency_manager
 
-        # Release session slot when conversation ends (final turn, whether completed or cancelled)
-        if credit.is_final_turn:
+        # Release session slot when root conversation ends (final turn, whether completed or cancelled).
+        # Child sessions (depth > 0) never acquired a session slot, so skip release.
+        if credit.is_final_turn and credit.agent_depth == 0:
             concurrency.release_session_slot(phase)
 
         # On phase end, release slots for sessions still in flight.

@@ -15,20 +15,46 @@ Turns declare explicit prerequisites (e.g. ``spawn_join``) that must be
 satisfied before the turn dispatches. The orchestrator builds a prerequisite
 index at init time from TurnPrerequisite entries on each turn.
 
+Credit Return Flow for Subagents
+================================
+
+CreditCallbackHandler.on_credit_return processing order::
+
+    1. Atomic counting (increment_returned)
+    2. Track prefill release
+    3. Release concurrency slots
+    4. on_failed_credit → terminate_child  (errored/cancelled, ALL credits)
+    5. Signal all_credits_returned_event
+    6. handle_credit_return → intercept    (can_send OR depth > 0)
+
+Step 4 runs BEFORE step 6 so that terminate_child marks the child in
+_terminated_children before _handle_child_credit checks _is_terminated.
+Step 6 uses a child bypass (depth > 0) so gate accounting always completes,
+even after stop fires.
+
 Stop Condition Interaction
 ==========================
 
-Three coordinated mechanisms achieve zero-overshoot, zero-deadlock:
+Four coordinated guards achieve zero-overshoot, zero-deadlock:
 
-1. **Callback handler gate** (CreditCallbackHandler):
-   Final child turns always pass through for gate accounting.
-   Non-final blocked children trigger on_child_stopped -> terminate_child.
+1. **Callback handler child bypass** (CreditCallbackHandler step 6):
+   Child returns (depth > 0) always reach handle_credit_return for gate
+   accounting. Without this, child final-turn returns would be silently
+   dropped when stop fires, leaving parent gates permanently unsatisfied.
 
-2. **Credit issuance failure** (_issue_child_credit_or_release):
-   When issue_credit returns False, the child is released from gate tracking.
+2. **Non-final child dispatch suppression** (_handle_child_credit):
+   Checks can_send_any_turn() before dispatching a child's next turn.
+   This prevents the child bypass from causing unbounded child work.
 
 3. **Gate dispatch suppression** (_release_blocked_gate):
-   Checks can_send_any_turn() before dispatching the gated turn.
+   Checks can_send_any_turn() before dispatching the gated parent turn.
+
+4. **Credit issuance failure** (_issue_child_credit_or_release):
+   When issue_credit returns False (stop fired, no slots), the child is
+   released from gate tracking to prevent the parent from hanging.
+
+Additionally, issue_credit itself checks stop conditions at slot
+acquisition time, providing a belt-and-suspenders final guard.
 """
 
 from __future__ import annotations
@@ -56,14 +82,31 @@ class PendingTurnGate:
     """Tracks prerequisite completion before dispatching a gated turn."""
 
     parent_conversation_id: str
+    """Template conversation ID of the parent."""
+
     parent_correlation_id: str
+    """Runtime correlation ID of the parent session."""
+
     gated_turn_index: int
+    """Turn index that is blocked until prerequisites are met."""
+
     parent_num_turns: int = 0
+    """Total turns in the parent conversation."""
+
     parent_agent_depth: int = 0
+    """Nesting depth of the parent (0 = root)."""
+
     parent_parent_correlation_id: str | None = None
+    """Correlation ID of the parent's parent (for nested subagents)."""
+
     created_at_ns: int = 0
+    """Monotonic timestamp when the gate was created, for leak diagnostics."""
+
     is_blocked: bool = False
+    """True once the parent has reached the gated turn and is waiting."""
+
     outstanding: dict[str, list[int]] = field(default_factory=dict)
+    """Maps prereq_key -> [expected_count, completed_count]."""
 
     @property
     def is_satisfied(self) -> bool:
@@ -76,8 +119,13 @@ class ChildGateEntry:
     """Tracks which parent gate a blocking child belongs to."""
 
     parent_corr_id: str
+    """Runtime correlation ID of the parent session."""
+
     gated_turn_index: int
+    """Turn index on the parent that this child gates."""
+
     prereq_key: str
+    """Prerequisite key in the parent's PendingTurnGate.outstanding dict."""
 
 
 @dataclass(slots=True)
@@ -85,29 +133,33 @@ class SubagentStats:
     """Counters for subagent observability."""
 
     children_spawned: int = 0
+    """Total child sessions started across all spawns."""
+
     children_completed: int = 0
+    """Children that finished their final turn normally."""
+
     children_errored: int = 0
+    """Children released from gate due to error/cancel or issuance failure."""
+
     parents_suspended: int = 0
+    """Parent sessions that blocked on a gated turn."""
+
     parents_resumed: int = 0
+    """Parent sessions resumed after all prerequisites were met."""
+
     joins_suppressed: int = 0
+    """Gated turns suppressed because stop condition fired."""
 
 
 class SubagentOrchestrator(AIPerfLoggerMixin):
     """Composable subagent spawn/join component.
 
-    Handles all subagent lifecycle internally. The strategy provides a
-    dispatch callback and calls ``intercept(credit)`` from handle_credit_return.
-    The orchestrator uses the callback to dispatch child turns, next turns for
-    non-final children, and gated turns when all prerequisites are met.
+    Strategies call ``intercept(credit)`` from handle_credit_return. The
+    orchestrator routes child credits, manages gate tracking, and dispatches
+    gated parent turns via a strategy-provided callback.
 
-    Strategy integration is provided by SubagentMixin, which handles:
-    - ``_init_subagents()``: stores orchestrator + sets dispatch callback
-    - ``on_failed_credit()``: calls terminate_child for errored/cancelled children
-    - ``cleanup()``: logs leaked state, clears tracking at phase end
-
-    CreditCallbackHandler calls on_failed_credit BEFORE handle_credit_return
-    so that terminate_child marks children before intercept checks _is_terminated.
-    PhaseRunner calls cleanup at every phase exit point.
+    Integration: SubagentMixin wires _init_subagents, on_failed_credit, cleanup.
+    See module docstring for credit return flow ordering and stop-condition guards.
     """
 
     def __init__(
@@ -148,11 +200,7 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
         self._build_prerequisite_index()
 
     def set_dispatch(self, dispatch_fn: Callable[[TurnToSend], None]) -> None:
-        """Set the strategy-provided dispatch callback.
-
-        Called by timing strategies during __init__ when the orchestrator
-        is constructed by the runner before the strategy exists.
-        """
+        """Set the strategy-provided dispatch callback."""
         self._dispatch = dispatch_fn
 
     # =========================================================================
@@ -162,21 +210,31 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
     def intercept(self, credit: Credit) -> bool:
         """Handle subagent-related credit returns.
 
-        Call at the top of handle_credit_return. Returns True if the credit
-        was fully handled (strategy should return early). Returns False if
-        the strategy should process the credit normally.
+        Called at the top of every strategy's handle_credit_return.
+        Returns True if the credit was fully handled (strategy must NOT
+        dispatch next turn). Returns False for normal strategy dispatch.
+
+        True only for: (a) child credits (depth > 0), (b) parent suspended
+        at a gate. Returning True incorrectly drops the parent's next turn.
         """
         if self._cleaning_up:
             return False
 
-        # Child credit returns
+        # Child credits are fully handled here. Strategy must not look up
+        # child conversation_ids -- they're not in the strategy's schedule.
         if credit.agent_depth > 0:
             self._handle_child_credit(credit)
             return True
 
-        # Spawn detection on completed turn
+        # Parent turn completed -- check if it spawned children.
         spawn_ids = self._get_spawn_ids(credit)
         if spawn_ids:
+            self.debug(
+                lambda: f"Parent {credit.x_correlation_id} turn[{credit.turn_index}] "
+                f"completed with spawns: {spawn_ids}"
+            )
+            # Turn-0 background spawns are pre-dispatched in execute_phase.
+            # Filter them out here to avoid double-dispatch.
             if credit.turn_index == 0:
                 spawn_ids = [
                     sid
@@ -186,20 +244,39 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
             if spawn_ids:
                 self._resolve_and_dispatch_spawns(credit, spawn_ids)
 
-        return self._maybe_suspend_parent(credit)
+        # Suspend parent if its next turn has unsatisfied prerequisites.
+        suspended = self._maybe_suspend_parent(credit)
+        if suspended:
+            self.debug(
+                lambda: f"Parent {credit.x_correlation_id} suspended at "
+                f"turn[{credit.turn_index + 1}] waiting for prerequisites"
+            )
+        return suspended
 
     # =========================================================================
     # Turn-0 background pre-dispatch (called from execute_phase)
     # =========================================================================
 
     def dispatch_turn0_background_spawns(self) -> None:
-        """Pre-dispatch background children for turn 0 of all root conversations."""
+        """Pre-dispatch background children for turn 0 of all root conversations.
+
+        Called from execute_phase after first-turn credits are scheduled.
+        Coordinates with intercept() which filters out turn-0 background
+        spawns to avoid double-dispatch. Blocking turn-0 spawns go through
+        intercept() instead.
+        """
+        if self._dispatch is None:
+            self.warning("dispatch_turn0_background_spawns called before set_dispatch")
+            return
+        total_dispatched = 0
         for conv in self._conversation_source.dataset_metadata.conversations:
             if conv.agent_depth > 0 or not conv.turns:
                 continue
             bg_ids = self._get_turn0_background_ids(conv.conversation_id)
             if not bg_ids:
                 continue
+            # Synthetic correlation ID -- these children are not gated so
+            # the parent_corr_id is only used for logging/tracing.
             parent_corr_id = f"bg-turn0-{conv.conversation_id}"
             for spawn_id in bg_ids:
                 spawn = self._conversation_source.get_subagent_spawn(
@@ -214,6 +291,9 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
                     )
                     self._dispatch(turn)
                     self._stats.children_spawned += 1
+                    total_dispatched += 1
+        if total_dispatched > 0:
+            self.info(f"Pre-dispatched {total_dispatched} turn-0 background children")
 
     # =========================================================================
     # Strategy-facing API (called via SubagentMixin)
@@ -222,9 +302,11 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
     def terminate_child(self, credit: Credit) -> None:
         """Release an errored/cancelled child from gate tracking.
 
-        Called from SubagentMixin.on_failed_credit() when a child credit
-        returns with an error or cancellation. Dispatches the gated turn
-        internally if this was the last child the parent was waiting for.
+        Called from SubagentMixin.on_failed_credit (callback handler step 4).
+        Must run before _handle_child_credit (step 6) -- see module docstring.
+
+        Skips final turns (gate accounting lives in _handle_child_credit) and
+        background children (not tracked in _child_to_gate).
         """
         if (
             self._cleaning_up
@@ -235,14 +317,34 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
             return
         self._stats.children_errored += 1
         self._terminated_children.add(credit.x_correlation_id)
+        entry = self._child_to_gate.get(credit.x_correlation_id)
+        self.debug(
+            lambda: f"Terminating child {credit.x_correlation_id} "
+            f"(parent={entry.parent_corr_id if entry else '?'}, "
+            f"turn[{credit.turn_index}]/{credit.num_turns})"
+        )
         gated = self._release_child(credit.x_correlation_id)
         if gated:
             self._dispatch(gated)
 
     def cleanup(self) -> None:
-        """Log leaked state and clear all tracking."""
+        """Log leaked state and clear all tracking. Idempotent."""
+        if self._cleaning_up:
+            return
         self._cleaning_up = True
+        s = self._stats
+        self.info(
+            f"Subagent stats: spawned={s.children_spawned}, "
+            f"completed={s.children_completed}, errored={s.children_errored}, "
+            f"suspended={s.parents_suspended}, resumed={s.parents_resumed}, "
+            f"suppressed={s.joins_suppressed}"
+        )
         if self._gated_turns or self._future_gates or self._child_to_gate:
+            self.warning(
+                f"Leaked state at cleanup: {len(self._gated_turns)} active gates, "
+                f"{sum(len(g) for g in self._future_gates.values())} future gates, "
+                f"{len(self._child_to_gate)} tracked children"
+            )
             now_ns = time.time_ns()
             leaked_gates = list(self._gated_turns.items())
             leaked_gates.extend(self._iter_future_gates())
@@ -292,6 +394,11 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
                             self._spawn_join_index[
                                 (conv.conversation_id, prereq.spawn_id)
                             ] = idx
+        if self._prerequisite_index:
+            self.info(
+                f"Prerequisite index: {len(self._prerequisite_index)} gated turns, "
+                f"{len(self._spawn_join_index)} spawn-join entries"
+            )
 
     def _find_gated_turn_index(
         self, conversation_id: str, spawn_ids: list[str]
@@ -358,9 +465,18 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
         return gate
 
     def _maybe_suspend_parent(self, credit: Credit) -> bool:
-        """Suspend parent dispatch only when it reaches a gated turn."""
+        """Suspend parent if its next turn has unsatisfied prerequisites.
+
+        Returns True to block the parent (strategy won't dispatch next turn).
+        Promotes a "future gate" (created by _resolve_and_dispatch_spawns) to
+        an active blocked gate in _gated_turns.
+
+        RACE: Children can complete before the parent reaches the gate. If the
+        future gate is already satisfied, we pop it and return False (no block).
+        """
         next_turn_index = credit.turn_index + 1
 
+        # Already blocked (multiple spawns targeting same gated turn).
         active_gate = self._gated_turns.get(credit.x_correlation_id)
         if (
             active_gate is not None
@@ -369,10 +485,12 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
         ):
             return True
 
+        # Promote future gate to active.
         future_gate = self._pop_future_gate(credit.x_correlation_id, next_turn_index)
         if future_gate is None:
             return False
 
+        # Children already finished -- no need to block.
         if future_gate.is_satisfied:
             return False
 
@@ -384,7 +502,12 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
     def _satisfy_prerequisite(
         self, parent_corr_id: str, gated_turn_index: int, prereq_key: str
     ) -> TurnToSend | None:
-        """Increment completion for a prerequisite; dispatch gated turn when all met."""
+        """Increment completion for a prerequisite; dispatch gated turn when all met.
+
+        Returns TurnToSend only when the gate is fully satisfied AND the parent
+        is already blocked. If satisfied before the parent arrives, pops the
+        future gate so _maybe_suspend_parent sees no gate and skips suspension.
+        """
         gate = self._get_gate(parent_corr_id, gated_turn_index)
         if gate is None:
             return None
@@ -396,6 +519,7 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
         if not gate.is_satisfied:
             return None
 
+        # Satisfied before parent arrived -- clean up future gate.
         if not gate.is_blocked:
             self._pop_future_gate(parent_corr_id, gated_turn_index)
             return None
@@ -403,7 +527,11 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
         return self._release_blocked_gate(parent_corr_id)
 
     def _release_blocked_gate(self, parent_corr_id: str) -> TurnToSend | None:
-        """Release a blocked parent gate and dispatch its gated turn."""
+        """Release a blocked parent gate and build its gated turn for dispatch.
+
+        Checks can_send_any_turn() to suppress dispatch after stop fires
+        (one of the three stop-condition guards; see module docstring).
+        """
         gate = self._gated_turns.pop(parent_corr_id, None)
         if gate is None:
             return None
@@ -435,20 +563,44 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
     # =========================================================================
 
     def _handle_child_credit(self, credit: Credit) -> None:
-        """Route a child credit: gate accounting for final, next turn for non-final."""
+        """Route a child credit: gate accounting for final, next turn for non-final.
+
+        Reached even after stop fires (callback handler child bypass), so both
+        paths check stop conditions before dispatching new work.
+        """
         if credit.is_final_turn:
+            # Gate accounting for blocking children only. Background children
+            # (not in _child_to_gate) are fire-and-forget.
             if credit.x_correlation_id in self._child_to_gate:
                 self._stats.children_completed += 1
+                entry = self._child_to_gate.get(credit.x_correlation_id)
+                self.debug(
+                    lambda: f"Child {credit.x_correlation_id} completed final turn "
+                    f"(parent={entry.parent_corr_id if entry else '?'})"
+                )
                 gated = self._release_child(credit.x_correlation_id)
                 if gated:
+                    self.debug(
+                        lambda: f"Gate satisfied, resuming parent "
+                        f"{gated.x_correlation_id} at turn[{gated.turn_index}]"
+                    )
                     self._dispatch(gated)
         else:
-            if not self._is_terminated(credit):
-                turn = TurnToSend.from_previous_credit(credit)
-                self._dispatch(turn)
+            # Consume terminated marker (set by terminate_child in step 4)
+            # to prevent dispatching next turn for errored children.
+            if self._is_terminated(credit):
+                return
+            if not self._stop_checker.can_send_any_turn():
+                return
+            turn = TurnToSend.from_previous_credit(credit)
+            self._dispatch(turn)
 
     def _is_terminated(self, credit: Credit) -> bool:
-        """Check and consume terminated status."""
+        """Check and consume terminated marker for a non-final child credit.
+
+        Consume-on-read: child turns are sequential (one in-flight at a time),
+        so the marker only needs to block one return.
+        """
         if credit.x_correlation_id in self._terminated_children:
             self._terminated_children.discard(credit.x_correlation_id)
             return True
@@ -477,7 +629,11 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
     def _resolve_and_dispatch_spawns(
         self, credit: Credit, spawn_ids: list[str]
     ) -> None:
-        """Resolve spawns, register gate tracking, and dispatch children."""
+        """Resolve spawns, register gate tracking, and dispatch children.
+
+        Two-phase: register all gates THEN dispatch. No awaits between phases,
+        so _child_to_gate entries exist before any child credit can return.
+        """
         parent_corr_id = credit.x_correlation_id
         child_depth = credit.agent_depth + 1
 
@@ -500,6 +656,8 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
                 gated_turn_index = self._find_gated_turn_index(
                     credit.conversation_id, [spawn_id]
                 )
+                # Sanity check: gate must be on a future turn. A gate on
+                # a past/current turn means the dataset is malformed.
                 if (
                     gated_turn_index is not None
                     and gated_turn_index <= credit.turn_index
@@ -514,17 +672,27 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
         if not resolved:
             return
 
-        # Create future gate tracking BEFORE dispatching children (prevents race)
+        if self.is_debug_enabled:
+            n_blocking = sum(1 for b, _, _, _ in resolved if b)
+            n_background = len(resolved) - n_blocking
+            self.debug(
+                f"Resolved spawns for parent {parent_corr_id}: "
+                f"{n_blocking} blocking, {n_background} background"
+            )
+
+        # PHASE 1: Register all gate tracking before dispatching any children.
         for is_blocking, spawn_id, child_sessions, gated_turn_index in resolved:
             if not is_blocking:
                 continue
             if gated_turn_index is None:
+                # Blocking spawn with no matching prerequisite in the dataset.
+                # The children will run but the parent won't wait for them.
                 self.warning(
                     f"Blocking spawn {spawn_id} on parent {parent_corr_id} has no "
                     "matching prerequisite; parent will not be gated"
                 )
                 continue
-            prereq_key = f"spawn_join:{spawn_id}"
+            prereq_key = f"{PrerequisiteKind.SPAWN_JOIN}:{spawn_id}"
             self._add_future_gate(
                 parent_corr_id=parent_corr_id,
                 gated_turn_index=gated_turn_index,
@@ -533,7 +701,7 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
                 expected_children=len(child_sessions),
             )
 
-        # Dispatch children
+        # PHASE 2: Dispatch children.
         for is_blocking, spawn_id, child_sessions, gated_turn_index in resolved:
             for session in child_sessions:
                 turn = session.build_first_turn(
@@ -559,7 +727,11 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
     async def _issue_child_credit_or_release(
         self, turn: TurnToSend, corr_id: str
     ) -> None:
-        """Issue a blocking child credit; release from gate if it fails."""
+        """Issue a blocking child credit; release from gate if issuance fails.
+
+        When issue_credit returns False (stop fired, no slots), releases the
+        child from gate tracking so the parent doesn't hang indefinitely.
+        """
         try:
             issued = await self._credit_issuer.issue_credit(turn)
         except Exception:
@@ -582,7 +754,11 @@ class SubagentOrchestrator(AIPerfLoggerMixin):
         return spawn is not None and spawn.is_background
 
     def _release_child(self, child_corr_id: str) -> TurnToSend | None:
-        """Pop child from tracking, maybe satisfy a prerequisite."""
+        """Pop child from gate tracking and satisfy its parent's prerequisite.
+
+        Returns TurnToSend if all prerequisites met and parent is blocked.
+        Safe to call twice (pop returns None on second call).
+        """
         entry = self._child_to_gate.pop(child_corr_id, None)
         if entry is None:
             return None

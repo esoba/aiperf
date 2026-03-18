@@ -56,46 +56,33 @@ class TimingStrategyProtocol(Protocol):
         """Execute the main timing loop for first turns.
 
         Sends first turns according to the timing strategy (rate, schedule, etc.).
-        Subsequent turns are handled by handle_credit_return via callbacks.
-        Subsequent turns can also be handled here if the strategy uses a queue.
+        Subsequent turns are dispatched by handle_credit_return via callbacks,
+        or pulled from a continuation queue here for queue-based strategies.
 
-        Return from this method once there are no more turns to send. In Queue-based strategies,
-        they must wait until all turns are sent. In non-queue-based strategies, this can
-        return once all first-turn credits are sent.
+        Must not return until all first-turn credits are sent (or queued).
         """
         ...
 
     async def handle_credit_return(self, credit: Credit) -> None:
         """Handle credit return: dispatch next turn if applicable.
 
-        Called when a worker completes a turn. Determines if a subsequent turn
-        should be sent, and if so, dispatches it via the appropriate path
-        (immediate, scheduled, or queued).
-
-        Note: CreditCallbackHandler checks can_send_any_turn() before calling.
-        Implementations only need to check conversation-specific conditions
-        (e.g., is_final_turn).
-
-        Args:
-            credit: Completed credit with conversation/turn info
+        Called by CreditCallbackHandler when can_send_any_turn() is True OR
+        credit.agent_depth > 0 (child bypass for gate accounting).
+        Implementations with subagents must call intercept() first -- the
+        orchestrator handles all child routing and stop-condition checks.
         """
         ...
 
     def on_failed_credit(self, credit_return: CreditReturn) -> None:
-        """Handle errored or cancelled credit returns for subagent join tracking.
+        """Handle errored/cancelled returns for subagent gate cleanup.
 
-        Called by CreditCallbackHandler for every errored/cancelled return,
-        BEFORE handle_credit_return and regardless of can_send_any_turn().
-        Default implementation is a no-op for strategies without subagents.
+        Called BEFORE handle_credit_return, regardless of can_send_any_turn().
+        No-op for strategies without subagents.
         """
         ...
 
     def cleanup(self) -> None:
-        """Release resources at phase end.
-
-        Called by PhaseRunner after the phase completes. Strategies with
-        subagent orchestrators use this to log leaked state and clear tracking.
-        """
+        """Release resources at phase end. Called by PhaseRunner after completion."""
         ...
 
 

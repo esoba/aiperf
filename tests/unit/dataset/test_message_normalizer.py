@@ -341,7 +341,7 @@ class TestAnthropicImageToOpenAI:
         block = _anthropic_image_block("base64")
         block["cache_control"] = {"type": "ephemeral"}
         result = _anthropic_image_to_openai(block)
-        assert result["_cache_control"] == {"type": "ephemeral"}
+        assert result["_meta"]["cache_control"] == {"type": "ephemeral"}
 
     def test_default_media_type(self) -> None:
         block = {"type": "image", "source": {"type": "base64", "data": "x"}}
@@ -377,7 +377,7 @@ class TestOpenAIImageToAnthropic:
         part = {
             "type": "image_url",
             "image_url": {"url": "https://x.com/i.png"},
-            "_cache_control": {"type": "ephemeral"},
+            "_meta": {"cache_control": {"type": "ephemeral"}},
         }
         result = _openai_image_to_anthropic(part)
         assert result["cache_control"] == {"type": "ephemeral"}
@@ -401,7 +401,7 @@ class TestAnthropicToolUseToCall:
         block = _tool_use_block()
         block["caller"] = {"type": "code_execution_20260120", "tool_id": "srv1"}
         result = _anthropic_tool_use_to_call(block)
-        assert result["_caller"] == {
+        assert result["_meta"]["caller"] == {
             "type": "code_execution_20260120",
             "tool_id": "srv1",
         }
@@ -410,7 +410,7 @@ class TestAnthropicToolUseToCall:
         block = _tool_use_block()
         block["cache_control"] = {"type": "ephemeral"}
         result = _anthropic_tool_use_to_call(block)
-        assert result["_cache_control"] == {"type": "ephemeral"}
+        assert result["_meta"]["cache_control"] == {"type": "ephemeral"}
 
     def test_non_dict_input(self) -> None:
         block = {"type": "tool_use", "id": "t1", "name": "X", "input": "raw string"}
@@ -509,7 +509,7 @@ class TestNormalizeAnthropicAssistant:
         result = _normalize_anthropic_assistant(msg)
         tc = result[0]["tool_calls"][0]
         assert tc["function"]["name"] == "web_search"
-        assert tc["_server_tool"] is True
+        assert tc["_meta"]["server_tool"] is True
 
     def test_server_tool_result_preserved_as_passthrough(self) -> None:
         msg = {
@@ -523,8 +523,8 @@ class TestNormalizeAnthropicAssistant:
         result = _normalize_anthropic_assistant(msg)
         out = result[0]
         assert len(out["tool_calls"]) == 1
-        assert len(out["_passthrough_blocks"]) == 1
-        assert out["_passthrough_blocks"][0]["type"] == "web_search_tool_result"
+        assert len(out["_meta"]["passthrough_blocks"]) == 1
+        assert out["_meta"]["passthrough_blocks"][0]["type"] == "web_search_tool_result"
         assert out["content"] == "Based on my search..."
 
     def test_caller_preserved_on_tool_call(self) -> None:
@@ -532,7 +532,10 @@ class TestNormalizeAnthropicAssistant:
         block["caller"] = {"type": "code_execution_20260120", "tool_id": "srv1"}
         msg = {"role": "assistant", "content": [block]}
         result = _normalize_anthropic_assistant(msg)
-        assert "_caller" in result[0]["tool_calls"][0]
+        assert (
+            "_meta" in result[0]["tool_calls"][0]
+            and "caller" in result[0]["tool_calls"][0]["_meta"]
+        )
 
     def test_citations_preserved(self) -> None:
         citations = [
@@ -542,7 +545,7 @@ class TestNormalizeAnthropicAssistant:
         text["citations"] = citations
         msg = {"role": "assistant", "content": [text]}
         result = _normalize_anthropic_assistant(msg)
-        assert result[0]["_citations"] == citations
+        assert result[0]["_meta"]["citations"] == citations
 
     def test_empty_content_list_returns_empty_string(self) -> None:
         msg = {"role": "assistant", "content": []}
@@ -605,13 +608,13 @@ class TestNormalizeAnthropicUser:
         block = _tool_result_block("t1", "Error!", is_error=True)
         msg = {"role": "user", "content": [block]}
         result = _normalize_anthropic_user(msg)
-        assert result[0]["_is_error"] is True
+        assert result[0]["_meta"]["is_error"] is True
 
     def test_tool_result_cache_control_preserved(self) -> None:
         block = _tool_result_block("t1", "data", cache_control={"type": "ephemeral"})
         msg = {"role": "user", "content": [block]}
         result = _normalize_anthropic_user(msg)
-        assert result[0]["_cache_control"] == {"type": "ephemeral"}
+        assert result[0]["_meta"]["cache_control"] == {"type": "ephemeral"}
 
     def test_text_plus_tool_result_split(self) -> None:
         """Text should appear as user message before tool result messages."""
@@ -816,7 +819,7 @@ class TestNormalizeAnthropicTools:
         tool = _anthropic_tool_def("Read")
         tool["cache_control"] = {"type": "ephemeral"}
         result = _normalize_anthropic_tools([tool])
-        assert result[0]["_cache_control"] == {"type": "ephemeral"}
+        assert result[0]["_meta"]["cache_control"] == {"type": "ephemeral"}
 
 
 # ============================================================
@@ -1074,7 +1077,7 @@ class TestEmitAnthropicAssistant:
                     "id": "srv1",
                     "type": "function",
                     "function": {"name": "web_search", "arguments": '{"q": "test"}'},
-                    "_server_tool": True,
+                    "_meta": {"server_tool": True},
                 }
             ],
         }
@@ -1093,7 +1096,7 @@ class TestEmitAnthropicAssistant:
                     "id": "t1",
                     "type": "function",
                     "function": {"name": "Read", "arguments": "{}"},
-                    "_caller": caller,
+                    "_meta": {"caller": caller},
                 }
             ],
         }
@@ -1109,7 +1112,7 @@ class TestEmitAnthropicAssistant:
                     "id": "t1",
                     "type": "function",
                     "function": {"name": "X", "arguments": "{}"},
-                    "_cache_control": {"type": "ephemeral"},
+                    "_meta": {"cache_control": {"type": "ephemeral"}},
                 }
             ],
         }
@@ -1121,7 +1124,7 @@ class TestEmitAnthropicAssistant:
         msg = {
             "role": "assistant",
             "content": "result",
-            "_passthrough_blocks": [sr],
+            "_meta": {"passthrough_blocks": [sr]},
         }
         result = _emit_anthropic_assistant(msg)
         assert sr in result["content"]
@@ -1207,7 +1210,7 @@ class TestEmitAnthropicToolResult:
             "role": "tool",
             "tool_call_id": "c1",
             "content": "Error!",
-            "_is_error": True,
+            "_meta": {"is_error": True},
         }
         result = _emit_anthropic_tool_result(msg)
         assert result["content"][0]["is_error"] is True
@@ -1222,7 +1225,7 @@ class TestEmitAnthropicToolResult:
             "role": "tool",
             "tool_call_id": "c1",
             "content": "data",
-            "_cache_control": {"type": "ephemeral"},
+            "_meta": {"cache_control": {"type": "ephemeral"}},
         }
         result = _emit_anthropic_tool_result(msg)
         assert result["content"][0]["cache_control"] == {"type": "ephemeral"}
@@ -1580,7 +1583,7 @@ class TestToAnthropicTools:
 
     def test_cache_control_restored(self) -> None:
         tool = _openai_tool_def("X")
-        tool["_cache_control"] = {"type": "ephemeral"}
+        tool["_meta"] = {"cache_control": {"type": "ephemeral"}}
         result = to_anthropic_tools([tool])
         assert result[0]["cache_control"] == {"type": "ephemeral"}
 
@@ -1788,8 +1791,8 @@ class TestRoundTrip:
             },
         ]
         canonical, _ = normalize_messages(original, provider="anthropic")
-        assert canonical[0]["tool_calls"][0]["_server_tool"] is True
-        assert len(canonical[0]["_passthrough_blocks"]) == 1
+        assert canonical[0]["tool_calls"][0]["_meta"]["server_tool"] is True
+        assert len(canonical[0]["_meta"]["passthrough_blocks"]) == 1
 
         restored, _ = to_anthropic_messages(canonical)
         blocks = restored[0]["content"]
@@ -1806,7 +1809,7 @@ class TestRoundTrip:
             },
         ]
         canonical, _ = normalize_messages(original, provider="anthropic")
-        assert canonical[0]["_is_error"] is True
+        assert canonical[0]["_meta"]["is_error"] is True
 
         restored, _ = to_anthropic_messages(canonical)
         block = restored[0]["content"][0]
@@ -1818,7 +1821,7 @@ class TestRoundTrip:
         block["caller"] = caller
         original = [{"role": "assistant", "content": [block]}]
         canonical, _ = normalize_messages(original, provider="anthropic")
-        assert canonical[0]["tool_calls"][0]["_caller"] == caller
+        assert canonical[0]["tool_calls"][0]["_meta"]["caller"] == caller
 
         restored, _ = to_anthropic_messages(canonical)
         assert restored[0]["content"][0]["caller"] == caller
@@ -1829,7 +1832,7 @@ class TestRoundTrip:
         _, canonical_tools = normalize_messages(
             [{"role": "user", "content": "hi"}], tools=[tool], provider="anthropic"
         )
-        assert canonical_tools[0]["_cache_control"] == {"type": "ephemeral"}
+        assert canonical_tools[0]["_meta"]["cache_control"] == {"type": "ephemeral"}
 
         restored = to_anthropic_tools(canonical_tools)
         assert restored[0]["cache_control"] == {"type": "ephemeral"}
@@ -2002,8 +2005,8 @@ class TestThinkingBlockInterleaving:
 
         # Verify block_order is preserved
         asst = canonical[1]
-        assert "_block_order" in asst
-        order = asst["_block_order"]
+        assert "_meta" in asst and "block_order" in asst["_meta"]
+        order = asst["_meta"]["block_order"]
         kinds = [k for k, _ in order]
         assert kinds == ["thinking", "tool_call", "passthrough", "thinking", "text"]
 
@@ -2031,7 +2034,9 @@ class TestThinkingBlockInterleaving:
             }
         ]
         canonical = _normalize_anthropic_messages(original)
-        assert "_block_order" not in canonical[0]
+        assert "_meta" not in canonical[0] or "block_order" not in canonical[0].get(
+            "_meta", {}
+        )
 
     def test_no_block_order_when_no_thinking(self) -> None:
         """Server tools without thinking should not get _block_order."""
@@ -2044,7 +2049,9 @@ class TestThinkingBlockInterleaving:
             }
         ]
         canonical = _normalize_anthropic_messages(original)
-        assert "_block_order" not in canonical[0]
+        assert "_meta" not in canonical[0] or "block_order" not in canonical[0].get(
+            "_meta", {}
+        )
 
 
 # ============================================================
@@ -2154,7 +2161,7 @@ class TestToolCallToAnthropicBlock:
             "id": "srvtoolu_01",
             "type": "function",
             "function": {"name": "web_search", "arguments": '{"query": "test"}'},
-            "_server_tool": True,
+            "_meta": {"server_tool": True},
         }
         block = _tool_call_to_anthropic_block(tc)
         assert block["type"] == "server_tool_use"
@@ -2164,7 +2171,7 @@ class TestToolCallToAnthropicBlock:
             "id": "toolu_01",
             "type": "function",
             "function": {"name": "Read", "arguments": "{}"},
-            "_caller": {"type": "direct"},
+            "_meta": {"caller": {"type": "direct"}},
         }
         block = _tool_call_to_anthropic_block(tc)
         assert block["caller"] == {"type": "direct"}

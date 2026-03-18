@@ -2,6 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pydantic models for synthesis and analysis data."""
 
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+import numpy as np
 from pydantic import Field
 from typing_extensions import Self
 
@@ -20,6 +25,22 @@ class MetricStats(AIPerfBaseModel):
     median: float = Field(description="Median (50th percentile)")
     p75: float = Field(description="75th percentile")
     max: float = Field(description="Maximum value")
+
+    @classmethod
+    def from_values(cls, values: Sequence[float | int]) -> Self | None:
+        """Compute stats from a list of values. Returns None if empty."""
+        if not values:
+            return None
+        arr = np.asarray(values, dtype=np.float64)
+        return cls(
+            mean=float(np.mean(arr)),
+            std_dev=float(np.std(arr)),
+            min=float(np.min(arr)),
+            p25=float(np.percentile(arr, 25)),
+            median=float(np.median(arr)),
+            p75=float(np.percentile(arr, 75)),
+            max=float(np.max(arr)),
+        )
 
 
 class AnalysisStats(AIPerfBaseModel):

@@ -114,19 +114,22 @@ class CreditIssuer:
             6. If final credit: freeze counts + set event
         """
         is_first_turn = turn.turn_index == 0
+        is_child = turn.agent_depth > 0
 
-        # Select appropriate check function based on turn type
-        # - First turns need can_start_new_session (more restrictive - checks session quota)
-        # - Subsequent turns use can_send_any_turn (less restrictive - allows finishing existing sessions)
+        # Select appropriate check function based on turn type.
+        # - Root first turns need can_start_new_session (checks session quota)
+        # - Child turns use can_send_any_turn (continuation work, not new user sessions)
+        # - Root subsequent turns use can_send_any_turn (finishing existing sessions)
         can_proceed_fn = (
             self._stop_checker.can_start_new_session
-            if is_first_turn
+            if is_first_turn and not is_child
             else self._stop_checker.can_send_any_turn
         )
 
-        # Session concurrency: one slot per conversation, acquired on first turn only.
-        # Controls how many multi-turn conversations can be active simultaneously.
-        if is_first_turn:
+        # Session concurrency: one slot per root conversation, acquired on first turn only.
+        # Children skip session slot acquisition to avoid contention with root sessions.
+        needs_session_slot = is_first_turn and not is_child
+        if needs_session_slot:
             acquired = await self._concurrency_manager.acquire_session_slot(
                 self._phase, self._stop_checker.can_start_new_session
             )
@@ -140,7 +143,7 @@ class CreditIssuer:
         )
         if not acquired:
             # CRITICAL: Release session slot if we acquired it to maintain symmetry
-            if is_first_turn:
+            if needs_session_slot:
                 self._concurrency_manager.release_session_slot(self._phase)
             return False
 
@@ -162,11 +165,12 @@ class CreditIssuer:
             None: No slots available, credit NOT issued. Retry later.
         """
         is_first_turn = turn.turn_index == 0
+        is_child = turn.agent_depth > 0
 
         # Select appropriate check function based on turn type
         can_proceed_fn = (
             self._stop_checker.can_start_new_session
-            if is_first_turn
+            if is_first_turn and not is_child
             else self._stop_checker.can_send_any_turn
         )
 
@@ -174,7 +178,8 @@ class CreditIssuer:
         if not can_proceed_fn():
             return False
 
-        if is_first_turn:
+        needs_session_slot = is_first_turn and not is_child
+        if needs_session_slot:
             acquired = self._concurrency_manager.try_acquire_session_slot(
                 self._phase, can_proceed_fn
             )
@@ -186,7 +191,7 @@ class CreditIssuer:
         )
         if not acquired:
             # CRITICAL: Release session slot if we acquired it to maintain symmetry
-            if is_first_turn:
+            if needs_session_slot:
                 self._concurrency_manager.release_session_slot(self._phase)
             return None  # No slot - credit not issued
 

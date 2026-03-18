@@ -21,6 +21,7 @@ timestamps/delays from metadata.  These tests verify:
 
 from __future__ import annotations
 
+import itertools
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -44,13 +45,7 @@ from aiperf.timing.subagent_orchestrator import SubagentOrchestrator
 # Helpers
 # =============================================================================
 
-_CREDIT_COUNTER = 0
-
-
-def _next_credit_id() -> int:
-    global _CREDIT_COUNTER
-    _CREDIT_COUNTER += 1
-    return _CREDIT_COUNTER
+_credit_counter = itertools.count(1)
 
 
 def _make_sampler(conv_ids: list[str]) -> object:
@@ -70,7 +65,7 @@ def _make_credit(
     parent_correlation_id: str | None = None,
 ) -> Credit:
     return Credit(
-        id=_next_credit_id(),
+        id=next(_credit_counter),
         phase=CreditPhase.PROFILING,
         conversation_id=conv_id,
         x_correlation_id=corr_id,

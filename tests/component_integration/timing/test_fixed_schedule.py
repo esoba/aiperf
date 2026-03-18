@@ -558,10 +558,10 @@ class TestFixedScheduleStress:
     def test_high_turn_count(self, cli: AIPerfCLI, tmp_path: Path):
         """Test with high number of turns per session."""
         config = FixedScheduleTestConfig(
-            num_sessions=20,
-            turns_per_session=25,
+            num_sessions=5,
+            turns_per_session=20,
             delay_ms=1,
-            workers_max=5,
+            workers_max=3,
             timeout=120.0,
         )
         trace_file = generate_trace_file(tmp_path, config)

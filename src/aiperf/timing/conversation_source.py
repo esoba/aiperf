@@ -66,7 +66,7 @@ class SampledSession:
             conversation_id=self.conversation_id,
             x_correlation_id=self.x_correlation_id,
             turn_index=0,
-            num_turns=max_turns or len(self.metadata.turns),
+            num_turns=max_turns if max_turns is not None else len(self.metadata.turns),
             agent_depth=(
                 self.metadata.agent_depth if agent_depth is None else agent_depth
             ),

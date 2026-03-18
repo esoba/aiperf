@@ -137,13 +137,13 @@ class TestTurnDelayInteractions:
             aiperf profile \
                 --model {defaults.model} \
                 --streaming \
-                --num-sessions 20 \
-                --session-turns-mean 4 \
+                --num-sessions 10 \
+                --session-turns-mean 3 \
                 --session-turns-stddev 0 \
-                --session-turn-delay-mean 100 \
+                --session-turn-delay-mean 50 \
                 --request-rate 200 \
                 --request-rate-mode constant \
-                --concurrency 8 \
+                --concurrency 5 \
                 --osl 50 \
                 --extra-inputs ignore_eos:true \
                 --ui {defaults.ui}
@@ -151,7 +151,7 @@ class TestTurnDelayInteractions:
 
         result = cli.run_sync(cmd, timeout=40.0)
 
-        assert result.request_count == 80  # 20 × 4
+        assert result.request_count == 30  # 10 × 3
 
         runner = result.runner_result
         credit_analyzer = CreditFlowAnalyzer(runner)

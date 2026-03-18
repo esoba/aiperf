@@ -4,10 +4,8 @@
 
 import statistics
 from collections import Counter
-from collections.abc import Sequence
 from pathlib import Path
 
-import numpy as np
 import orjson
 
 from aiperf.common.config.config_defaults import InputTokensDefaults
@@ -144,37 +142,11 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
                     for pos, hash_id in enumerate(hash_ids)
                     if (pos, hash_id) in repeated_hash_ids
                 )
-                context_len = repeated_count * self.block_size
+                context_len = min(repeated_count * self.block_size, isl)
                 unique_prompt_len = isl - context_len
 
             self.context_lengths.append(context_len)
             self.unique_prompt_lengths.append(unique_prompt_len)
-
-    def _compute_metric_stats(
-        self, values: Sequence[float | int]
-    ) -> MetricStats | None:
-        """Compute full statistics for a list of values.
-
-        Args:
-            values: List of numeric values.
-
-        Returns:
-            MetricStats with mean, std_dev, min, percentiles, max, or None if empty.
-        """
-        if not values:
-            return None
-
-        arr = np.asarray(values)
-
-        return MetricStats(
-            mean=float(np.mean(arr)),
-            std_dev=float(np.std(arr)),
-            min=float(np.min(arr)),
-            p25=float(np.percentile(arr, 25)),
-            median=float(np.median(arr)),
-            p75=float(np.percentile(arr, 75)),
-            max=float(np.max(arr)),
-        )
 
     def _compute_stats(self) -> AnalysisStats:
         """Compute final statistics.
@@ -202,13 +174,13 @@ class PrefixAnalyzer(AIPerfLoggerMixin):
             avg_osl=sum(self.osls) / len(self.osls) if self.osls else 0.0,
             prefix_reuse_ratio=prefix_reuse,
             # Extended statistics
-            isl_stats=self._compute_metric_stats(self.isls),
-            osl_stats=self._compute_metric_stats(self.osls),
-            context_length_stats=self._compute_metric_stats(self.context_lengths),
-            unique_prompt_length_stats=self._compute_metric_stats(
+            isl_stats=MetricStats.from_values(self.isls),
+            osl_stats=MetricStats.from_values(self.osls),
+            context_length_stats=MetricStats.from_values(self.context_lengths),
+            unique_prompt_length_stats=MetricStats.from_values(
                 self.unique_prompt_lengths
             ),
-            hit_rate_stats=self._compute_metric_stats(per_request_hit_rates),
+            hit_rate_stats=MetricStats.from_values(per_request_hit_rates),
         )
 
     def _compute_per_request_hit_rates(self) -> list[float]:

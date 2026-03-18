@@ -10,14 +10,18 @@ and each endpoint emitter converts from canonical to its wire format.
 Architecture: N normalizers (provider -> canonical) + M emitters (canonical -> wire)
 instead of NxM direct converters.
 
-Extended fields (underscore-prefixed) preserved for round-trip fidelity:
-- ``_is_error``: on role:tool messages, from Anthropic tool_result ``is_error``
-- ``_caller``: on tool_call dicts, from Anthropic tool_use ``caller``
-- ``_citations``: on canonical messages, from Anthropic text block ``citations``
-- ``_cache_control``: on canonical messages/tool dicts, from Anthropic ``cache_control``
-- ``_server_tool``: on tool_call dicts, marks Anthropic ``server_tool_use`` origin
-- ``_passthrough_blocks``: on canonical messages, Anthropic blocks with no OpenAI equivalent
-- ``_block_order``: on canonical messages, original block ordering for interleaved
+Provider-specific metadata is stored in a single ``_meta`` dict on each message,
+tool_call, or tool definition that needs it. This consolidates round-trip fidelity
+data into one key rather than scattering underscore-prefixed fields.
+
+Metadata keys stored in ``_meta``:
+- ``is_error``: on role:tool messages, from Anthropic tool_result ``is_error``
+- ``caller``: on tool_call dicts, from Anthropic tool_use ``caller``
+- ``citations``: on canonical messages, from Anthropic text block ``citations``
+- ``cache_control``: on canonical messages/tool dicts, from Anthropic ``cache_control``
+- ``server_tool``: on tool_call dicts, marks Anthropic ``server_tool_use`` origin
+- ``passthrough_blocks``: on canonical messages, Anthropic blocks with no OpenAI equivalent
+- ``block_order``: on canonical messages, original block ordering for interleaved
   thinking + server tools (needed for Anthropic signature verification)
 """
 
@@ -50,7 +54,7 @@ _SERVER_TOOL_RESULT_TYPES = frozenset(
 )
 
 # Union of both passthrough sets -- used in the normalizer where the distinction
-# doesn't matter (both go to _passthrough_blocks).
+# doesn't matter (both go to passthrough_blocks).
 _ALL_PASSTHROUGH_BLOCK_TYPES = (
     _ANTHROPIC_PASSTHROUGH_BLOCK_TYPES | _SERVER_TOOL_RESULT_TYPES
 )
@@ -76,6 +80,36 @@ _BILLING_PREFIX = "x-anthropic-billing-header:"
 _ANTHROPIC_MESSAGE_BLOCK_TYPES = frozenset(
     {"tool_use", "tool_result", "thinking", "redacted_thinking", "server_tool_use"}
 )
+
+_META = "_meta"
+
+
+# ---------------------------------------------------------------------------
+# _meta accessors -- single place for all metadata read/write
+# ---------------------------------------------------------------------------
+
+
+def _get_meta(d: dict[str, Any], key: str, default: Any = None) -> Any:
+    """Read a metadata value from the ``_meta`` dict."""
+    meta = d.get(_META)
+    if meta is None:
+        return default
+    return meta.get(key, default)
+
+
+def _set_meta(d: dict[str, Any], key: str, value: Any) -> None:
+    """Write a metadata value into the ``_meta`` dict."""
+    meta = d.get(_META)
+    if meta is None:
+        meta = {}
+        d[_META] = meta
+    meta[key] = value
+
+
+def _has_meta(d: dict[str, Any], key: str) -> bool:
+    """Check whether a metadata key exists."""
+    meta = d.get(_META)
+    return meta is not None and key in meta
 
 
 # ---------------------------------------------------------------------------
@@ -208,8 +242,9 @@ def _normalize_anthropic_messages(
 def _normalize_anthropic_assistant(msg: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert an Anthropic assistant message to OpenAI format.
 
-    Tracks original block ordering via ``_block_order`` when thinking blocks
-    are interleaved with server tools (needed for Anthropic signature verification).
+    Tracks original block ordering via ``block_order`` in _meta when thinking
+    blocks are interleaved with server tools (needed for Anthropic signature
+    verification).
     """
     content = msg.get("content")
     if not isinstance(content, list):
@@ -231,14 +266,15 @@ def _normalize_anthropic_assistant(msg: dict[str, Any]) -> list[dict[str, Any]]:
             text = block.get("text", "")
             if text:
                 text_parts.append(text)
+                # Must be inside `if text` -- moving outside produces stale index.
+                block_order.append(("text", len(text_parts) - 1))
             if "citations" in block:
                 citations.extend(block["citations"])
-            block_order.append(("text", len(text_parts) - 1))
 
         elif block_type in ("tool_use", "server_tool_use"):
             tool_call = _anthropic_tool_use_to_call(block)
             if block_type == "server_tool_use":
-                tool_call["_server_tool"] = True
+                _set_meta(tool_call, "server_tool", True)
             tool_calls.append(tool_call)
             block_order.append(("tool_call", len(tool_calls) - 1))
 
@@ -264,13 +300,13 @@ def _normalize_anthropic_assistant(msg: dict[str, Any]) -> list[dict[str, Any]]:
     if thinking_blocks:
         out["thinking_blocks"] = thinking_blocks
     if passthrough_blocks:
-        out["_passthrough_blocks"] = passthrough_blocks
+        _set_meta(out, "passthrough_blocks", passthrough_blocks)
     if citations:
-        out["_citations"] = citations
+        _set_meta(out, "citations", citations)
 
     # Only store block order for interleaved thinking + server tool messages
-    if thinking_blocks and any(tc.get("_server_tool") for tc in tool_calls):
-        out["_block_order"] = block_order
+    if thinking_blocks and any(_get_meta(tc, "server_tool") for tc in tool_calls):
+        _set_meta(out, "block_order", block_order)
 
     return [out]
 
@@ -290,9 +326,9 @@ def _anthropic_tool_use_to_call(block: dict[str, Any]) -> dict[str, Any]:
         },
     }
     if "caller" in block:
-        tool_call["_caller"] = block["caller"]
+        _set_meta(tool_call, "caller", block["caller"])
     if "cache_control" in block:
-        tool_call["_cache_control"] = block["cache_control"]
+        _set_meta(tool_call, "cache_control", block["cache_control"])
     return tool_call
 
 
@@ -334,9 +370,9 @@ def _normalize_anthropic_user(msg: dict[str, Any]) -> list[dict[str, Any]]:
                 "content": _flatten_text_content(block.get("content")),
             }
             if block.get("is_error"):
-                tool_msg["_is_error"] = True
+                _set_meta(tool_msg, "is_error", True)
             if "cache_control" in block:
-                tool_msg["_cache_control"] = block["cache_control"]
+                _set_meta(tool_msg, "cache_control", block["cache_control"])
             result.append(tool_msg)
         elif block_type == "text":
             text = block.get("text", "")
@@ -355,30 +391,31 @@ def _normalize_anthropic_user(msg: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _flatten_text_content(content: Any, *, strip_billing_headers: bool = False) -> str:
-    """Flatten content to a plain string.
-
-    Handles: plain string, list of text blocks, list of strings.
-    """
+    """Flatten Anthropic content (string, list-of-blocks, or nested) to a single string."""
     if isinstance(content, str):
-        if strip_billing_headers and content.startswith(_BILLING_PREFIX):
-            return ""
+        if strip_billing_headers:
+            return _strip_billing_headers(content)
         return content
     if isinstance(content, list):
         parts: list[str] = []
         for item in content:
             if isinstance(item, str):
-                if strip_billing_headers and item.startswith(_BILLING_PREFIX):
-                    continue
-                parts.append(item)
-            elif isinstance(item, dict) and item.get("type") == "text":
-                text = item.get("text", "")
-                if not text:
-                    continue
-                if strip_billing_headers and text.startswith(_BILLING_PREFIX):
-                    continue
-                parts.append(text)
+                text = item
+            elif isinstance(item, dict):
+                text = item.get("text")
+            else:
+                continue
+            if not isinstance(text, str) or not text:
+                continue
+            if strip_billing_headers and text.startswith(_BILLING_PREFIX):
+                continue
+            parts.append(text)
         return "\n\n".join(parts)
-    return str(content) if content is not None else ""
+    if content is None:
+        return ""
+    if isinstance(content, dict):
+        return orjson.dumps(content).decode()
+    return str(content)
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +439,7 @@ def _anthropic_image_to_openai(block: dict[str, Any]) -> dict[str, Any]:
 
     result: dict[str, Any] = {"type": "image_url", "image_url": {"url": url}}
     if "cache_control" in block:
-        result["_cache_control"] = block["cache_control"]
+        _set_meta(result, "cache_control", block["cache_control"])
     return result
 
 
@@ -423,8 +460,8 @@ def _openai_image_to_anthropic(part: dict[str, Any]) -> dict[str, Any]:
     else:
         result = {"type": "image", "source": {"type": "url", "url": url}}
 
-    if "_cache_control" in part:
-        result["cache_control"] = part["_cache_control"]
+    if _has_meta(part, "cache_control"):
+        result["cache_control"] = _get_meta(part, "cache_control")
     return result
 
 
@@ -461,7 +498,7 @@ def _normalize_anthropic_tools(
                 },
             }
             if "cache_control" in tool:
-                converted["_cache_control"] = tool["cache_control"]
+                _set_meta(converted, "cache_control", tool["cache_control"])
             result.append(converted)
             continue
 
@@ -470,45 +507,42 @@ def _normalize_anthropic_tools(
     return result
 
 
-# ===========================================================================
-# Canonical (OpenAI) -> Anthropic wire format (emitter)
-# ===========================================================================
+def _strip_billing_headers(text: str) -> str:
+    """Remove x-anthropic-billing-header lines from system text."""
+    lines = text.split("\n")
+    filtered = [line for line in lines if not line.startswith(_BILLING_PREFIX)]
+    return "\n".join(filtered).strip()
+
+
+# ---------------------------------------------------------------------------
+# Canonical -> Anthropic (emitter)
+# ---------------------------------------------------------------------------
 
 
 def to_anthropic_messages(
     messages: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], str | list[dict[str, Any]] | None]:
-    """Convert canonical OpenAI messages to Anthropic Messages API format.
+    """Convert canonical (OpenAI) messages to Anthropic format.
 
     Returns:
-        (messages, system) where system is the extracted system content or None.
+        Tuple of (messages, system) where system is extracted from the first
+        system message if present, or None.
     """
-    system: str | list[dict[str, Any]] | None = None
     raw: list[dict[str, Any]] = []
+    system_parts: list[str] = []
 
     for msg in messages:
-        role = msg.get("role", "")
+        role = msg.get("role")
 
         if role in ("system", "developer"):
-            new_content = msg.get("content")
-            if system is None:
-                system = new_content
-            elif isinstance(system, str) and isinstance(new_content, str):
-                system = system + "\n\n" + new_content
-            else:
-                # Mixed types (str + list or list + list): merge into list
-                a = (
-                    [{"type": "text", "text": system}]
-                    if isinstance(system, str)
-                    else (system or [])
-                )
-                b = (
-                    [{"type": "text", "text": new_content}]
-                    if isinstance(new_content, str)
-                    else (new_content or [])
-                )
-                system = a + b
-        elif role == "assistant":
+            content = msg.get("content")
+            if isinstance(content, str):
+                system_parts.append(content)
+            elif isinstance(content, list):
+                system_parts.append(_flatten_text_content(content))
+            continue
+
+        if role == "assistant":
             raw.append(_emit_anthropic_assistant(msg))
         elif role == "tool":
             raw.append(_emit_anthropic_tool_result(msg))
@@ -517,6 +551,7 @@ def to_anthropic_messages(
         else:
             raw.append(msg)
 
+    system = "\n\n".join(system_parts) if system_parts else None
     return _merge_consecutive_roles(raw), system
 
 
@@ -542,8 +577,8 @@ def to_anthropic_tools(
             desc = func.get("description")
             if desc:
                 converted["description"] = desc
-            if "_cache_control" in tool:
-                converted["cache_control"] = tool["_cache_control"]
+            if _has_meta(tool, "cache_control"):
+                converted["cache_control"] = _get_meta(tool, "cache_control")
             result.append(converted)
             continue
 
@@ -555,11 +590,11 @@ def to_anthropic_tools(
 def _emit_anthropic_assistant(msg: dict[str, Any]) -> dict[str, Any]:
     """Convert a canonical assistant message to Anthropic content blocks.
 
-    When ``_block_order`` is present (interleaved thinking + server tools),
-    restores the original block ordering required for Anthropic signature
-    verification.
+    When ``block_order`` is present in _meta (interleaved thinking + server
+    tools), restores the original block ordering required for Anthropic
+    signature verification.
     """
-    block_order = msg.get("_block_order")
+    block_order = _get_meta(msg, "block_order")
     if block_order:
         return _emit_anthropic_assistant_ordered(msg, block_order)
 
@@ -577,25 +612,33 @@ def _emit_anthropic_assistant(msg: dict[str, Any]) -> dict[str, Any]:
     for tc in msg.get("tool_calls", []):
         content_blocks.append(_tool_call_to_anthropic_block(tc))
 
-    content_blocks.extend(msg.get("_passthrough_blocks", []))
+    content_blocks.extend(_get_meta(msg, "passthrough_blocks", []))
 
-    return {
+    result: dict[str, Any] = {
         "role": "assistant",
         "content": content_blocks or [{"type": "text", "text": ""}],
     }
+    if _has_meta(msg, "cache_control"):
+        result["cache_control"] = _get_meta(msg, "cache_control")
+    return result
 
 
 def _emit_anthropic_assistant_ordered(
     msg: dict[str, Any],
     block_order: list[tuple[str, int]],
 ) -> dict[str, Any]:
-    """Emit assistant content blocks in the original interleaved order."""
+    """Emit assistant message with original block ordering restored."""
     thinking_blocks = msg.get("thinking_blocks", [])
     tool_calls = msg.get("tool_calls", [])
-    passthrough_blocks = msg.get("_passthrough_blocks", [])
+    passthrough_blocks = _get_meta(msg, "passthrough_blocks", [])
 
     text = msg.get("content")
-    text_parts = text.split("\n\n") if isinstance(text, str) and text else []
+    if isinstance(text, str):
+        text_parts = [text] if text else []
+    elif isinstance(text, list):
+        text_parts = [b.get("text", "") for b in text if isinstance(b, dict)]
+    else:
+        text_parts = []
 
     content_blocks: list[dict[str, Any]] = []
     for kind, idx in block_order:
@@ -635,17 +678,17 @@ def _tool_call_to_anthropic_block(tc: dict[str, Any]) -> dict[str, Any]:
     else:
         input_val = arguments
 
-    block_type = "server_tool_use" if tc.get("_server_tool") else "tool_use"
+    block_type = "server_tool_use" if _get_meta(tc, "server_tool") else "tool_use"
     tool_block: dict[str, Any] = {
         "type": block_type,
         "id": _sanitize_tool_id(tc.get("id", "")),
         "name": func.get("name", ""),
         "input": input_val,
     }
-    if "_caller" in tc:
-        tool_block["caller"] = tc["_caller"]
-    if "_cache_control" in tc:
-        tool_block["cache_control"] = tc["_cache_control"]
+    if _has_meta(tc, "caller"):
+        tool_block["caller"] = _get_meta(tc, "caller")
+    if _has_meta(tc, "cache_control"):
+        tool_block["cache_control"] = _get_meta(tc, "cache_control")
     return tool_block
 
 
@@ -656,10 +699,10 @@ def _emit_anthropic_tool_result(msg: dict[str, Any]) -> dict[str, Any]:
         "tool_use_id": _sanitize_tool_id(msg.get("tool_call_id", "")),
         "content": msg.get("content", ""),
     }
-    if msg.get("_is_error"):
+    if _get_meta(msg, "is_error"):
         block["is_error"] = True
-    if "_cache_control" in msg:
-        block["cache_control"] = msg["_cache_control"]
+    if _has_meta(msg, "cache_control"):
+        block["cache_control"] = _get_meta(msg, "cache_control")
     return {"role": "user", "content": [block]}
 
 

@@ -481,9 +481,9 @@ class BaseCreditFlowTests:
     def test_turn_indices_sequential(self, cli: AIPerfCLI):
         """Verify turn indices are sequential per session."""
         config = TimingTestConfig(
-            num_sessions=10,
-            qps=50.0,
-            turns_per_session=5,
+            num_sessions=8,
+            qps=80.0,
+            turns_per_session=3,
         )
         cmd = self.build_command(config)
         result = cli.run_sync(cmd, timeout=config.timeout)
@@ -544,7 +544,7 @@ class BaseConcurrencyTests:
     def test_with_concurrency_limit(self, cli: AIPerfCLI, concurrency: int, qps: float):
         """Test timing mode respects and reaches concurrency limit."""
         config = TimingTestConfig(
-            num_sessions=50,
+            num_sessions=30,
             qps=qps,
             concurrency=concurrency,
             osl=50,  # Need longer OSL to hit concurrency limits

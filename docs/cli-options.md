@@ -14,7 +14,7 @@ Install shell completion for this application.
 
 ### [`analyze-trace`](#aiperf-analyze-trace)
 
-Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
+Analyze a trace file or directory for distributions and statistics.
 
 ### [`profile`](#aiperf-profile)
 
@@ -54,15 +54,17 @@ Output path for the completion script. If not specified, uses shell-specific def
 
 ## `aiperf analyze-trace`
 
-Analyze a mooncake trace file for ISL/OSL distributions and cache hit rates.
+Analyze a trace file or directory for distributions and statistics.
+
+Auto-detects the format: - Conflux JSON (file or directory of files): conversation structure, token distributions, timing - JSONL traces (Mooncake/Bailian): ISL/OSL distributions, prefix cache hit rates
 
 #### `--input-file` `<str>` _(Required)_
 
-Path to input mooncake trace JSONL file.
+Path to trace file or directory.
 
 #### `--block-size` `<int>`
 
-KV cache block size for analysis (default: 512).
+KV cache block size for JSONL prefix analysis (default: 512).
 <br/>_Default: `512`_
 
 #### `--output-file` `<str>`

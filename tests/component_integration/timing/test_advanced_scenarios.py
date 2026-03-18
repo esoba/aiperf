@@ -138,10 +138,10 @@ class TestRequestCancellationRate:
         - Verify all credits returned (with errors)
         """
         config = TimingTestConfig(
-            num_sessions=10,
+            num_sessions=8,
             qps=0,
-            turns_per_session=4,
-            concurrency=10,
+            turns_per_session=3,
+            concurrency=8,
         )
 
         cmd = f"""

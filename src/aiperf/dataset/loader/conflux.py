@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import gzip
 import re
 from datetime import datetime
 from pathlib import Path
@@ -41,6 +42,31 @@ def _parse_timestamp_ms(iso_str: str) -> float:
     return dt.timestamp() * 1000
 
 
+def _decode_base64_payload(encoded: str) -> bytes:
+    """Decode a base64 string, auto-detecting gzip/zstd compression.
+
+    Conflux base64 payloads may be gzip or zstd compressed before encoding.
+    Detects compression via magic bytes and decompresses transparently.
+    Uncompressed payloads (the common case) are returned as-is.
+    """
+    raw = base64.b64decode(encoded)
+    # gzip: magic bytes 1f 8b
+    if len(raw) >= 2 and raw[0] == 0x1F and raw[1] == 0x8B:
+        return gzip.decompress(raw)
+    # zstd: magic bytes 28 b5 2f fd
+    if len(raw) >= 4 and raw[:4] == b"\x28\xb5\x2f\xfd":
+        try:
+            import zstandard
+
+            return zstandard.ZstdDecompressor().decompress(raw)
+        except ImportError as exc:
+            raise ImportError(
+                "zstandard package required to decompress zstd-compressed "
+                "Conflux base64 payloads. Install with: uv add zstandard"
+            ) from exc
+    return raw
+
+
 def _messages_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Build messages list from a decoded request payload, prepending system when present."""
     msgs = list(payload.get("messages", []))
@@ -54,7 +80,7 @@ def _decode_messages(record: ConfluxRecord) -> list[dict[str, Any]]:
     """Decode the messages array from a ConfluxRecord, preferring base64 payload."""
     if record.base64 and record.base64.get("request_body"):
         payload: dict[str, Any] = orjson.loads(
-            base64.b64decode(record.base64["request_body"])
+            _decode_base64_payload(record.base64["request_body"])
         )
         return _messages_from_payload(payload)
     return list(record.messages)
@@ -74,7 +100,17 @@ def _new_messages(
     previous_messages: list[dict[str, Any]],
     current_messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Return messages appended between two consecutive parent turns."""
+    """Return messages appended between two consecutive parent turns.
+
+    Assumes append-only growth. Uses length-based slicing (O(1)) since
+    Conflux conversations grow by appending. Falls back to sequential
+    comparison only when the prefix assumption fails.
+    """
+    prev_len = len(previous_messages)
+    if prev_len <= len(current_messages) and (
+        prev_len == 0 or previous_messages[-1] == current_messages[prev_len - 1]
+    ):
+        return current_messages[prev_len:]
     common_prefix_len = 0
     for previous, current in zip(previous_messages, current_messages, strict=False):
         if previous != current:
@@ -91,6 +127,22 @@ def _iter_message_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]
         if isinstance(content, list):
             blocks.extend(block for block in content if isinstance(block, dict))
     return blocks
+
+
+def _collect_agent_tool_use_ids(messages: list[dict[str, Any]]) -> set[str]:
+    """Extract all Agent tool_use block IDs from a message list."""
+    ids: set[str] = set()
+    for block in _iter_message_blocks(messages):
+        if block.get("type") == "tool_use" and block.get("name") == "Agent":
+            bid = block.get("id")
+            if isinstance(bid, str):
+                ids.add(bid)
+    return ids
+
+
+# Protocol strings from Claude Code's Conflux format for background agent detection
+_QUEUED_SIGNAL = "queued for running"
+_ASYNC_LAUNCHED_SIGNAL = "Async agent launched"
 
 
 def _stringify_block_content(content: Any) -> str:
@@ -124,24 +176,8 @@ def _detect_join_turn_from_content(
     if spawn_turn_index + 1 >= len(parent_records):
         return None, False
 
-    # Collect all Agent tool_use IDs already present in the cumulative messages
-    # at spawn_turn_index. Any such ID appearing at spawn_turn_index+1 is a
-    # completion of a *previous* blocking spawn (possibly re-surfaced due to
-    # metadata drift re-rooting the common-prefix diff), not a new launch.
     spawn_msgs = _decode_messages(parent_records[spawn_turn_index])
-    existing_agent_ids: set[str] = set()
-    for msg in spawn_msgs:
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            for block in content:
-                if (
-                    isinstance(block, dict)
-                    and block.get("type") == "tool_use"
-                    and block.get("name") == "Agent"
-                ):
-                    bid = block.get("id")
-                    if isinstance(bid, str):
-                        existing_agent_ids.add(bid)
+    existing_agent_ids = _collect_agent_tool_use_ids(spawn_msgs)
 
     spawn_tool_use_ids: set[str] = set()
     saw_queued_result = False
@@ -162,8 +198,6 @@ def _detect_join_turn_from_content(
                 if not isinstance(block_id, str):
                     continue
                 if block_id in existing_agent_ids:
-                    # This tool_use was already in the history — it's a previous
-                    # blocking spawn completing here, not a new launch.
                     continue
                 spawn_tool_use_ids.add(block_id)
                 continue
@@ -179,10 +213,7 @@ def _detect_join_turn_from_content(
                 continue
 
             result_text = _stringify_block_content(block.get("content", ""))
-            if (
-                "queued for running" in result_text
-                or "Async agent launched" in result_text
-            ):
+            if _QUEUED_SIGNAL in result_text or _ASYNC_LAUNCHED_SIGNAL in result_text:
                 saw_queued_result = True
                 continue
 
@@ -280,37 +311,12 @@ def _build_spawn_tuid_to_agent_id(
     if spawn_turn_index + 1 >= len(parent_records):
         return {}
 
-    existing_ids: set[str] = set()
-    for msg in _decode_messages(parent_records[spawn_turn_index]):
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            for block in content:
-                if (
-                    isinstance(block, dict)
-                    and block.get("type") == "tool_use"
-                    and block.get("name") == "Agent"
-                ):
-                    bid = block.get("id")
-                    if isinstance(bid, str):
-                        existing_ids.add(bid)
-
     prev = _decode_messages(parent_records[spawn_turn_index])
+    existing_ids = _collect_agent_tool_use_ids(prev)
+
     curr = _decode_messages(parent_records[spawn_turn_index + 1])
     new_msgs = _new_messages(prev, curr)
-
-    new_spawn_ids: set[str] = set()
-    for msg in new_msgs:
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            for block in content:
-                if (
-                    isinstance(block, dict)
-                    and block.get("type") == "tool_use"
-                    and block.get("name") == "Agent"
-                ):
-                    bid = block.get("id")
-                    if isinstance(bid, str) and bid not in existing_ids:
-                        new_spawn_ids.add(bid)
+    new_spawn_ids = _collect_agent_tool_use_ids(new_msgs) - existing_ids
 
     tuid_to_agent: dict[str, str] = {}
     for msg in new_msgs:
@@ -323,7 +329,7 @@ def _build_spawn_tuid_to_agent_id(
                 if not isinstance(tuid, str) or tuid not in new_spawn_ids:
                     continue
                 result_text = _stringify_block_content(block.get("content", ""))
-                if "Async agent launched" not in result_text:
+                if _ASYNC_LAUNCHED_SIGNAL not in result_text:
                     continue
                 m = _AGENT_ID_RE.search(result_text)
                 if m:
@@ -349,17 +355,25 @@ class ConfluxLoader(BaseFileLoader):
         **kwargs: Any,
     ) -> None:
         super().__init__(filename=filename, user_config=user_config, **kwargs)
-        self._groups: dict[str, list[ConfluxRecord]] = {}
         self._orphan_ids: set[str] = set()
+        self._orphan_counter: int = 0
+        self._file_boundaries: list[set[str]] = []
 
     @classmethod
     def can_load(
         cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
     ) -> bool:
-        """Return True if filename is a JSON file with Conflux-format records."""
+        """Return True if filename is a Conflux JSON file or a directory containing one."""
         if filename is None:
             return False
         path = Path(filename)
+        if path.is_dir():
+            return any(cls._probe_file(f) for f in sorted(path.glob("*.json"))[:5])
+        return cls._probe_file(path)
+
+    @classmethod
+    def _probe_file(cls, path: Path) -> bool:
+        """Return True if a single file looks like a Conflux JSON capture."""
         if not path.is_file() or path.suffix != ".json":
             return False
         try:
@@ -407,9 +421,67 @@ class ConfluxLoader(BaseFileLoader):
         Records without an agent_id (e.g. haiku tool-result processing calls)
         become single-turn background subagent children of the parent agent,
         each mapped to the closest parent turn by timestamp.
+
+        For directory input, each file is loaded independently with a file
+        prefix on agent_ids to avoid cross-file collisions. File boundaries
+        are preserved for per-file zero-alignment in convert_to_conversations.
         """
-        with open(self.filename, "rb") as f:
-            raw_records: list[dict] = orjson.loads(f.read())
+        self._orphan_ids = set()
+        self._orphan_counter = 0
+        self._file_boundaries = []
+
+        path = Path(self.filename)
+        if path.is_dir():
+            return self._load_directory(path)
+
+        groups = self._load_single_file(self.filename)
+        self._file_boundaries.append(set(groups.keys()))
+        return groups
+
+    def _load_directory(self, path: Path) -> dict[str, list[ConfluxRecord]]:
+        """Load all JSON files in a directory as independent sessions."""
+        json_files = sorted(path.glob("*.json"))
+        if not json_files:
+            raise FileNotFoundError(
+                f"No .json files found in directory: {self.filename}"
+            )
+
+        all_groups: dict[str, list[ConfluxRecord]] = {}
+        total_records = 0
+        for file_idx, json_file in enumerate(json_files):
+            file_groups = self._load_single_file(str(json_file), prefix=f"f{file_idx}_")
+            file_keys: set[str] = set()
+            for key, records in file_groups.items():
+                all_groups[key] = records
+                file_keys.add(key)
+                total_records += len(records)
+            self._file_boundaries.append(file_keys)
+            self.debug(
+                lambda fn=json_file.name, fk=file_keys: (
+                    f"  {fn}: {len(fk)} agent groups -> {fk}"
+                )
+            )
+
+        file_count = len(json_files)
+        threaded = len(all_groups) - len(self._orphan_ids)
+        self.info(
+            f"Loaded {threaded} agent threads from "
+            f"{file_count} files ({total_records} total records) in {path.name}/"
+        )
+        return all_groups
+
+    def _load_single_file(
+        self, filename: str, prefix: str = ""
+    ) -> dict[str, list[ConfluxRecord]]:
+        """Load and group records from a single JSON file.
+
+        Args:
+            filename: Path to the JSON file.
+            prefix: String prefix for agent_id keys to avoid cross-file collisions
+                    when loading multiple files from a directory.
+        """
+        with open(filename, "rb") as f:
+            raw_records: list[dict[str, Any]] = orjson.loads(f.read())
 
         include_orphans = self.user_config.input.conflux_include_utility_calls
 
@@ -419,10 +491,11 @@ class ConfluxLoader(BaseFileLoader):
         for raw in raw_records:
             record = ConfluxRecord.model_validate(raw)
             if record.agent_id is not None:
-                groups.setdefault(record.agent_id, []).append(record)
+                key = f"{prefix}{record.agent_id}"
+                groups.setdefault(key, []).append(record)
             elif include_orphans:
-                orphan_id = f"_orphan_{orphan_count}"
-                orphan_count += 1
+                orphan_id = f"{prefix}_orphan_{self._orphan_counter}"
+                self._orphan_counter += 1
                 self._orphan_ids.add(orphan_id)
                 groups[orphan_id] = [record]
             else:
@@ -432,19 +505,19 @@ class ConfluxLoader(BaseFileLoader):
         for records in groups.values():
             records.sort(key=lambda r: _parse_timestamp_ms(r.timestamp))
 
-        self._groups = groups
-
-        threaded = len(groups) - len(self._orphan_ids)
-        total_records = sum(len(recs) for recs in groups.values())
-        orphan_label = (
-            f"{orphan_count} utility calls included"
-            if include_orphans
-            else f"{orphan_count} utility calls skipped"
-        )
-        self.info(
-            f"Loaded {threaded} agent threads + {orphan_label} "
-            f"({total_records} total records)"
-        )
+        if not prefix:
+            orphans_in_file = sum(1 for k in groups if k in self._orphan_ids)
+            threaded = len(groups) - orphans_in_file
+            total_records = sum(len(recs) for recs in groups.values())
+            orphan_label = (
+                f"{orphans_in_file} utility calls included"
+                if include_orphans
+                else f"{orphan_count} utility calls skipped"
+            )
+            self.info(
+                f"Loaded {threaded} agent threads + {orphan_label} "
+                f"({total_records} total records)"
+            )
 
         return groups
 
@@ -452,6 +525,31 @@ class ConfluxLoader(BaseFileLoader):
         self, data: dict[str, list[ConfluxRecord]]
     ) -> list[Conversation]:
         """Convert grouped Conflux records to Conversation objects.
+
+        Each file boundary (from directory loading) is processed independently
+        with its own zero-alignment, so timestamps from separate captures
+        don't bleed into each other.
+        """
+        if not data:
+            return []
+
+        # Without load_dataset, _file_boundaries is empty and all data is dropped.
+        if not self._file_boundaries:
+            self._file_boundaries = [set(data.keys())]
+
+        all_conversations: list[Conversation] = []
+        for file_keys in self._file_boundaries:
+            file_data = {k: v for k, v in data.items() if k in file_keys}
+            convs = self._convert_file_groups(file_data)
+            self._zero_align_timestamps(convs)
+            all_conversations.extend(convs)
+
+        return all_conversations
+
+    def _convert_file_groups(
+        self, data: dict[str, list[ConfluxRecord]]
+    ) -> list[Conversation]:
+        """Convert one file's grouped records to Conversation objects.
 
         Three categories:
         - The group with is_subagent=False is the parent agent thread.
@@ -464,9 +562,6 @@ class ConfluxLoader(BaseFileLoader):
         - Orphan groups (no agent_id) become single-turn background subagent
           children, each spawned at the closest parent turn by timestamp.
         """
-        if not data:
-            return []
-
         # Separate orphans from threaded groups
         threaded_data: dict[str, list[ConfluxRecord]] = {}
         orphan_data: dict[str, list[ConfluxRecord]] = {}
@@ -481,10 +576,20 @@ class ConfluxLoader(BaseFileLoader):
         unclassified_ids: list[str] = []
 
         for agent_id, records in threaded_data.items():
+            # `is True`/`is False`: distinguish from None (un-enriched).
             if records[0].is_subagent is True:
                 child_ids.append(agent_id)
             elif records[0].is_subagent is False:
-                parent_id = agent_id
+                if parent_id is not None:
+                    # Multiple groups marked is_subagent=False — keep the one with
+                    # the most records as parent, demote the other to child.
+                    if len(records) > len(threaded_data[parent_id]):
+                        child_ids.append(parent_id)
+                        parent_id = agent_id
+                    else:
+                        child_ids.append(agent_id)
+                else:
+                    parent_id = agent_id
             else:
                 # is_subagent=None: un-enriched record, classify heuristically
                 unclassified_ids.append(agent_id)
@@ -508,6 +613,12 @@ class ConfluxLoader(BaseFileLoader):
                 parent_id, parent_records, is_child=False
             )
             parent_session_id = parent_conv.session_id
+            self.debug(
+                lambda: (
+                    f"Parent {parent_session_id}: {len(parent_records)} turns, "
+                    f"{len(child_ids)} children, {len(orphan_data)} orphans"
+                )
+            )
 
             # Group children by spawn turn index, then detect blocking vs background
             spawn_turn_to_children: dict[
@@ -525,17 +636,38 @@ class ConfluxLoader(BaseFileLoader):
                 spawn_turn_to_children.setdefault(spawn_turn_index, []).append(
                     (child_agent_id, child_records, child_conv)
                 )
+                self.debug(
+                    lambda cid=child_conv.session_id,
+                    recs=child_records,
+                    si=spawn_turn_index: (
+                        f"  Child {cid}: {len(recs)} turns, spawn_point=turn[{si}]"
+                    )
+                )
 
             spawn_counter = 0
             blocking_count = 0
             background_count = 0
             notification_joins = _extract_notification_joins(parent_records)
+            if notification_joins:
+                self.debug(
+                    lambda: f"  Found {len(notification_joins)} task-notification join(s)"
+                )
             for spawn_turn_index in sorted(spawn_turn_to_children):
                 children_at_turn = spawn_turn_to_children[spawn_turn_index]
                 join_turn_index = _find_join_turn_index(
                     parent_records, spawn_turn_index, children_at_turn
                 )
                 is_background = join_turn_index is None
+                self.debug(
+                    lambda cat=children_at_turn,
+                    si=spawn_turn_index,
+                    ji=join_turn_index,
+                    bg=is_background: (
+                        f"  Spawn at turn[{si}]: "
+                        f"{len(cat)} children {[aid for aid, _, _ in cat]}, "
+                        f"join=turn[{ji}], background={bg}"
+                    )
+                )
 
                 # For background spawns, check if each child reports back via
                 # <task-notification>. If so, split into per-child blocking
@@ -550,15 +682,22 @@ class ConfluxLoader(BaseFileLoader):
                         if tuid in notification_joins
                     }
                     if agent_to_join:
+                        self.debug(
+                            lambda atj=agent_to_join: (
+                                f"    Notification join split: {atj}"
+                            )
+                        )
+                        # Match via record's agent_id (unprefixed) since
+                        # agent_to_join keys come from message content.
                         notification_children = [
-                            (aid, recs, conv, agent_to_join[aid])
+                            (aid, recs, conv, agent_to_join[recs[0].agent_id])
                             for aid, recs, conv in children_at_turn
-                            if aid in agent_to_join
+                            if recs[0].agent_id in agent_to_join
                         ]
                         bg_children = [
                             (aid, recs, conv)
                             for aid, recs, conv in children_at_turn
-                            if aid not in agent_to_join
+                            if recs[0].agent_id not in agent_to_join
                         ]
                         for (
                             _,
@@ -694,6 +833,25 @@ class ConfluxLoader(BaseFileLoader):
         )
         return conversations
 
+    @staticmethod
+    def _zero_align_timestamps(conversations: list[Conversation]) -> None:
+        """Shift all turn timestamps so the earliest becomes 0."""
+        min_ts = min(
+            (
+                turn.timestamp
+                for conv in conversations
+                for turn in conv.turns
+                if turn.timestamp is not None
+            ),
+            default=None,
+        )
+        if min_ts is None or min_ts == 0:
+            return
+        for conv in conversations:
+            for turn in conv.turns:
+                if turn.timestamp is not None:
+                    turn.timestamp -= min_ts
+
     def _build_conversation(
         self,
         agent_id: str,
@@ -724,7 +882,7 @@ class ConfluxLoader(BaseFileLoader):
 
         for record in records:
             ts_ms = _parse_timestamp_ms(record.timestamp)
-            input_tokens = record.tokens.input if record.tokens else 0
+            input_tokens = record.tokens.input if record.tokens else None
 
             # Extract messages and tools from best available source
             messages, tools, max_tokens = self._extract_record_fields(record)
@@ -745,7 +903,7 @@ class ConfluxLoader(BaseFileLoader):
                 role="user",
                 model=record.model,
                 timestamp=ts_ms,
-                max_tokens=max_tokens or 4096,
+                max_tokens=max_tokens,
                 input_tokens=input_tokens,
                 raw_messages=raw_messages,
                 raw_tools=raw_tools,
@@ -827,20 +985,28 @@ class ConfluxLoader(BaseFileLoader):
         """
         if record.base64 and record.base64.get("request_body"):
             payload: dict[str, Any] = orjson.loads(
-                base64.b64decode(record.base64["request_body"])  # type: ignore[index]
+                _decode_base64_payload(record.base64["request_body"])
             )
             payload.pop("metadata", None)
             messages = _messages_from_payload(payload)
-            tools = payload.get("tools") or None
+            # Don't collapse [] to None -- tools=[] means "no tools" vs absent.
+            tools = payload.get("tools")
+            # Anthropic: max_tokens. OpenAI: max_completion_tokens.
             max_tokens = payload.get("max_tokens")
+            if max_tokens is None:
+                max_tokens = payload.get("max_completion_tokens")
             return messages, tools, max_tokens
 
-        # Fallback: use top-level Conflux fields
         messages = list(record.messages)
-        tools = record.tools if record.tools else None
-        max_tokens = (
-            record.hyperparameters.max_tokens if record.hyperparameters else None
-        )
+        # record.tools defaults to [] via default_factory, not from the original request.
+        tools = record.tools or None
+        hp = record.hyperparameters
+        if hp is None:
+            max_tokens = None
+        else:
+            max_tokens = (
+                hp.max_tokens if hp.max_tokens is not None else hp.max_output_tokens
+            )
         return messages, tools, max_tokens
 
     @staticmethod
@@ -884,41 +1050,30 @@ class ConfluxLoader(BaseFileLoader):
         """
         child_first_ts = _parse_timestamp_ms(child_records[0].timestamp)
 
-        # Tier 1: In-flight overlap
-        for i, record in enumerate(parent_records):
-            start_ts = _parse_timestamp_ms(record.timestamp)
-            if record.completed_at:
-                end_ts = _parse_timestamp_ms(record.completed_at)
-            elif record.duration_ms > 0:
-                end_ts = start_ts + record.duration_ms
-            else:
-                continue
-            if start_ts <= child_first_ts <= end_ts:
-                return i
-
-        # Tier 2: Post-completion gap (child starts after turn N ends but
-        # before turn N+1 starts -- spawned by turn N's response processing)
-        for i, record in enumerate(parent_records):
-            if record.completed_at:
-                end_ts = _parse_timestamp_ms(record.completed_at)
-            elif record.duration_ms > 0:
-                end_ts = _parse_timestamp_ms(record.timestamp) + record.duration_ms
-            else:
-                continue
-            next_start_ts = (
-                _parse_timestamp_ms(parent_records[i + 1].timestamp)
-                if i + 1 < len(parent_records)
-                else float("inf")
-            )
-            if end_ts <= child_first_ts <= next_start_ts:
-                return i
-
-        # Tier 3: Closest timestamp fallback
+        # Single pass: check in-flight overlap and post-completion gap together
         best_idx = 0
         best_diff = float("inf")
         for i, record in enumerate(parent_records):
-            ts = _parse_timestamp_ms(record.timestamp)
-            diff = abs(ts - child_first_ts)
+            start_ts = _parse_timestamp_ms(record.timestamp)
+            end_ts = _record_end_ms(record)
+            has_end = end_ts > start_ts
+
+            # Tier 1: child started while parent turn was in-flight
+            if has_end and start_ts <= child_first_ts <= end_ts:
+                return i
+
+            # Tier 2: child started in the gap after this turn completed
+            if has_end and child_first_ts > end_ts:
+                next_start_ts = (
+                    _parse_timestamp_ms(parent_records[i + 1].timestamp)
+                    if i + 1 < len(parent_records)
+                    else float("inf")
+                )
+                if child_first_ts <= next_start_ts:
+                    return i
+
+            # Tier 3: track closest by start timestamp as fallback
+            diff = abs(start_ts - child_first_ts)
             if diff < best_diff:
                 best_diff = diff
                 best_idx = i

@@ -378,18 +378,27 @@ class UserConfig(BaseConfig):
             return False
 
     @staticmethod
-    def _read_first_record(file_path: str) -> dict | None:
+    def _read_first_record(file_path: str) -> dict[str, Any] | None:
         """Read the first JSON record from a dataset file.
 
         Uses file extension to pick the parsing strategy:
-        ``.json`` files are parsed as JSON arrays, ``.jsonl`` files
-        are parsed line-by-line.
+        ``.json`` files read a bounded probe (1 MB) to avoid loading
+        multi-GB files into memory. ``.jsonl`` files are parsed line-by-line.
+
+        For directories, reads the first .json file found (sorted by name).
         """
+        _PROBE_BYTES = 1 << 20  # 1 MB
         path = Path(file_path)
-        with open(path) as f:
+        if path.is_dir():
+            json_files = sorted(path.glob("*.json"))
+            if not json_files:
+                return None
+            path = json_files[0]
+        with open(path, "rb") as f:
             if path.suffix == ".json":
+                probe = f.read(_PROBE_BYTES)
                 try:
-                    data = orjson.loads(f.read())
+                    data = orjson.loads(probe)
                 except JSONDecodeError:
                     return None
                 if isinstance(data, dict):
