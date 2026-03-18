@@ -14,7 +14,7 @@ from pydantic import Field
 from aiperf.common.config import EndpointDefaults, UserConfig
 from aiperf.common.enums import ConnectionReuseStrategy, ModelSelectionStrategy
 from aiperf.common.models import AIPerfBaseModel
-from aiperf.plugin.enums import EndpointType, TransportType
+from aiperf.plugin.enums import EndpointType, RequestSignerType, TransportType
 
 
 class ModelInfo(AIPerfBaseModel):
@@ -121,6 +121,22 @@ class EndpointInfo(AIPerfBaseModel):
         description="Collect per-chunk trace data (timestamps and sizes) for HTTP trace export. "
         "When False, only aggregate metrics are tracked (counts, totals, first/last timestamps).",
     )
+    auth_type: RequestSignerType | None = Field(
+        default=None,
+        description="Request signing method (e.g., sigv4).",
+    )
+    aws_region: str | None = Field(
+        default=None,
+        description="AWS region for SigV4 signing.",
+    )
+    aws_service: str | None = Field(
+        default=None,
+        description="AWS service name for SigV4 signing.",
+    )
+    aws_profile: str | None = Field(
+        default=None,
+        description="AWS profile name for credential lookup.",
+    )
 
     @property
     def base_url(self) -> str:
@@ -157,6 +173,10 @@ class EndpointInfo(AIPerfBaseModel):
             connection_reuse_strategy=user_config.endpoint.connection_reuse_strategy,
             download_video_content=user_config.endpoint.download_video_content,
             collect_trace_chunks=user_config.output.export_http_trace,
+            auth_type=user_config.endpoint.auth_type,
+            aws_region=user_config.endpoint.aws_region,
+            aws_service=user_config.endpoint.aws_service,
+            aws_profile=user_config.endpoint.aws_profile,
         )
 
 

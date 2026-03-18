@@ -187,6 +187,23 @@ Transport connection reuse strategy. 'pooled' (default): connections are pooled 
 For video generation endpoints, download the video content after generation completes. When enabled, request latency includes the video download time. When disabled (default), only generation time is measured.
 <br/>_Flag (no value required)_
 
+#### `--auth-type` `<str>`
+
+Request signing method for authentication. When set, the selected request_signer plugin signs every HTTP request. Replaces Bearer token auth (--api-key is ignored when --auth-type is set).
+<br/>_Choices: [`sigv4`]_
+
+#### `--aws-region` `<str>`
+
+AWS region for SigV4 request signing (e.g., us-east-1, eu-west-1). Required when --auth-type is sigv4.
+
+#### `--aws-service` `<str>`
+
+AWS service name for SigV4 request signing (e.g., execute-api, sagemaker). Required when --auth-type is sigv4.
+
+#### `--aws-profile` `<str>`
+
+AWS profile name from ~/.aws/credentials for credential lookup. When not set, uses the default boto credential chain (env vars, config file, IAM role, IRSA, SSO).
+
 ### Input
 
 #### `--extra-inputs` `<list>`
@@ -1059,7 +1076,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 #### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accuracy_benchmark`, `accuracy_grader`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_processor`, `request_signer`, `results_processor`, `service`, `service_manager`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 #### `--name` `<str>`
 

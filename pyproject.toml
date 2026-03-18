@@ -70,6 +70,9 @@ aiperf = "aiperf.cli:app"
 aiperf = "aiperf.plugin:plugins.yaml"
 
 [project.optional-dependencies]
+aws = [
+  "botocore>=1.34.0",
+]
 dev = [
   "black>=25.1.0",
   "httpx>=0.27.0",

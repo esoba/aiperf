@@ -18,6 +18,7 @@ from aiperf.common.enums import (
 )
 from aiperf.plugin.enums import (
     EndpointType,
+    RequestSignerType,
     TransportType,
     URLSelectionStrategy,
 )
@@ -263,3 +264,68 @@ class EndpointConfig(BaseConfig):
             group=_CLI_GROUP,
         ),
     ] = EndpointDefaults.DOWNLOAD_VIDEO_CONTENT
+
+    auth_type: Annotated[
+        RequestSignerType | None,
+        Field(
+            description="Request signing method for authentication. When set, the selected "
+            "request_signer plugin signs every HTTP request. Replaces Bearer token auth "
+            "(--api-key is ignored when --auth-type is set).",
+        ),
+        CLIParameter(
+            name=("--auth-type",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    aws_region: Annotated[
+        str | None,
+        Field(
+            description="AWS region for SigV4 request signing (e.g., us-east-1, eu-west-1). "
+            "Required when --auth-type is sigv4.",
+        ),
+        CLIParameter(
+            name=("--aws-region",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    aws_service: Annotated[
+        str | None,
+        Field(
+            description="AWS service name for SigV4 request signing "
+            "(e.g., execute-api, sagemaker). "
+            "Required when --auth-type is sigv4.",
+        ),
+        CLIParameter(
+            name=("--aws-service",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    aws_profile: Annotated[
+        str | None,
+        Field(
+            description="AWS profile name from ~/.aws/credentials for credential lookup. "
+            "When not set, uses the default boto credential chain "
+            "(env vars, config file, IAM role, IRSA, SSO).",
+        ),
+        CLIParameter(
+            name=("--aws-profile",),
+            group=_CLI_GROUP,
+        ),
+    ] = None
+
+    @model_validator(mode="after")
+    def validate_auth_type(self) -> Self:
+        """Validate that SigV4 auth has required AWS fields."""
+        if self.auth_type == RequestSignerType.SIGV4:
+            if not self.aws_region:
+                raise ValueError("--aws-region is required when --auth-type is sigv4")
+            if not self.aws_service:
+                raise ValueError("--aws-service is required when --auth-type is sigv4")
+            if self.api_key is not None:
+                raise ValueError(
+                    f"--api-key is not allowed with --auth-type {self.auth_type}"
+                )
+        return self

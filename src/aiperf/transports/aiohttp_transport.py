@@ -260,6 +260,9 @@ class AioHttpTransport(BaseTransport):
             headers = self.build_headers(request_info)
             json_bytes = orjson.dumps(payload)
 
+            signed = await self._sign_if_needed("POST", url, headers, json_bytes)
+            url, headers, json_bytes = signed.url, signed.headers, signed.body
+
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
                     # Create a new connector for this request, and have aiohttp
@@ -397,8 +400,10 @@ class AioHttpTransport(BaseTransport):
         """
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
+        payload_bytes = orjson.dumps(payload)
+        signed = await self._sign_if_needed("POST", url, headers, payload_bytes)
         record = await self.aiohttp_client.post_request(
-            url, orjson.dumps(payload), headers
+            signed.url, signed.body, signed.headers
         )
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):
@@ -431,7 +436,8 @@ class AioHttpTransport(BaseTransport):
         poll_start = time.perf_counter_ns()
 
         while (time.perf_counter_ns() - poll_start) / 1e9 < timeout:
-            record = await self.aiohttp_client.get_request(poll_url, headers)
+            signed = await self._sign_if_needed("GET", poll_url, headers)
+            record = await self.aiohttp_client.get_request(signed.url, signed.headers)
             result = self._parse_video_response(record, "poll")
             if isinstance(result, ErrorDetails):
                 return result
@@ -481,7 +487,8 @@ class AioHttpTransport(BaseTransport):
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
         try:
-            record = await self.aiohttp_client.get_request(content_url, headers)
+            signed = await self._sign_if_needed("GET", content_url, headers)
+            record = await self.aiohttp_client.get_request(signed.url, signed.headers)
             if record.error:
                 return ErrorDetails(
                     type="VideoDownloadError",
