@@ -336,8 +336,87 @@ class BailianTrace(AIPerfBaseModel):
     )
 
 
+class ConfluxTokens(AIPerfBaseModel):
+    """Normalized token counts across providers."""
+
+    input: int = Field(
+        default=0,
+        description="Total input tokens processed (all input the model saw). "
+        "For Anthropic: input_tokens + cache_creation_input_tokens + cache_read_input_tokens. "
+        "For OpenAI: prompt_tokens (already includes cached).",
+    )
+    input_cached: int = Field(
+        default=0,
+        description="Tokens read from cache. "
+        "For Anthropic: cache_read_input_tokens. For OpenAI: equivalent cached tokens.",
+    )
+    input_cache_write: int = Field(
+        default=0,
+        description="Tokens written to cache. For Anthropic: cache_creation_input_tokens.",
+    )
+    output: int = Field(default=0, description="Total output tokens generated.")
+    output_reasoning: int = Field(
+        default=0,
+        description="Output tokens used for reasoning/thinking, when available from the provider.",
+    )
+
+
+class ConfluxRecord(AIPerfBaseModel):
+    """A single unified API call from a Conflux proxy capture.
+
+    Minimal schema: only the fields needed for timestamp-based replay.
+    Extra fields in the JSON are silently ignored.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    session_id: str = Field(
+        description="Session identifier grouping related API calls.",
+    )
+    agent_id: str | None = Field(
+        default=None,
+        description="Identifier of the agent/persona that made this call.",
+    )
+    is_subagent: bool | None = Field(
+        default=None,
+        description="Whether this call was made by a sub-agent.",
+    )
+    timestamp: float = Field(
+        description="Request timestamp in milliseconds since epoch.",
+    )
+    duration_ms: int | float = Field(
+        default=0,
+        description="Time in milliseconds from request start to response completion.",
+    )
+    completed_at: str | None = Field(
+        default=None,
+        description="ISO 8601 timestamp when the API response completed.",
+    )
+    tokens: ConfluxTokens | None = Field(
+        default=None,
+        description="Normalized token counts across providers.",
+    )
+    messages: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Input messages from the request.",
+    )
+    tools: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Tool definitions available to the model for this API call.",
+    )
+    hyperparameters: dict[str, Any] | None = Field(
+        default=None,
+        description="Normalized generation hyperparameters.",
+    )
+
+
 CustomDatasetT = TypeVar(
     "CustomDatasetT",
-    bound=SingleTurn | MultiTurn | RandomPool | MooncakeTrace | BailianTrace,
+    bound=SingleTurn
+    | MultiTurn
+    | RandomPool
+    | MooncakeTrace
+    | BailianTrace
+    | ConfluxRecord,
 )
 """A union type of all custom data types."""

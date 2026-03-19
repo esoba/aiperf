@@ -6,9 +6,11 @@ from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.base_loader import BaseFileLoader, BaseLoader
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
+from aiperf.dataset.loader.conflux import ConfluxLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import (
     BailianTrace,
+    ConfluxRecord,
     MooncakeTrace,
     MultiTurn,
     RandomPool,
@@ -27,6 +29,8 @@ __all__ = [
     "BaseLoader",
     "BasePublicDatasetLoader",
     "BaseTraceDatasetLoader",
+    "ConfluxLoader",
+    "ConfluxRecord",
     "MediaConversionMixin",
     "MooncakeTrace",
     "MooncakeTraceDatasetLoader",

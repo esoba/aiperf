@@ -444,7 +444,18 @@ custom_dataset_loader:
       conversation chains and fixed_schedule timing mode.
     metadata:
       is_trace: true
+      supports_timing: true
       default_block_size: 16
+
+  conflux:
+    class: aiperf.dataset.loader.conflux:ConfluxLoader
+    description: |
+      Conflux proxy capture loader for verbatim replay of Claude Code and Codex sessions.
+      Loads JSON arrays of API request records with agent_id grouping and
+      timestamp-based delays for fixed-schedule replay.
+    metadata:
+      is_trace: false
+      supports_timing: true
 
   mooncake_trace:
     class: aiperf.dataset.loader.mooncake_trace:MooncakeTraceDatasetLoader
@@ -453,6 +464,7 @@ custom_dataset_loader:
       timestamp-based replay support. Designed for fixed_schedule timing mode.
     metadata:
       is_trace: true
+      supports_timing: true
       default_block_size: 512
 
   multi_turn:

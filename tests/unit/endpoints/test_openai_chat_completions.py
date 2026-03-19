@@ -374,3 +374,136 @@ class TestChatEndpoint:
         message = payload["messages"][0]
         assert "name" not in message
         assert isinstance(message["content"], list)
+
+    # -----------------------------------------------------------------------
+    # extra_params integration tests
+    # -----------------------------------------------------------------------
+
+    def test_extra_params_merged_into_payload(self, model_endpoint):
+        """Turn.extra_params are included in the final payload."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(
+            texts=[Text(contents=["Hello"])],
+            extra_params={"temperature": 0.3, "top_p": 0.95},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        assert payload["temperature"] == 0.3
+        assert payload["top_p"] == 0.95
+
+    def test_extra_params_none_adds_nothing(self, model_endpoint):
+        """No extra keys when extra_params is None."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(texts=[Text(contents=["Hello"])], extra_params=None)
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        assert "temperature" not in payload
+        assert set(payload.keys()) == {"messages", "model", "stream"}
+
+    def test_extra_params_empty_dict_adds_nothing(self, model_endpoint):
+        """Empty dict is falsy, so no extra keys."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(texts=[Text(contents=["Hello"])], extra_params={})
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        assert set(payload.keys()) == {"messages", "model", "stream"}
+
+    def test_endpoint_extra_overrides_extra_params(self, model_endpoint):
+        """Endpoint-level extra takes precedence over per-turn extra_params."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(
+            texts=[Text(contents=["Hello"])],
+            extra_params={"temperature": 0.3},
+        )
+        model_endpoint.endpoint.extra = {"temperature": 0.9}
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        assert payload["temperature"] == 0.9
+
+    def test_max_tokens_not_overridden_by_extra_params(self, model_endpoint):
+        """max_completion_tokens set from Turn.max_tokens wins over extra_params."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(
+            texts=[Text(contents=["Hello"])],
+            max_tokens=100,
+            extra_params={"max_completion_tokens": 9999},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        assert payload["max_completion_tokens"] == 100
+
+    def test_model_not_overridden_by_extra_params(self, model_endpoint):
+        """The model field is always set last and cannot be overridden."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(
+            texts=[Text(contents=["Hello"])],
+            extra_params={"model": "evil-model"},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        assert payload["model"] == "test-model"
+
+    def test_stream_not_overridden_by_extra_params(self, model_endpoint):
+        """The stream field is always set last and cannot be overridden."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(
+            texts=[Text(contents=["Hello"])],
+            extra_params={"stream": True},
+        )
+        model_endpoint.endpoint.streaming = False
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+        assert payload["stream"] is False
+
+    def test_extra_params_with_tools_and_stream_options(self, model_endpoint):
+        """extra_params, tools, and stream_options coexist correctly."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(
+            texts=[Text(contents=["Hello"])],
+            raw_tools=[{"type": "function", "function": {"name": "search"}}],
+            extra_params={"temperature": 0.5},
+        )
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.use_server_token_count = True
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["temperature"] == 0.5
+        assert payload["tools"] == [
+            {"type": "function", "function": {"name": "search"}}
+        ]
+        assert payload["stream"] is True
+        assert payload["stream_options"] == {"include_usage": True}
+
+    def test_extra_params_stream_options_not_clobbered(self, model_endpoint):
+        """stream_options from extra_params gets include_usage merged in."""
+        endpoint = ChatEndpoint(model_endpoint)
+        turn = Turn(
+            texts=[Text(contents=["Hello"])],
+            extra_params={"stream_options": {"continuous_updates": True}},
+        )
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.use_server_token_count = True
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["stream_options"] == {
+            "continuous_updates": True,
+            "include_usage": True,
+        }
+
+    def test_extra_params_with_raw_messages(self, model_endpoint):
+        """extra_params work with raw_messages path (Conflux replay)."""
+        endpoint = ChatEndpoint(model_endpoint)
+        raw_msgs = [{"role": "user", "content": "Hello from replay"}]
+        turn = Turn(
+            texts=[],
+            raw_messages=raw_msgs,
+            extra_params={"temperature": 0.2},
+        )
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["messages"] == raw_msgs
+        assert payload["temperature"] == 0.2
+        assert payload["model"] == "test-model"

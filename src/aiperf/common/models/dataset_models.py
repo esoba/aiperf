@@ -158,6 +158,15 @@ class Turn(AIPerfBaseModel):
     videos: list[Video] = Field(
         default=[], description="Collection of video data in each turn."
     )
+    input_tokens: int | None = Field(
+        default=None,
+        description="Expected input token count for this turn (from trace data).",
+    )
+    extra_params: dict[str, Any] | None = Field(
+        default=None,
+        description="Per-turn hyperparameter overrides merged into the API payload at the top level. "
+        "Populated from dataset capture metadata.",
+    )
 
     def metadata(self) -> TurnMetadata:
         """Get the metadata of the turn."""
@@ -209,6 +218,8 @@ class Turn(AIPerfBaseModel):
                 )
                 for vid in self.videos
             ],
+            input_tokens=self.input_tokens,
+            extra_params=dict(self.extra_params) if self.extra_params else None,
         )
 
 

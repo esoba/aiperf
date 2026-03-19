@@ -39,47 +39,47 @@ class ChatEndpoint(BaseEndpoint):
             raise ValueError("Chat endpoint requires at least one turn.")
 
         turns = request_info.turns
+        current_turn = turns[-1]
         model_endpoint = request_info.model_endpoint
 
-        if turns[-1].raw_messages is not None:
-            messages = turns[-1].raw_messages
+        if current_turn.raw_messages is not None:
+            messages = current_turn.raw_messages
         else:
             messages = self._create_messages(
                 turns, request_info.system_message, request_info.user_context_message
             )
 
-        payload = {
-            "messages": messages,
-            "model": turns[-1].model or model_endpoint.primary_model_name,
-            "stream": model_endpoint.endpoint.streaming,
-        }
+        payload = {"messages": messages}
 
-        if turns[-1].raw_tools is not None:
-            payload["tools"] = turns[-1].raw_tools
+        if current_turn.raw_tools is not None:
+            payload["tools"] = current_turn.raw_tools
 
-        if turns[-1].max_tokens is not None:
+        if current_turn.extra_params:
+            payload.update(current_turn.extra_params)
+
+        if model_endpoint.endpoint.extra:
+            payload.update(model_endpoint.endpoint.extra)
+
+        # Set max tokens, model, and stream after all other payload fields are set
+        # to avoid them being overwritten
+        if current_turn.max_tokens is not None:
             token_field = (
                 "max_tokens"
                 if model_endpoint.endpoint.use_legacy_max_tokens
                 else "max_completion_tokens"
             )
-            payload[token_field] = turns[-1].max_tokens
+            payload[token_field] = current_turn.max_tokens
 
-        if model_endpoint.endpoint.extra:
-            payload.update(model_endpoint.endpoint.extra)
+        payload["model"] = current_turn.model or model_endpoint.primary_model_name
+        payload["stream"] = model_endpoint.endpoint.streaming
 
         if (
             model_endpoint.endpoint.streaming
             and model_endpoint.endpoint.use_server_token_count
         ):
-            # Automatically set stream_options to include usage when using server token counts
-            if "stream_options" not in payload:
-                payload["stream_options"] = {"include_usage": True}
-            elif (
-                isinstance(payload["stream_options"], dict)
-                and "include_usage" not in payload["stream_options"]
-            ):
-                payload["stream_options"]["include_usage"] = True
+            stream_opts = payload.setdefault("stream_options", {})
+            if isinstance(stream_opts, dict):
+                stream_opts.setdefault("include_usage", True)
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
