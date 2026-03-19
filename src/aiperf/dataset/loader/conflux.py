@@ -57,7 +57,7 @@ class ConfluxLoader(BaseFileLoader):
             return first is not None and cls._probe_file(first)
         return cls._probe_file(path)
 
-    _PROBE_BYTES = 32_768
+    _PROBE_BYTES = 1 << 20  # 1MB
 
     @classmethod
     def _probe_file(cls, path: Path) -> bool:

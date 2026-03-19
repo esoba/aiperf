@@ -223,6 +223,11 @@ Start offset in milliseconds for fixed schedule replay. Skips all requests befor
 End offset in milliseconds for fixed schedule replay. Stops issuing requests after this timestamp, allowing benchmark of specific trace subsets. Requests at exactly the end offset are included. Defaults to last timestamp in dataset. Must be ≥ `--fixed-schedule-start-offset` if both specified.
 <br/>_Constraints: ≥ 0_
 
+#### `--fixed-schedule-speedup` `<float>`
+
+Scaling factor for fixed schedule timestamps. A value of 2.0 replays the schedule twice as fast (halving inter-request delays), while 0.5 replays at half speed (doubling delays). Applied at the timing layer to any dataset using `--fixed-schedule`.
+<br/>_Constraints: > 0_
+
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets.

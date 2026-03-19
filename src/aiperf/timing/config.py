@@ -182,6 +182,12 @@ class CreditPhaseConfig(AIPerfBaseModel):
         ge=0,
         description="The fixed schedule end offset of the timing manager.",
     )
+    fixed_schedule_speedup: float | None = Field(
+        default=None,
+        gt=0,
+        description="Scaling factor for fixed schedule timestamps. "
+        "2.0 = twice as fast, 0.5 = half speed.",
+    )
 
 
 def _build_warmup_config(user_config: UserConfig) -> CreditPhaseConfig | None:
@@ -267,4 +273,5 @@ def _build_profiling_config(user_config: UserConfig) -> CreditPhaseConfig:
         auto_offset_timestamps=input.fixed_schedule_auto_offset,
         fixed_schedule_start_offset=input.fixed_schedule_start_offset,
         fixed_schedule_end_offset=input.fixed_schedule_end_offset,
+        fixed_schedule_speedup=input.fixed_schedule_speedup,
     )  # fmt: skip

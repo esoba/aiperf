@@ -53,7 +53,6 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         stop_checker: StopConditionChecker,
         **kwargs,
     ):
-        """Initialize fixed schedule timing strategy with all dependencies."""
         super().__init__(logger_name="FixedScheduleTiming")
         self._config = config
         self._conversation_source = conversation_source
@@ -61,16 +60,25 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         self._credit_issuer = credit_issuer
         self._lifecycle = lifecycle
 
-        # Computed in setup_phase
+        # Speedup is expressed as a multiplier (2x = twice as fast), but the
+        # timing math needs a divisor: a 2x speedup means each interval is
+        # *half* as long. Storing the reciprocal once avoids a division on
+        # every timestamp conversion and delay calculation.
+        self._time_scale = 1.0 / (config.fixed_schedule_speedup or 1.0)
+
         self._absolute_schedule: list[ScheduleEntry] = []
         self._schedule_zero_ms: float = 0.0
 
     def _timestamp_to_perf_sec(self, timestamp_ms: int | float) -> float:
-        """Convert trace timestamp in milliseconds to perf counter seconds.
+        """Convert a trace timestamp to a perf-counter target.
 
-        Uses the offset from the schedule zero to calculate the target performance seconds.
+        Subtracts the schedule zero point, scales by the speedup factor,
+        then anchors to the phase start time:
+
+            wall_target = started_at + (ts - zero) / speedup
         """
-        target_offset_sec = (timestamp_ms - self._schedule_zero_ms) / MILLIS_PER_SECOND
+        scaled_offset_ms = (timestamp_ms - self._schedule_zero_ms) * self._time_scale
+        target_offset_sec = scaled_offset_ms / MILLIS_PER_SECOND
         return self._lifecycle.started_at_perf_sec + target_offset_sec
 
     async def setup_phase(self) -> None:
@@ -116,10 +124,16 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         else:
             self._schedule_zero_ms = 0.0
 
+        speedup_msg = (
+            f", speedup={self._config.fixed_schedule_speedup}x"
+            if self._config.fixed_schedule_speedup
+            else ""
+        )
         self.info(
             f"Built schedule with {len(self._absolute_schedule)} timestamps, "
             f"zero_ms={self._schedule_zero_ms:.0f}, "
             f"auto_offset={self._config.auto_offset_timestamps}"
+            f"{speedup_msg}"
         )
 
     async def execute_phase(self) -> None:
@@ -162,7 +176,7 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
             )
         elif next_meta.delay_ms is not None:
             self._scheduler.schedule_later(
-                next_meta.delay_ms / MILLIS_PER_SECOND,
+                next_meta.delay_ms * self._time_scale / MILLIS_PER_SECOND,
                 self._credit_issuer.issue_credit(turn),
             )
         else:
