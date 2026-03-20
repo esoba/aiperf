@@ -170,8 +170,8 @@ class CreditCounter:
     # Atomic Operations (lock-free - no await between read and write)
     # =========================================================================
 
-    def increment_sent(self, turn_to_send: TurnToSend) -> tuple[int, bool]:
-        """Atomically increment sent count and return (credit_index, is_final_credit).
+    def increment_sent(self, turn_to_send: TurnToSend) -> tuple[int, int, bool]:
+        """Atomically increment sent count and return (credit_index, session_index, is_final_credit).
 
         Lock-free: no async calls.
         """
@@ -184,6 +184,9 @@ class CreditCounter:
         if turn_to_send.turn_index == 0:
             new_sent_sessions_count += 1
             new_total_session_turns += turn_to_send.num_turns
+
+        # session_index is 0-based: current session count minus 1
+        session_index = new_sent_sessions_count - 1
 
         is_final_credit = (
             self._config.total_expected_requests is not None
@@ -198,7 +201,7 @@ class CreditCounter:
         self._sent_sessions = new_sent_sessions_count
         self._total_session_turns = new_total_session_turns
 
-        return credit_index, is_final_credit
+        return credit_index, session_index, is_final_credit
 
     def increment_returned(self, is_final_turn: bool, cancelled: bool) -> bool:
         """Atomically increment returned count and check phase completion.

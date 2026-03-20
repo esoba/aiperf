@@ -24,7 +24,9 @@ class Credit(
     Sent directly from router to worker (no wrapper message).
 
     Attributes:
-        id: Sequential number of the credit in the credit phase.
+        id: Sequential number of the credit in the credit phase (0-based request index).
+        session_num: Sequential number of the session/conversation (0-based). All turns
+                     within the same conversation share the same session_num.
         phase: Type of credit phase (e.g., "warmup", "profile").
         conversation_id: Template ID from the dataset.
         x_correlation_id: Conversation instance ID for sticky routing (X-Correlation-ID header).
@@ -46,6 +48,7 @@ class Credit(
     issued_at_ns: int
     cancel_after_ns: int | None = None
     url_index: int | None = None
+    session_num: int | None = None
 
     @property
     def is_final_turn(self) -> bool:

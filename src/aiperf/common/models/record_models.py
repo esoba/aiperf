@@ -86,6 +86,11 @@ class MetricValue(AIPerfBaseModel):
 class MetricRecordMetadata(AIPerfBaseModel):
     """The metadata of a metric record for export."""
 
+    request_num: int | None = Field(
+        default=None,
+        description="The sequential index of the request in the benchmark (0-based). Each credit issued gets a unique"
+        " request_num, including child turns in multi-turn conversations.",
+    )
     session_num: int = Field(
         ...,
         description="The sequential number of the session in the benchmark. For single-turn datasets, this will be the"
@@ -477,6 +482,12 @@ class RequestInfo(AIPerfBaseModel):
         ge=0,
         description="The sequential number of the credit in the credit phase. This is used to track the progress of the credit phase,"
         " as well as the order that requests are sent in.",
+    )
+    session_num: int | None = Field(
+        default=None,
+        ge=0,
+        description="The sequential number of the session/conversation (0-based). All turns within the same conversation"
+        " share the same session_num.",
     )
     credit_phase: CreditPhase = Field(
         ...,

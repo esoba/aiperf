@@ -33,7 +33,9 @@ def mock_stop_checker():
 def mock_progress():
     """Mock progress tracker."""
     mock = MagicMock()
-    mock.increment_sent = MagicMock(return_value=(1, False))  # (credit_index, is_final)
+    mock.increment_sent = MagicMock(
+        return_value=(1, 0, False)
+    )  # (credit_index, session_index, is_final)
     mock.freeze_sent_counts = MagicMock()
     mock.all_credits_sent_event = asyncio.Event()
     return mock
@@ -150,7 +152,7 @@ class TestBasicCreditIssuance:
         self, credit_issuer, mock_router, mock_progress
     ):
         """Credit struct should have correct fields from turn."""
-        mock_progress.increment_sent.return_value = (42, False)  # credit_index=42
+        mock_progress.increment_sent.return_value = (42, 0, False)  # credit_index=42
         turn = make_turn(conversation_id="test-conv", turn_index=1, num_turns=5)
 
         await credit_issuer.issue_credit(turn)
@@ -164,11 +166,24 @@ class TestBasicCreditIssuance:
         assert sent_credit.num_turns == 5
         assert sent_credit.issued_at_ns > 0
 
+    async def test_issue_credit_sets_session_num_on_credit(
+        self, credit_issuer, mock_router, mock_progress
+    ):
+        """Credit struct should carry session_num from progress tracker."""
+        mock_progress.increment_sent.return_value = (5, 3, False)
+        turn = make_turn()
+
+        await credit_issuer.issue_credit(turn)
+
+        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+        assert sent_credit.id == 5
+        assert sent_credit.session_num == 3
+
     async def test_issue_credit_returns_true_when_more_credits_can_be_sent(
         self, credit_issuer, mock_progress
     ):
         """Should return True when not the final credit."""
-        mock_progress.increment_sent.return_value = (1, False)  # Not final
+        mock_progress.increment_sent.return_value = (1, 0, False)  # Not final
         turn = make_turn()
 
         result = await credit_issuer.issue_credit(turn)
@@ -179,7 +194,7 @@ class TestBasicCreditIssuance:
         self, credit_issuer, mock_progress
     ):
         """Should return False when this is the final credit."""
-        mock_progress.increment_sent.return_value = (10, True)  # Final credit
+        mock_progress.increment_sent.return_value = (10, 0, True)  # Final credit
         turn = make_turn()
 
         result = await credit_issuer.issue_credit(turn)
@@ -284,7 +299,7 @@ class TestFinalCreditHandling:
 
     async def test_final_credit_freezes_sent_counts(self, credit_issuer, mock_progress):
         """Final credit should freeze sent counts."""
-        mock_progress.increment_sent.return_value = (10, True)  # Final credit
+        mock_progress.increment_sent.return_value = (10, 0, True)  # Final credit
         turn = make_turn()
 
         await credit_issuer.issue_credit(turn)
@@ -293,7 +308,7 @@ class TestFinalCreditHandling:
 
     async def test_final_credit_sets_event(self, credit_issuer, mock_progress):
         """Final credit should set the all_credits_sent_event."""
-        mock_progress.increment_sent.return_value = (10, True)  # Final credit
+        mock_progress.increment_sent.return_value = (10, 0, True)  # Final credit
         turn = make_turn()
 
         await credit_issuer.issue_credit(turn)
@@ -304,7 +319,7 @@ class TestFinalCreditHandling:
         self, credit_issuer, mock_progress
     ):
         """Non-final credit should not freeze counts or set event."""
-        mock_progress.increment_sent.return_value = (5, False)  # Not final
+        mock_progress.increment_sent.return_value = (5, 0, False)  # Not final
         turn = make_turn()
 
         await credit_issuer.issue_credit(turn)
@@ -381,7 +396,7 @@ class TestAtomicCreditNumbering:
 
         def increment_sent(turn):
             call_count[0] += 1
-            return (call_count[0], call_count[0] >= 3)  # Final at 3rd call
+            return (call_count[0], 0, call_count[0] >= 3)  # Final at 3rd call
 
         progress.increment_sent = increment_sent
         progress.freeze_sent_counts = MagicMock()

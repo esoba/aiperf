@@ -385,6 +385,22 @@ class ServerMetricsFormat(CaseInsensitiveStrEnum):
     Includes cumulative deltas from reference point for counters and histograms."""
 
 
+class RecordExportFormat(CaseInsensitiveStrEnum):
+    """Format options for per-record metrics export.
+
+    Controls which output files are generated for per-record benchmark data.
+    Default selection is JSONL only.
+    """
+
+    CSV = "csv"
+    """Export per-record metrics in CSV tabular format with flat column layout.
+    Best for: Spreadsheet analysis, tabular comparison, pandas DataFrames."""
+
+    JSONL = "jsonl"
+    """Export per-record metrics in line-delimited JSON with nested metadata.
+    Best for: Programmatic access, structured analysis, debugging."""
+
+
 class ServiceRegistrationStatus(CaseInsensitiveStrEnum):
     """Defines the various states a service can be in during registration with
     the SystemController."""

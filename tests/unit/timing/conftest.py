@@ -582,7 +582,7 @@ def mock_stop_checker() -> MagicMock:
 @pytest.fixture
 def mock_progress_tracker() -> MagicMock:
     m = MagicMock()
-    m.increment_sent = MagicMock(return_value=(1, False))
+    m.increment_sent = MagicMock(return_value=(1, 0, False))
     m.increment_returned = MagicMock(return_value=False)
     m.increment_prefill_released = m.freeze_sent_counts = m.freeze_completed_counts = (
         m.create_stats

@@ -100,6 +100,54 @@ class TestRecordProcessorCreateMetricRecordMetadata:
         assert metadata.cancellation_time_ns == expected_cancellation_time
         assert metadata.worker_id == worker_id
 
+    def test_create_metadata_populates_request_num_from_credit_num(
+        self, mock_record_processor, sample_request_record
+    ):
+        """request_num should be set from credit_num."""
+        sample_request_record.request_info.credit_num = 7
+        sample_request_record.request_info.session_num = 3
+        sample_request_record.end_perf_ns = (
+            sample_request_record.start_perf_ns + 100_000
+        )
+
+        metadata = RecordProcessor._create_metric_record_metadata(
+            mock_record_processor, sample_request_record, "worker-1"
+        )
+
+        assert metadata.request_num == 7
+
+    def test_create_metadata_populates_session_num_from_request_info(
+        self, mock_record_processor, sample_request_record
+    ):
+        """session_num should come from request_info.session_num when present."""
+        sample_request_record.request_info.credit_num = 10
+        sample_request_record.request_info.session_num = 5
+        sample_request_record.end_perf_ns = (
+            sample_request_record.start_perf_ns + 100_000
+        )
+
+        metadata = RecordProcessor._create_metric_record_metadata(
+            mock_record_processor, sample_request_record, "worker-1"
+        )
+
+        assert metadata.session_num == 5
+
+    def test_create_metadata_session_num_falls_back_to_credit_num(
+        self, mock_record_processor, sample_request_record
+    ):
+        """session_num should fall back to credit_num when request_info.session_num is None."""
+        sample_request_record.request_info.credit_num = 8
+        sample_request_record.request_info.session_num = None
+        sample_request_record.end_perf_ns = (
+            sample_request_record.start_perf_ns + 100_000
+        )
+
+        metadata = RecordProcessor._create_metric_record_metadata(
+            mock_record_processor, sample_request_record, "worker-1"
+        )
+
+        assert metadata.session_num == 8
+
     @pytest.mark.parametrize(
         "field_name,field_value,expected_metadata_field",
         [

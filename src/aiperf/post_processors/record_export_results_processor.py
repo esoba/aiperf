@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import ExportLevel
+from aiperf.common.enums import ExportLevel, RecordExportFormat
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.messages.inference_messages import MetricRecordsData
@@ -30,6 +30,10 @@ class RecordExportResultsProcessor(
             raise PostProcessorDisabled(
                 f"Record export results processor is disabled for export level {export_level}"
             )
+        if RecordExportFormat.JSONL not in user_config.output.record_export_formats:
+            raise PostProcessorDisabled(
+                "JSONL record export disabled: format not selected in --record-export-formats"
+            )
 
         output_file = user_config.output.profile_export_jsonl_file
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -50,9 +54,12 @@ class RecordExportResultsProcessor(
             Environment.DEV.MODE and Environment.DEV.SHOW_EXPERIMENTAL_METRICS
         )
         self.export_http_trace = user_config.output.export_http_trace
+        self.export_per_chunk_data = user_config.output.export_per_chunk_data
         self.info(f"Record metrics export enabled: {self.output_file}")
         if self.export_http_trace:
             self.info("HTTP trace export enabled (--export-http-trace)")
+        if self.export_per_chunk_data:
+            self.info("Per-chunk data export enabled (--export-per-chunk-data)")
 
     async def process_result(self, record_data: MetricRecordsData) -> None:
         try:
@@ -64,6 +71,14 @@ class RecordExportResultsProcessor(
             # (error records should always be exported for debugging/analysis)
             if not display_metrics and not record_data.error:
                 return
+
+            # Filter out list-valued metrics (per-chunk arrays) unless explicitly enabled
+            if not self.export_per_chunk_data:
+                display_metrics = {
+                    k: v
+                    for k, v in display_metrics.items()
+                    if not isinstance(v.value, list)
+                }
 
             # Convert trace data to export format (wall-clock timestamps) if enabled
             export_trace_data = None

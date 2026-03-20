@@ -473,6 +473,7 @@ def dual_flag_metric_cls(mock_metric_registry: Mock) -> type[BaseRecordMetric]:
 
 
 def create_metric_metadata(
+    request_num: int = 0,
     session_num: int = 0,
     conversation_id: str | None = None,
     turn_index: int = 0,
@@ -489,6 +490,7 @@ def create_metric_metadata(
     Create a MetricRecordMetadata object with sensible defaults.
 
     Args:
+        request_num: Sequential request index in the benchmark (0-based)
         session_num: Sequential session number in the benchmark
         conversation_id: Conversation ID (optional)
         turn_index: Turn index in conversation
@@ -505,6 +507,7 @@ def create_metric_metadata(
         MetricRecordMetadata object
     """
     return MetricRecordMetadata(
+        request_num=request_num,
         session_num=session_num,
         conversation_id=conversation_id,
         turn_index=turn_index,

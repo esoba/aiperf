@@ -83,15 +83,16 @@ class PhaseProgressTracker:
     # Increment Methods (wrapped with event coordination)
     # =========================================================================
 
-    def increment_sent(self, turn: TurnToSend) -> tuple[int, bool]:
+    def increment_sent(self, turn: TurnToSend) -> tuple[int, int, bool]:
         """Atomically increment sent count.
 
         Args:
             turn: The turn being sent.
 
         Returns:
-            (credit_index, is_final_credit)
-            - credit_index: Sequential ID for this credit
+            (credit_index, session_index, is_final_credit)
+            - credit_index: Sequential ID for this credit (0-based request number)
+            - session_index: Sequential ID for this session/conversation (0-based)
             - is_final_credit: True if this was the final credit to send
 
         CRITICAL: No async calls in this method - preserves atomicity.

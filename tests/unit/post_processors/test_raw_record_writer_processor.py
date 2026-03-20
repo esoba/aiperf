@@ -150,6 +150,7 @@ class TestRawRecordWriterProcessorProcessRecord:
         async with raw_record_processor("processor-1", user_config_raw) as processor:
             for i in range(5):
                 metadata = create_metric_metadata(
+                    request_num=i,
                     session_num=i,
                     conversation_id=f"conv-{i}",
                     x_request_id=f"req-{i}",
@@ -223,6 +224,7 @@ class TestRawRecordAggregator:
             ) as processor:
                 for j in range(2):
                     metadata = create_metric_metadata(
+                        request_num=i * 2 + j,
                         session_num=i * 2 + j,
                         conversation_id=f"conv-{i}-{j}",
                     )
@@ -274,11 +276,11 @@ class TestRawRecordAggregator:
 
         test_file = raw_records_dir / "raw_records_test.jsonl"
         with open(test_file, "w") as f:
-            f.write('{"metadata": {"session_num": 0}}\n')
+            f.write('{"metadata": {"request_num": 0, "session_num": 0}}\n')
             f.write("\n")
-            f.write('{"metadata": {"session_num": 1}}\n')
+            f.write('{"metadata": {"request_num": 1, "session_num": 1}}\n')
             f.write("   \n")
-            f.write('{"metadata": {"session_num": 2}}\n')
+            f.write('{"metadata": {"request_num": 2, "session_num": 2}}\n')
 
         exporter_config = create_exporter_config(user_config_raw)
         aggregator = RawRecordAggregator(exporter_config=exporter_config)

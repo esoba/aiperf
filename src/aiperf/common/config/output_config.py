@@ -4,14 +4,15 @@
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, model_validator
+from pydantic import BeforeValidator, Field, model_validator
 from typing_extensions import Self
 
 from aiperf.common.config.base_config import BaseConfig
 from aiperf.common.config.cli_parameter import CLIParameter
 from aiperf.common.config.config_defaults import OutputDefaults
+from aiperf.common.config.config_validators import parse_str_or_list
 from aiperf.common.config.groups import Groups
-from aiperf.common.enums import ExportLevel
+from aiperf.common.enums import ExportLevel, RecordExportFormat
 
 
 class OutputConfig(BaseConfig):
@@ -24,9 +25,9 @@ class OutputConfig(BaseConfig):
     artifact_directory: Annotated[
         Path,
         Field(
-            description="Output directory for all benchmark artifacts including metrics (`.csv`, `.json`, `.jsonl`), raw data (`_raw.jsonl`), "
-            "GPU telemetry (`_gpu_telemetry.jsonl`), and time-sliced metrics (`_timeslices.csv/json`). Directory created if it doesn't exist. "
-            "All output file paths are constructed relative to this directory.",
+            description="Output directory for all benchmark artifacts including metrics (`.csv`, `.json`, `.jsonl`), per-record CSV (`_records.csv`), "
+            "raw data (`_raw.jsonl`), GPU telemetry (`_gpu_telemetry.jsonl`), and time-sliced metrics (`_timeslices.csv/json`). "
+            "Directory created if it doesn't exist. All output file paths are constructed relative to this directory.",
         ),
         CLIParameter(
             name=(
@@ -67,6 +68,21 @@ class OutputConfig(BaseConfig):
         ),
     ] = OutputDefaults.EXPORT_LEVEL
 
+    record_export_formats: Annotated[
+        list[RecordExportFormat],
+        Field(
+            description="Specify which output formats to generate for per-record metrics. "
+            "Multiple formats can be specified (e.g., `--record-export-formats jsonl csv`). "
+            "Requires --export-level >= records.",
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--record-export-formats",),
+            consume_multiple=True,
+            group=_CLI_GROUP,
+        ),
+    ] = OutputDefaults.RECORD_EXPORT_FORMATS
+
     slice_duration: Annotated[
         float | None,
         Field(
@@ -93,6 +109,20 @@ class OutputConfig(BaseConfig):
         ),
     ] = OutputDefaults.EXPORT_HTTP_TRACE
 
+    export_per_chunk_data: Annotated[
+        bool,
+        Field(
+            description="Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports "
+            "(profile_export.jsonl and profile_export_records.csv). These arrays contain one timing value per SSE "
+            "chunk and can be very large for long responses. When disabled (default), only scalar aggregate metrics "
+            "are included. The aggregate inter_token_latency scalar is always exported regardless of this setting.",
+        ),
+        CLIParameter(
+            name="--export-per-chunk-data",
+            group=_CLI_GROUP,
+        ),
+    ] = OutputDefaults.EXPORT_PER_CHUNK_DATA
+
     show_trace_timing: Annotated[
         bool,
         Field(
@@ -114,6 +144,9 @@ class OutputConfig(BaseConfig):
     _profile_export_timeslices_json_file: Path = (
         OutputDefaults.PROFILE_EXPORT_AIPERF_TIMESLICES_JSON_FILE
     )
+    _profile_export_records_csv_file: Path = (
+        OutputDefaults.PROFILE_EXPORT_RECORDS_CSV_FILE
+    )
     _profile_export_jsonl_file: Path = OutputDefaults.PROFILE_EXPORT_JSONL_FILE
     _profile_export_raw_jsonl_file: Path = OutputDefaults.PROFILE_EXPORT_RAW_JSONL_FILE
     _profile_export_gpu_telemetry_jsonl_file: Path = (
@@ -131,6 +164,23 @@ class OutputConfig(BaseConfig):
     _server_metrics_export_parquet_file: Path = (
         OutputDefaults.SERVER_METRICS_EXPORT_PARQUET_FILE
     )
+
+    @model_validator(mode="after")
+    def validate_record_export_formats(self) -> Self:
+        """Validate record_export_formats against export_level."""
+        if not self.record_export_formats:
+            raise ValueError(
+                "--record-export-formats cannot be empty; "
+                "specify at least one format (e.g., jsonl, csv)"
+            )
+        if (
+            "record_export_formats" in self.model_fields_set
+            and self.export_level == ExportLevel.SUMMARY
+        ):
+            raise ValueError(
+                "--record-export-formats requires --export-level >= records"
+            )
+        return self
 
     @model_validator(mode="after")
     def set_export_filenames(self) -> Self:
@@ -151,6 +201,7 @@ class OutputConfig(BaseConfig):
             "_gpu_telemetry.jsonl",
             "_timeslices.csv",
             "_timeslices.json",
+            "_records.csv",
             "_raw.jsonl",
             ".parquet",
             ".csv",
@@ -166,6 +217,7 @@ class OutputConfig(BaseConfig):
         self._profile_export_json_file = Path(f"{base_str}.json")
         self._profile_export_timeslices_csv_file = Path(f"{base_str}_timeslices.csv")
         self._profile_export_timeslices_json_file = Path(f"{base_str}_timeslices.json")
+        self._profile_export_records_csv_file = Path(f"{base_str}_records.csv")
         self._profile_export_jsonl_file = Path(f"{base_str}.jsonl")
         self._profile_export_raw_jsonl_file = Path(f"{base_str}_raw.jsonl")
         self._profile_export_gpu_telemetry_jsonl_file = Path(
@@ -196,6 +248,10 @@ class OutputConfig(BaseConfig):
     @property
     def profile_export_timeslices_json_file(self) -> Path:
         return self.artifact_directory / self._profile_export_timeslices_json_file
+
+    @property
+    def profile_export_records_csv_file(self) -> Path:
+        return self.artifact_directory / self._profile_export_records_csv_file
 
     @property
     def profile_export_jsonl_file(self) -> Path:

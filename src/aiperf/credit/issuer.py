@@ -198,7 +198,9 @@ class CreditIssuer:
         Returns:
             True if more credits can be sent, False if this was the final credit.
         """
-        credit_index, is_final_credit = self._progress.increment_sent(turn)
+        credit_index, session_index, is_final_credit = self._progress.increment_sent(
+            turn
+        )
 
         cancel_after_ns = self._cancellation_policy.next_cancellation_delay_ns(
             turn, self._phase
@@ -219,6 +221,7 @@ class CreditIssuer:
 
         credit = Credit(
             id=credit_index,
+            session_num=session_index,
             phase=self._phase,
             conversation_id=turn.conversation_id,
             x_correlation_id=turn.x_correlation_id,

@@ -107,6 +107,7 @@ class AIPerfResults:
         self.csv = self._load_text_file("**/*aiperf.csv")
         self.inputs = self._load_inputs()
         self.jsonl = self._load_jsonl_records()
+        self.csv_records = self._load_csv_records()
         self.raw_records = self._load_raw_records()
         self.log = self._load_text_file("**/logs/aiperf*.log")
 
@@ -164,6 +165,19 @@ class AIPerfResults:
                     records.append(MetricRecordInfo.model_validate_json(line))
         return records
 
+    def _load_csv_records(self) -> list[dict[str, str]] | None:
+        """Load CSV per-record export as list of dicts."""
+        import csv
+        import io
+
+        file_path = self._find_file("**/*profile_export_records.csv")
+        if not file_path:
+            return None
+
+        content = file_path.read_text(encoding="utf-8")
+        reader = csv.DictReader(io.StringIO(content))
+        return list(reader)
+
     def _load_raw_records(self) -> list[RawRecordInfo] | None:
         """Load raw records as Pydantic models."""
         file_path = self._find_file("**/*profile_export_raw.jsonl")
@@ -206,6 +220,7 @@ class AIPerfResults:
                 bool(self.csv),
                 self.inputs is not None,
                 self.jsonl is not None,
+                self.csv_records is not None,
             )
         )
 

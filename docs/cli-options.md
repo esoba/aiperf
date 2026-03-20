@@ -614,7 +614,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--output-artifact-dir`, `--artifact-dir` `<str>`
 
-Output directory for all benchmark artifacts including metrics (`.csv`, `.json`, `.jsonl`), raw data (`_raw.jsonl`), GPU telemetry (`_gpu_telemetry.jsonl`), and time-sliced metrics (`_timeslices.csv/json`). Directory created if it doesn't exist. All output file paths are constructed relative to this directory.
+Output directory for all benchmark artifacts including metrics (`.csv`, `.json`, `.jsonl`), per-record CSV (`_records.csv`), raw data (`_raw.jsonl`), GPU telemetry (`_gpu_telemetry.jsonl`), and time-sliced metrics (`_timeslices.csv/json`). Directory created if it doesn't exist. All output file paths are constructed relative to this directory.
 <br/>_Default: `artifacts`_
 
 #### `--profile-export-prefix`, `--profile-export-file` `<str>`
@@ -633,6 +633,17 @@ Controls which output files are generated. `summary`: Only aggregate metrics fil
 | `records` | _default_ | Export per-record metrics after aggregation with display unit conversion |
 | `raw` |  | Export raw parsed records with full request/response data (most detailed) |
 
+#### `--record-export-formats` `<list>`
+
+Specify which output formats to generate for per-record metrics. Multiple formats can be specified (e.g., `--record-export-formats jsonl csv`). Requires --export-level >= records.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `csv` |  | Export per-record metrics in CSV tabular format with flat column layout. Best for: Spreadsheet analysis, tabular comparison, pandas DataFrames. |
+| `jsonl` | _default_ | Export per-record metrics in line-delimited JSON with nested metadata. Best for: Programmatic access, structured analysis, debugging. |
+
 #### `--slice-duration` `<float>`
 
 Duration in seconds for time-sliced metric analysis. When set, AIPerf divides the benchmark timeline into fixed-length windows and computes metrics separately for each window. This enables analysis of performance trends and variations over time (e.g., warmup effects, degradation under sustained load).
@@ -640,6 +651,11 @@ Duration in seconds for time-sliced metric analysis. When set, AIPerf divides th
 #### `--export-http-trace`
 
 Include HTTP trace data (timestamps, chunks, headers, socket info) in profile_export.jsonl. Computed metrics (http_req_duration, http_req_waiting, etc.) are always included regardless of this setting. See the HTTP Trace Metrics guide for details on trace data fields.
+<br/>_Flag (no value required)_
+
+#### `--export-per-chunk-data`
+
+Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports (profile_export.jsonl and profile_export_records.csv). These arrays contain one timing value per SSE chunk and can be very large for long responses. When disabled (default), only scalar aggregate metrics are included. The aggregate inter_token_latency scalar is always exported regardless of this setting.
 <br/>_Flag (no value required)_
 
 #### `--show-trace-timing`
