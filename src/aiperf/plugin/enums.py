@@ -87,7 +87,7 @@ StreamExporterType = plugins.create_enum(PluginType.STREAM_EXPORTER, "StreamExpo
 
 AnalyzerTypeStr: TypeAlias = str
 AnalyzerType = plugins.create_enum(PluginType.ANALYZER, "AnalyzerType", module=__name__)
-"""Dynamic enum for analyzer. Example: AnalyzerType.ACCURACY_RESULTS, AnalyzerType.STEADY_STATE"""
+"""Dynamic enum for analyzer. Example: AnalyzerType.ACCURACY_RESULTS, AnalyzerType.ENERGY_EFFICIENCY, AnalyzerType.STEADY_STATE"""
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)
@@ -99,11 +99,11 @@ AccuracyBenchmarkType = plugins.create_enum(PluginType.ACCURACY_BENCHMARK, "Accu
 
 DataExporterTypeStr: TypeAlias = str
 DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterType", module=__name__)
-"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.CSV, DataExporterType.JSON"""
+"""Dynamic enum for data exporter. Example: DataExporterType.ACCURACY_CSV, DataExporterType.CSV, DataExporterType.ENERGY_EFFICIENCY_JSON"""
 
 ConsoleExporterTypeStr: TypeAlias = str
 ConsoleExporterType = plugins.create_enum(PluginType.CONSOLE_EXPORTER, "ConsoleExporterType", module=__name__)
-"""Dynamic enum for console exporter. Example: ConsoleExporterType.ACCURACY, ConsoleExporterType.API_ERRORS, ConsoleExporterType.ERRORS"""
+"""Dynamic enum for console exporter. Example: ConsoleExporterType.ACCURACY, ConsoleExporterType.API_ERRORS, ConsoleExporterType.ENERGY_EFFICIENCY"""
 
 UITypeStr: TypeAlias = str
 UIType = plugins.create_enum(PluginType.UI, "UIType", module=__name__)

@@ -176,6 +176,9 @@ class OutputDefaults:
     PROFILE_EXPORT_AIPERF_STEADY_STATE_JSON_FILE = Path(
         "profile_export_aiperf_steady_state.json"
     )
+    PROFILE_EXPORT_AIPERF_ENERGY_EFFICIENCY_JSON_FILE = Path(
+        "profile_export_aiperf_energy_efficiency.json"
+    )
     PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
     PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")

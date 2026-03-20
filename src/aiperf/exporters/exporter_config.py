@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.models import ProfileResults
 from aiperf.common.models.export_models import TelemetryExportData
@@ -23,6 +24,7 @@ class ExporterConfig:
     telemetry_results: TelemetryExportData | None
     server_metrics_results: ServerMetricsResults | None = None
     steady_state_results: SteadyStateSummary | None = None
+    energy_efficiency_results: EnergyEfficiencySummary | None = None
 
 
 @dataclass(slots=True)

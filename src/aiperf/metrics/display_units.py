@@ -3,7 +3,7 @@
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
-from aiperf.common.exceptions import MetricUnitError
+from aiperf.common.exceptions import MetricTypeError, MetricUnitError
 from aiperf.common.models import MetricResult
 from aiperf.metrics.metric_registry import MetricRegistry
 
@@ -13,8 +13,14 @@ _logger = AIPerfLogger(__name__)
 def to_display_unit(result: MetricResult, registry: MetricRegistry) -> MetricResult:
     """
     Return a new MetricResult converted to its display unit (if different).
+
+    Returns the result unchanged if the tag is not in the metric registry
+    (e.g. sweep metrics injected by analyzers).
     """
-    metric_cls = registry.get_class(result.tag)
+    try:
+        metric_cls = registry.get_class(result.tag)
+    except (MetricTypeError, KeyError):
+        return result
     if result.unit and result.unit != metric_cls.unit.value:
         _logger.error(
             f"Metric {result.tag} has a unit ({result.unit}) that does not match the expected unit ({metric_cls.unit.value}). "

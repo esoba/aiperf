@@ -7,6 +7,7 @@ import asyncio
 
 from rich.console import Console
 
+from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.exceptions import (
     ArtifactPublisherDisabled,
@@ -42,6 +43,7 @@ class ExporterManager(AIPerfLoggerMixin):
         telemetry_results: TelemetryExportData | None,
         server_metrics_results: ServerMetricsResults | None = None,
         steady_state_results: SteadyStateSummary | None = None,
+        energy_efficiency_results: EnergyEfficiencySummary | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -56,6 +58,7 @@ class ExporterManager(AIPerfLoggerMixin):
             telemetry_results=telemetry_results,
             server_metrics_results=server_metrics_results,
             steady_state_results=steady_state_results,
+            energy_efficiency_results=energy_efficiency_results,
         )
         self._exported_file_infos: dict[str, FileExportInfo] = {}
 

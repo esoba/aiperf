@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
 from aiperf.common.enums import MessageType
 from aiperf.common.messages.base_messages import RequiresRequestNSMixin
 from aiperf.common.messages.service_messages import BaseServiceMessage
@@ -67,6 +68,9 @@ class ProcessAllResultsMessage(BaseServiceMessage):
     )
     steady_state_results: SteadyStateSummary | None = Field(
         default=None, description="Steady-state windowed metric results"
+    )
+    energy_efficiency_results: EnergyEfficiencySummary | None = Field(
+        default=None, description="Energy efficiency metric results"
     )
     exported_artifacts: dict[str, FileExportInfo] = Field(
         default_factory=dict,

@@ -724,6 +724,14 @@ analyzer:
       arrays from MetricsAccumulator, detects ramp-up/ramp-down phases, and
       computes metrics over the stable window. Enabled via --steady-state flag.
 
+  energy_efficiency:
+    class: aiperf.analysis.energy_analyzer:EnergyEfficiencyAnalyzer
+    description: |
+      Cross-accumulator energy efficiency metrics. Reads GPU telemetry
+      (power, energy) and inference metrics (tokens, throughput, latency)
+      to compute energy-per-token, tokens-per-joule, performance-per-watt,
+      and energy delay product. Requires GPU telemetry to be enabled.
+
   accuracy_results:
     class: aiperf.accuracy.accuracy_results_processor:AccuracyResultsProcessor
     description: |
@@ -784,6 +792,13 @@ data_exporter:
     description: |
       JSON exporter for steady-state windowed metrics. Exports metrics computed over
       the detected or user-specified steady-state window to JSON format.
+
+  energy_efficiency_json:
+    class: aiperf.exporters.energy_json_exporter:EnergyJsonExporter
+    description: |
+      JSON exporter for energy efficiency metrics. Exports energy-per-token,
+      tokens-per-joule, performance-per-watt, and related metrics to JSON format.
+      Self-disables when GPU telemetry is unavailable.
 
   timeslice_csv:
     class: aiperf.exporters.timeslice_metrics_csv_exporter:TimesliceMetricsCsvExporter
@@ -871,6 +886,13 @@ console_exporter:
     description: |
       Console exporter for steady-state windowed metrics. Displays a separate table
       with metrics computed over the detected or user-specified steady-state window.
+
+  energy_efficiency:
+    class: aiperf.exporters.console_energy_exporter:ConsoleEnergyExporter
+    description: |
+      Console exporter for energy efficiency metrics. Displays energy-per-token,
+      tokens-per-joule, performance-per-watt, and related metrics as a Rich table.
+      Self-disables when GPU telemetry is unavailable.
 
   accuracy:
     class: aiperf.accuracy.accuracy_console_exporter:AccuracyConsoleExporter

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from itertools import chain
 from typing import Any
 
+from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
 from aiperf.common.accumulator_protocols import (
     AccumulatorProtocol,
     AnalyzerProtocol,
@@ -760,11 +761,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         # Export data files and publish artifacts — single ExporterManager instance
         steady_state = analyzer_outputs.get(AnalyzerType.STEADY_STATE)
+        energy_efficiency = analyzer_outputs.get(AnalyzerType.ENERGY_EFFICIENCY)
         exported_artifacts = await self._export_and_publish(
             process_records_result.results,
             telemetry_results,
             server_metrics_results,
             steady_state_results=steady_state,
+            energy_efficiency_results=energy_efficiency,
         )
 
         # Publish unified results message (includes artifact paths for SystemController display)
@@ -776,6 +779,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 telemetry_results=telemetry_results,
                 server_metrics_results=server_metrics_results,
                 steady_state_results=analyzer_outputs.get(AnalyzerType.STEADY_STATE),
+                energy_efficiency_results=energy_efficiency,
                 exported_artifacts=exported_artifacts,
             )
         )
@@ -788,6 +792,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         telemetry_results: TelemetryExportData | None,
         server_metrics_results: ServerMetricsResults | None,
         steady_state_results: SteadyStateSummary | None = None,
+        energy_efficiency_results: EnergyEfficiencySummary | None = None,
     ) -> dict[str, FileExportInfo]:
         """Export data files, collect all artifact paths, and publish to remote storage.
 
@@ -808,6 +813,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 telemetry_results=telemetry_results,
                 server_metrics_results=server_metrics_results,
                 steady_state_results=steady_state_results,
+                energy_efficiency_results=energy_efficiency_results,
             )
             await exporter_manager.export_data()
         except Exception as e:

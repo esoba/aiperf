@@ -9,6 +9,7 @@ from typing import cast
 from rich.console import Console
 from rich.panel import Panel
 
+from aiperf.analysis.energy_analyzer import EnergyEfficiencySummary
 from aiperf.cli_utils import (
     print_developer_mode_warning,
     warn_osl_without_ignore_eos,
@@ -148,6 +149,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._telemetry_results: TelemetryExportData | None = None
         self._server_metrics_results: ServerMetricsResults | None = None
         self._steady_state_results: SteadyStateSummary | None = None
+        self._energy_efficiency_results: EnergyEfficiencySummary | None = None
         self._exported_artifacts: dict[str, FileExportInfo] = {}
         self._profile_results_received = False
 
@@ -569,6 +571,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
         self._server_metrics_results = message.server_metrics_results
         self._steady_state_results = message.steady_state_results
+        self._energy_efficiency_results = message.energy_efficiency_results
         self._exported_artifacts = message.exported_artifacts
 
         # Trigger shutdown (lock still needed for cancel race)
@@ -793,6 +796,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             telemetry_results=self._telemetry_results,
             server_metrics_results=self._server_metrics_results,
             steady_state_results=self._steady_state_results,
+            energy_efficiency_results=self._energy_efficiency_results,
         )
 
         # Data files (CSV, JSON) already exported by RecordsManager.
