@@ -10,6 +10,7 @@ from typing import Any, Generic, TypeVar
 
 from aiperf.common.config.config_defaults import InputTokensDefaults
 from aiperf.common.config.user_config import UserConfig
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.generator.base import BaseGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader
@@ -233,6 +234,16 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         """
         return getattr(trace, "text_input", None)
 
+    def _infer_context_mode(
+        self, traces: list[TraceT]
+    ) -> ConversationContextMode | None:
+        """Infer context_mode from trace data when not explicitly set.
+
+        Override in subclasses to auto-detect based on trace content.
+        Default returns None (falls through to global DELTAS_WITHOUT_RESPONSES default).
+        """
+        return None
+
     def _build_turn(self, trace: TraceT, prompt: str) -> Turn:
         """Build a :class:`Turn` from trace data and a generated prompt.
 
@@ -297,7 +308,10 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     ) -> Iterator[Conversation]:
         """Fallback single-threaded conversion for small datasets."""
         for session_id, traces in sessions:
-            conversation = Conversation(session_id=session_id)
+            context_mode = self._infer_context_mode(traces)
+            conversation = Conversation(
+                session_id=session_id, context_mode=context_mode
+            )
             for trace in traces:
                 text_input = self._get_text_input(trace)
                 if text_input is not None:

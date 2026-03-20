@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from aiperf.common.config import UserConfig
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str
 from aiperf.dataset.composer.base import BaseDatasetComposer
+from aiperf.dataset.loader.base_loader import BaseLoader
 from aiperf.dataset.utils import check_file_exists
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import CustomDatasetType, PluginType
@@ -19,6 +21,7 @@ from aiperf.plugin.enums import CustomDatasetType, PluginType
 class CustomDatasetComposer(BaseDatasetComposer):
     def __init__(self, config: UserConfig, tokenizer: Tokenizer | None):
         super().__init__(config, tokenizer)
+        self.loader: BaseLoader | None = None
 
     def create_dataset(self) -> Iterator[Conversation]:
         """Create conversations from a file or directory.
@@ -53,6 +56,12 @@ class CustomDatasetComposer(BaseDatasetComposer):
             # Finalize conversation-level context prompts
             self._finalize_conversation(conversation, session_index)
             yield conversation
+
+    def get_default_context_mode(self) -> ConversationContextMode | None:
+        """Delegate to the loader's format-specific default, if a loader was created."""
+        if self.loader is not None:
+            return self.loader.get_default_context_mode()
+        return None
 
     def _infer_dataset_type(self, file_path: str) -> CustomDatasetType:
         """Infer the custom dataset type from the input file.
