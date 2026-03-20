@@ -35,6 +35,7 @@ from aiperf.common.models import MetricResult, TimesliceWindow
 from aiperf.common.types import MetricTagT, TimeSliceT
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.column_store import ColumnStore
+from aiperf.metrics.display_units import to_display_unit
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.ragged_series import RaggedSeries
@@ -322,10 +323,22 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
         Public interface for analyzers (e.g. SteadyStateAnalyzer) that
         need windowed metric computation without accessing private methods.
+        Results are converted to display units before returning.
         """
-        return self._compute_results(
+        raw = self._compute_results(
             mask, window_start_ns=window_start_ns, window_end_ns=window_end_ns
         )
+        return self._convert_display_units(raw)
+
+    @staticmethod
+    def _convert_display_units(
+        results: dict[MetricTagT, MetricResult],
+    ) -> dict[MetricTagT, MetricResult]:
+        """Convert all metric results from native units to display units."""
+        return {
+            tag: to_display_unit(result, MetricRegistry)
+            for tag, result in results.items()
+        }
 
     async def summarize(self, ctx: SummaryContext | None = None) -> MetricsSummary:
         """Compute and return aggregated metric results.
@@ -345,6 +358,14 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
             if self._slice_duration_ns is not None:
                 timeslices, timeslice_windows = self._compute_timeslices(sweeps)
+
+        # Convert from native units (e.g. ns) to display units (e.g. ms)
+        overall_results = self._convert_display_units(overall_results)
+        if timeslices is not None:
+            timeslices = {
+                ts: self._convert_display_units(metrics)
+                for ts, metrics in timeslices.items()
+            }
 
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")
         return MetricsSummary(

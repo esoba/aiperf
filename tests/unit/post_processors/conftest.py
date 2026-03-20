@@ -355,7 +355,7 @@ def mock_metric_registry(monkeypatch):
     mock_registry = Mock()
     mock_registry.tags_applicable_to.return_value = []
     mock_registry.create_dependency_order_for.return_value = []
-    mock_registry.get_class.return_value = Mock()
+    mock_registry.get_class.return_value = Mock(display_unit=None)
     mock_registry.all_classes.return_value = []
     mock_registry.all_tags.return_value = []
 
