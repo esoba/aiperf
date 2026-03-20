@@ -28,11 +28,11 @@ from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.export_models import JsonMetricResult
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
 from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
 from aiperf.common.utils import load_json_str
+from aiperf.config.config import BenchmarkConfig
 
 _logger = AIPerfLogger(__name__)
 
@@ -50,7 +50,7 @@ class MetricResult(JsonMetricResult):
         default=None,
         description="The total number of records used to calculate the metric",
     )
-    current: float | None = Field(
+    current: float | int | None = Field(
         default=None,
         description="The most recent value of the metric (used for realtime dashboard display only)",
     )
@@ -112,6 +112,11 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
         "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
     )
+    credit_received_ns: int | None = Field(
+        default=None,
+        description="Wall clock timestamp when the worker received the credit from the controller. "
+        "credit_received_ns - credit_issued_ns = ZMQ transit + event loop pickup time.",
+    )
     request_start_ns: int = Field(
         ...,
         description="The wall clock timestamp of the request start time measured as time.time_ns().",
@@ -135,7 +140,7 @@ class MetricRecordMetadata(AIPerfBaseModel):
     )
     benchmark_phase: CreditPhase = Field(
         ...,
-        description="The benchmark phase of the record, either warmup or profiling.",
+        description="The name of the benchmark phase (e.g. 'warmup', 'main', 'cooldown').",
     )
     was_cancelled: bool = Field(
         default=False,
@@ -145,6 +150,11 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
+    )
+    clock_offset_ns: int | None = Field(
+        default=None,
+        description="Clock offset between worker and controller in nanoseconds. "
+        "To convert worker timestamps to controller time: controller_time = timestamp_ns - clock_offset_ns.",
     )
 
 
@@ -401,7 +411,6 @@ class SSEMessage:
             field_name, value = parts
 
             if field_name == "":
-                # Field name is empty, so this is a comment
                 field_name = SSEFieldType.COMMENT
 
             # Spec says strip only one leading space; we strip() all whitespace
@@ -452,9 +461,9 @@ class SSEMessage:
 class RequestInfo(AIPerfBaseModel):
     """Info about a request."""
 
-    model_endpoint: ModelEndpointInfo = Field(
+    config: BenchmarkConfig = Field(
         ...,
-        description="The model endpoint that the request was sent to.",
+        description="The benchmark config for the request.",
     )
     turns: list[Turn] = Field(
         default_factory=list,
@@ -480,7 +489,7 @@ class RequestInfo(AIPerfBaseModel):
     )
     credit_phase: CreditPhase = Field(
         ...,
-        description="The type of credit phase (either warmup or profiling)",
+        description="The name of the credit phase (e.g. 'warmup', 'main', 'cooldown').",
     )
     cancel_after_ns: int | None = Field(
         default=None,
@@ -518,8 +527,14 @@ class RequestInfo(AIPerfBaseModel):
     credit_issued_ns: int | None = Field(
         default=None,
         ge=0,
-        description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
+        description="MonotonicClock timestamp when the credit was issued by the controller. "
         "This is the control point for accurate rate measurement, before ZeroMQ transit to workers.",
+    )
+    credit_received_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="MonotonicClock timestamp when the worker received the credit. "
+        "credit_received_ns - credit_issued_ns = ZMQ transit time (same clock domain).",
     )
     is_final_turn: bool = Field(
         default=True,
@@ -551,7 +566,9 @@ class RequestRecord(AIPerfBaseModel):
     )
     timestamp_ns: int = Field(
         default_factory=time.time_ns,
-        description="The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).",
+        description="Monotonic wall-clock timestamp of the request in nanoseconds. "
+        "Overwritten by Worker with MonotonicClock.now_ns() for clock-offset consistency. "
+        "DO NOT USE FOR LATENCY CALCULATIONS.",
     )
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,
@@ -569,9 +586,6 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The HTTP status code of the response.",
     )
-    # TODO: Maybe we could improve this with subclassing the responses to allow for more specific types.
-    #       This would allow us to remove the SerializeAsAny and use a more specific type. Look at how we handle
-    #       the CommandMessage and CommandResponse classes for an example.
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
@@ -593,6 +607,12 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
+    )
+    clock_offset_ns: int | None = Field(
+        default=None,
+        description="Clock offset between worker and controller in nanoseconds, estimated via minimum offset filtering (worker_clock - controller_clock + transit). "
+        "Used for cross-machine timestamp alignment in Kubernetes deployments. "
+        "To convert worker timestamp to controller time: controller_time = timestamp_ns - clock_offset_ns.",
     )
     trace_data: SerializeAsAny[BaseTraceData] | None = Field(
         default=None,

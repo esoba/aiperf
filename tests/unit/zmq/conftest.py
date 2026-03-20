@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 import zmq.asyncio
 
-from aiperf.common.enums import CreditPhase, LifecycleState
+from aiperf.common.enums import LifecycleState
 from aiperf.common.messages import HeartbeatMessage
 from aiperf.credit.messages import (
     CancelCredits,
@@ -130,7 +130,7 @@ def sample_credit():
     """Create a sample credit struct for testing."""
     return Credit(
         id=1,
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         conversation_id="conv-001",
         x_correlation_id="corr-001",
         turn_index=0,

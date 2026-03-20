@@ -4,6 +4,7 @@
 
 import pytest
 
+from aiperf.common.enums import MetricSizeUnit, MetricTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import (
     AioHttpTraceData,
@@ -829,8 +830,6 @@ class TestMetricAttributes:
     )  # fmt: skip
     def test_timing_metrics_use_nanoseconds_internally(self, metric_class):
         """Test that timing metrics use nanoseconds as internal unit."""
-        from aiperf.common.enums import MetricTimeUnit
-
         assert metric_class.unit == MetricTimeUnit.NANOSECONDS
 
     @pytest.mark.parametrize(
@@ -848,8 +847,6 @@ class TestMetricAttributes:
     )  # fmt: skip
     def test_timing_metrics_display_in_milliseconds(self, metric_class):
         """Test that timing metrics display in milliseconds (like k6)."""
-        from aiperf.common.enums import MetricTimeUnit
-
         assert metric_class.display_unit == MetricTimeUnit.MILLISECONDS
 
     @pytest.mark.parametrize(
@@ -861,8 +858,6 @@ class TestMetricAttributes:
     )  # fmt: skip
     def test_size_metrics_use_bytes_internally(self, metric_class):
         """Test that size metrics use bytes as internal unit."""
-        from aiperf.common.enums import MetricSizeUnit
-
         assert metric_class.unit == MetricSizeUnit.BYTES
 
 

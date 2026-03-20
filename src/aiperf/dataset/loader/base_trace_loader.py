@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from abc import abstractmethod
-from typing import Any, Generic, TypeVar
+from __future__ import annotations
 
-from aiperf.common.config.config_defaults import InputTokensDefaults
-from aiperf.common.config.user_config import UserConfig
+from abc import abstractmethod
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Text, Turn
+from aiperf.config.defaults import InputTokensDefaults
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_loader import BaseFileLoader
@@ -15,7 +16,43 @@ from aiperf.dataset.synthesis.models import SynthesisParams
 from aiperf.dataset.synthesis.synthesizer import Synthesizer
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkConfig, BenchmarkRun
+    from aiperf.config.dataset import SynthesisConfig
+
 TraceT = TypeVar("TraceT")
+
+
+def _extract_phase_offsets(config: BenchmarkConfig) -> tuple[int | None, int | None]:
+    """Extract start_offset and end_offset from the first fixed_schedule phase."""
+    for phase in config.phases.values():
+        start = getattr(phase, "start_offset", None)
+        end = getattr(phase, "end_offset", None)
+        if start is not None or end is not None:
+            return start, end
+    return None, None
+
+
+def _get_file_dataset_synthesis(config: BenchmarkConfig) -> SynthesisConfig | None:
+    """Get synthesis config from the default dataset if it's a FileDataset."""
+    from aiperf.config.dataset import FileDataset
+
+    dataset = config.get_default_dataset()
+    if isinstance(dataset, FileDataset):
+        return dataset.synthesis
+    return None
+
+
+def _synthesis_should_apply(synthesis: SynthesisConfig | None) -> bool:
+    """Check if synthesis should be triggered based on non-default values."""
+    if synthesis is None:
+        return False
+    return (
+        synthesis.speedup_ratio != 1.0
+        or synthesis.prefix_len_multiplier != 1.0
+        or synthesis.prefix_root_multiplier != 1
+        or synthesis.prompt_len_multiplier != 1.0
+    )
 
 
 class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
@@ -38,32 +75,46 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         *,
         filename: str,
         prompt_generator: PromptGenerator,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         default_block_size: int | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(filename=filename, user_config=user_config, **kwargs)
+        super().__init__(filename=filename, run=run, **kwargs)
         self.prompt_generator = prompt_generator
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
-        self._start_offset = user_config.input.fixed_schedule_start_offset
-        self._end_offset = user_config.input.fixed_schedule_end_offset
-        self._max_isl = user_config.input.synthesis.max_isl
-        self._max_osl = user_config.input.synthesis.max_osl
+
+        config = run.cfg
+        # Phase offsets for timestamp filtering
+        self._start_offset, self._end_offset = _extract_phase_offsets(config)
+
+        # Synthesis config from the file dataset
+        self._synthesis_config = _get_file_dataset_synthesis(config)
+        self._max_isl = (
+            self._synthesis_config.max_isl if self._synthesis_config else None
+        )
+        self._max_osl = (
+            self._synthesis_config.max_osl if self._synthesis_config else None
+        )
 
         # Use the resolved tokenizer name so worker processes can load from cache
         # without needing alias resolution or network access.
+        tokenizer_cfg = config.tokenizer
         self._tokenizer_name = (
             prompt_generator.tokenizer.resolved_name
-            or user_config.tokenizer.name
-            or user_config.endpoint.model_names[0]
+            or (tokenizer_cfg.name if tokenizer_cfg else None)
+            or config.get_model_names()[0]
         )
-        self._trust_remote_code = user_config.tokenizer.trust_remote_code
-        self._tokenizer_revision = user_config.tokenizer.revision
+        self._trust_remote_code = (
+            tokenizer_cfg.trust_remote_code if tokenizer_cfg else False
+        )
+        self._tokenizer_revision = tokenizer_cfg.revision if tokenizer_cfg else "main"
 
         # Precedence: user CLI --isl-block-size > plugin metadata default > hardcoded fallback
-        user_block_size = user_config.input.prompt.input_tokens.block_size
+        dataset = config.get_default_dataset()
+        prompts = getattr(dataset, "prompts", None)
+        user_block_size = prompts.block_size if prompts else None
         if user_block_size is not None:
             self._block_size = user_block_size
         elif default_block_size is not None:
@@ -199,7 +250,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
             )
         )
 
-        if self.user_config.input.synthesis.should_synthesize():
+        if _synthesis_should_apply(self._synthesis_config):
             data = self._apply_synthesis(data)
 
         return data
@@ -355,7 +406,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     ) -> dict[str, list[TraceT]]:
         """Apply synthesis transformations to traces in-memory."""
         params = SynthesisParams.from_synthesis_config(
-            self.user_config.input.synthesis, block_size=self._block_size
+            self._synthesis_config, block_size=self._block_size
         )
 
         exclude = self._synthesis_exclude_fields()

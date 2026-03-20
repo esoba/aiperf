@@ -5,6 +5,7 @@
 import numpy as np
 import pytest
 
+from aiperf.common import random_generator as rng
 from aiperf.dataset.synthesis import EmpiricalSampler
 
 
@@ -147,8 +148,6 @@ class TestEmpiricalSampler:
         Since EmpiricalSampler derives its RNG from the global seed,
         reproducibility is achieved by reinitializing the global RNG.
         """
-        from aiperf.common import random_generator as rng
-
         # First run with seed 42
         rng.reset()
         rng.init(42)

@@ -143,9 +143,167 @@ def hf_offline_mode():
 @pytest.fixture(autouse=True, scope="package")
 def mock_tokenizer_from_pretrained():
     """Patch Tokenizer.from_pretrained to use FakeTokenizer."""
-    with patch(
-        "aiperf.common.tokenizer.Tokenizer.from_pretrained",
-        FakeTokenizer.from_pretrained,
+    with (
+        patch(
+            "aiperf.common.tokenizer.Tokenizer.from_pretrained",
+            FakeTokenizer.from_pretrained,
+        ),
+        patch(
+            "aiperf.common.tokenizer_validator._prefetch_tokenizers",
+        ),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True, scope="package")
+def mock_control_clients():
+    """Replace ZMQ control-channel clients with fakes for in-process testing.
+
+    SystemController directly instantiates ZMQStreamingRouterClient and all
+    BaseComponentService instances directly instantiate ZMQStreamingDealerClient
+    for the control channel. These bypass FakeCommunication's plugin system, so
+    we patch them with fake implementations wired to the shared bus.
+    """
+    import asyncio
+
+    from tests.harness.fake_communication import (
+        FakeStreamingDealerClient,
+        FakeStreamingRouterClient,
+    )
+
+    # Private registries for control-channel clients, kept SEPARATE from
+    # FakeCommunication's tracking dicts to avoid identity collisions with
+    # the credit ROUTER/DEALER pair (which shares the same worker IDs).
+    _ctrl_routers: dict[str, list] = {}  # address -> [router]
+    _ctrl_dealers: dict[str, object] = {}  # identity -> dealer
+    _current_bus = None
+
+    def _reset_if_new_bus():
+        """Reset control registries when the bus changes (new test)."""
+        nonlocal _current_bus
+        bus = FakeCommunication.shared_bus
+        if _current_bus is not bus:
+            _ctrl_routers.clear()
+            _ctrl_dealers.clear()
+            _current_bus = bus
+
+    class FakeControlRouterClient(FakeStreamingRouterClient):
+        """Adapter matching ZMQStreamingRouterClient constructor signature.
+
+        Uses private _ctrl_routers/_ctrl_dealers registries (NOT FakeCommunication's
+        tracking dicts) to avoid identity collisions with the credit ROUTER/DEALER
+        pair which shares the same worker IDs.
+
+        Wraps the handler so return values (e.g. RegistrationAck) are sent
+        back to the originating dealer, matching real ZMQ _dispatch_message.
+        """
+
+        _pending_requests: dict
+
+        def __init__(self, address, bind=True, **kwargs):
+            _reset_if_new_bus()
+            super().__init__(address, "control_router", FakeCommunication.shared_bus)
+            self._pending_requests = {}
+            _ctrl_routers.setdefault(address, []).append(self)
+
+        def register_receiver(self, handler):
+            """Wrap handler to send non-None return values back to the dealer."""
+
+            async def _dispatch(identity, message):
+                cid = getattr(message, "cid", None)
+                if cid and cid in self._pending_requests:
+                    future = self._pending_requests.pop(cid)
+                    if not future.done():
+                        future.set_result(message)
+                    return
+                response = await handler(identity, message)
+                if response is not None:
+                    await self.send_to(identity, response)
+
+            super().register_receiver(_dispatch)
+
+        async def send_to(self, identity, message):
+            """Send to control dealer only (private registry)."""
+            self.capture_sent_payload(message, receiver_identity=identity)
+            dealer = _ctrl_dealers.get(identity)
+            if dealer and dealer.handler:
+                dealer.capture_received_payload(message, sender_identity=self.identity)
+                await dealer.handler(message)
+
+        async def request_to(self, identity, struct, timeout=30.0):
+            """Send request and wait for cid-matched response."""
+            cid = getattr(struct, "cid", None)
+            if cid is None:
+                raise ValueError("request_to() requires a struct with 'cid'")
+            future: asyncio.Future = asyncio.Future()
+            self._pending_requests[cid] = future
+            try:
+                await self.send_to(identity, struct)
+                return await asyncio.wait_for(future, timeout=timeout)
+            finally:
+                self._pending_requests.pop(cid, None)
+
+    class FakeControlDealerClient(FakeStreamingDealerClient):
+        """Adapter matching ZMQStreamingDealerClient constructor signature.
+
+        Uses private _ctrl_dealers registry to avoid collisions with credit dealers.
+        """
+
+        _pending_requests: dict
+
+        def __init__(self, address, identity="", bind=False, **kwargs):
+            _reset_if_new_bus()
+            super().__init__(address, identity, FakeCommunication.shared_bus)
+            self._pending_requests = {}
+            _ctrl_dealers[identity] = self
+
+        def register_receiver(self, handler):
+            """Wrap handler to check pending requests before dispatching."""
+            original_handler = handler
+
+            async def _dispatch(message):
+                key = getattr(message, "rid", None) or getattr(message, "cid", None)
+                if key and key in self._pending_requests:
+                    future = self._pending_requests.pop(key)
+                    if not future.done():
+                        future.set_result(message)
+                    return
+                await original_handler(message)
+
+            super().register_receiver(_dispatch)
+
+        async def send(self, message):
+            """Send to control routers only (private registry)."""
+            self.capture_sent_payload(message)
+            for router in _ctrl_routers.get(self.address, []):
+                if router.handler:
+                    router.capture_received_payload(
+                        message, sender_identity=self.identity
+                    )
+                    await router.handler(self.identity, message)
+
+        async def request(self, struct, timeout=30.0):
+            """Send request and wait for rid/cid-matched response."""
+            key = getattr(struct, "rid", None) or getattr(struct, "cid", None)
+            if key is None:
+                raise ValueError("request() requires a struct with 'rid' or 'cid'")
+            future: asyncio.Future = asyncio.Future()
+            self._pending_requests[key] = future
+            try:
+                await self.send(struct)
+                return await asyncio.wait_for(future, timeout=timeout)
+            finally:
+                self._pending_requests.pop(key, None)
+
+    with (
+        patch(
+            "aiperf.controller.system_controller.ZMQStreamingRouterClient",
+            FakeControlRouterClient,
+        ),
+        patch(
+            "aiperf.zmq.streaming_dealer_client.ZMQStreamingDealerClient",
+            FakeControlDealerClient,
+        ),
     ):
         yield
 
@@ -205,6 +363,15 @@ def reset_singleton_factories():
     from aiperf.common.singleton import SingletonMeta
 
     SingletonMeta._instances.clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_service_registry():
+    """Reset the global ServiceRegistry singleton between tests."""
+    yield
+    from aiperf.common.service_registry import ServiceRegistry
+
+    ServiceRegistry.reset()
 
 
 @pytest.fixture(autouse=True)

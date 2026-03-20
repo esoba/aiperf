@@ -1,14 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 from datetime import datetime
 from typing import ClassVar
 
 from pydantic import ConfigDict, Field
 
-from aiperf.common.config import UserConfig
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.error_models import ErrorDetailsCount
+from aiperf.config import BenchmarkConfig
 
 # =============================================================================
 # JSON Metric Result
@@ -107,7 +108,7 @@ class TimesliceCollectionExportData(AIPerfBaseModel):
     """
 
     timeslices: list[TimesliceData]
-    input_config: UserConfig | None = None
+    input_config: BenchmarkConfig | None = None
 
 
 # =============================================================================
@@ -170,7 +171,7 @@ class JsonExportData(AIPerfBaseModel):
     error_isl: JsonMetricResult | None = None
     total_error_isl: JsonMetricResult | None = None
     telemetry_data: TelemetryExportData | None = None
-    input_config: UserConfig | None = None
+    input_config: BenchmarkConfig | None = None
     was_cancelled: bool | None = None
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None

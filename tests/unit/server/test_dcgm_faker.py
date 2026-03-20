@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for DCGMFaker using real telemetry parsing logic."""
 
+import random
+
 import pytest
 from aiperf_mock_server.dcgm_faker import (
     GPU_CONFIGS,
@@ -37,8 +39,6 @@ class TestFakeGPU:
 
     @pytest.fixture
     def fake_gpu(self, gpu_config):
-        import random
-
         rng = random.Random(42)
         return FakeGPU(idx=0, cfg=gpu_config, rng=rng, load_offset=0.0)
 

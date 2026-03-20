@@ -22,7 +22,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self._results = exporter_config.results
-        self._endpoint_type = exporter_config.user_config.endpoint.type
+        self._endpoint_type = exporter_config.config.endpoint.type
 
     async def export(self, console: Console) -> None:
         if not self._results.records:

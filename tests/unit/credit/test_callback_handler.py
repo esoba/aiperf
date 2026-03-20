@@ -81,7 +81,7 @@ def registered_handler(
 ):
     """Create CreditCallbackHandler with phase registered."""
     callback_handler.register_phase(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         progress=mock_progress,
         lifecycle=mock_lifecycle,
         stop_checker=mock_stop_checker,
@@ -95,7 +95,7 @@ def make_credit(
     conversation_id: str = "conv1",
     turn_index: int = 0,
     num_turns: int = 1,
-    phase: CreditPhase = CreditPhase.PROFILING,
+    phase: CreditPhase = "profiling",
 ) -> Credit:
     """Create a Credit for testing."""
     return Credit(
@@ -136,17 +136,17 @@ class TestPhaseRegistration:
         progress.all_credits_returned_event = asyncio.Event()
 
         callback_handler.register_phase(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             progress=progress,
             lifecycle=MagicMock(),
             stop_checker=MagicMock(),
             strategy=MagicMock(),
         )
 
-        assert CreditPhase.PROFILING in callback_handler._phase_handlers
+        assert "profiling" in callback_handler._phase_handlers
 
-        callback_handler.unregister_phase(CreditPhase.PROFILING)
-        assert CreditPhase.PROFILING not in callback_handler._phase_handlers
+        callback_handler.unregister_phase("profiling")
+        assert "profiling" not in callback_handler._phase_handlers
 
 
 # =============================================================================
@@ -194,9 +194,7 @@ class TestCreditReturnBasicFlow:
 
         await registered_handler.on_credit_return("worker-1", credit_return)
 
-        mock_concurrency.release_session_slot.assert_called_once_with(
-            CreditPhase.PROFILING
-        )
+        mock_concurrency.release_session_slot.assert_called_once_with("profiling")
 
     async def test_on_credit_return_does_not_release_session_on_non_final_turn(
         self, registered_handler, mock_concurrency
@@ -266,7 +264,7 @@ class TestCreditReturnFinalHandling:
         progress.in_flight_sessions = 2
 
         callback_handler.register_phase(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             progress=progress,
             lifecycle=MagicMock(is_complete=False),
             stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=False)),
@@ -320,7 +318,7 @@ class TestUnregisteredAndCompletePhaseHandling:
 
     async def test_ignores_unregistered_phase(self, callback_handler):
         """Silently ignores returns for unregistered phases."""
-        credit = make_credit(phase=CreditPhase.WARMUP)
+        credit = make_credit(phase="warmup")
         credit_return = make_credit_return(credit)
         # Should not raise
         await callback_handler.on_credit_return("worker-1", credit_return)
@@ -350,16 +348,14 @@ class TestFirstTokenHandling:
         """TTFT tracks prefill release and releases slot."""
         first_token = FirstToken(
             credit_id=1,
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             ttft_ns=1000000,
         )
 
         await registered_handler.on_first_token(first_token)
 
         mock_progress.increment_prefill_released.assert_called_once()
-        mock_concurrency.release_prefill_slot.assert_called_once_with(
-            CreditPhase.PROFILING
-        )
+        mock_concurrency.release_prefill_slot.assert_called_once_with("profiling")
 
 
 # =============================================================================

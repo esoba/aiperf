@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import zmq.asyncio
 
@@ -18,6 +18,9 @@ from aiperf.zmq.zmq_defaults import (
     TOPIC_END_LENGTH,
     WILDCARD_TOPIC,
 )
+
+if TYPE_CHECKING:
+    from aiperf.common.event_loop_monitor import EventLoopMonitor
 
 
 class ZMQSubClient(BaseZMQClient):
@@ -78,6 +81,7 @@ class ZMQSubClient(BaseZMQClient):
         self._wildcard_subscriber: Callable[[Message], Awaitable[None]] | None = None
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.SUB_YIELD_INTERVAL
+        self.event_loop_monitor: EventLoopMonitor | None = None
 
     async def subscribe_all(
         self,
@@ -167,6 +171,19 @@ class ZMQSubClient(BaseZMQClient):
                 f"Failed to subscribe to wildcard: {e}",
             ) from e
 
+    async def _resubscribe_all(self) -> None:
+        """Reissue all ZMQ SUBSCRIBE calls for stored subscriptions.
+
+        Used after socket recreation to restore subscription state.
+        """
+        for topic in self._subscribers:
+            self.socket.setsockopt(zmq.SUBSCRIBE, topic.encode() + TOPIC_END_ENCODED)
+        if self._wildcard_subscriber is not None:
+            self.socket.setsockopt(zmq.SUBSCRIBE, b"")
+        self.debug(
+            lambda: f"Resubscribed to {len(self._subscribers)} topics after socket recreation"
+        )
+
     async def _handle_message(self, topic_bytes: bytes, message_bytes: bytes) -> None:
         """Handle a message from a subscribed message_type."""
 
@@ -176,9 +193,15 @@ class ZMQSubClient(BaseZMQClient):
             lambda: f"Received message from topic: '{topic}', message: {message_bytes}"
         )
 
+        monitor = self.event_loop_monitor
+
         # Use AUTO-LOOKUP for all messages - single parse with multi-level routing
         # This is optimal for our workload (84% large messages in push/pull, 45% in pub/sub)
-        message = Message.from_json(message_bytes)
+        if monitor is not None:
+            with monitor.activity(f"from_json topic={topic}"):
+                message = Message.from_json(message_bytes)
+        else:
+            message = Message.from_json(message_bytes)
 
         self.trace(
             lambda: f"Calling callbacks for message: {message}, {self._subscribers.get(topic)}"
@@ -187,7 +210,13 @@ class ZMQSubClient(BaseZMQClient):
         # Call callbacks with the parsed message object
         if topic in self._subscribers:
             try:
-                await call_all_functions(self._subscribers[topic], message)
+                if monitor is not None:
+                    with monitor.activity(
+                        f"handler topic={topic} msg={message.__class__.__name__}"
+                    ):
+                        await call_all_functions(self._subscribers[topic], message)
+                else:
+                    await call_all_functions(self._subscribers[topic], message)
             except Exception:
                 self.exception(f"Error in subscription handler for topic {topic}")
 
@@ -206,6 +235,9 @@ class ZMQSubClient(BaseZMQClient):
         This method is a coroutine that will run indefinitely until the client is
         shutdown. It will wait for messages from the socket and handle them.
         """
+        self.debug(
+            lambda: f"SUB client {self.client_id} receiver task started, subscriptions: {list(self._subscribers.keys())}"
+        )
         while not self.stop_requested:
             try:
                 topic_bytes, message_bytes = await self.socket.recv_multipart()
@@ -225,7 +257,7 @@ class ZMQSubClient(BaseZMQClient):
                     await yield_to_event_loop()
 
             except zmq.Again:
-                self.debug(f"Sub client {self.client_id} receiver task timed out")
+                self.trace(f"Sub client {self.client_id} receiver task timed out")
                 await yield_to_event_loop()
             except (asyncio.CancelledError, zmq.ContextTerminated):
                 self.debug(f"Sub client {self.client_id} receiver task cancelled")

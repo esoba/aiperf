@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Vision-Language Model Benchmark
+# description: Benchmark VLMs with synthetic images of varying resolutions.
+# category: Multimodal
+# tags: vision, multimodal, images
+# difficulty: intermediate
+# features: image config, resolution distributions
+#
+# Multimodal Vision Benchmark
+# ===========================
+# Benchmarks vision-language models with synthetic images.
+# Tests image understanding capabilities with varying image sizes.
+#
+# Use case: Benchmark VLMs like LLaVA, Qwen-VL, or GPT-4V compatible endpoints
+#
+# Run: aiperf profile --config multimodal_vision.yaml
+
+random_seed: 42
+
+model: llava-hf/llava-1.5-7b-hf
+
+endpoint:
+  url: http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 120.0
+
+datasets:
+  vision_test:
+    type: synthetic
+    entries: 500
+    prompts:
+      isl: {mean: 100, stddev: 20}  # Text prompt length
+      osl: {mean: 256, stddev: 50}  # Response length
+    images:
+      batch_size: 1  # 1 image per request
+      width: {mean: 512, stddev: 0}
+      height: {mean: 512, stddev: 0}
+      format: jpeg
+
+  multi_image_test:
+    type: synthetic
+    entries: 200
+    prompts:
+      isl: {mean: 150, stddev: 30}
+      osl: {mean: 200, stddev: 40}
+    images:
+      batch_size: 4  # 4 images per request
+      width: {mean: 256, stddev: 50}
+      height: {mean: 256, stddev: 50}
+      format: jpeg
+
+
+phases:
+  single_image:
+    type: poisson
+    dataset: vision_test
+    requests: 500
+    concurrency: 16
+    rate: 10.0
+
+  multi_image:
+    type: poisson
+    dataset: multi_image_test
+    requests: 200
+    concurrency: 8
+    rate: 5.0
+    seamless: true
+
+artifacts:
+  dir: ./artifacts/multimodal_vision
+  summary: [json]
+  records: [jsonl]

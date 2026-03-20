@@ -16,6 +16,8 @@ repos:
         exclude: ^\.devcontainer/devcontainer\.json$
       - id: check-toml
       - id: check-yaml
+        args: ['--allow-multiple-documents']
+        exclude: ^deploy/helm/.*/templates/.*\.yaml$
       - id: check-shebang-scripts-are-executable
       - id: end-of-file-fixer
         types_or: [cuda, proto, textproto, python]
@@ -66,6 +68,40 @@ repos:
         files: (\.py$|^src/aiperf/plugin/(categories|plugins)\.yaml|tools/generate_plugin_artifacts\.py)$
         pass_filenames: false
         args: []
+      - id: validate-template-metadata
+        name: validate-template-metadata
+        entry: make validate-template-metadata
+        language: python
+        files: (^src/aiperf/config/templates/.*\.yaml$|^src/aiperf/config/templates\.py$|^tools/validate_template_metadata\.py$)
+        pass_filenames: false
+        args: []
+      - id: validate-config-examples
+        name: validate-config-examples
+        entry: make validate-config-examples
+        language: python
+        files: (^src/aiperf/config/.*\.py$|^src/aiperf/config/templates/.*\.yaml$|^tools/validate_config_examples\.py$)
+        pass_filenames: false
+        args: []
+      - id: generate-config-schema
+        name: generate-config-schema
+        entry: make generate-config-schema
+        language: python
+        files: (^src/aiperf/config/.*\.py$|^tools/generate_config_schema\.py$)
+        pass_filenames: false
+        args: []
+      - id: generate-crd
+        name: generate-crd
+        entry: make generate-crd
+        language: python
+        files: (^src/aiperf/config/.*\.py$|^src/aiperf/kubernetes/enums\.py$|^tools/generate_crd\.py$|^pyproject\.toml$)
+        pass_filenames: false
+        args: []
+      - id: helm-lint
+        name: helm-lint
+        entry: helm lint deploy/helm/aiperf-operator
+        language: system
+        files: ^deploy/helm/
+        pass_filenames: false
       - id: test-imports
         name: test-imports
         entry: make test-imports

@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import multiprocessing
@@ -10,10 +12,15 @@ import signal
 import sys
 import uuid
 import warnings
+from typing import TYPE_CHECKING, Any
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.environment import Environment
+from aiperf.common.error_queue import ErrorQueue
+from aiperf.common.logging import LogQueue
 from aiperf.plugin.enums import ServiceType
+
+if TYPE_CHECKING:
+    from aiperf.config import AIPerfConfig, BenchmarkRun
 
 # Suppress ZMQ RuntimeWarning about dropped messages during shutdown.
 # This is expected behavior when async tasks are cancelled while ZMQ messages are in-flight.
@@ -25,27 +32,44 @@ warnings.filterwarnings(
 )
 
 
+def _enable_hf_offline_mode() -> None:
+    """Force HuggingFace libraries to use local cache only.
+
+    The parent process warms the disk cache before spawning children
+    (see ``tokenizer_validator._prefetch_tokenizers``). Setting these
+    env vars ensures child processes never hit the network, avoiding
+    the thundering-herd problem when many workers start concurrently.
+    """
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+
 def bootstrap_and_run_service(
     service_type: ServiceType,
-    service_config: ServiceConfig | None = None,
-    user_config: UserConfig | None = None,
+    run: BenchmarkRun | None = None,
+    config: AIPerfConfig | None = None,
     service_id: str | None = None,
-    log_queue: "multiprocessing.Queue | None" = None,
-    **kwargs,
-):
+    log_queue: LogQueue | None = None,
+    error_queue: ErrorQueue | None = None,
+    health_port: int | None = None,
+    api_port: int | None = None,
+    **kwargs: Any,
+) -> None:
     """Bootstrap the service and run it.
-
-    This function will load the service configuration,
-    create an instance of the service, and run it.
 
     Args:
         service_type: The type of the service to run.
-        service_config: The service configuration to use. If not provided, the service
-            configuration will be loaded from the environment variables.
-        user_config: The user configuration to use. If not provided, the user configuration
-            will be loaded from the environment variables.
+        run: The BenchmarkRun for this execution. If not provided, config
+            will be loaded from the ``config`` argument, then environment variables.
+        config: Optional AIPerfConfig. Used when ``run`` is not provided
+            (e.g. ``aiperf service --config-file``). Falls back to env vars.
+        service_id: Optional service ID. If not provided, will be auto-generated.
         log_queue: Optional multiprocessing queue for child process logging. If provided,
             the child process logging will be set up.
+        error_queue: Optional multiprocessing queue for reporting unhandled errors back
+            to the parent process.
+        health_port: HTTP port for health endpoints (/healthz, /readyz).
+        api_port: HTTP port for API endpoints (services that support it).
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
@@ -59,29 +83,42 @@ def bootstrap_and_run_service(
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
+        # Skip HF offline mode in Kubernetes pods: the parent process may not
+        # have warmed the cache (e.g. controller pod), so children need network
+        # access.  Worker pods prefetch via WorkerPodManager before spawning
+        # subprocesses, but the controller pod does not.
+        if not os.environ.get("AIPERF_JOB_ID"):
+            _enable_hf_offline_mode()
+
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
 
     ServiceClass = plugins.get_class(PluginType.SERVICE, service_type)
     service_metadata = plugins.get_service_metadata(service_type)
     if not service_id:
-        service_id = (
-            f"{service_type}_{uuid.uuid4().hex[:8]}"
-            if service_metadata.replicable
-            else str(service_type)
+        # Use AIPERF_POD_INDEX (set via Downward API from the JobSet job-index
+        # label) for deterministic pod-level IDs in Kubernetes.
+        pod_index = os.environ.get("AIPERF_POD_INDEX")
+        if pod_index is not None:
+            service_id = f"{service_type}_{pod_index}"
+        elif service_metadata.replicable:
+            service_id = f"{service_type}_{uuid.uuid4().hex[:8]}"
+        else:
+            service_id = str(service_type)
+
+    # Build a BenchmarkRun if not provided (standalone / env-var fallback)
+    if run is None:
+        from aiperf.config import BenchmarkRun as BenchmarkRunCls
+
+        if config is None:
+            from aiperf.config.loader import load_config_from_env
+
+            config = load_config_from_env()
+        run = BenchmarkRunCls(
+            benchmark_id="standalone",
+            cfg=config,
+            artifact_dir=config.artifacts.dir,
         )
-
-    # Load the service configuration
-    if service_config is None:
-        from aiperf.common.config.loader import load_service_config
-
-        service_config = load_service_config()
-
-    # Load the user configuration
-    if user_config is None:
-        from aiperf.common.config.loader import load_user_config
-
-        user_config = load_user_config()
 
     async def _run_service():
         # Disable health server in child processes to prevent port conflicts.
@@ -105,31 +142,37 @@ def bootstrap_and_run_service(
             gc.set_threshold(0)
             gc.disable()
 
-        # Load and apply custom GPU metrics in child process
-        if user_config.gpu_telemetry_metrics_file:
+        # Apply custom GPU metrics from resolver cache or re-parse if needed
+        if run.cfg.gpu_telemetry.metrics_file:
             from aiperf.gpu_telemetry import constants
-            from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
 
-            loader = MetricsConfigLoader()
-            custom_metrics, new_dcgm_mappings = loader.build_custom_metrics_from_csv(
-                custom_csv_path=user_config.gpu_telemetry_metrics_file
-            )
+            if run.resolved.gpu_custom_metrics is not None:
+                custom_metrics = run.resolved.gpu_custom_metrics
+                new_dcgm_mappings = run.resolved.gpu_dcgm_mappings or {}
+            else:
+                from aiperf.gpu_telemetry.metrics_config import MetricsConfigLoader
+
+                loader = MetricsConfigLoader()
+                custom_metrics, new_dcgm_mappings = (
+                    loader.build_custom_metrics_from_csv(
+                        custom_csv_path=run.cfg.gpu_telemetry.metrics_file
+                    )
+                )
 
             constants.GPU_TELEMETRY_METRICS_CONFIG.extend(custom_metrics)
             constants.DCGM_TO_FIELD_MAPPING.update(new_dcgm_mappings)
 
         service = ServiceClass(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
+            health_port=health_port,
+            api_port=api_port,
             **kwargs,
         )
 
         from aiperf.common.logging import setup_child_process_logging
 
-        setup_child_process_logging(
-            log_queue, service.service_id, service_config, user_config
-        )
+        setup_child_process_logging(log_queue, service.service_id, run.cfg)
 
         # NOTE: Prevent child processes from accessing parent's terminal on macOS.
         # This solves the macOS terminal corruption issue with Textual UI where child
@@ -144,7 +187,9 @@ def bootstrap_and_run_service(
 
         # Always reset and then initialize the global random generator to ensure a clean state
         rng.reset()
-        rng.init(user_config.input.random_seed)
+        rng.init(run.cfg.random_seed)
+
+        nonlocal has_errors
 
         try:
             await service.initialize()
@@ -152,9 +197,17 @@ def bootstrap_and_run_service(
             await service.stopped_event.wait()
         except Exception as e:
             service.exception(f"Unhandled exception in service: {e}")
+        finally:
+            if error_queue is not None and service._exit_errors:
+                from aiperf.common.error_queue import report_errors
+
+                report_errors(error_queue, service._exit_errors)
+            has_errors = bool(service._exit_errors)
 
         if Environment.DEV.ENABLE_YAPPI:
-            _stop_yappi_profiling(service.service_id, user_config)
+            _stop_yappi_profiling(service.service_id, run)
+
+    has_errors = False
 
     with contextlib.suppress(asyncio.CancelledError):
         if not Environment.SERVICE.DISABLE_UVLOOP:
@@ -163,6 +216,9 @@ def bootstrap_and_run_service(
             uvloop.run(_run_service())
         else:
             asyncio.run(_run_service())
+
+    if has_errors and error_queue is None:
+        sys.exit(1)
 
 
 def _redirect_stdio_to_devnull() -> None:
@@ -210,11 +266,11 @@ def _start_yappi_profiling() -> None:
 
         raise AIPerfError(
             "yappi is not installed. Please install yappi to enable profiling. "
-            "You can install yappi with `pip install yappi`."
+            "You can install yappi with `uv add yappi`."
         ) from e
 
 
-def _stop_yappi_profiling(service_id_: str, user_config: UserConfig) -> None:
+def _stop_yappi_profiling(service_id_: str, run: BenchmarkRun) -> None:
     """Stop yappi profiling and save the profile to a file."""
     import yappi
 
@@ -222,7 +278,7 @@ def _stop_yappi_profiling(service_id_: str, user_config: UserConfig) -> None:
 
     # Get profile stats and save to file in the artifact directory
     stats = yappi.get_func_stats()
-    yappi_dir = user_config.output.artifact_directory / "yappi"
+    yappi_dir = run.cfg.artifacts.dir / "yappi"
     yappi_dir.mkdir(parents=True, exist_ok=True)
     stats.save(
         str(yappi_dir / f"{service_id_}.prof"),

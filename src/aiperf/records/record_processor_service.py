@@ -1,18 +1,23 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import traceback
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.hooks import on_command, on_pull_message
 from aiperf.common.messages import (
     InferenceResultsMessage,
     MetricRecordsMessage,
-    ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
@@ -21,7 +26,6 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.models.error_models import ErrorDetails
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.common.tokenizer import Tokenizer
@@ -41,31 +45,24 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             pull_client_address=CommAddress.RAW_INFERENCE_PROXY_BACKEND,
             pull_client_bind=False,
             pull_client_max_concurrency=Environment.ZMQ.PULL_MAX_CONCURRENCY,
+            **kwargs,
         )
         self.records_push_client: PushClientProtocol = self.comms.create_push_client(
             CommAddress.RECORDS,
         )
         self.tokenizers: dict[str, Tokenizer] = {}
-        self.user_config: UserConfig = user_config
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
-        self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
-            user_config
-        )
-        self.inference_result_parser = InferenceResultParser(
-            service_config=service_config,
-            user_config=user_config,
-        )
+        self.inference_result_parser = InferenceResultParser(run=self.run)
 
         self.records_processors: list[RecordProcessorProtocol] = []
         for entry in plugins.iter_entries(PluginType.RECORD_PROCESSOR):
@@ -74,8 +71,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                     PluginType.RECORD_PROCESSOR, entry.name
                 )
                 processor: RecordProcessorProtocol = ProcessorClass(
-                    service_config=self.service_config,
-                    user_config=self.user_config,
+                    run=self.run,
                     service_id=self.service_id,
                 )
                 self.records_processors.append(processor)
@@ -92,9 +88,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 raise
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the tokenizers."""
         await self.inference_result_parser.configure()
 
@@ -102,13 +96,25 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Get the tokenizer for a given model."""
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
-                tokenizer_config = self.user_config.tokenizer
+                resolved_names = self.run.resolved.tokenizer_names
+                if resolved_names and model in resolved_names:
+                    tokenizer_name = resolved_names[model]
+                    resolve_alias = False
+                else:
+                    tokenizer_name = (
+                        self.run.cfg.tokenizer.name if self.run.cfg.tokenizer else None
+                    ) or model
+                    resolve_alias = True
                 self.tokenizers[model] = await asyncio.to_thread(
                     Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model),
-                    trust_remote_code=tokenizer_config.trust_remote_code,
-                    revision=tokenizer_config.revision,
-                    resolve_alias=tokenizer_config.should_resolve_alias,
+                    tokenizer_name,
+                    trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
+                    if self.run.cfg.tokenizer
+                    else False,
+                    revision=self.run.cfg.tokenizer.revision
+                    if self.run.cfg.tokenizer
+                    else "main",
+                    resolve_alias=resolve_alias,
                 )
             return self.tokenizers[model]
 
@@ -139,9 +145,15 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         cancellation_time_ns = compute_time_ns(
             start_time_ns, start_perf_ns, record.cancellation_perf_ns
         )
+        # credit_received_ns is captured directly from the worker's MonotonicClock
+        # at the instant the credit arrives — same clock domain as credit_issued_ns.
+        credit_received_ns = (
+            record.request_info.credit_received_ns if record.request_info else None
+        )
 
         return MetricRecordMetadata(
             credit_issued_ns=record.request_info.credit_issued_ns,
+            credit_received_ns=credit_received_ns,
             request_start_ns=start_time_ns,
             request_ack_ns=request_ack_ns,
             request_end_ns=request_end_ns,
@@ -155,6 +167,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             worker_id=worker_id,
             was_cancelled=cancellation_time_ns is not None,
             cancellation_time_ns=cancellation_time_ns,
+            clock_offset_ns=record.clock_offset_ns,
         )
 
     @on_pull_message(MessageType.INFERENCE_RESULTS)
@@ -171,7 +184,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
 
         # Free raw SSE messages now that parsing extracted what it needs.
         # Skip when RAW export is active -- the raw writer needs them.
-        if self.user_config.output.export_level != ExportLevel.RAW:
+        if self.run.cfg.output.export_level != ExportLevel.RAW:
             record.responses = None
 
         metadata = self._create_metric_record_metadata(
@@ -215,7 +228,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """
         trace_data = record.trace_data
         error = record.error
-        if self.user_config.output.export_level != ExportLevel.RAW:
+        if self.run.cfg.output.export_level != ExportLevel.RAW:
             record.responses = None
         record.turns = None
         record.trace_data = None

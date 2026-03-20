@@ -39,7 +39,7 @@ class ChatEndpoint(BaseEndpoint):
             raise ValueError("Chat endpoint requires at least one turn.")
 
         turns = request_info.turns
-        model_endpoint = request_info.model_endpoint
+        model_endpoint = request_info.config
 
         if turns[-1].raw_messages is not None:
             messages = turns[-1].raw_messages
@@ -50,7 +50,7 @@ class ChatEndpoint(BaseEndpoint):
 
         payload = {
             "messages": messages,
-            "model": turns[-1].model or model_endpoint.primary_model_name,
+            "model": turns[-1].model or model_endpoint.get_model_names()[0],
             "stream": model_endpoint.endpoint.streaming,
         }
 

@@ -1,20 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import time
 from contextlib import suppress
+from typing import TYPE_CHECKING
 
-from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.enums import ExportLevel
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
 )
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import ReasoningResponseData, TokenCounts
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
@@ -27,32 +31,22 @@ class InferenceResultParser(CommunicationMixin):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
     ) -> None:
-        super().__init__(
-            service_config=service_config,
-            user_config=user_config,
-        )
+        super().__init__(run=run)
         self.tokenizers: dict[str, Tokenizer] = {}
-        self.user_config: UserConfig = user_config
+        config: BenchmarkConfig = run.cfg
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
-        self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_user_config(
-            user_config
-        )
-        EndpointClass = plugins.get_class(
-            PluginType.ENDPOINT, self.model_endpoint.endpoint.type
-        )
-        self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
-        endpoint_meta = plugins.get_endpoint_metadata(self.model_endpoint.endpoint.type)
+        EndpointClass = plugins.get_class(PluginType.ENDPOINT, config.endpoint.type)
+        self.endpoint = EndpointClass(run=run)
+        endpoint_meta = plugins.get_endpoint_metadata(config.endpoint.type)
         # Disable tokenization if the endpoint doesn't produce tokens and doesn't tokenize input, or
-        # if the user config is set to use server token counts.
-        self.disable_tokenization: bool = (
-            user_config.endpoint.use_server_token_count
-            or (not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input)
+        # if the config is set to use server token counts.
+        self.disable_tokenization: bool = config.endpoint.use_server_token_count or (
+            not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input
         )
         self.debug(
-            lambda: f"Created endpoint for {self.model_endpoint.endpoint.type}, "
+            lambda: f"Created endpoint for {config.endpoint.type}, "
             f"class: {self.endpoint.__class__.__name__}",
         )
 
@@ -71,17 +65,31 @@ class InferenceResultParser(CommunicationMixin):
 
         self.info("Configuring tokenizers for inference result parser")
         begin = time.perf_counter()
-        tokenizer_config = self.user_config.tokenizer
 
         async with self.tokenizer_lock:
             self.tokenizers = {}
-            for model in self.model_endpoint.models.models:
+            resolved_names = self.run.resolved.tokenizer_names
+            for model in self.run.cfg.models.items:
+                if resolved_names and model.name in resolved_names:
+                    tokenizer_name = resolved_names[model.name]
+                    resolve_alias = False
+                else:
+                    tokenizer_name = (
+                        self.run.cfg.tokenizer.name or model.name
+                        if self.run.cfg.tokenizer
+                        else model.name
+                    )
+                    resolve_alias = True
                 self.tokenizers[model.name] = await asyncio.to_thread(
                     Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model.name),
-                    trust_remote_code=tokenizer_config.trust_remote_code,
-                    revision=tokenizer_config.revision,
-                    resolve_alias=tokenizer_config.should_resolve_alias,
+                    tokenizer_name,
+                    trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
+                    if self.run.cfg.tokenizer
+                    else False,
+                    revision=self.run.cfg.tokenizer.revision
+                    if self.run.cfg.tokenizer
+                    else "main",
+                    resolve_alias=resolve_alias,
                 )
 
         duration = time.perf_counter() - begin
@@ -98,13 +106,20 @@ class InferenceResultParser(CommunicationMixin):
         """Get the tokenizer for a given model or create it if it doesn't exist."""
         async with self.tokenizer_lock:
             if model not in self.tokenizers:
-                tokenizer_config = self.user_config.tokenizer
+                tokenizer_name = (
+                    self.run.cfg.tokenizer.name or model
+                    if self.run.cfg.tokenizer
+                    else model
+                )
                 self.tokenizers[model] = await asyncio.to_thread(
                     Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model),
-                    trust_remote_code=tokenizer_config.trust_remote_code,
-                    revision=tokenizer_config.revision,
-                    resolve_alias=tokenizer_config.should_resolve_alias,
+                    tokenizer_name,
+                    trust_remote_code=self.run.cfg.tokenizer.trust_remote_code
+                    if self.run.cfg.tokenizer
+                    else False,
+                    revision=self.run.cfg.tokenizer.revision
+                    if self.run.cfg.tokenizer
+                    else "main",
                 )
             return self.tokenizers[model]
 
@@ -207,11 +222,11 @@ class InferenceResultParser(CommunicationMixin):
 
         # Free the raw responses list after extraction.
         # Skip when RAW export needs the original responses for serialization.
-        if self.user_config.output.export_level != ExportLevel.RAW:
+        if self.run.cfg.output.export_level != ExportLevel.RAW:
             request_record.responses = None
 
         # Compute token counts based on configuration
-        if self.user_config.endpoint.use_server_token_count:
+        if self.run.cfg.endpoint.use_server_token_count:
             token_counts = await self._compute_server_token_counts(resp)
         elif not self.disable_tokenization:
             token_counts = await self._compute_client_side_token_counts(

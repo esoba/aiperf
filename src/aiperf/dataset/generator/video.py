@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import base64
 import io
 import math
@@ -8,6 +10,7 @@ import platform
 import shutil
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import ffmpeg
 import numpy as np
@@ -15,10 +18,13 @@ import soundfile as sf
 from PIL import Image, ImageDraw
 
 from aiperf.common import random_generator as rng
-from aiperf.common.config.video_config import VIDEO_AUDIO_CODEC_MAP, VideoConfig
 from aiperf.common.enums import VideoAudioCodec, VideoFormat, VideoSynthType
+from aiperf.config.dataset import VIDEO_AUDIO_CODEC_MAP
 from aiperf.dataset.generator.audio import SUPPORTED_BIT_DEPTHS
 from aiperf.dataset.generator.base import BaseGenerator, generate_noise_signal
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class VideoGenerator(BaseGenerator):
@@ -29,9 +35,11 @@ class VideoGenerator(BaseGenerator):
     and returned as base64 encoded strings.
     """
 
-    def __init__(self, config: VideoConfig, **kwargs):
-        super().__init__(**kwargs)
-        self.config = config
+    def __init__(self, run: BenchmarkRun, **kwargs):
+        super().__init__(run=run, **kwargs)
+        # Extract video config from dataset config
+        dataset_config = run.cfg.get_default_dataset()
+        self.video_config = getattr(dataset_config, "video", None)
         self._audio_rng = rng.derive("dataset.video.audio")
         self._noise_rng = rng.derive("dataset.video.noise")
 
@@ -82,20 +90,23 @@ class VideoGenerator(BaseGenerator):
         Returns:
             A base64 encoded string of the generated video, or empty string if generation is disabled.
         """
+        if self.video_config is None:
+            return ""
+
         # Only generate videos if width and height are non-zero
-        if not self.config.width or not self.config.height:
+        if not self.video_config.width or not self.video_config.height:
             self.logger.debug(
-                f"Video generation disabled (width={self.config.width}, height={self.config.height})",
+                f"Video generation disabled (width={self.video_config.width}, height={self.video_config.height})",
             )
             return ""
 
         self.logger.debug(
             "Generating video with width=%d, height=%d, duration=%.1fs, fps=%d, type=%s",
-            self.config.width,
-            self.config.height,
-            self.config.duration,
-            self.config.fps,
-            self.config.synth_type,
+            self.video_config.width,
+            self.video_config.height,
+            self.video_config.duration,
+            self.video_config.fps,
+            self.video_config.synth_type,
         )
 
         # Generate frames
@@ -106,24 +117,24 @@ class VideoGenerator(BaseGenerator):
 
     def _generate_frames(self) -> list[Image.Image]:
         """Generate frames based on the synthesis type."""
-        total_frames = int(self.config.duration * self.config.fps)
+        total_frames = int(self.video_config.duration * self.video_config.fps)
         frames = []
 
-        if self.config.synth_type == VideoSynthType.MOVING_SHAPES:
+        if self.video_config.synth_type == VideoSynthType.MOVING_SHAPES:
             frames = self._generate_moving_shapes_frames(total_frames)
-        elif self.config.synth_type == VideoSynthType.GRID_CLOCK:
+        elif self.video_config.synth_type == VideoSynthType.GRID_CLOCK:
             frames = self._generate_grid_clock_frames(total_frames)
-        elif self.config.synth_type == VideoSynthType.NOISE:
+        elif self.video_config.synth_type == VideoSynthType.NOISE:
             frames = self._generate_noise_frames(total_frames)
         else:
-            raise ValueError(f"Unknown synthesis type: {self.config.synth_type}")
+            raise ValueError(f"Unknown synthesis type: {self.video_config.synth_type}")
 
         return frames
 
     def _generate_moving_shapes_frames(self, total_frames: int) -> list[Image.Image]:
         """Generate frames with moving geometric shapes."""
         frames = []
-        width, height = self.config.width, self.config.height
+        width, height = self.video_config.width, self.video_config.height
 
         # Create multiple moving objects
         shapes = [
@@ -191,7 +202,7 @@ class VideoGenerator(BaseGenerator):
     def _generate_grid_clock_frames(self, total_frames: int) -> list[Image.Image]:
         """Generate frames with a grid and clock-like animation."""
         frames = []
-        width, height = self.config.width, self.config.height
+        width, height = self.video_config.width, self.video_config.height
 
         for frame_num in range(total_frames):
             # Create dark gray background
@@ -254,7 +265,7 @@ class VideoGenerator(BaseGenerator):
 
     def _generate_noise_frames(self, total_frames: int) -> list[Image.Image]:
         """Generate frames with random noise pixels."""
-        width, height = self.config.width, self.config.height
+        width, height = self.video_config.width, self.video_config.height
         return [
             Image.fromarray(
                 self._noise_rng.integers(0, 256, (height, width, 3), dtype=np.uint8)
@@ -270,9 +281,9 @@ class VideoGenerator(BaseGenerator):
         if not frames:
             return ""
 
-        if self.config.format not in [VideoFormat.MP4, VideoFormat.WEBM]:
+        if self.video_config.format not in [VideoFormat.MP4, VideoFormat.WEBM]:
             raise ValueError(
-                f"Unsupported video format: {self.config.format}. Only MP4 and WebM are supported."
+                f"Unsupported video format: {self.video_config.format}. Only MP4 and WebM are supported."
             )
 
         # Check if FFmpeg is available before proceeding
@@ -289,7 +300,7 @@ class VideoGenerator(BaseGenerator):
             return self._create_video_with_ffmpeg(frames)
         except Exception as e:
             self.logger.error(
-                f"Failed to create {self.config.format.upper()} with ffmpeg: {e}"
+                f"Failed to create {self.video_config.format.upper()} with ffmpeg: {e}"
             )
 
             # Provide specific error messages based on the error type
@@ -299,13 +310,13 @@ class VideoGenerator(BaseGenerator):
                 ) from e
             elif "Codec" in str(e) or "codec" in str(e):
                 raise RuntimeError(
-                    f"Video codec '{self.config.codec}' is not supported. "
+                    f"Video codec '{self.video_config.codec}' is not supported. "
                     f"Please use a valid FFmpeg codec (e.g., libvpx-vp9, libx264, libx265, h264_nvenc)."
                 ) from e
             else:
                 raise RuntimeError(
                     f"FFmpeg failed to create video: {e}\n"
-                    f"Codec: {self.config.codec}, Size: {self.config.width}x{self.config.height}, FPS: {self.config.fps}"
+                    f"Codec: {self.video_config.codec}, Size: {self.video_config.width}x{self.video_config.height}, FPS: {self.video_config.fps}"
                 ) from e
 
     def _create_video_with_ffmpeg(self, frames: list[Image.Image]) -> str:
@@ -323,14 +334,16 @@ class VideoGenerator(BaseGenerator):
 
     def _generate_audio_data(self) -> bytes:
         """Generate Gaussian noise audio data matching video duration as WAV bytes."""
-        num_samples = int(self.config.duration * self.config.audio.sample_rate)
+        num_samples = int(
+            self.video_config.duration * self.video_config.audio.sample_rate
+        )
         signal = generate_noise_signal(
-            self._audio_rng, num_samples, self.config.audio.channels
+            self._audio_rng, num_samples, self.video_config.audio.channels
         )
 
         # Scale to the appropriate bit depth range
         # Note: For 8-bit, we use int16 input and let soundfile convert to PCM_U8
-        bit_depth = self.config.audio.depth
+        bit_depth = self.video_config.audio.depth
         numpy_type, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
         scale_depth = 16 if bit_depth == 8 else bit_depth
         max_val = 2 ** (scale_depth - 1) - 1
@@ -340,7 +353,7 @@ class VideoGenerator(BaseGenerator):
         sf.write(
             output_buffer,
             audio_data,
-            self.config.audio.sample_rate,
+            self.video_config.audio.sample_rate,
             format="WAV",
             subtype=subtype,
         )
@@ -348,12 +361,12 @@ class VideoGenerator(BaseGenerator):
 
     def _resolve_audio_codec(self) -> VideoAudioCodec:
         """Resolve the audio codec, auto-selecting from format if not explicitly set."""
-        if self.config.audio.codec is not None:
-            return self.config.audio.codec
-        codec = VIDEO_AUDIO_CODEC_MAP.get(self.config.format)
+        if self.video_config.audio.codec is not None:
+            return self.video_config.audio.codec
+        codec = VIDEO_AUDIO_CODEC_MAP.get(self.video_config.format)
         if codec is None:
             raise ValueError(
-                f"No default audio codec for format '{self.config.format}'. "
+                f"No default audio codec for format '{self.video_config.format}'. "
                 f"Specify --video-audio-codec explicitly."
             )
         return codec
@@ -370,7 +383,7 @@ class VideoGenerator(BaseGenerator):
         Writes a temp WAV file into audio_dir when audio is enabled.
         Caller is responsible for cleaning up audio_dir.
         """
-        if self.config.audio.channels > 0:
+        if self.video_config.audio.channels > 0:
             audio_path = audio_dir / "audio.wav"
             audio_path.write_bytes(self._generate_audio_data())
 
@@ -388,8 +401,10 @@ class VideoGenerator(BaseGenerator):
 
     def _prepare_frame_for_encoding(self, frame: Image.Image) -> bytes:
         """Prepare frame for encoding."""
-        if frame.size != (self.config.width, self.config.height):
-            frame = frame.resize((self.config.width, self.config.height), Image.LANCZOS)
+        if frame.size != (self.video_config.width, self.video_config.height):
+            frame = frame.resize(
+                (self.video_config.width, self.video_config.height), Image.LANCZOS
+            )
         if frame.mode != "RGB":
             frame = frame.convert("RGB")
         return frame.tobytes()
@@ -404,16 +419,16 @@ class VideoGenerator(BaseGenerator):
             )
 
             output_options = {
-                "format": self.config.format,
-                "vcodec": self.config.codec,
+                "format": self.video_config.format,
+                "vcodec": self.video_config.codec,
                 "pix_fmt": "yuv420p",
             }
 
             # Determine output destination based on format
-            if self.config.format == VideoFormat.MP4:
+            if self.video_config.format == VideoFormat.MP4:
                 # MP4 requires seekable output, use temp file
                 output_options["movflags"] = "faststart"
-                output_dest = str(temp_dir / f"output.{self.config.format}")
+                output_dest = str(temp_dir / f"output.{self.video_config.format}")
             else:
                 # WebM and other formats can use pipe output
                 output_dest = "pipe:"
@@ -422,8 +437,8 @@ class VideoGenerator(BaseGenerator):
                 "pipe:",
                 format="rawvideo",
                 pix_fmt="rgb24",
-                s=f"{self.config.width}x{self.config.height}",
-                r=self.config.fps,
+                s=f"{self.video_config.width}x{self.video_config.height}",
+                r=self.video_config.fps,
             )
 
             pipeline = self._build_ffmpeg_output(
@@ -442,7 +457,7 @@ class VideoGenerator(BaseGenerator):
             if not video_data:
                 raise RuntimeError("FFmpeg produced no output")
 
-            return f"data:video/{self.config.format};base64,{base64.b64encode(video_data).decode()}"
+            return f"data:video/{self.video_config.format};base64,{base64.b64encode(video_data).decode()}"
 
         except ffmpeg.Error as e:
             error_msg = e.stderr.decode() if e.stderr else "Unknown ffmpeg error"
@@ -461,9 +476,10 @@ class VideoGenerator(BaseGenerator):
             # Save frames as PNG files
             for i, frame in enumerate(frames):
                 # Ensure frame is the correct size
-                if frame.size != (self.config.width, self.config.height):
+                if frame.size != (self.video_config.width, self.video_config.height):
                     frame = frame.resize(
-                        (self.config.width, self.config.height), Image.LANCZOS
+                        (self.video_config.width, self.video_config.height),
+                        Image.LANCZOS,
                     )
 
                 frame_path = temp_dir / f"frame_{i:06d}.png"
@@ -471,21 +487,21 @@ class VideoGenerator(BaseGenerator):
                 frame.save(frame_path, "PNG", compress_level=6, optimize=False)
 
             # Create output file in the same temp directory
-            output_path = temp_dir / f"output.{self.config.format}"
+            output_path = temp_dir / f"output.{self.video_config.format}"
             frame_pattern = str(temp_dir / "frame_%06d.png")
 
             # Build output options based on format
             output_options = {
-                "format": self.config.format,
-                "vcodec": self.config.codec,
+                "format": self.video_config.format,
+                "vcodec": self.video_config.codec,
                 "pix_fmt": "yuv420p",
             }
 
             # Add format-specific options
-            if self.config.format == VideoFormat.MP4:
+            if self.video_config.format == VideoFormat.MP4:
                 output_options["movflags"] = "faststart"
 
-            video_stream = ffmpeg.input(frame_pattern, r=self.config.fps)
+            video_stream = ffmpeg.input(frame_pattern, r=self.video_config.fps)
 
             pipeline = self._build_ffmpeg_output(
                 video_stream, str(output_path), output_options, temp_dir
@@ -500,7 +516,7 @@ class VideoGenerator(BaseGenerator):
 
             # Encode as base64
             base64_data = base64.b64encode(video_data).decode("utf-8")
-            return f"data:video/{self.config.format};base64,{base64_data}"
+            return f"data:video/{self.video_config.format};base64,{base64_data}"
 
         except ffmpeg.Error as e:
             error_msg = e.stderr.decode("utf-8") if e.stderr else "Unknown ffmpeg error"

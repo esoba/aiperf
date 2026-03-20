@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Composed Dataset (File + Synthetic)
+# description: Combine file-based prompts with synthetic output length control.
+# category: Datasets
+# tags: composed, file, augmentation
+# difficulty: intermediate
+# features: composed dataset, OSL augmentation
+#
+# Composed Dataset Benchmark
+# ==========================
+# Demonstrates AIPerf's composed dataset feature.
+# Combines file-based prompts with output length control.
+#
+# Use case: Apply consistent output length distribution to file-based prompts
+#
+# Run: aiperf profile --config composed_dataset.yaml
+#
+# Note: Create a simple prompts.jsonl file first:
+# {"prompt": "What is machine learning?"}
+# {"prompt": "Explain neural networks"}
+# {"prompt": "How does backpropagation work?"}
+
+random_seed: 42
+
+model: meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  url: http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 120.0
+
+dataset:
+  type: composed
+  source:
+    type: file
+    path: ./data/prompts.jsonl  # Replace with your prompts file
+    format: single_turn
+    sampling: shuffle
+  augment:
+    osl: {mean: 256, stddev: 50}
+    osl_mode: fill  # Only apply if record doesn't have OSL
+  entries: 1000
+
+phases:
+  type: concurrency
+  requests: 1000
+  concurrency: 32
+  duration: 120
+  grace_period: 60
+
+artifacts:
+  dir: ./artifacts/composed_dataset
+  summary: [json]
+  records: [jsonl, csv]
+
+server_metrics:
+  enabled: true
+  urls:
+    - http://localhost:8000/metrics
+  formats: [json, csv]

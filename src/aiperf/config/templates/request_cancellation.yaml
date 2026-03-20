@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Request Cancellation Test
+# description: Test server behavior when clients cancel in-flight requests.
+# category: Load Testing
+# tags: cancellation, resilience
+# difficulty: advanced
+# features: cancellation, rate + delay
+#
+# Request Cancellation Test
+# =========================
+# Tests server behavior when clients cancel requests mid-flight.
+# Useful for understanding resource cleanup and scheduling behavior.
+#
+# Use case: Validate server handles cancellations gracefully
+#
+# Run: aiperf profile --config request_cancellation.yaml
+
+random_seed: 42
+
+model: meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  url: http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 120.0
+
+dataset:
+  type: synthetic
+  entries: 1000
+  prompts:
+    isl: {mean: 512, stddev: 100}
+    osl: {mean: 512, stddev: 100}  # Long output for cancellation window
+
+
+phases:
+  # Baseline without cancellation
+  baseline:
+    type: poisson
+    requests: 500
+    concurrency: 32
+    rate: 20.0
+    duration: 120
+    grace_period: 60
+
+  # 10% cancellation after 0.5 seconds
+  cancel_10_percent:
+    type: poisson
+    requests: 500
+    concurrency: 32
+    rate: 20.0
+    cancellation:
+      rate: 10.0  # Cancel 10% of requests
+      delay: 0.5  # Wait 0.5 seconds before cancelling
+    seamless: true
+    duration: 120
+    grace_period: 60
+
+  # 25% cancellation (immediate)
+  cancel_25_percent_immediate:
+    type: poisson
+    requests: 500
+    concurrency: 32
+    rate: 20.0
+    cancellation:
+      rate: 25.0
+      delay: 0.0  # Cancel immediately
+    seamless: true
+    duration: 120
+    grace_period: 60
+
+artifacts:
+  dir: ./artifacts/request_cancellation
+  summary: [json]
+  records: [jsonl, csv]
+
+server_metrics:
+  enabled: true
+  urls:
+    - http://localhost:8000/metrics
+  formats: [json, csv]

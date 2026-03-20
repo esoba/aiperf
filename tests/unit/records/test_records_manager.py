@@ -1,13 +1,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.messages import TelemetryRecordsMessage
 from aiperf.common.messages.inference_messages import MetricRecordsData
-from aiperf.common.models import MetricResult, ProcessRecordsResult, ProfileResults
+from aiperf.common.models import (
+    ErrorDetails,
+    MetricResult,
+    ProcessRecordsResult,
+    ProfileResults,
+    TelemetryHierarchy,
+    TelemetryMetrics,
+    TelemetryRecord,
+)
 from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.types import MetricTagT
 
@@ -42,7 +50,7 @@ def create_metric_record_data(
             request_end_ns=request_end_ns,
             worker_id="worker-1",
             record_processor_id="processor-1",
-            benchmark_phase=CreditPhase.PROFILING,
+            benchmark_phase="profiling",
         ),
         metrics=metrics or {},
     )
@@ -54,15 +62,6 @@ class TestRecordsManagerTelemetry:
     @pytest.mark.asyncio
     async def test_on_telemetry_records_valid(self):
         """Test handling valid telemetry records."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from aiperf.common.messages import TelemetryRecordsMessage
-        from aiperf.common.models import (
-            TelemetryHierarchy,
-            TelemetryMetrics,
-            TelemetryRecord,
-        )
-
         # Create sample telemetry records
         records = [
             TelemetryRecord(
@@ -104,11 +103,6 @@ class TestRecordsManagerTelemetry:
     @pytest.mark.asyncio
     async def test_on_telemetry_records_invalid(self):
         """Test handling invalid telemetry records with errors."""
-        from unittest.mock import AsyncMock
-
-        from aiperf.common.messages import TelemetryRecordsMessage
-        from aiperf.common.models import ErrorDetails
-
         error = ErrorDetails(message="Test error", code=500)
 
         message = TelemetryRecordsMessage(
@@ -138,10 +132,6 @@ class TestRecordsManagerTelemetry:
     @pytest.mark.asyncio
     async def test_send_telemetry_to_results_processors(self):
         """Test sending telemetry records to processors."""
-        from unittest.mock import AsyncMock, Mock
-
-        from aiperf.common.models import TelemetryMetrics, TelemetryRecord
-
         # Create mock telemetry processor
         mock_processor = Mock()
         mock_processor.process_telemetry_record = AsyncMock()
@@ -174,12 +164,6 @@ class TestRecordsManagerTelemetry:
 
     def test_telemetry_hierarchy_add_record(self):
         """Test that telemetry hierarchy adds records correctly."""
-        from aiperf.common.models import (
-            TelemetryHierarchy,
-            TelemetryMetrics,
-            TelemetryRecord,
-        )
-
         hierarchy = TelemetryHierarchy()
 
         record = TelemetryRecord(

@@ -5,7 +5,6 @@ import time
 import pytest
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models.credit_models import (
     BasePhaseStats,
     CreditPhaseStats,
@@ -19,7 +18,7 @@ def base_phase_stats():
     """Factory for BasePhaseStats instances."""
 
     def _create(**kwargs) -> BasePhaseStats:
-        defaults = {"phase": CreditPhase.WARMUP}
+        defaults = {"phase": "warmup"}
         defaults.update(kwargs)
         return BasePhaseStats(**defaults)
 
@@ -31,7 +30,7 @@ def credit_phase_stats():
     """Factory for CreditPhaseStats instances."""
 
     def _create(**kwargs) -> CreditPhaseStats:
-        defaults = {"phase": CreditPhase.PROFILING}
+        defaults = {"phase": "profiling"}
         defaults.update(kwargs)
         return CreditPhaseStats(**defaults)
 
@@ -43,7 +42,7 @@ def phase_records_stats():
     """Factory for PhaseRecordsStats instances."""
 
     def _create(**kwargs) -> PhaseRecordsStats:
-        defaults = {"phase": CreditPhase.PROFILING}
+        defaults = {"phase": "profiling"}
         defaults.update(kwargs)
         return PhaseRecordsStats(**defaults)
 
@@ -486,14 +485,14 @@ class TestCreditPhaseStatsIntegration:
         start_ns = time.time_ns()
 
         stats = credit_phase_stats(
-            phase=CreditPhase.WARMUP, start_ns=start_ns, total_expected_requests=100
+            phase="warmup", start_ns=start_ns, total_expected_requests=100
         )
         assert stats.is_started
         assert not stats.is_sending_complete
         assert not stats.is_requests_complete
 
         stats = credit_phase_stats(
-            phase=CreditPhase.WARMUP,
+            phase="warmup",
             start_ns=start_ns,
             total_expected_requests=100,
             requests_sent=50,
@@ -503,7 +502,7 @@ class TestCreditPhaseStatsIntegration:
         assert stats.requests_progress_percent == 30.0
 
         stats = credit_phase_stats(
-            phase=CreditPhase.WARMUP,
+            phase="warmup",
             start_ns=start_ns,
             sent_end_ns=start_ns + (5 * NANOS_PER_SECOND),
             total_expected_requests=100,
@@ -514,7 +513,7 @@ class TestCreditPhaseStatsIntegration:
         assert stats.in_flight_requests == 0
 
         stats = credit_phase_stats(
-            phase=CreditPhase.WARMUP,
+            phase="warmup",
             start_ns=start_ns,
             sent_end_ns=start_ns + (5 * NANOS_PER_SECOND),
             requests_end_ns=start_ns + (10 * NANOS_PER_SECOND),
@@ -535,7 +534,7 @@ class TestPhaseRecordsStatsIntegration:
         start_ns = time.time_ns()
 
         stats = phase_records_stats(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             start_ns=start_ns,
             final_requests_completed=100,
             success_records=60,
@@ -549,7 +548,7 @@ class TestPhaseRecordsStatsIntegration:
         time_traveler.advance_time(5.0)
         end_ns = time.time_ns()
         stats = phase_records_stats(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             start_ns=start_ns,
             records_end_ns=end_ns,
             final_requests_completed=100,

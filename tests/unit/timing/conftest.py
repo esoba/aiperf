@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.config import ServiceConfig
 from aiperf.common.enums import CommAddress, CreditPhase
 from aiperf.common.models import (
     ConversationMetadata,
@@ -18,7 +17,9 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.common.utils import yield_to_event_loop
+from aiperf.config import BenchmarkRun
 from aiperf.credit.messages import CreditReturn, FirstToken
+from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit, CreditContext, TurnToSend
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -205,7 +206,7 @@ def make_credit(
     turn: int = 0,
     num_turns: int | None = None,
     is_final: bool | None = None,
-    phase: CreditPhase = CreditPhase.PROFILING,
+    phase: CreditPhase = "profiling",
     corr_id: str | None = None,
 ) -> Credit:
     if num_turns is not None:
@@ -305,7 +306,7 @@ def make_dataset_with_schedule(
 
 
 def make_phase_config(
-    phase: CreditPhase = CreditPhase.PROFILING,
+    phase: CreditPhase = "profiling",
     timing_mode: TimingMode = TimingMode.REQUEST_RATE,
     request_count: int | None = None,
     num_sessions: int | None = None,
@@ -348,7 +349,7 @@ def make_phase_config(
 
 def make_timing_config(
     timing_mode: TimingMode = TimingMode.REQUEST_RATE,
-    phase: CreditPhase = CreditPhase.PROFILING,
+    phase: CreditPhase = "profiling",
     request_count: int | None = None,
     num_sessions: int | None = None,
     duration_sec: float | None = None,
@@ -402,11 +403,11 @@ def make_timing_config(
 
 def profiling_stats_from_config(cfg: TimingConfig) -> CreditPhaseStats:
     pc = next(
-        (p for p in cfg.phase_configs if p.phase == CreditPhase.PROFILING),
+        (p for p in cfg.phase_configs if p.phase == "profiling"),
         cfg.phase_configs[0] if cfg.phase_configs else None,
     )
     return CreditPhaseStats(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         start_ns=time.time_ns(),
         total_expected_requests=pc.total_expected_requests if pc else None,
     )
@@ -441,14 +442,10 @@ class InstantWorker(Worker):
 
 
 class TimingHarness:
-    def __init__(self, service_config: ServiceConfig, user_config) -> None:
-        from aiperf.credit.sticky_router import StickyCreditRouter
-
+    def __init__(self, run: BenchmarkRun) -> None:
         self.bus = FakeCommunicationBus()
         FakeCommunication.set_shared_bus(self.bus)
-        self.router = StickyCreditRouter(
-            service_config=service_config, service_id="test-router"
-        )
+        self.router = StickyCreditRouter(run=run, service_id="test-router")
         self.publisher = PhasePublisher(
             pub_client=self.router.comms.create_pub_client(
                 CommAddress.EVENT_BUS_PROXY_FRONTEND
@@ -456,8 +453,7 @@ class TimingHarness:
             service_id="test-service",
         )
         self._worker = InstantWorker(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id="instant-worker-1",
         )
 
@@ -517,10 +513,8 @@ class MockCreditSender:
 
 
 @pytest.fixture
-def timing_harness(
-    service_config, user_config, skip_service_registration
-) -> TimingHarness:
-    return TimingHarness(service_config=service_config, user_config=user_config)
+def timing_harness(run, skip_service_registration) -> TimingHarness:
+    return TimingHarness(run=run)
 
 
 @pytest.fixture
@@ -529,10 +523,10 @@ def mock_credit_sender() -> MockCreditSender:
 
 
 @pytest.fixture
-def router_with_worker(service_config):
+def router_with_worker(run):
     from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
 
-    router = StickyCreditRouter(service_config=service_config, service_id="test-router")
+    router = StickyCreditRouter(run=run, service_id="test-router")
     router._workers = {
         "worker-1": WorkerLoad(worker_id="worker-1", in_flight_credits=0)
     }

@@ -37,8 +37,72 @@ def profile(user_config: UserConfig, service_config: ServiceConfig | None = None
 - Export a single `App` named `app`.
 - Hyphenate multi-word commands: `App(name="analyze-trace")`.
 - Keep module-level imports minimal; heavy deps go inside the function body.
+- Import modules, not individual functions. Call functions on the module alias:
+  `from aiperf.kubernetes import cli_helpers` then `cli_helpers.resolve_jobset(...)`.
+  Use aliases when the module name conflicts with the current scope:
+  `from aiperf.kubernetes import console as kube_console`.
+- `Parameter(name=...)` for naming/aliasing only. Document parameters in the
+  docstring `Args:` section — no `help=` on `Parameter()`.
+- Wrap all heavy work inside `with cli_utils.exit_on_error(...):`; place deferred
+  imports inside that block so import errors are caught.
 - Heavy implementation logic lives in a `cli.py` inside the owning domain
   package (e.g. `aiperf/plugin/cli.py`), lazily imported at call time.
+
+### Subcommand Groups
+
+For commands with multiple subcommands, use a directory with `_app.py` and
+`__init__.py`. The `_app.py` file defines the group `App` and lazily registers
+subcommands. Each subcommand lives in its own file within the directory:
+
+```
+cli_commands/
+  kube/
+    __init__.py       # re-exports app from _app.py
+    _app.py           # group App + lazy subcommand registration
+    attach.py         # aiperf kube attach
+    cancel.py         # aiperf kube cancel
+    ...
+```
+
+```python
+# cli_commands/kube/__init__.py
+from aiperf.cli_commands.kube._app import app
+
+__all__ = ["app"]
+```
+
+```python
+# cli_commands/kube/_app.py
+from cyclopts import App
+
+app = App(name="kube", help="Kubernetes deployment and management commands")
+
+app.command("aiperf.cli_commands.kube.attach:app", name="attach")
+app.command("aiperf.cli_commands.kube.cancel:app", name="cancel")
+```
+
+```python
+# cli_commands/kube/cancel.py
+from cyclopts import App
+
+app = App(name="cancel")
+
+@app.default
+async def cancel(job_id: str | None = None) -> None:
+    """Cancel a running AIPerf benchmark."""
+    from aiperf import cli_utils
+    from aiperf.kubernetes import cli_helpers, console as kube_console
+
+    with cli_utils.exit_on_error(title="Error Cancelling Job"):
+        result = await cli_helpers.resolve_jobset(job_id, ...)
+        kube_console.print_success(f"Job {job_id} cancelled.")
+```
+
+The group is registered in `cli.py` exactly like a flat command:
+
+```python
+app.command("aiperf.cli_commands.kube:app", name="kube")
+```
 
 ## Service Pattern
 

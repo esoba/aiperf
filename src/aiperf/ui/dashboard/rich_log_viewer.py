@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import multiprocessing
+from __future__ import annotations
+
 from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -14,6 +15,7 @@ from textual.widgets import Static
 
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task
+from aiperf.common.logging import LogQueue
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.utils import yield_to_event_loop
 
@@ -161,6 +163,18 @@ class SelectableRichLog(ScrollableContainer):
             self._log_lines.append(Text(f"ERROR formatting log: {e}"))
             self._update_display()
 
+    def write_line(self, text: str) -> None:
+        """Write a plain text line to the log viewer.
+
+        This is a simpler alternative to display_log_record for when you just
+        want to append a line of text without the full log record formatting.
+
+        Args:
+            text: The text to append to the log viewer.
+        """
+        self._log_lines.append(Text(text))
+        self._update_display()
+
     def _update_display(self) -> None:
         """Update the display with all log lines."""
         if self._content_widget is None:
@@ -222,9 +236,7 @@ class LogConsumer(AIPerfLifecycleMixin):
     """LogConsumer is a class that consumes log records from the shared log queue
     and displays them in the RichLogViewer."""
 
-    def __init__(
-        self, log_queue: multiprocessing.Queue, app: "AIPerfTextualApp", **kwargs
-    ) -> None:
+    def __init__(self, log_queue: LogQueue, app: AIPerfTextualApp, **kwargs) -> None:
         super().__init__(**kwargs)
         self.log_queue = log_queue
         self.app = app

@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import ExportLevel
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
 from aiperf.common.messages.inference_messages import MetricRecordsData
@@ -11,6 +13,9 @@ from aiperf.common.models.record_models import MetricRecordInfo, MetricResult
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class RecordExportResultsProcessor(
@@ -21,17 +26,21 @@ class RecordExportResultsProcessor(
     def __init__(
         self,
         service_id: str,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         **kwargs,
     ):
-        export_level = user_config.output.export_level
-        if export_level not in (ExportLevel.RECORDS, ExportLevel.RAW):
+        # Check if records export is enabled (records list is not False/empty)
+        config = run.cfg
+        artifacts = config.artifacts
+        records_enabled = artifacts.records and artifacts.records is not False
+        raw_enabled = artifacts.raw
+        if not records_enabled and not raw_enabled:
             raise PostProcessorDisabled(
-                f"Record export results processor is disabled for export level {export_level}"
+                "Record export results processor is disabled (artifacts.records is not enabled)"
             )
 
-        output_file = user_config.output.profile_export_jsonl_file
+        # Build output file path from artifacts config
+        output_file = artifacts.profile_export_jsonl_file
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.unlink(missing_ok=True)
 
@@ -39,7 +48,7 @@ class RecordExportResultsProcessor(
         super().__init__(
             output_file=output_file,
             batch_size=Environment.RECORD.EXPORT_BATCH_SIZE,
-            user_config=user_config,
+            run=run,
             **kwargs,
         )
 
@@ -49,10 +58,10 @@ class RecordExportResultsProcessor(
         self.show_experimental = (
             Environment.DEV.MODE and Environment.DEV.SHOW_EXPERIMENTAL_METRICS
         )
-        self.export_http_trace = user_config.output.export_http_trace
+        self.export_http_trace = config.artifacts.trace
         self.info(f"Record metrics export enabled: {self.output_file}")
         if self.export_http_trace:
-            self.info("HTTP trace export enabled (--export-http-trace)")
+            self.info("HTTP trace export enabled (artifacts.trace)")
 
     async def process_result(self, record_data: MetricRecordsData) -> None:
         try:

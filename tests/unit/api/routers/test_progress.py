@@ -10,18 +10,14 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.progress import ProgressRouter
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CreditPhase
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
+from aiperf.config import AIPerfConfig
 
 
 @pytest.fixture
-def progress_router(
-    mock_zmq, router_service_config: ServiceConfig, router_user_config: UserConfig
-) -> ProgressRouter:
+def progress_router(mock_zmq, router_config: AIPerfConfig) -> ProgressRouter:
     return ProgressRouter(
-        service_config=router_service_config,
-        user_config=router_user_config,
+        run=router_config,
     )
 
 
@@ -46,8 +42,8 @@ class TestProgressEndpoint:
         self, progress_client: TestClient, progress_router: ProgressRouter
     ) -> None:
         progress_router._progress_tracker._phases = {
-            CreditPhase.WARMUP: CombinedPhaseStats(
-                phase=CreditPhase.WARMUP,
+            "warmup": CombinedPhaseStats(
+                phase="warmup",
                 total_expected_requests=100,
                 requests_completed=50,
                 start_ns=1000,

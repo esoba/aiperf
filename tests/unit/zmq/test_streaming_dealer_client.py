@@ -10,7 +10,7 @@ import msgspec.msgpack
 import pytest
 import zmq
 
-from aiperf.common.enums import CreditPhase, LifecycleState
+from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.credit.messages import RouterToWorkerMessage, WorkerReady
 from aiperf.credit.structs import Credit
@@ -404,7 +404,7 @@ class TestZMQStreamingDealerClientEdgeCases:
         credits = [
             Credit(
                 id=i,
-                phase=CreditPhase.PROFILING,
+                phase="profiling",
                 conversation_id=f"conv-{i:03d}",
                 x_correlation_id=f"corr-{i:03d}",
                 turn_index=0,

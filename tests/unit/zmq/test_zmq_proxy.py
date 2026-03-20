@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 import zmq
 
-from aiperf.common.config import ZMQTCPConfig, ZMQTCPProxyConfig
+from aiperf.config import ZMQTCPConfig, ZMQTCPProxyConfig
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ZMQProxyType
 from aiperf.zmq.zmq_proxy_base import ProxyEndType, ProxySocketClient

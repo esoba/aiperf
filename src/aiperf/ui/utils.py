@@ -87,3 +87,12 @@ def format_bytes(bytes: int | None, none_str: str = "--") -> str:
             return f"{bytes / factor:.0f} {suffix}"
 
     raise ValueError(f"Bytes value is too large to format: {bytes}")
+
+
+def format_memory(bytes_value: int, signed: bool = False) -> str:
+    """Format memory bytes as MB or GB (GB when >= 1000 MB)."""
+    mb = bytes_value / 1e6
+    if abs(mb) >= 999.5:
+        gb = bytes_value / 1e9
+        return f"{gb:+.2f} GB" if signed else f"{gb:.2f} GB"
+    return f"{mb:+.1f} MB" if signed else f"{mb:.1f} MB"

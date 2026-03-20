@@ -418,8 +418,23 @@ class DashboardBuilder:
         Returns:
             Dash HTML Div containing the full dashboard
         """
+        back_link = html.Div(
+            html.A(
+                "Back to Operator UI",
+                href="/",
+                style={
+                    "color": "#76B900",
+                    "textDecoration": "none",
+                    "fontSize": "14px",
+                    "padding": "8px 16px",
+                    "display": "inline-block",
+                },
+            ),
+            style={"borderBottom": "1px solid #333", "marginBottom": "8px"},
+        )
         return html.Div(
             [
+                back_link,
                 # Hidden stores for state management
                 self._build_stores(),
                 # Toast container for warnings

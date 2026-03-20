@@ -8,10 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommandType
-from aiperf.common.messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails
+from aiperf.config import BenchmarkRun
 from aiperf.controller.system_controller import SystemController
 
 
@@ -23,19 +21,20 @@ class MockTestException(Exception):
 def mock_service_manager() -> AsyncMock:
     """Mock service manager."""
     mock_manager = AsyncMock()
-    mock_manager.service_id_map = {"test_service_1": MagicMock()}
     return mock_manager
 
 
 @pytest.fixture
 def system_controller(
-    service_config: ServiceConfig,
-    user_config: UserConfig,
+    run: BenchmarkRun,
     mock_service_manager: AsyncMock,
 ) -> SystemController:
     """Create a SystemController instance with mocked dependencies."""
     mock_ui = AsyncMock()
     mock_comm = AsyncMock()
+    # get_address is synchronous — return a plain string so the
+    # ZMQRouterReplyClient constructor doesn't receive a coroutine.
+    mock_comm.get_address = MagicMock(return_value="ipc:///tmp/test-health-check")
 
     def mock_get_class(protocol, name):
         if protocol == "service_manager":
@@ -53,6 +52,10 @@ def system_controller(
         ),
         patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
         patch(
+            "aiperf.zmq.router_reply_client.ZMQRouterReplyClient",
+            return_value=AsyncMock(),
+        ),
+        patch(
             "aiperf.common.mixins.communication_mixin.plugins.get_class",
             side_effect=mock_get_class,
         ),
@@ -60,8 +63,7 @@ def system_controller(
         mock_proxy.return_value = AsyncMock()
 
         controller = SystemController(
-            user_config=user_config,
-            service_config=service_config,
+            run=run,
             service_id="test_controller",
         )
         # Mock the stop method to avoid actual shutdown
@@ -79,14 +81,3 @@ def mock_exception() -> MockTestException:
 def error_details(mock_exception: MockTestException) -> ErrorDetails:
     """Mock the error details."""
     return ErrorDetails.from_exception(mock_exception)
-
-
-@pytest.fixture
-def error_response(error_details: ErrorDetails) -> CommandErrorResponse:
-    """Mock the command responses."""
-    return CommandErrorResponse(
-        service_id="test_service_1",
-        command=CommandType.PROFILE_CONFIGURE,
-        command_id="test_command_id",
-        error=error_details,
-    )

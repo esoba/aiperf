@@ -1,0 +1,137 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# image is the operator container image configuration
+image:
+  # image.repository is the container registry and image name
+  repository: nvcr.io/nvidia/aiperf
+  # image.tag is the image tag (defaults to Chart.AppVersion)
+  tag: ""
+  # image.pullPolicy is the Kubernetes image pull policy
+  pullPolicy: IfNotPresent
+
+# imagePullSecrets is a list of pull secrets for private registries
+imagePullSecrets: []
+# - name: my-registry-secret
+
+# nameOverride overrides the chart name used in resource names
+nameOverride: ""
+# fullnameOverride overrides the full release name used in resource names
+fullnameOverride: ""
+
+# operator contains deployment settings for the operator container
+operator:
+  # operator.replicas is the number of operator replicas (only 1 recommended for leader election)
+  replicas: 1
+
+  # operator.resources is the CPU and memory requests and limits
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # operator.podAnnotations is a map of additional pod annotations
+  podAnnotations: {}
+
+  # operator.nodeSelector is a map of node selector labels
+  nodeSelector: {}
+
+  # operator.tolerations is a list of pod tolerations
+  tolerations: []
+
+  # operator.affinity is the pod affinity configuration
+  affinity: {}
+
+  # operator.env contains environment variables for the operator process
+  env:
+    # monitorInterval is the interval between status checks (seconds)
+    monitorInterval: "10.0"
+    # monitorInitialDelay is the initial delay before first status check (seconds)
+    monitorInitialDelay: "5.0"
+    # jobTimeoutSeconds is the job timeout in seconds (0 = no timeout)
+    jobTimeoutSeconds: "0"
+    # podRestartThreshold is the pod restart count before emitting warning events
+    podRestartThreshold: "3"
+    # resultsTtlDays is the results TTL in days
+    resultsTtlDays: "30"
+    # resultsMaxRetries is the max retries for fetching results from controller
+    resultsMaxRetries: "5"
+    # resultsRetryDelay is the delay between result fetch retries (seconds)
+    resultsRetryDelay: "2.0"
+    # endpointCheckTimeout is the endpoint health check timeout (seconds)
+    endpointCheckTimeout: "10.0"
+    # resultsCompressOnDisk stores downloaded result files as zstd on the PVC
+    resultsCompressOnDisk: "true"
+
+# resultsServer is the sidecar container that serves stored results via HTTP
+resultsServer:
+  # resultsServer.port is the HTTP port for the results API
+  port: 8081
+
+  # resultsServer.resources is the CPU and memory requests and limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# rbac controls RBAC resource creation.
+# A ClusterRole is required because the operator:
+# - Watches AIPerfJob CRDs across all namespaces (or a configured subset)
+# - Creates/manages leader election Leases in kube-system
+# - Creates JobSets, ConfigMaps, Roles, and RoleBindings in benchmark namespaces
+# To restrict scope, deploy with --namespace flag to limit the watch to a single namespace.
+rbac:
+  # rbac.create specifies whether to create ClusterRole and ClusterRoleBinding
+  create: true
+
+# storage is the results storage configuration
+storage:
+  # storage.enabled enables persistent storage for benchmark results
+  enabled: true
+
+  # storage.size is the PVC storage size
+  size: 1Ti
+
+  # storage.storageClassName is the storage class (empty = cluster default)
+  storageClassName: ""
+
+  # storage.mountPath is the mount path in the operator pod
+  mountPath: "/data"
+
+  # storage.accessMode is the PVC access mode.
+  # ReadWriteOnce (RWO) limits the PVC to a single node — this prevents running
+  # multiple operator replicas on different nodes. Use ReadWriteMany (RWX) with
+  # a shared filesystem (e.g. NFS, CephFS, EFS) for multi-replica HA deployments.
+  accessMode: "ReadWriteOnce"
+
+# serviceAccount controls service account creation
+serviceAccount:
+  # serviceAccount.create specifies whether to create a service account
+  create: true
+
+  # serviceAccount.name is the service account name (auto-generated if empty)
+  name: ""
+
+  # serviceAccount.annotations is a map of service account annotations
+  annotations: {}
+
+# benchmarkNamespace controls the namespace for running AIPerfJob workloads
+benchmarkNamespace:
+  # benchmarkNamespace.create specifies whether to create the benchmark namespace
+  create: true
+  # benchmarkNamespace.name is the benchmark namespace name
+  name: "aiperf-benchmarks"
+
+# defaults contains default settings for AIPerfJob resources
+defaults:
+  # defaults.image is the default container image for benchmark jobs
+  image: "nvcr.io/nvidia/aiperf:latest"
+
+  # defaults.imagePullPolicy is the default image pull policy for benchmark jobs
+  imagePullPolicy: "IfNotPresent"

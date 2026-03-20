@@ -8,10 +8,12 @@ import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import orjson
 
-from aiperf.common.config import ServiceConfig, UserConfig
+from aiperf.common.redact import REDACTED_VALUE
+from aiperf.config.config import BenchmarkConfig
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.strategies import ExecutionStrategy
 
@@ -42,19 +44,16 @@ class MultiRunOrchestrator:
     def __init__(
         self,
         base_dir: Path,
-        service_config: ServiceConfig,
     ):
         """Initialize MultiRunOrchestrator.
 
         Args:
             base_dir: Base directory for all artifacts
-            service_config: Service configuration for SystemController
         """
         self.base_dir = Path(base_dir)
-        self.service_config = service_config
 
     def execute(
-        self, base_config: UserConfig, strategy: ExecutionStrategy
+        self, base_config: BenchmarkConfig, strategy: ExecutionStrategy
     ) -> list[RunResult]:
         """Execute runs based on strategy.
 
@@ -113,7 +112,7 @@ class MultiRunOrchestrator:
         return results
 
     def _execute_single_run(
-        self, config: UserConfig, strategy: ExecutionStrategy, run_index: int
+        self, config: BenchmarkConfig, strategy: ExecutionStrategy, run_index: int
     ) -> RunResult:
         """Execute a single benchmark run in a subprocess.
 
@@ -128,6 +127,8 @@ class MultiRunOrchestrator:
         Returns:
             RunResult with success status and metrics or error
         """
+        from aiperf.config.benchmark import BenchmarkRun
+
         # Initialize label and artifacts_path BEFORE try block to ensure they're always defined
         # This prevents UnboundLocalError in the except block if any operation fails
         label = None
@@ -140,28 +141,25 @@ class MultiRunOrchestrator:
             label = strategy.get_run_label(run_index)
 
             config = config.model_copy(deep=True)
-            config.output.artifact_directory = artifacts_path
+            config.artifacts.dir = artifacts_path
 
-            # Serialize configs to JSON
-            # Use exclude_defaults=True to avoid serializing fields that weren't explicitly set
-            # This prevents validation errors on deserialization for fields with conditional validators
-            config_data = {
-                "user_config": config.model_dump(
-                    mode="json",
-                    exclude_defaults=True,
-                    exclude_none=True,
-                    context={"include_secrets": True},
-                ),
-                "service_config": self.service_config.model_dump(
-                    mode="json", exclude_defaults=True, exclude_none=True
-                ),
-            }
+            # Build a BenchmarkRun for subprocess serialization
+            run = BenchmarkRun(
+                benchmark_id=uuid4().hex,
+                cfg=config,
+                artifact_dir=artifacts_path,
+            )
 
-            # Write config with secrets for subprocess to read.
+            # Serialize config to JSON (with secrets for subprocess to read)
             # Overwritten with redacted version after the subprocess finishes.
             config_file = artifacts_path / "run_config.json"
             with open(config_file, "wb") as f:
-                f.write(orjson.dumps(config_data, option=orjson.OPT_INDENT_2))
+                f.write(
+                    orjson.dumps(
+                        run.model_dump(mode="json", exclude_none=True),
+                        option=orjson.OPT_INDENT_2,
+                    )
+                )
 
             # Run the benchmark in a subprocess using the dedicated runner module
             # The runner loads the config and calls _run_single_benchmark()
@@ -184,16 +182,13 @@ class MultiRunOrchestrator:
             )
 
             # Overwrite config file with redacted version so secrets don't persist in artifacts
-            redacted_config_data = {
-                "user_config": config.model_dump(
-                    mode="json", exclude_defaults=True, exclude_none=True
-                ),
-                "service_config": self.service_config.model_dump(
-                    mode="json", exclude_defaults=True, exclude_none=True
-                ),
-            }
+            redacted = run.model_dump(mode="json", exclude_none=True)
+            if "cfg" in redacted and "endpoint" in redacted["cfg"]:
+                endpoint = redacted["cfg"]["endpoint"]
+                if "api_key" in endpoint and endpoint["api_key"] is not None:
+                    endpoint["api_key"] = REDACTED_VALUE
             with open(config_file, "wb") as f:
-                f.write(orjson.dumps(redacted_config_data, option=orjson.OPT_INDENT_2))
+                f.write(orjson.dumps(redacted, option=orjson.OPT_INDENT_2))
 
             if result.returncode != 0:
                 error_msg = f"Benchmark failed with exit code {result.returncode}"
@@ -290,17 +285,26 @@ class MultiRunOrchestrator:
         """
         from aiperf.common.models.export_models import JsonMetricResult
 
-        # Read the profile export JSON file
+        # Read the profile export JSON file (supports zstd-compressed variant)
         json_file = artifacts_path / "profile_export_aiperf.json"
+        zst_file = artifacts_path / "profile_export_aiperf.json.zst"
 
-        if not json_file.exists():
+        if zst_file.exists():
+            json_file = zst_file
+        elif not json_file.exists():
             logger.warning(f"Profile export file not found: {json_file}")
             return {}
 
         try:
             # Load JSON as dict directly
-            with open(json_file, "rb") as f:
-                data = orjson.loads(f.read())
+            raw = json_file.read_bytes()
+            if json_file.suffix == ".zst":
+                import io
+
+                import zstandard
+
+                raw = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(raw)).read()
+            data = orjson.loads(raw)
 
             # Extract metrics - keep the structure intact, don't flatten
             metrics = {}

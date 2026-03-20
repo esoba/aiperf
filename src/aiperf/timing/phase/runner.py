@@ -127,6 +127,7 @@ class PhaseRunner(TaskManagerMixin):
         )
         self._credit_issuer = CreditIssuer(
             phase=self._config.phase,
+            exclude_from_results=self._config.exclude_from_results,
             stop_checker=self._stop_checker,
             progress=self._progress,
             concurrency_manager=self._concurrency_manager,

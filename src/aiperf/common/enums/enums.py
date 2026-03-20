@@ -74,26 +74,34 @@ class CommAddress(CaseInsensitiveStrEnum):
     RAW_INFERENCE_PROXY_BACKEND = "raw_inference_proxy_backend"
     """Backend address for the InferenceParser to receive raw inference messages from Workers."""
 
+    CONTROL = "control"
+    """Address for direct DEALER/ROUTER control channel communication with the controller."""
+
 
 class CommandType(CaseInsensitiveStrEnum):
-    REALTIME_METRICS = "realtime_metrics"
     PROCESS_RECORDS = "process_records"
     PROFILE_CANCEL = "profile_cancel"
     PROFILE_COMPLETE = "profile_complete"
     PROFILE_CONFIGURE = "profile_configure"
     PROFILE_START = "profile_start"
-    REGISTER_SERVICE = "register_service"
+    REALTIME_METRICS = "realtime_metrics"
     SHUTDOWN = "shutdown"
     SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
 
 
-class CommandResponseStatus(CaseInsensitiveStrEnum):
-    ACKNOWLEDGED = "acknowledged"
-    FAILURE = "failure"
-    SUCCESS = "success"
-    UNHANDLED = "unhandled"  # The command was received but not handled by any hook
+class CommunicationType(CaseInsensitiveStrEnum):
+    """Type of inter-process communication transport."""
+
+    IPC = "ipc"
+    """Unix domain sockets (single machine)."""
+
+    TCP = "tcp"
+    """TCP sockets (multi-machine)."""
+
+    DUAL = "dual"
+    """Dual-bind: IPC for co-located services, TCP for remote workers (Kubernetes)."""
 
 
 class ConversationContextMode(CaseInsensitiveStrEnum):
@@ -139,17 +147,85 @@ class ConnectionReuseStrategy(CaseInsensitiveStrEnum):
     """Connection persists across turns of a multi-turn conversation, closed on final turn (enables sticky load balancing)"""
 
 
-class CreditPhase(CaseInsensitiveStrEnum):
-    """The type of credit phase. This is used to identify which phase of the
-    benchmark the credit is being used in, for tracking and reporting purposes."""
+class ContentType(CaseInsensitiveStrEnum):
+    """Defines the semantic type for synthetic text content."""
 
-    WARMUP = "warmup"
-    """The credit phase while the warmup is active. This is used to warm up the model and
-    ensure that the model is ready to be profiled."""
+    RANDOM_TOKENS = "random_tokens"
+    """Generate random token sequences."""
 
-    PROFILING = "profiling"
-    """The credit phase while profiling is active. This is the primary phase of the
-    benchmark, and what is used to calculate the final results."""
+    SYSTEM_PROMPT = "system_prompt"
+    """Generate system prompt style content."""
+
+    CONTEXT = "context"
+    """Generate contextual information."""
+
+    INSTRUCTION = "instruction"
+    """Generate instruction-style content."""
+
+    QUESTION = "question"
+    """Generate question-style content."""
+
+
+CreditPhase = str
+"""Type alias for credit phase names. Phases are arbitrary strings (e.g. 'warmup', 'main', 'cooldown')."""
+
+
+class DatasetFormat(CaseInsensitiveStrEnum):
+    """Defines the format of file-based datasets."""
+
+    SINGLE_TURN = "single_turn"
+    """Simple prompt-response pairs."""
+
+    MULTI_TURN = "multi_turn"
+    """Conversational data with multiple turns."""
+
+    MOONCAKE_TRACE = "mooncake_trace"
+    """Mooncake production trace format."""
+
+    RANDOM_POOL = "random_pool"
+    """Treat file as a pool for random sampling."""
+
+
+class DatasetType(CaseInsensitiveStrEnum):
+    """Defines the source type for benchmark datasets."""
+
+    SYNTHETIC = "synthetic"
+    """Generate synthetic prompts programmatically."""
+
+    FILE = "file"
+    """Load prompts from a local file."""
+
+    PUBLIC = "public"
+    """Use a well-known public dataset."""
+
+    COMPOSED = "composed"
+    """Combine file-based data with synthetic augmentation."""
+
+
+class SweepType(CaseInsensitiveStrEnum):
+    """Defines the sweep strategy for parameter exploration."""
+
+    GRID = "grid"
+    """All combinations of variable values (Cartesian product)."""
+
+    SCENARIOS = "scenarios"
+    """Hand-picked configurations merged with base."""
+
+    SEQUENTIAL = "sequential"
+    """Ordered parameter sets applied one at a time."""
+
+
+class ExportFormat(CaseInsensitiveStrEnum):
+    """Defines the file format for record-level exports."""
+
+    JSON = "json"
+    """JSON format."""
+
+    JSONL = "jsonl"
+    """JSON Lines format (one JSON object per line)."""
+
+    CSV = "csv"
+    """Comma-separated values format."""
 
 
 class ExportLevel(CaseInsensitiveStrEnum):
@@ -195,6 +271,19 @@ class GPUTelemetryMode(CaseInsensitiveStrEnum):
 
     SUMMARY = "summary"
     REALTIME_DASHBOARD = "realtime_dashboard"
+
+
+class GpuTelemetryType(CaseInsensitiveStrEnum):
+    """Defines the type of GPU telemetry source."""
+
+    DASHBOARD = "dashboard"
+    """Built-in dashboard metrics collection."""
+
+    DCGM = "dcgm"
+    """NVIDIA DCGM (Data Center GPU Manager) integration."""
+
+    CSV = "csv"
+    """Export GPU metrics to CSV file."""
 
 
 class ImageFormat(CaseInsensitiveStrEnum):
@@ -254,9 +343,8 @@ class MessageType(CaseInsensitiveStrEnum):
     """
 
     ALL_RECORDS_RECEIVED = "all_records_received"
+    BENCHMARK_COMPLETE = "benchmark_complete"
     CANCEL_CREDITS = "cancel_credits"
-    COMMAND = "command"
-    COMMAND_RESPONSE = "command_response"
     CONNECTION_PROBE = "connection_probe"
     CONVERSATION_REQUEST = "conversation_request"
     CONVERSATION_RESPONSE = "conversation_response"
@@ -269,6 +357,7 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
     CREDITS_COMPLETE = "credits_complete"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
+    DATASET_DOWNLOADED_NOTIFICATION = "dataset_downloaded_notification"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
     INFERENCE_RESULTS = "inference_results"
@@ -280,8 +369,10 @@ class MessageType(CaseInsensitiveStrEnum):
     PROCESS_SERVER_METRICS_RESULT = "process_server_metrics_result"
     PROFILE_PROGRESS = "profile_progress"
     PROFILE_RESULTS = "profile_results"
+    MEMORY_REPORT = "memory_report"
     REALTIME_METRICS = "realtime_metrics"
     REALTIME_TELEMETRY_METRICS = "realtime_telemetry_metrics"
+    REALTIME_SERVER_METRICS = "realtime_server_metrics"
     REGISTRATION = "registration"
     SERVICE_ERROR = "service_error"
     STATUS = "status"
@@ -301,6 +392,19 @@ class ModelSelectionStrategy(CaseInsensitiveStrEnum):
 
     RANDOM = "random"
     """Randomly select a model for each prompt using uniform distribution."""
+
+    WEIGHTED = "weighted"
+    """Select models based on configured weights. Each model's weight determines its selection probability."""
+
+
+class OslMode(CaseInsensitiveStrEnum):
+    """Defines how output sequence length is handled in composed datasets."""
+
+    FILL = "fill"
+    """Only apply OSL if the source record lacks it."""
+
+    OVERRIDE = "override"
+    """Always use OSL from augmentation config."""
 
 
 class PrometheusMetricType(CaseInsensitiveStrEnum):
@@ -357,6 +461,31 @@ class PromptSource(CaseInsensitiveStrEnum):
     SYNTHETIC = "synthetic"
     FILE = "file"
     PAYLOAD = "payload"
+
+
+class PublicDatasetType(CaseInsensitiveStrEnum):
+    """Public datasets available for benchmarking."""
+
+    SHAREGPT = "sharegpt"
+    """ShareGPT dataset from HuggingFace. Multi-turn conversational dataset with user/assistant exchanges."""
+
+
+class ServerMetricsDiscoveryMode(CaseInsensitiveStrEnum):
+    """Mode for discovering server metrics endpoints in distributed environments.
+
+    Controls how AIPerf discovers Prometheus /metrics endpoints for server metrics collection.
+    """
+
+    AUTO = "auto"
+    """Automatically detect environment and use appropriate discovery method.
+    Tries Kubernetes first (if running in-cluster), then falls back to manual configuration."""
+
+    KUBERNETES = "kubernetes"
+    """Use Kubernetes API to discover pods with prometheus.io/scrape annotations
+    or nvidia.com/metrics-enabled labels."""
+
+    DISABLED = "disabled"
+    """Disable automatic discovery. Only use explicitly provided URLs."""
 
 
 class ServerMetricsFormat(CaseInsensitiveStrEnum):
@@ -421,6 +550,16 @@ class SSEFieldType(CaseInsensitiveStrEnum):
     ID = "id"
     RETRY = "retry"
     COMMENT = "comment"
+
+
+class SummaryFormat(CaseInsensitiveStrEnum):
+    """Defines the file format for summary exports."""
+
+    JSON = "json"
+    """JSON format for summaries."""
+
+    YAML = "yaml"
+    """YAML format for summaries."""
 
 
 class SystemState(CaseInsensitiveStrEnum):

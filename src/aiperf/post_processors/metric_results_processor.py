@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Callable
-from typing import Any
+from __future__ import annotations
 
-from aiperf.common.config import UserConfig
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
 from aiperf.common.enums import (
     MetricDictValueTypeT,
     MetricFlags,
@@ -22,6 +23,9 @@ from aiperf.metrics.metric_dicts import MetricArray, MetricResultsDict
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
+
 
 class MetricResultsProcessor(BaseMetricsProcessor):
     """Processor for metric results.
@@ -30,8 +34,8 @@ class MetricResultsProcessor(BaseMetricsProcessor):
     It is responsible for processing the results and returning them to the RecordsManager, as well as summarizing the results.
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any):
-        super().__init__(user_config=user_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs: Any):
+        super().__init__(run=run, **kwargs)
         # For derived metrics, we don't care about splitting up the error metrics
         # Note: _setup_metrics returns metrics in dependency order, which includes
         # non-derived dependencies. We filter to only include actual derived metrics.

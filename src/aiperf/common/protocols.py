@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
     from typing import Any
 
-    from aiperf.common.config import ServiceConfig, UserConfig
     from aiperf.common.enums import LifecycleState
     from aiperf.common.models import (
         MessageCallbackMapT,
@@ -21,6 +20,7 @@ if TYPE_CHECKING:
         MessageTypeT,
     )
     from aiperf.common.types import CommAddressType, ServiceTypeT
+    from aiperf.config import BenchmarkRun
     from aiperf.plugin.enums import CommClientType
 
 
@@ -136,6 +136,7 @@ class PullClientProtocol(CommunicationClientProtocol, Protocol):
 @runtime_checkable
 class PushClientProtocol(CommunicationClientProtocol, Protocol):
     async def push(self, message: MessageT) -> None: ...
+    async def push_raw(self, data: bytes) -> None: ...
 
 
 @runtime_checkable
@@ -145,11 +146,15 @@ class ReplyClientProtocol(CommunicationClientProtocol, Protocol):
         service_id: str,
         message_type: MessageTypeT,
         handler: Callable[[MessageT], Coroutine[Any, Any, MessageOutputT | None]],
+        *,
+        fire_and_forget: bool = False,
     ) -> None: ...
 
 
 @runtime_checkable
 class RequestClientProtocol(CommunicationClientProtocol, Protocol):
+    async def send(self, message: MessageT) -> None: ...
+
     async def request(
         self,
         message: MessageT,
@@ -315,6 +320,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
     ) -> ReplyClientProtocol:
         """Create a REPLY client for the given address, which will be automatically
         started and stopped with the CommunicationProtocol instance."""
@@ -328,7 +334,15 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         additional_bind_address: str | None = None,
     ) -> StreamingRouterClientProtocol:
         """Create a STREAMING_ROUTER client for the given address, which will be automatically
-        started and stopped with the CommunicationProtocol instance."""
+        started and stopped with the CommunicationProtocol instance.
+
+        Args:
+            address: The address to bind or connect to.
+            bind: Whether to bind (True) or connect (False) the socket.
+            socket_ops: Additional socket options to set.
+            additional_bind_address: Optional second address to bind to for dual-bind mode
+                (e.g., IPC + TCP in Kubernetes). Only used when bind=True.
+        """
         ...
 
     def create_streaming_dealer_client(
@@ -364,8 +378,7 @@ class ServiceProtocol(MessageBusClientProtocol, Protocol):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ) -> None: ...

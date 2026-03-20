@@ -14,7 +14,6 @@ Key responsibilities:
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 from aiperf.common.enums import CreditPhase
@@ -53,6 +52,7 @@ class CreditIssuer:
         self,
         *,
         phase: CreditPhase,
+        exclude_from_results: bool,
         stop_checker: StopConditionChecker,
         progress: PhaseProgressTracker,
         concurrency_manager: ConcurrencyManager,
@@ -64,7 +64,8 @@ class CreditIssuer:
         """Initialize credit issuer.
 
         Args:
-            phase: Phase enum (WARMUP or PROFILING).
+            phase: Phase name (e.g. 'warmup', 'main').
+            exclude_from_results: Whether this phase is excluded from results.
             stop_checker: Evaluates stop conditions (can_send_any_turn, can_start_new_session).
             progress: Tracks credit progress (increment_sent, freeze_sent_counts).
             concurrency_manager: Manages concurrency slots (session + prefill).
@@ -75,6 +76,7 @@ class CreditIssuer:
                 balancing. If None, url_index will be None in credits.
         """
         self._phase = phase
+        self._exclude_from_results = exclude_from_results
         self._stop_checker = stop_checker
         self._progress = progress
         self._concurrency_manager = concurrency_manager
@@ -201,11 +203,9 @@ class CreditIssuer:
         credit_index, is_final_credit = self._progress.increment_sent(turn)
 
         cancel_after_ns = self._cancellation_policy.next_cancellation_delay_ns(
-            turn, self._phase
+            turn, self._phase, exclude_from_results=self._exclude_from_results
         )
-        issued_at_ns = self._lifecycle.started_at_ns + (
-            time.perf_counter_ns() - self._lifecycle.started_at_perf_ns
-        )
+        issued_at_ns = self._lifecycle.clock.now_ns()
 
         # Get URL index from strategy (for multi-URL load balancing)
         # Only advance the round-robin on the first turn of a conversation.

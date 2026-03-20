@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 
@@ -70,10 +69,7 @@ def mock_lifecycle():
     """Mock phase lifecycle."""
     mock = MagicMock()
     mock.time_left_in_seconds = MagicMock(return_value=None)
-    mock.phase_start_ns = 0
-    # CreditIssuer uses these to calculate issued_at_ns timestamps
-    mock.started_at_ns = time.time_ns()
-    mock.started_at_perf_ns = time.perf_counter_ns()
+    mock.clock.now_ns = MagicMock(side_effect=time.time_ns)
     return mock
 
 
@@ -88,7 +84,8 @@ def credit_issuer(
 ):
     """Create CreditIssuer with all mocked dependencies."""
     return CreditIssuer(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
+        exclude_from_results=False,
         stop_checker=mock_stop_checker,
         progress=mock_progress,
         concurrency_manager=mock_concurrency,
@@ -157,7 +154,7 @@ class TestBasicCreditIssuance:
 
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.id == 42
-        assert sent_credit.phase == CreditPhase.PROFILING
+        assert sent_credit.phase == "profiling"
         assert sent_credit.conversation_id == "test-conv"
         assert sent_credit.x_correlation_id == "corr-test-conv"
         assert sent_credit.turn_index == 1
@@ -219,9 +216,7 @@ class TestSlotAcquisitionFailures:
         result = await credit_issuer.issue_credit(turn)
 
         assert result is False
-        mock_concurrency.release_session_slot.assert_called_once_with(
-            CreditPhase.PROFILING
-        )
+        mock_concurrency.release_session_slot.assert_called_once_with("profiling")
         mock_router.send_credit.assert_not_called()
 
     async def test_subsequent_turn_returns_false_when_prefill_fails(
@@ -354,7 +349,7 @@ class TestCancellationPolicy:
         await credit_issuer.issue_credit(turn)
 
         mock_cancellation.next_cancellation_delay_ns.assert_called_once_with(
-            turn, CreditPhase.PROFILING
+            turn, "profiling", exclude_from_results=False
         )
 
 
@@ -387,7 +382,8 @@ class TestAtomicCreditNumbering:
         progress.freeze_sent_counts = MagicMock()
 
         issuer = CreditIssuer(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
+            exclude_from_results=False,
             stop_checker=mock_stop_checker,
             progress=progress,
             concurrency_manager=mock_concurrency,
@@ -437,7 +433,8 @@ class TestEdgeCases:
     ):
         """CreditIssuer should work with WARMUP phase."""
         issuer = CreditIssuer(
-            phase=CreditPhase.WARMUP,
+            phase="warmup",
+            exclude_from_results=True,
             stop_checker=mock_stop_checker,
             progress=mock_progress,
             concurrency_manager=mock_concurrency,
@@ -450,7 +447,7 @@ class TestEdgeCases:
         await issuer.issue_credit(turn)
 
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
-        assert sent_credit.phase == CreditPhase.WARMUP
+        assert sent_credit.phase == "warmup"
 
     async def test_large_conversation_with_many_turns(self, credit_issuer, mock_router):
         """Should handle conversations with many turns."""
@@ -560,7 +557,8 @@ class TestURLSelectionStrategy:
         mock_url_strategy.next_url_index.return_value = 2
 
         issuer = CreditIssuer(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
+            exclude_from_results=False,
             stop_checker=mock_stop_checker,
             progress=mock_progress,
             concurrency_manager=mock_concurrency,
@@ -592,7 +590,8 @@ class TestURLSelectionStrategy:
         mock_url_strategy.next_url_index.return_value = 5  # Should NOT be used
 
         issuer = CreditIssuer(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
+            exclude_from_results=False,
             stop_checker=mock_stop_checker,
             progress=mock_progress,
             concurrency_manager=mock_concurrency,
@@ -636,7 +635,8 @@ class TestURLSelectionStrategy:
         mock_url_strategy.next_url_index.side_effect = next_url
 
         issuer = CreditIssuer(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
+            exclude_from_results=False,
             stop_checker=mock_stop_checker,
             progress=mock_progress,
             concurrency_manager=mock_concurrency,

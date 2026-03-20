@@ -15,14 +15,18 @@ Includes:
 - StickyCreditRouter: Main router class
 """
 
+from __future__ import annotations
+
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from aiperf.common.config import ServiceConfig
-from aiperf.common.config.zmq_config import ZMQDualBindConfig
+from aiperf.config.zmq import ZMQDualBindConfig
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 from aiperf.common.enums import CommAddress
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.protocols import StreamingRouterClientProtocol
@@ -30,6 +34,8 @@ from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
     FirstToken,
+    TimePing,
+    TimePong,
     WorkerReady,
     WorkerShutdown,
     WorkerToRouterMessage,
@@ -186,17 +192,17 @@ class StickyCreditRouter(CommunicationMixin):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
+        run: BenchmarkRun,
         service_id: str,
         **kwargs,
     ) -> None:
-        super().__init__(service_config=service_config, service_id=service_id, **kwargs)
+        super().__init__(run=run, service_id=service_id, **kwargs)
 
         # For dual-bind mode (Kubernetes), also bind to TCP for remote workers.
         # Controller services use IPC (fast, same-pod) but workers connect via TCP.
         # Only bind to TCP if we're in controller mode (controller_host not set).
         additional_bind_address: str | None = None
-        comm_config = service_config.comm_config
+        comm_config = self.run.resolved.comm_config or self.run.cfg.comm_config
         if (
             isinstance(comm_config, ZMQDualBindConfig)
             and not comm_config.controller_host
@@ -394,6 +400,11 @@ class StickyCreditRouter(CommunicationMixin):
                 if self._on_first_token_callback:
                     # Forward TTFT to orchestrator so it can release the prefill slot.
                     await self._on_first_token_callback(message)
+            case TimePing():
+                await self._router_client.send_to(
+                    worker_id,
+                    TimePong(sequence=message.sequence, sent_at_ns=message.sent_at_ns),
+                )
             case WorkerReady():
                 self._register_worker(worker_id)
             case WorkerShutdown():

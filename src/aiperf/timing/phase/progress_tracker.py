@@ -184,6 +184,7 @@ class PhaseProgressTracker:
         """
         return CreditPhaseStats(
             phase=self._config.phase,
+            exclude_from_results=self._config.exclude_from_results,
             # Timestamps from lifecycle
             start_ns=lifecycle.started_at_ns,
             sent_end_ns=lifecycle.sending_complete_at_ns,

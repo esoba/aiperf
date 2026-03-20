@@ -1,11 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
 import time
+from typing import TYPE_CHECKING
 
 from pydantic import ConfigDict, Field
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.config import ServiceConfig
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, MessageType
 from aiperf.common.hooks import AIPerfHook, on_message, provides_hooks
@@ -21,6 +24,9 @@ from aiperf.credit.messages import (
     CreditPhaseSendingCompleteMessage,
     CreditPhaseStartMessage,
 )
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
 
@@ -130,32 +136,27 @@ class ProgressTracker:
 
 @provides_hooks(
     AIPerfHook.ON_RECORDS_PROGRESS,
-    AIPerfHook.ON_PROFILING_PROGRESS,
-    AIPerfHook.ON_WARMUP_PROGRESS,
+    AIPerfHook.ON_PHASE_PROGRESS,
 )
 class ProgressTrackerMixin(MessageBusClientMixin):
     """A progress tracker that tracks the progress of the entire benchmark suite."""
 
-    def __init__(self, service_config: ServiceConfig, **kwargs):
-        super().__init__(service_config=service_config, **kwargs)
+    def __init__(self, run: BenchmarkRun, **kwargs):
+        super().__init__(run=run, **kwargs)
         self._progress_tracker = ProgressTracker()
 
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(self, message: CreditPhaseStartMessage):
         """Update the progress from a credit phase start message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
         await self._update_records_stats(progress, message.request_ns)
 
     @on_message(MessageType.CREDIT_PHASE_PROGRESS)
     async def _on_credit_phase_progress(self, message: CreditPhaseProgressMessage):
         """Update the progress from a credit phase progress message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
     async def _on_credit_phase_sending_complete(
@@ -163,17 +164,13 @@ class ProgressTrackerMixin(MessageBusClientMixin):
     ):
         """Update the progress from a credit phase sending complete message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
     async def _on_credit_phase_complete(self, message: CreditPhaseCompleteMessage):
         """Update the progress from a credit phase complete message."""
         progress = self._progress_tracker.update_requests_stats(message.stats)
-        await self._update_requests_stats(
-            message.stats.phase, progress, message.stats.start_ns
-        )
+        await self._update_requests_stats(progress, message.stats.start_ns)
         await self._update_records_stats(progress, message.request_ns)
 
     @on_message(MessageType.PROCESSING_STATS)
@@ -189,23 +186,14 @@ class ProgressTrackerMixin(MessageBusClientMixin):
 
     async def _update_requests_stats(
         self,
-        phase: CreditPhase,
         phase_progress: CombinedPhaseStats,
         request_ns: int | None,
     ):
         """Update the requests stats based on the TimingManager stats."""
-        if phase == CreditPhase.WARMUP:
-            await self.run_hooks(
-                AIPerfHook.ON_WARMUP_PROGRESS,
-                warmup_stats=phase_progress,
-            )
-        elif phase == CreditPhase.PROFILING:
-            await self.run_hooks(
-                AIPerfHook.ON_PROFILING_PROGRESS,
-                profiling_stats=phase_progress,
-            )
-        else:
-            self.warning(f"Unsupported phase: {phase}")
+        await self.run_hooks(
+            AIPerfHook.ON_PHASE_PROGRESS,
+            phase_stats=phase_progress,
+        )
 
     async def _update_records_stats(
         self, phase_progress: CombinedPhaseStats, request_ns: int | None

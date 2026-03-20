@@ -6,7 +6,6 @@ import pytest
 from pydantic import ValidationError
 
 from aiperf.common.constants import MILLIS_PER_SECOND
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
@@ -61,7 +60,7 @@ def make_strategy(
     )
     src = ConversationSource(ds, sampler)
     cfg = CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
+        phase="profiling",
         timing_mode=TimingMode.FIXED_SCHEDULE,
         total_expected_requests=len(schedule),
         auto_offset_timestamps=auto_offset,
@@ -173,7 +172,7 @@ class TestFixedScheduleExecutePhase:
         sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
         src = ConversationSource(ds, sampler)
         cfg = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             timing_mode=TimingMode.FIXED_SCHEDULE,
             total_expected_requests=1,
             auto_offset_timestamps=True,
@@ -199,7 +198,7 @@ class TestFixedScheduleCreditReturn:
         await strategy.setup_phase()
         credit = Credit(
             id=1,
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             conversation_id="c1",
             x_correlation_id="corr-c1",
             turn_index=1,
@@ -217,7 +216,7 @@ class TestFixedScheduleCreditReturn:
         await strategy.setup_phase()
         credit = Credit(
             id=1,
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             conversation_id="c1",
             x_correlation_id="corr-c1",
             turn_index=0,
@@ -273,7 +272,7 @@ class TestFixedScheduleEdgeCases:
         sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
         src = ConversationSource(ds, sampler)
         cfg = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             timing_mode=TimingMode.FIXED_SCHEDULE,
             total_expected_requests=1,
             auto_offset_timestamps=True,
@@ -308,7 +307,7 @@ class TestFixedScheduleEdgeCases:
         sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
         src = ConversationSource(ds, sampler)
         cfg = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             timing_mode=TimingMode.FIXED_SCHEDULE,
             total_expected_requests=1,
             auto_offset_timestamps=True,

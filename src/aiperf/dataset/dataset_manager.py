@@ -10,12 +10,11 @@ from typing import TYPE_CHECKING
 import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import OutputDefaults, ServiceConfig, UserConfig
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
     ConversationContextMode,
-    CreditPhase,
     MessageType,
 )
 from aiperf.common.environment import Environment
@@ -26,7 +25,6 @@ from aiperf.common.messages import (
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
     DatasetConfiguredNotification,
-    ProfileConfigureCommand,
 )
 from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import (
@@ -34,11 +32,11 @@ from aiperf.common.models import (
     DatasetClientMetadata,
     DatasetMetadata,
     InputsFile,
-    ModelEndpointInfo,
     RequestInfo,
     SessionPayloads,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.config import OutputDefaults
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
@@ -48,6 +46,7 @@ from aiperf.plugin.enums import (
 )
 
 if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
     from aiperf.dataset.protocols import (
         DatasetBackingStoreProtocol,
         DatasetClientStoreProtocol,
@@ -70,20 +69,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             reply_client_address=CommAddress.DATASET_MANAGER_PROXY_BACKEND,
             reply_client_bind=False,
             **kwargs,
         )
-        self.user_config = user_config
         self.tokenizer: Tokenizer | None = None
         self.dataset: dict[
             str, Conversation
@@ -96,27 +92,33 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # This avoids creating large uncompressed files on the control plane.
         # WorkerPodManagers will download compressed files and decompress locally.
         self._compress_only = (
-            service_config.service_run_type == ServiceRunType.KUBERNETES
+            run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
         )
 
         BackingStoreClass = plugins.get_class(
             PluginType.DATASET_BACKING_STORE, DatasetBackingStoreType.MEMORY_MAP
         )
         self._backing_store: DatasetBackingStoreProtocol = BackingStoreClass(
-            benchmark_id=user_config.benchmark_id,
+            benchmark_id=self.run.cfg.artifacts.benchmark_id,
             compress_only=self._compress_only,
         )
         self._dataset_client: DatasetClientStoreProtocol | None = None
+        self._rebroadcast_task: asyncio.Task | None = None
         self._default_context_mode: ConversationContextMode | None = None
 
+    @on_command(CommandType.PROFILE_START)
+    async def _on_profile_start(self, message: Command) -> None:
+        """Stop rebroadcasting dataset notifications once profiling begins."""
+        if self._rebroadcast_task is not None:
+            self._rebroadcast_task.cancel()
+            self._rebroadcast_task = None
+
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the dataset."""
 
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
-            self.user_config.endpoint.type
+            self.run.cfg.endpoint.type
         )
         if endpoint_meta.tokenizes_input:
             self.info("Configuring tokenizer(s) for dataset manager")
@@ -172,32 +174,40 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _configure_tokenizer(self) -> None:
         """Configure the tokenizer for the dataset manager."""
-        model_name = self.user_config.endpoint.model_names[0]
-        tokenizer_config = self.user_config.tokenizer
-        tokenizer_name = tokenizer_config.get_tokenizer_name_for_model(model_name)
+        tokenizer_config = self.run.cfg.tokenizer
+        resolved_names = self.run.resolved.tokenizer_names
+        model_name = self.run.cfg.get_model_names()[0]
+
+        # Use pre-resolved name from resolver chain if available
+        if resolved_names and model_name in resolved_names:
+            tokenizer_name = resolved_names[model_name]
+            resolve_alias = False
+        else:
+            tokenizer_name = (
+                tokenizer_config.name if tokenizer_config else None
+            ) or model_name
+            resolve_alias = True
 
         # Let exceptions propagate - controller_utils will display the error panel
         self.tokenizer = await asyncio.to_thread(
             Tokenizer.from_pretrained,
             tokenizer_name,
-            trust_remote_code=tokenizer_config.trust_remote_code,
-            revision=tokenizer_config.revision,
-            resolve_alias=tokenizer_config.should_resolve_alias,
+            trust_remote_code=tokenizer_config.trust_remote_code
+            if tokenizer_config
+            else False,
+            revision=tokenizer_config.revision if tokenizer_config else "main",
+            resolve_alias=resolve_alias,
         )
 
-    def _generate_input_payloads(
-        self,
-        model_endpoint: ModelEndpointInfo,
-    ) -> InputsFile:
+    def _generate_input_payloads(self) -> InputsFile:
         """Generate input payloads from the dataset for use in the inputs.json file."""
+        config = self.run.cfg
         inputs = InputsFile()
 
-        EndpointClass = plugins.get_class(
-            PluginType.ENDPOINT, model_endpoint.endpoint.type
-        )
-        endpoint: EndpointProtocol = EndpointClass(model_endpoint=model_endpoint)
+        EndpointClass = plugins.get_class(PluginType.ENDPOINT, config.endpoint.type)
+        endpoint: EndpointProtocol = EndpointClass(run=self.run)
         self.debug(
-            lambda: f"Created endpoint protocol for {model_endpoint.endpoint.type}, "
+            lambda: f"Created endpoint protocol for {config.endpoint.type}, "
             f"class: {endpoint.__class__.__name__}",
         )
         session_payloads_map: dict[str, list] = {}
@@ -208,11 +218,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
             for i, turn in enumerate(conversation.turns):
                 request_info = RequestInfo(
-                    model_endpoint=model_endpoint,
+                    config=config,
                     turns=[turn],
                     turn_index=i,
                     credit_num=i,
-                    credit_phase=CreditPhase.PROFILING,
+                    credit_phase="profiling",
                     x_request_id="",
                     x_correlation_id="",
                     conversation_id=conversation.session_id,
@@ -234,9 +244,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
     async def _generate_inputs_json_file(self) -> None:
         """Generate inputs.json file in the artifact directory."""
-        file_path = (
-            self.user_config.output.artifact_directory / OutputDefaults.INPUTS_JSON_FILE
-        )
+        file_path = self.run.cfg.artifacts.dir / OutputDefaults.INPUTS_JSON_FILE
         temp_file_path = file_path.with_suffix(".tmp")
         self.info(f"Generating inputs.json file at {file_path.resolve()}")
 
@@ -244,8 +252,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             start_time = time.perf_counter()
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
-            model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
-            inputs = self._generate_input_payloads(model_endpoint)
+            inputs = self._generate_input_payloads()
 
             temp_file_path.write_bytes(
                 orjson.dumps(
@@ -279,7 +286,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         ComposerClass = plugins.get_class(
             PluginType.DATASET_COMPOSER, ComposerType.PUBLIC
         )
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        composer = ComposerClass(run=self.run, tokenizer=self.tokenizer)
         self._default_context_mode = composer.get_default_context_mode()
         return await composer.create_dataset_async()
 
@@ -287,7 +294,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         ComposerClass = plugins.get_class(
             PluginType.DATASET_COMPOSER, ComposerType.CUSTOM
         )
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        composer = ComposerClass(run=self.run, tokenizer=self.tokenizer)
         conversations = composer.create_dataset()
         self._default_context_mode = composer.get_default_context_mode()
         return conversations
@@ -296,7 +303,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         return "rankings" in endpoint_type.lower()
 
     def _load_synthetic_dataset(self) -> list[Conversation]:
-        endpoint_type = self.user_config.endpoint.type
+        endpoint_type = self.run.cfg.endpoint.type
 
         if self._is_rankings_endpoint(endpoint_type):
             composer_type = ComposerType.SYNTHETIC_RANKINGS
@@ -304,27 +311,24 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             composer_type = ComposerType.SYNTHETIC
 
         ComposerClass = plugins.get_class(PluginType.DATASET_COMPOSER, composer_type)
-        composer = ComposerClass(config=self.user_config, tokenizer=self.tokenizer)
+        composer = ComposerClass(run=self.run, tokenizer=self.tokenizer)
         conversations = composer.create_dataset()
         self._default_context_mode = composer.get_default_context_mode()
         return conversations
 
     async def _configure_dataset(self) -> None:
-        if self.user_config is None:
-            raise self._service_error("User config is required for dataset manager")
+        from aiperf.config.resolved import is_file_dataset, is_public_dataset
 
         self.dataset_configured.clear()
 
         self._default_context_mode = None
-        if self.user_config.input.public_dataset is not None:
+
+        # Get the default dataset config
+        dataset_config = self.run.cfg.get_default_dataset()
+
+        if is_public_dataset(dataset_config):
             conversations = await self._load_public_dataset()
-        elif (
-            self.user_config.input.custom_dataset_type is not None
-            or self.user_config.input.file is not None
-        ):
-            # Use CUSTOM composer if either:
-            # 1. custom_dataset_type is explicitly set, OR
-            # 2. input file is provided (composer will auto-infer type)
+        elif is_file_dataset(dataset_config):
             conversations = self._load_custom_dataset()
         else:
             conversations = self._load_synthetic_dataset()
@@ -350,15 +354,22 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # WorkerPodManager which provides local file paths. We still send mmap_metadata
         # which has the control plane paths (ignored by workers in Kubernetes mode).
         client_metadata: DatasetClientMetadata = mmap_metadata
-        if self.service_config.service_run_type == ServiceRunType.KUBERNETES:
+        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
             self.info(
                 "Kubernetes mode: workers will wait for DatasetDownloadedNotification "
                 "from WorkerPodManager before accessing dataset"
             )
 
+        from aiperf.config.resolved import (
+            conversations_have_timing_data,
+            get_sampling_strategy,
+        )
+
+        sampling_strategy = get_sampling_strategy(dataset_config)
         self.dataset_metadata = DatasetMetadata(
             conversations=[conversation.metadata() for conversation in conversations],
-            sampling_strategy=self.user_config.input.dataset_sampling_strategy,
+            sampling_strategy=sampling_strategy,
+            has_timing_data=conversations_have_timing_data(conversations),
             default_context_mode=self._default_context_mode,
         )
         self.info(
@@ -369,13 +380,26 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # Note: dataset_configured event is set in _configure_dataset_client_and_free_memory()
         # after the dataset client is initialized, to avoid a race condition where fallback
         # requests arrive before the client is ready.
-        await self.publish(
-            DatasetConfiguredNotification(
-                service_id=self.service_id,
-                metadata=self.dataset_metadata,
-                client_metadata=client_metadata,
-            )
+        notification = DatasetConfiguredNotification(
+            service_id=self.service_id,
+            metadata=self.dataset_metadata,
+            client_metadata=client_metadata,
         )
+        await self.publish(notification)
+        self._rebroadcast_task = asyncio.create_task(
+            self._rebroadcast_dataset_notification(notification)
+        )
+
+    async def _rebroadcast_dataset_notification(
+        self, notification: DatasetConfiguredNotification
+    ) -> None:
+        """Rebroadcast the dataset notification every second until profile_start."""
+        try:
+            while True:
+                await asyncio.sleep(1.0)
+                await self.publish(notification)
+        except asyncio.CancelledError:
+            pass
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(
@@ -474,6 +498,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
     @on_stop
     async def _cleanup(self) -> None:
         """Clean up the backing store, dataset client, and associated mmap files."""
+        if self._rebroadcast_task is not None:
+            self._rebroadcast_task.cancel()
+            self._rebroadcast_task = None
         if self._dataset_client is not None:
             await self._dataset_client.stop()
             self.debug("Dataset client cleanup complete")

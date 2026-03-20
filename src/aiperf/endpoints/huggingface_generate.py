@@ -22,7 +22,6 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
             raise ValueError("TGI endpoint supports a single turn per request.")
 
         turn = request_info.turns[0]
-        model_endpoint = request_info.model_endpoint
 
         inputs = " ".join(
             [content for text in turn.texts for content in text.contents if content]
@@ -32,8 +31,8 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
         if turn.max_tokens is not None:
             parameters["max_new_tokens"] = turn.max_tokens
 
-        if model_endpoint.endpoint.extra:
-            parameters.update(model_endpoint.endpoint.extra)
+        if request_info.config.endpoint.extra:
+            parameters.update(request_info.config.endpoint.extra)
 
         payload: dict[str, Any] = {
             "inputs": inputs,
@@ -50,7 +49,7 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
 
         Handles both streaming and non-streaming modes.
         """
-        if self.model_endpoint.endpoint.streaming:
+        if self.run.cfg.endpoint.streaming:
             return self._parse_streaming(response)
         return self._parse_non_streaming(response)
 

@@ -9,10 +9,10 @@ import zmq
 import zmq.asyncio
 from zmq import SocketType
 
-from aiperf.common.config import BaseZMQProxyConfig
 from aiperf.common.enums import CaseInsensitiveStrEnum
 from aiperf.common.hooks import background_task, on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
+from aiperf.config.zmq import BaseZMQProxyConfig
 from aiperf.zmq.zmq_base_client import BaseZMQClient
 
 
@@ -185,7 +185,9 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
                             lifecycle_id=self.proxy_id,
                         ) from exc
 
-            self.debug("Proxy Sockets Initialized Successfully")
+            self.info(
+                f"Proxy {self.proxy_id} initialized: frontend={self.config.frontend_address}, backend={self.config.backend_address}"
+            )
 
             if self.control_client:
                 self.debug(

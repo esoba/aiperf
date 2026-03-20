@@ -177,24 +177,22 @@ class TestZMQRouterReplyClientRequestHandling:
             assert sent_data[0] == b"client_id"
 
     @pytest.mark.asyncio
-    async def test_wait_for_response_handles_none_response(
+    async def test_wait_for_response_sends_error_on_none(
         self, router_test_helper, sample_message
     ):
-        """Test that _wait_for_response handles None response gracefully."""
+        """Test that _wait_for_response sends an ErrorMessage when handler returns None."""
         mock_socket = router_test_helper.setup_mock_socket()
 
         async with router_test_helper.create_client() as client:
-            # Create and set response future with None
             client._response_futures[sample_message.request_id] = asyncio.Future()
             client._response_futures[sample_message.request_id].set_result(None)
 
             routing_envelope = (b"client_id",)
 
-            # Wait for and send response
             await client._wait_for_response(sample_message.request_id, routing_envelope)
 
-            # Verify error message was sent
             mock_socket.send_multipart.assert_called_once()
+            assert sample_message.request_id not in client._response_futures
 
 
 class TestZMQRouterReplyClientBackgroundTask:

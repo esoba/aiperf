@@ -24,7 +24,7 @@ class MetricsCsvExporter(MetricsBaseExporter):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(exporter_config, **kwargs)
-        self._file_path = exporter_config.user_config.output.profile_export_csv_file
+        self._file_path = exporter_config.config.artifacts.profile_export_csv_file
         self._percentile_keys = _percentile_keys_from(STAT_KEYS)
         self.trace_or_debug(
             lambda: f"Initializing MetricsCsvExporter with config: {exporter_config}",

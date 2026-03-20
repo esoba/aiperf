@@ -44,9 +44,13 @@ Usage:
     ...         sample = self._rng.sample_positive_normal_integer(100, 10)
 """
 
+from __future__ import annotations
+
 import hashlib
 import math
 import random
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
@@ -119,7 +123,13 @@ class RandomGenerator:
         """Get the seed used to initialize this generator."""
         return self._seed
 
-    def integers(self, low: int, high: int | None = None, size=None, dtype=np.int64):
+    def integers(
+        self,
+        low: int,
+        high: int | None = None,
+        size: int | tuple[int, ...] | None = None,
+        dtype: type = np.int64,
+    ) -> Any:
         """Generate random integers from [low, high) using NumPy.
 
         Args:
@@ -133,7 +143,7 @@ class RandomGenerator:
         """
         return self._numpy_rng.integers(low, high, size=size, dtype=dtype)
 
-    def choice(self, seq):
+    def choice(self, seq: Sequence[Any]) -> Any:
         """Select random element from non-empty sequence.
 
         Args:
@@ -147,7 +157,7 @@ class RandomGenerator:
         """
         return self._python_rng.choice(seq)
 
-    def randrange(self, *args):
+    def randrange(self, *args: int) -> int:
         """Generate random integer from range (start, stop[, step]).
 
         Args:
@@ -185,7 +195,7 @@ class RandomGenerator:
         """
         return self._python_rng.uniform(a, b)
 
-    def choices(self, population, k: int):
+    def choices(self, population: Sequence[Any], k: int) -> list[Any]:
         """Select k elements with replacement.
 
         Args:
@@ -197,7 +207,7 @@ class RandomGenerator:
         """
         return self._python_rng.choices(population, k=k)
 
-    def sample(self, population, k: int):
+    def sample(self, population: Sequence[Any], k: int) -> list[Any]:
         """Select k unique elements without replacement.
 
         Args:
@@ -212,7 +222,13 @@ class RandomGenerator:
         """
         return self._python_rng.sample(population, k=k)
 
-    def numpy_choice(self, a, size=None, p=None, replace=True):
+    def numpy_choice(
+        self,
+        a: Any,
+        size: int | tuple[int, ...] | None = None,
+        p: np.ndarray | None = None,
+        replace: bool = True,
+    ) -> Any:
         """NumPy random choice from array.
 
         Args:
@@ -226,7 +242,12 @@ class RandomGenerator:
         """
         return self._numpy_rng.choice(a, size=size, p=p, replace=replace)
 
-    def normal(self, loc=0.0, scale=1.0, size=None):
+    def normal(
+        self,
+        loc: float = 0.0,
+        scale: float = 1.0,
+        size: int | tuple[int, ...] | None = None,
+    ) -> Any:
         """Draw samples from normal (Gaussian) distribution.
 
         Args:
@@ -340,6 +361,18 @@ class RandomGenerator:
                 interval = gammavariate(smoothness, 1.0 / (rate * smoothness))
         """
         return self._python_rng.gammavariate(alpha, beta)
+
+    def zipf(self, alpha: float) -> int:
+        """Generate Zipf-distributed random integer >= 1.
+
+        Args:
+            alpha: Exponent parameter (must be > 1). Higher values concentrate
+                   more probability on small ranks (value 1 dominates).
+
+        Returns:
+            Random positive integer from Zipf distribution.
+        """
+        return int(self._numpy_rng.zipf(alpha))
 
     def random(self) -> float:
         """Generate random float in [0.0, 1.0).

@@ -8,6 +8,7 @@ and made available to test functions in the same directory and subdirectories.
 """
 
 import asyncio
+import logging
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from io import BytesIO
@@ -19,7 +20,6 @@ import zmq.asyncio
 
 from aiperf.common import random_generator as rng
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import EndpointConfig, ServiceConfig, UserConfig
 from aiperf.common.messages import Message
 from aiperf.common.models import (
     Conversation,
@@ -34,11 +34,14 @@ from aiperf.common.models import (
 from aiperf.common.models.record_models import TokenCounts
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.exporters.exporter_config import ExporterConfig
-from aiperf.plugin.enums import CommunicationBackend, ServiceRunType
 from aiperf.plugin.plugins import _PluginRegistry as PluginRegistry
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.time_traveler import TimeTraveler
+
+# Suppress plugin override messages that leak through xdist worker stdout
+logging.getLogger("aiperf.plugin.plugins").setLevel(logging.WARNING)
 
 # Shared test constants for request/response records
 DEFAULT_START_TIME_NS = 1_000_000
@@ -57,13 +60,15 @@ def no_sleep(monkeypatch, request):
     Tests using time_traveler (or time_traveler_no_patch_sleep) need looptime
     to handle asyncio.sleep for virtual time advancement, so we skip patching.
     """
-    # Check if test uses time_traveler fixtures (which need looptime to work)
+    # Check if test uses time_traveler fixtures or looptime marker
+    # (which need looptime to handle asyncio.sleep for virtual time advancement)
     fixture_names = request.fixturenames
-    uses_time_traveler = (
+    uses_virtual_time = (
         "time_traveler" in fixture_names
         or "time_traveler_no_patch_sleep" in fixture_names
+        or request.node.get_closest_marker("looptime") is not None
     )
-    if not uses_time_traveler:
+    if not uses_virtual_time:
         monkeypatch.setattr("asyncio.sleep", lambda delay: _REAL_SLEEP(0))
     yield
 
@@ -167,8 +172,14 @@ def fake_tokenizer():
 
 @pytest.fixture
 def skip_service_registration():
-    """Patch BaseComponentService._register_service_on_start to do nothing."""
-    with patch.object(BaseComponentService, "_register_service_on_start", AsyncMock()):
+    """Mock the DEALER control client and skip registration."""
+    with (
+        patch(
+            "aiperf.zmq.streaming_dealer_client.ZMQStreamingDealerClient",
+            return_value=AsyncMock(),
+        ),
+        patch.object(BaseComponentService, "_register_until_ack", AsyncMock()),
+    ):
         yield
 
 
@@ -298,6 +309,17 @@ def reset_singleton_factories():
     SingletonMeta._instances.clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_service_registry():
+    """Reset the global ServiceRegistry singleton and service type caches between tests."""
+    yield
+    from aiperf.common.base_service import BaseService
+    from aiperf.common.service_registry import ServiceRegistry
+
+    ServiceRegistry.reset()
+    BaseService.reset_service_type_cache()
+
+
 @pytest.fixture
 def temporary_registry() -> Generator[PluginRegistry, None, None]:
     """Fixture for isolated plugin registry testing.
@@ -378,17 +400,42 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
 
 
 @pytest.fixture
-def user_config() -> UserConfig:
-    config = UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def config() -> AIPerfConfig:
+    """Minimal AIPerfConfig for testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+    )
+
+
+@pytest.fixture
+def run(config: AIPerfConfig) -> BenchmarkRun:
+    """Minimal BenchmarkRun wrapping the config fixture."""
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
+    )
+
+
+@pytest.fixture
+def user_config(config: AIPerfConfig) -> AIPerfConfig:
+    """Backwards-compatible alias for config fixture during migration."""
     return config
 
 
 @pytest.fixture
-def service_config() -> ServiceConfig:
-    return ServiceConfig(
-        service_run_type=ServiceRunType.MULTIPROCESSING,
-        comm_backend=CommunicationBackend.ZMQ_IPC,
-    )
+def service_config(config: AIPerfConfig) -> AIPerfConfig:
+    """Backwards-compatible alias for config fixture during migration."""
+    return config
 
 
 class MockPubClient:
@@ -518,26 +565,23 @@ def sample_conversations() -> dict[str, Conversation]:
 @pytest.fixture
 def sample_request_info() -> RequestInfo:
     """Create a sample RequestInfo for testing."""
-    from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
-    from aiperf.common.models.model_endpoint_info import (
-        EndpointInfo,
-        ModelEndpointInfo,
-        ModelInfo,
-        ModelListInfo,
+    from aiperf.config import BenchmarkConfig
+
+    config = BenchmarkConfig(
+        models=["test-model"],
+        endpoint={"type": "chat", "urls": ["http://localhost:8000/v1/test"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
     )
-    from aiperf.plugin.enums import EndpointType
 
     return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name="test-model")],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        ),
+        config=config,
         turns=[
             Turn(
                 texts=[Text(contents=["test prompt"])], role="user", model="test-model"
@@ -545,7 +589,7 @@ def sample_request_info() -> RequestInfo:
         ],
         turn_index=0,
         credit_num=0,
-        credit_phase=CreditPhase.PROFILING,
+        credit_phase="profiling",
         x_request_id="test-request-id",
         x_correlation_id="test-correlation-id",
         conversation_id="test-conversation",
@@ -716,16 +760,14 @@ def tmp_artifact_dir(tmp_path: Path) -> Path:
 
 def create_exporter_config(
     profile_results,
-    user_config,
+    config,
     telemetry_results=None,
     server_metrics_results=None,
-    verbose=True,
 ):
     """Helper to create ExporterConfig with common defaults."""
     return ExporterConfig(
         results=profile_results,
-        user_config=user_config,
-        service_config=ServiceConfig(verbose=verbose),
+        config=config,
         telemetry_results=telemetry_results,
         server_metrics_results=server_metrics_results,
     )

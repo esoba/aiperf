@@ -1,11 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
@@ -24,12 +27,12 @@ class HFInstructionResponseDatasetLoader(BaseHFDatasetLoader):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         prompt_column: str,
         **kwargs,
     ) -> None:
         self.prompt_column = prompt_column
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
     async def convert_to_conversations(
         self, data: dict[str, Any]

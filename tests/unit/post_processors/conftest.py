@@ -9,14 +9,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, OutputConfig, ServiceConfig, UserConfig
 from aiperf.common.enums import (
     CreditPhase,
-    ExportLevel,
     MessageType,
     MetricFlags,
     MetricValueTypeT,
-    ModelSelectionStrategy,
 )
 from aiperf.common.enums.metric_enums import GenericMetricUnit
 from aiperf.common.exceptions import NoMetricValue
@@ -32,18 +29,13 @@ from aiperf.common.models import (
     TelemetryRecord,
     TextResponse,
 )
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
-)
 from aiperf.common.models.record_models import (
     MetricRecordMetadata,
     ProfileResults,
     TokenCounts,
 )
 from aiperf.common.types import MetricTagT
+from aiperf.config import AIPerfConfig, BenchmarkConfig, BenchmarkRun
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.base_metric import BaseMetric
 from aiperf.metrics.base_record_metric import BaseRecordMetric
@@ -60,6 +52,37 @@ from tests.unit.conftest import (
 )
 
 T = TypeVar("T", bound=AIPerfLifecycleMixin)
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000/v1/test"],
+    },
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+}
+
+
+def _make_config(**overrides: Any) -> BenchmarkConfig:
+    """Create a BenchmarkConfig with minimal defaults."""
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    return BenchmarkConfig(**kwargs)
+
+
+def _make_run(config: AIPerfConfig, artifact_dir: Path | None = None) -> BenchmarkRun:
+    """Wrap an AIPerfConfig in a BenchmarkRun for testing."""
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=artifact_dir or Path("/tmp/test"),
+    )
 
 
 @asynccontextmanager
@@ -82,48 +105,67 @@ async def aiperf_lifecycle(instance: T) -> T:
 
 
 @asynccontextmanager
-async def raw_record_processor(service_id: str, user_config: UserConfig):
+async def raw_record_processor(service_id: str, config: AIPerfConfig):
     """Async context manager for RawRecordWriterProcessor lifecycle.
 
     Handles initialize, start, and stop automatically.
 
     Usage:
-        async with raw_record_processor("processor-1", user_config) as processor:
+        async with raw_record_processor("processor-1", config) as processor:
             await processor.process_record(record, metadata)
     """
 
     processor = RawRecordWriterProcessor(
         service_id=service_id,
-        user_config=user_config,
+        run=_make_run(config),
     )
     async with aiperf_lifecycle(processor) as proc:
         yield proc
 
 
 @pytest.fixture
-def mock_user_config() -> UserConfig:
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.COMPLETIONS,
-            streaming=False,
-        )
+def mock_user_config() -> AIPerfConfig:
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={
+            "urls": ["http://localhost:8000/v1/completions"],
+            "type": EndpointType.COMPLETIONS,
+            "streaming": False,
+        },
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
     )
 
 
 @pytest.fixture
-def user_config_raw(tmp_artifact_dir: Path) -> UserConfig:
-    """Create a UserConfig for raw record testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            model_names=["test-model"],
-            type=EndpointType.CHAT,
-            streaming=False,
-        ),
-        output=OutputConfig(
-            artifact_directory=tmp_artifact_dir,
-            export_level=ExportLevel.RAW,
-        ),
+def user_config_raw(tmp_artifact_dir: Path) -> AIPerfConfig:
+    """Create an AIPerfConfig for raw record testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={
+            "urls": ["http://localhost:8000/v1/chat/completions"],
+            "type": EndpointType.CHAT,
+            "streaming": False,
+        },
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+        artifacts={
+            "dir": str(tmp_artifact_dir),
+            "raw": True,
+            "records": ["jsonl"],
+        },
     )
 
 
@@ -135,20 +177,11 @@ def _create_test_request_info(
 ) -> RequestInfo:
     """Create a RequestInfo for testing post processors."""
     return RequestInfo(
-        model_endpoint=ModelEndpointInfo(
-            models=ModelListInfo(
-                models=[ModelInfo(name=model_name)],
-                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-            ),
-            endpoint=EndpointInfo(
-                type=EndpointType.CHAT,
-                base_url="http://localhost:8000/v1/test",
-            ),
-        ),
+        config=_make_config(models=[model_name]),
         turns=turns or [],
         turn_index=turn_index,
         credit_num=0,
-        credit_phase=CreditPhase.PROFILING,
+        credit_phase="profiling",
         x_request_id="test-request-id",
         x_correlation_id="test-correlation-id",
         conversation_id=conversation_id,
@@ -253,11 +286,10 @@ def error_parsed_record() -> ParsedResponseRecord:
     )
 
 
-def create_exporter_config(user_config: UserConfig) -> ExporterConfig:
+def create_exporter_config(config: AIPerfConfig) -> ExporterConfig:
     """Helper to create standard ExporterConfig for aggregator tests."""
     return ExporterConfig(
-        user_config=user_config,
-        service_config=ServiceConfig(),
+        config=config,
         results=ProfileResults(
             records=None,
             completed=0,
@@ -322,19 +354,19 @@ def setup_mock_registry_sequences(
 
 
 def create_results_processor_with_metrics(
-    user_config: UserConfig, *metrics: type[BaseMetric]
+    config: AIPerfConfig, *metrics: type[BaseMetric]
 ) -> MetricResultsProcessor:
     """Create a MetricResultsProcessor with pre-configured metrics.
 
     Args:
-        user_config: User configuration for the processor
+        config: AIPerfConfig for the processor
         metrics: list of metric classes
 
     Returns:
         Configured MetricResultsProcessor instance
     """
 
-    processor = MetricResultsProcessor(user_config)
+    processor = MetricResultsProcessor(_make_run(config))
     processor._tags_to_types = {metric.tag: metric.type for metric in metrics}
     processor._instances_map = {metric.tag: metric() for metric in metrics}
     return processor
@@ -481,7 +513,7 @@ def create_metric_metadata(
     request_end_ns: int = 1_100_000_000,
     worker_id: str = "worker-1",
     record_processor_id: str = "processor-1",
-    benchmark_phase: CreditPhase = CreditPhase.PROFILING,
+    benchmark_phase: CreditPhase = "profiling",
     x_request_id: str | None = None,
     x_correlation_id: str | None = None,
 ) -> MetricRecordMetadata:

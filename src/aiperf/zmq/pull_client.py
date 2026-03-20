@@ -116,7 +116,7 @@ class ZMQPullClient(BaseZMQClient):
                     await yield_to_event_loop()
 
             except zmq.Again:
-                self.debug("Pull client receiver task timed out")
+                self.trace("Pull client receiver task timed out")
                 self.semaphore.release()  # release the semaphore as it was not used
                 await yield_to_event_loop()
             except (asyncio.CancelledError, zmq.ContextTerminated):

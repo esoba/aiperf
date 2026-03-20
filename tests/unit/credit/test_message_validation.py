@@ -27,7 +27,7 @@ def credit_factory():
 
     def _create(
         credit_id: int = 1,
-        phase: CreditPhase = CreditPhase.PROFILING,
+        phase: CreditPhase = "profiling",
         turn_index: int = 0,
         num_turns: int = 1,
         conversation_id: str = "conv-1",
@@ -82,9 +82,7 @@ class TestFirstTokenValidation:
 
     def test_first_token_serialization_roundtrip(self):
         """FirstToken serializes/deserializes correctly via msgspec."""
-        original = FirstToken(
-            credit_id=99, phase=CreditPhase.WARMUP, ttft_ns=250_000_000
-        )
+        original = FirstToken(credit_id=99, phase="warmup", ttft_ns=250_000_000)
         decoded = msgspec.msgpack.decode(
             msgspec.msgpack.encode(original), type=FirstToken
         )
@@ -95,9 +93,7 @@ class TestFirstTokenValidation:
 
     def test_first_token_in_union_type(self):
         """FirstToken can be decoded as part of WorkerToRouterMessage union."""
-        first_token = FirstToken(
-            credit_id=42, phase=CreditPhase.PROFILING, ttft_ns=150_000_000
-        )
+        first_token = FirstToken(credit_id=42, phase="profiling", ttft_ns=150_000_000)
         decoded = msgspec.msgpack.decode(
             msgspec.msgpack.encode(first_token), type=WorkerToRouterMessage
         )

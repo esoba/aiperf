@@ -6,6 +6,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from huggingface_hub.utils import HfHubHTTPError, RepositoryNotFoundError
 
 from aiperf.common.tokenizer import Tokenizer
 
@@ -52,8 +53,6 @@ class TestTokenizerAliasResolution:
 
     def test_resolve_alias_not_found(self, mock_model_info, mock_list_models):
         """Test alias resolution when repository is not found."""
-        from huggingface_hub.utils import RepositoryNotFoundError
-
         mock_model_info.side_effect = RepositoryNotFoundError(
             "Not found", response=_create_mock_response(404)
         )
@@ -65,8 +64,6 @@ class TestTokenizerAliasResolution:
 
     def test_resolve_alias_http_error(self, mock_model_info, mock_list_models):
         """Test alias resolution when HTTP error occurs."""
-        from huggingface_hub.utils import HfHubHTTPError
-
         mock_model_info.side_effect = HfHubHTTPError(
             "HTTP error", response=_create_mock_response(500)
         )
@@ -84,8 +81,6 @@ class TestTokenizerAliasResolution:
 
     def test_resolve_alias_with_search(self, mock_model_info, mock_list_models):
         """Test alias resolution using search when direct lookup fails."""
-        from huggingface_hub.utils import RepositoryNotFoundError
-
         mock_model_info.side_effect = RepositoryNotFoundError(
             "Not found", response=_create_mock_response(404)
         )
@@ -103,8 +98,6 @@ class TestTokenizerAliasResolution:
         self, mock_model_info, mock_list_models
     ):
         """Test alias resolution chooses the correct model from multiple search results."""
-        from huggingface_hub.utils import RepositoryNotFoundError
-
         mock_model_info.side_effect = RepositoryNotFoundError(
             "Not found", response=_create_mock_response(404)
         )
@@ -126,8 +119,6 @@ class TestTokenizerAliasResolution:
         self, mock_model_info, mock_list_models
     ):
         """Test alias resolution returns suggestions when no exact match found."""
-        from huggingface_hub.utils import RepositoryNotFoundError
-
         mock_model_info.side_effect = RepositoryNotFoundError(
             "Not found", response=_create_mock_response(404)
         )

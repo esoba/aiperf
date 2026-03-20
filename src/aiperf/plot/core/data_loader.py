@@ -9,6 +9,9 @@ from various output files (JSONL, JSON) and parse them into structured
 formats suitable for visualization and analysis.
 """
 
+import io
+from collections.abc import Generator
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
@@ -214,6 +217,50 @@ class DataLoader(AIPerfLoggerMixin):
             "aggregation_method": "mean",
         }
 
+    @staticmethod
+    def _resolve_file(directory: Path, name: str) -> Path | None:
+        """Resolve a file, checking raw then .zst variant."""
+        raw = directory / name
+        if raw.exists():
+            return raw
+        zst = directory / f"{name}.zst"
+        if zst.exists():
+            return zst
+        return None
+
+    @staticmethod
+    def _read_bytes(path: Path) -> bytes:
+        """Read file bytes, decompressing if .zst.
+
+        Uses stream_reader to handle files compressed without content size
+        in the frame header (e.g. streaming compression).
+        """
+        raw = path.read_bytes()
+        if path.suffix == ".zst":
+            import zstandard
+
+            dctx = zstandard.ZstdDecompressor()
+            return dctx.stream_reader(raw).read()
+        return raw
+
+    @staticmethod
+    @contextmanager
+    def _open_text(path: Path) -> Generator[io.StringIO | io.TextIOWrapper, None, None]:
+        """Open a file as a text stream, decompressing .zst transparently.
+
+        Uses stream_reader to handle files compressed without content size
+        in the frame header (e.g. streaming compression).
+        """
+        if path.suffix == ".zst":
+            import zstandard
+
+            dctx = zstandard.ZstdDecompressor()
+            data = dctx.stream_reader(path.read_bytes()).read()
+            yield io.StringIO(data.decode("utf-8"))
+        else:
+            with open(path, encoding="utf-8") as f:
+                yield f
+
     def load_run(self, run_path: Path, load_per_request_data: bool = True) -> RunData:
         """
         Load data from a single profiling run.
@@ -239,21 +286,30 @@ class DataLoader(AIPerfLoggerMixin):
 
         self.info(f"Loading run from: {run_path}")
 
-        jsonl_path = run_path / PROFILE_EXPORT_JSONL
-        if not jsonl_path.exists():
-            raise DataLoadError("Required JSONL file not found", path=str(jsonl_path))
+        jsonl_path = self._resolve_file(run_path, PROFILE_EXPORT_JSONL)
+        if jsonl_path is None:
+            raise DataLoadError(
+                "Required JSONL file not found",
+                path=str(run_path / PROFILE_EXPORT_JSONL),
+            )
 
         requests_df = self._load_jsonl(jsonl_path) if load_per_request_data else None
 
-        aggregated = self._load_aggregated_json(run_path / PROFILE_EXPORT_AIPERF_JSON)
+        agg_path = self._resolve_file(run_path, PROFILE_EXPORT_AIPERF_JSON)
+        if agg_path is None:
+            raise DataLoadError(
+                "Required JSON file not found",
+                path=str(run_path / PROFILE_EXPORT_AIPERF_JSON),
+            )
+        aggregated = self._load_aggregated_json(agg_path)
 
         self._add_all_derived_metrics(aggregated)
 
-        timeslices_path = run_path / PROFILE_EXPORT_TIMESLICES_CSV
+        timeslices_path = self._resolve_file(run_path, PROFILE_EXPORT_TIMESLICES_CSV)
         timeslices_df = None
         slice_duration = None
 
-        if timeslices_path.exists():
+        if timeslices_path is not None:
             try:
                 timeslices_df = self._load_timeslices_csv(timeslices_path)
             except DataLoadError as e:
@@ -267,7 +323,9 @@ class DataLoader(AIPerfLoggerMixin):
 
         metadata = self._extract_metadata(run_path, requests_df, aggregated)
 
-        gpu_telemetry_path = run_path / PROFILE_EXPORT_GPU_TELEMETRY_JSONL
+        gpu_telemetry_path = self._resolve_file(
+            run_path, PROFILE_EXPORT_GPU_TELEMETRY_JSONL
+        )
         gpu_telemetry_df = None
 
         run_start_time_ns = None
@@ -284,7 +342,7 @@ class DataLoader(AIPerfLoggerMixin):
                 else:
                     run_start_time_ns = int(first_start)
 
-        if gpu_telemetry_path.exists():
+        if gpu_telemetry_path is not None:
             try:
                 gpu_telemetry_df = self._load_gpu_telemetry_jsonl(
                     gpu_telemetry_path, run_start_time_ns
@@ -296,11 +354,15 @@ class DataLoader(AIPerfLoggerMixin):
         server_metrics_df = None
         server_metrics_aggregated = {}
 
-        server_metrics_parquet_path = run_path / SERVER_METRICS_EXPORT_PARQUET
-        server_metrics_json_path = run_path / SERVER_METRICS_EXPORT_JSON
+        server_metrics_parquet_path = self._resolve_file(
+            run_path, SERVER_METRICS_EXPORT_PARQUET
+        )
+        server_metrics_json_path = self._resolve_file(
+            run_path, SERVER_METRICS_EXPORT_JSON
+        )
 
         # Try Parquet first (for time-series data)
-        if server_metrics_parquet_path.exists():
+        if server_metrics_parquet_path is not None:
             try:
                 df_parquet, agg_parquet = self._load_server_metrics_parquet(
                     server_metrics_parquet_path
@@ -311,7 +373,7 @@ class DataLoader(AIPerfLoggerMixin):
                 self.warning(f"Failed to load server metrics from Parquet: {e}")
 
         # Load JSON (for aggregated stats and metadata)
-        if server_metrics_json_path.exists():
+        if server_metrics_json_path is not None:
             try:
                 df_json, agg_json = self._load_server_metrics_json(
                     server_metrics_json_path
@@ -590,7 +652,7 @@ class DataLoader(AIPerfLoggerMixin):
         corrupted_lines = 0
 
         try:
-            with open(jsonl_path, encoding="utf-8") as f:
+            with self._open_text(jsonl_path) as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
@@ -750,12 +812,8 @@ class DataLoader(AIPerfLoggerMixin):
         Raises:
             DataLoadError: If file cannot be read or parsed.
         """
-        if not json_path.exists():
-            raise DataLoadError("Required JSON file not found", path=str(json_path))
-
         try:
-            with open(json_path, "rb") as f:
-                data = orjson.loads(f.read())
+            data = orjson.loads(self._read_bytes(json_path))
 
             if "metrics" in data and isinstance(data["metrics"], dict):
                 parsed_metrics = {}
@@ -772,6 +830,10 @@ class DataLoader(AIPerfLoggerMixin):
         except orjson.JSONDecodeError as e:
             raise DataLoadError(
                 f"Failed to parse JSON file: {e}", path=str(json_path)
+            ) from e
+        except FileNotFoundError as e:
+            raise DataLoadError(
+                "Required JSON file not found", path=str(json_path)
             ) from e
         except OSError as e:
             raise DataLoadError(
@@ -792,11 +854,8 @@ class DataLoader(AIPerfLoggerMixin):
         Raises:
             DataLoadError: If file cannot be read or parsed.
         """
-        if not csv_path.exists():
-            raise DataLoadError("Timeslices CSV file not found", path=str(csv_path))
-
         try:
-            df = pd.read_csv(csv_path)
+            df = pd.read_csv(io.BytesIO(self._read_bytes(csv_path)))
 
             expected_columns = ["Timeslice", "Metric", "Unit", "Stat", "Value"]
             if not all(col in df.columns for col in expected_columns):
@@ -893,13 +952,8 @@ class DataLoader(AIPerfLoggerMixin):
         Raises:
             DataLoadError: If file exists but cannot be read or parsed
         """
-        if not json_path.exists():
-            self.debug(f"Server metrics JSON file not found: {json_path}")
-            return None, {}
-
         try:
-            with open(json_path, "rb") as f:
-                data = orjson.loads(f.read())
+            data = orjson.loads(self._read_bytes(json_path))
 
             export_data = ServerMetricsExportData.model_validate(data)
 
@@ -1005,15 +1059,11 @@ class DataLoader(AIPerfLoggerMixin):
         Raises:
             DataLoadError: If file exists but cannot be read or parsed
         """
-        if not parquet_path.exists():
-            self.debug(f"Server metrics Parquet file not found: {parquet_path}")
-            return None, {}
-
         try:
             import pyarrow.parquet as pq
 
             # Read Parquet file
-            table = pq.read_table(parquet_path)
+            table = pq.read_table(io.BytesIO(self._read_bytes(parquet_path)))
             df_wide = table.to_pandas()
 
             # Identify label columns (columns that aren't core metrics)
@@ -1152,7 +1202,7 @@ class DataLoader(AIPerfLoggerMixin):
 
         except ImportError as e:
             raise DataLoadError(
-                "pyarrow is required to load Parquet files. Install with: pip install pyarrow",
+                "pyarrow is required to load Parquet files. Install with: uv add pyarrow",
                 path=str(parquet_path),
             ) from e
         except Exception as e:

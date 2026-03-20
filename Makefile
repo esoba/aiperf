@@ -24,7 +24,19 @@
 		add-copyright generate-cli-docs generate-env-vars-docs generate-plugin-enums \
 		generate-plugin-overloads check-plugin-overloads generate-plugin-schemas \
 		generate-all-plugin-files generate-all-docs test-stress stress-tests \
-		test-fern-docs internal-help help
+		test-fern-docs internal-help help \
+		validate-config-examples validate-template-metadata \
+		generate-config-schema check-config-schema \
+		generate-crd check-crd benchmark-resources \
+		kube-setup kube-doctor kube-status kube-cleanup kube-teardown kube-reload \
+		kube-build kube-load kube-logs kube-cluster-create kube-cluster-delete \
+		kube-install-jobset kube-install-dynamo \
+		kube-deploy-mock kube-remove-mock \
+		kube-deploy-vllm kube-remove-vllm kube-vllm-logs \
+		kube-deploy-dynamo kube-remove-dynamo kube-dynamo-logs \
+		kube-deploy-lora kube-remove-lora \
+		kube-run kube-run-detach kube-dry-run \
+		kube-run-local kube-run-local-detach kube-dry-run-local
 
 
 # Include user-defined environment variables
@@ -70,7 +82,7 @@ dim := $(shell tput dim)
 
 
 help: #? show this help
-	@$(MAKE) internal-help --no-print-directory
+	@make internal-help --no-print-directory
 
 #
 # Help command is automatically generated based on the comments in the Makefile.
@@ -171,7 +183,7 @@ setup-venv: #? create the virtual environment.
 	fi
 
 first-time-setup: #? convenience command to setup the environment for the first time
-	$(MAKE) setup-venv --no-print-directory
+	make setup-venv --no-print-directory
 
 	@# Install the project
 	@printf "$(bold)$(green)Installing project...$(reset)\n"
@@ -220,6 +232,11 @@ stress-tests test-stress: #? run stress tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running stress tests with AIPerf Mock Server...$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'integration and stress' -vv -s --tb=short --log-cli-level=INFO --capture=no $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server stress tests passed!$(reset)\n"
+
+benchmark-resources: #? run worker resource benchmarks for K8s sizing.
+	@printf "$(bold)$(blue)Running worker resource benchmarks...$(reset)\n"
+	$(activate_venv) && pytest tests/benchmarks/worker_resource/ -m 'benchmark' -v --tb=short --capture=no $(args)
+	@printf "$(bold)$(green)Worker resource benchmarks completed!$(reset)\n"
 
 integration-tests test-integration: #? run integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running integration tests with AIPerf Mock Server...$(reset)\n"
@@ -284,6 +301,24 @@ generate-plugin-schemas: #? generate JSON schemas for categories.yaml and plugin
 validate-plugin-schemas: #? validate categories.yaml and plugins.yaml against their schemas.
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py --validate
 
+validate-config-examples: #? validate config example YAML files.
+	$(activate_venv) && python -m tools.validate_config_examples $(args)
+
+validate-template-metadata: #? validate template YAML metadata blocks.
+	$(activate_venv) && python -m tools.validate_template_metadata $(args)
+
+generate-config-schema: #? generate JSON schema for config YAML files.
+	$(activate_venv) && python -m tools.generate_config_schema $(args)
+
+check-config-schema: #? check if config JSON schema is up-to-date.
+	$(activate_venv) && python -m tools.generate_config_schema --check $(args)
+
+generate-crd: #? generate Kubernetes CRD YAML from AIPerfConfig model.
+	$(activate_venv) && python -m tools.generate_crd $(args)
+
+check-crd: #? check if CRD YAML is up-to-date.
+	$(activate_venv) && python -m tools.generate_crd --check $(args)
+
 generate-all-plugin-files: #? generate all plugin files (enums, overloads, schemas).
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py
 
@@ -293,3 +328,96 @@ generate-all-docs: #? generate all documentation files.
 
 add-copyright: #? add the copyright header to the files.
 	$(activate_venv) && ./tools/add_copyright.py
+
+# ---------------------------------------------------------------------------
+# Kubernetes cluster management (dev/kube.py)
+# ---------------------------------------------------------------------------
+
+KUBE = $(activate_venv) && python dev/kube.py
+
+kube-setup: #? set up local K8s cluster with all dependencies (Kind/Minikube).
+	$(KUBE) setup $(args)
+
+kube-doctor: #? check prerequisites and cluster health.
+	$(KUBE) doctor $(args)
+
+kube-status: #? show status of cluster, images, and deployments.
+	$(KUBE) status
+
+kube-cleanup: #? delete AIPerf benchmark resources (keep cluster).
+	$(KUBE) cleanup
+
+kube-teardown: #? delete the entire local cluster.
+	$(KUBE) teardown
+
+kube-reload: #? rebuild images and reload into cluster.
+	$(KUBE) reload
+
+kube-build: #? build AIPerf and mock-server Docker images.
+	$(KUBE) build
+
+kube-load: #? load Docker images into the cluster.
+	$(KUBE) load
+
+kube-logs: #? view AIPerf benchmark pod logs.
+	$(KUBE) logs $(args)
+
+kube-cluster-create: #? create a new Kind/Minikube cluster.
+	$(KUBE) cluster-create
+
+kube-cluster-delete: #? delete the Kind/Minikube cluster.
+	$(KUBE) cluster-delete
+
+kube-install-jobset: #? install the JobSet CRD.
+	$(KUBE) install-jobset
+
+kube-install-dynamo: #? install the Dynamo operator.
+	$(KUBE) install-dynamo
+
+kube-deploy-mock: #? deploy the mock inference server.
+	$(KUBE) deploy-mock
+
+kube-remove-mock: #? remove the mock inference server.
+	$(KUBE) remove-mock
+
+kube-deploy-vllm: #? deploy a standalone vLLM server.
+	$(KUBE) deploy-vllm $(args)
+
+kube-remove-vllm: #? remove the vLLM server.
+	$(KUBE) remove-vllm
+
+kube-vllm-logs: #? view vLLM server logs.
+	$(KUBE) vllm-logs $(args)
+
+kube-deploy-dynamo: #? deploy a Dynamo inference server.
+	$(KUBE) deploy-dynamo $(args)
+
+kube-remove-dynamo: #? remove the Dynamo server.
+	$(KUBE) remove-dynamo
+
+kube-dynamo-logs: #? view Dynamo pod logs.
+	$(KUBE) dynamo-logs $(args)
+
+kube-deploy-lora: #? deploy a LoRA adapter.
+	$(KUBE) deploy-lora $(args)
+
+kube-remove-lora: #? remove a LoRA adapter.
+	$(KUBE) remove-lora $(args)
+
+kube-run: #? run an AIPerf benchmark (attached).
+	$(KUBE) run $(args)
+
+kube-run-detach: #? run an AIPerf benchmark (detached).
+	$(KUBE) run-detach $(args)
+
+kube-dry-run: #? print benchmark manifest without running.
+	$(KUBE) dry-run $(args)
+
+kube-run-local: #? run single-pod benchmark (attached). Pass aiperf args after '--'.
+	$(KUBE) run-local $(args)
+
+kube-run-local-detach: #? run single-pod benchmark (detached). Pass aiperf args after '--'.
+	$(KUBE) run-local-detach $(args)
+
+kube-dry-run-local: #? print single-pod manifest without running. Pass aiperf args after '--'.
+	$(KUBE) dry-run-local $(args)

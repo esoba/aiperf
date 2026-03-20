@@ -44,13 +44,9 @@ from aiperf.common.models.health_models import (
     CPUTimes,
     CtxSwitches,
     IOCounters,
+    NumericAggregate,
     ProcessHealth,
-)
-from aiperf.common.models.model_endpoint_info import (
-    EndpointInfo,
-    ModelEndpointInfo,
-    ModelInfo,
-    ModelListInfo,
+    ProcessHealthAggregates,
 )
 from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerStats
 from aiperf.common.models.record_models import (
@@ -162,7 +158,6 @@ __all__ = [
     "DistributionParser",
     "EmbeddingResponseData",
     "EndpointData",
-    "EndpointInfo",
     "ErrorDetails",
     "ErrorDetailsCount",
     "ExitErrorInfo",
@@ -196,13 +191,12 @@ __all__ = [
     "MetricResult",
     "MetricSample",
     "MetricValue",
-    "ModelEndpointInfo",
-    "ModelInfo",
-    "ModelListInfo",
+    "NumericAggregate",
     "ParsedResponse",
     "ParsedResponseRecord",
     "PhaseRecordsStats",
     "ProcessHealth",
+    "ProcessHealthAggregates",
     "ProcessRecordsResult",
     "ProcessServerMetricsResult",
     "ProcessTelemetryResult",

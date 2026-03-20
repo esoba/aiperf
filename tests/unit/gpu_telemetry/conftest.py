@@ -8,34 +8,54 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiperf.common.config import UserConfig
-from aiperf.common.config.endpoint_config import EndpointConfig
 from aiperf.common.models.telemetry_models import (
     TelemetryMetrics,
     TelemetryRecord,
 )
+from aiperf.config import AIPerfConfig
 from tests.aiperf_mock_server.dcgm_faker import DCGMFaker
 
 
 @pytest.fixture
 def base_user_config():
-    """Create a minimal UserConfig for testing."""
-    return UserConfig(
-        endpoint=EndpointConfig(url="http://localhost:8000", model_names=["test-model"])
+    """Create a minimal AIPerfConfig for testing."""
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
     )
 
 
-def create_user_config(
-    gpu_telemetry: list[str] | None = None,
-    no_gpu_telemetry: bool = False,
-) -> UserConfig:
-    """Helper to create UserConfig with GPU telemetry settings."""
-    return UserConfig(
-        endpoint=EndpointConfig(
-            url="http://localhost:8000", model_names=["test-model"]
-        ),
+def create_config(
+    gpu_telemetry_urls: list[str] | None = None,
+    gpu_telemetry_enabled: bool = True,
+) -> AIPerfConfig:
+    """Helper to create AIPerfConfig with GPU telemetry settings."""
+    gpu_telemetry = None
+    if gpu_telemetry_urls is not None or not gpu_telemetry_enabled:
+        gpu_telemetry = {
+            "enabled": gpu_telemetry_enabled,
+            "urls": gpu_telemetry_urls or [],
+        }
+    return AIPerfConfig(
+        models=["test-model"],
+        endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 100,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
         gpu_telemetry=gpu_telemetry,
-        no_gpu_telemetry=no_gpu_telemetry,
     )
 
 

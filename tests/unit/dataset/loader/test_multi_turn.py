@@ -122,7 +122,7 @@ class TestMultiTurn:
 class TestMultiTurnDatasetLoader:
     """Tests for MultiTurnDatasetLoader functionality."""
 
-    def test_load_simple_conversation(self, create_jsonl_file, default_user_config):
+    def test_load_simple_conversation(self, create_jsonl_file, default_user_run):
         """Test loading a simple multi-turn conversation."""
         content = [
             json.dumps(
@@ -137,9 +137,7 @@ class TestMultiTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = MultiTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename=filename, run=default_user_run)
         dataset = loader.load_dataset()
 
         assert len(dataset) == 1
@@ -154,7 +152,7 @@ class TestMultiTurnDatasetLoader:
         assert multi_turn.turns[1].texts is None
         assert multi_turn.turns[1].delay == 1000
 
-    def test_load_multiple_conversations(self, create_jsonl_file, default_user_config):
+    def test_load_multiple_conversations(self, create_jsonl_file, default_user_run):
         """Test loading multiple conversations from file."""
         content = [
             json.dumps(
@@ -177,9 +175,7 @@ class TestMultiTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = MultiTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename=filename, run=default_user_run)
         dataset = loader.load_dataset()
 
         assert len(dataset) == 2
@@ -189,7 +185,7 @@ class TestMultiTurnDatasetLoader:
         assert len(dataset["session_B"][0].turns) == 2
 
     def test_load_conversation_without_session_id(
-        self, create_jsonl_file, default_user_config
+        self, create_jsonl_file, default_user_run
     ):
         """Test loading conversation without explicit session_id generates UUID."""
         content = [
@@ -204,9 +200,7 @@ class TestMultiTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = MultiTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename=filename, run=default_user_run)
         dataset = loader.load_dataset()
 
         assert len(dataset) == 1
@@ -218,7 +212,7 @@ class TestMultiTurnDatasetLoader:
         multi_turn = dataset[session_id][0]
         assert len(multi_turn.turns) == 2
 
-    def test_load_multimodal_conversation(self, create_jsonl_file, default_user_config):
+    def test_load_multimodal_conversation(self, create_jsonl_file, default_user_run):
         """Test loading conversation with multimodal content."""
         content = [
             json.dumps(
@@ -240,9 +234,7 @@ class TestMultiTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = MultiTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename=filename, run=default_user_run)
         dataset = loader.load_dataset()
 
         multi_turn = dataset["multimodal_chat"][0]
@@ -256,7 +248,7 @@ class TestMultiTurnDatasetLoader:
         assert multi_turn.turns[1].audios is None
         assert multi_turn.turns[1].delay == 3000
 
-    def test_load_scheduled_conversation(self, create_jsonl_file, default_user_config):
+    def test_load_scheduled_conversation(self, create_jsonl_file, default_user_run):
         """Test loading conversation with timestamp scheduling."""
         content = [
             json.dumps(
@@ -272,16 +264,14 @@ class TestMultiTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = MultiTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename=filename, run=default_user_run)
         result = loader.load_dataset()
 
         conversation = result["scheduled_chat"][0]
         timestamps = [turn.timestamp for turn in conversation.turns]
         assert timestamps == [0, 5000, 10000]
 
-    def test_load_batched_conversation(self, create_jsonl_file, default_user_config):
+    def test_load_batched_conversation(self, create_jsonl_file, default_user_run):
         """Test loading conversation with batched content."""
         content = [
             json.dumps(
@@ -302,9 +292,7 @@ class TestMultiTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = MultiTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename=filename, run=default_user_run)
         dataset = loader.load_dataset()
 
         multi_turn = dataset["batched_chat"][0]
@@ -315,9 +303,7 @@ class TestMultiTurnDatasetLoader:
         assert multi_turn.turns[1].text is None
         assert multi_turn.turns[1].texts == ["Fine", "Thanks"]
 
-    def test_load_full_featured_conversation(
-        self, create_jsonl_file, default_user_config
-    ):
+    def test_load_full_featured_conversation(self, create_jsonl_file, default_user_run):
         """Test loading conversation with full-featured format."""
         content = [
             json.dumps(
@@ -344,9 +330,7 @@ class TestMultiTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = MultiTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename=filename, run=default_user_run)
         dataset = loader.load_dataset()
 
         multi_turn = dataset["full_featured_chat"][0]
@@ -366,9 +350,7 @@ class TestMultiTurnDatasetLoader:
         assert turn.images[1].contents == ["/data.png"]
         assert turn.timestamp == 1000
 
-    def test_load_dataset_skips_empty_lines(
-        self, create_jsonl_file, default_user_config
-    ):
+    def test_load_dataset_skips_empty_lines(self, create_jsonl_file, default_user_run):
         """Test that empty lines are skipped during loading."""
         content = [
             json.dumps(
@@ -387,9 +369,7 @@ class TestMultiTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = MultiTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename=filename, run=default_user_run)
         dataset = loader.load_dataset()
 
         assert len(dataset) == 2  # Should skip empty line
@@ -397,7 +377,7 @@ class TestMultiTurnDatasetLoader:
         assert "test_empty_lines_2" in dataset
 
     def test_load_duplicate_session_ids_are_grouped(
-        self, create_jsonl_file, default_user_config
+        self, create_jsonl_file, default_user_run
     ):
         """Test that multiple conversations with same session_id are grouped together."""
         content = [
@@ -416,9 +396,7 @@ class TestMultiTurnDatasetLoader:
         ]
         filename = create_jsonl_file(content)
 
-        loader = MultiTurnDatasetLoader(
-            filename=filename, user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename=filename, run=default_user_run)
         dataset = loader.load_dataset()
 
         assert len(dataset) == 1  # Same session_id groups together
@@ -432,7 +410,7 @@ class TestMultiTurnDatasetLoader:
 class TestMultiTurnDatasetLoaderConvertToConversations:
     """Test convert_to_conversations method for MultiTurnDatasetLoader."""
 
-    def test_convert_simple_multi_turn_data(self, default_user_config):
+    def test_convert_simple_multi_turn_data(self, default_user_run):
         """Test converting simple multi-turn data to conversations."""
         data = {
             "session_123": [
@@ -446,9 +424,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
             ]
         }
 
-        loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename="dummy.jsonl", run=default_user_run)
         conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 1
@@ -462,9 +438,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert conversation.turns[1].texts[0].contents == ["How are you?"]
         assert conversation.turns[1].delay == 1000
 
-    def test_convert_multiple_multi_turn_entries_same_session(
-        self, default_user_config
-    ):
+    def test_convert_multiple_multi_turn_entries_same_session(self, default_user_run):
         """Test converting multiple MultiTurn entries with same session ID."""
         data = {
             "session_123": [
@@ -473,9 +447,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
             ]
         }
 
-        loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename="dummy.jsonl", run=default_user_run)
         conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 1
@@ -485,7 +457,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert conversation.turns[0].texts[0].contents == ["First"]
         assert conversation.turns[1].texts[0].contents == ["Second"]
 
-    def test_convert_multimodal_multi_turn_data(self, default_user_config):
+    def test_convert_multimodal_multi_turn_data(self, default_user_run):
         """Test converting multimodal multi-turn data."""
         data = {
             "session_1": [
@@ -502,9 +474,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
                 )
             ]
         }
-        loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename="dummy.jsonl", run=default_user_run)
 
         conversations = loader.convert_to_conversations(data)
 
@@ -522,7 +492,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert second_turn.texts[0].contents == ["Follow up"]
         assert second_turn.images[0].contents == ["https://example.com/image2.png"]
 
-    def test_convert_structured_objects_in_turns(self, default_user_config):
+    def test_convert_structured_objects_in_turns(self, default_user_run):
         """Test converting MultiTurn with structured Text objects."""
         data = {
             "session_1": [
@@ -540,9 +510,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
             ]
         }
 
-        loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename="dummy.jsonl", run=default_user_run)
         conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 1
@@ -553,7 +521,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert turn.texts[1].name == "context"
         assert turn.texts[1].contents == ["Some context"]
 
-    def test_convert_multiple_sessions(self, default_user_config):
+    def test_convert_multiple_sessions(self, default_user_run):
         """Test converting multiple sessions."""
         data = {
             "session_1": [
@@ -564,9 +532,7 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
             ],
         }
 
-        loader = MultiTurnDatasetLoader(
-            filename="dummy.jsonl", user_config=default_user_config
-        )
+        loader = MultiTurnDatasetLoader(filename="dummy.jsonl", run=default_user_run)
         conversations = loader.convert_to_conversations(data)
 
         assert len(conversations) == 2

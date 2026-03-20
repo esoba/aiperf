@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.common.enums import LifecycleState
+from aiperf.common.mixins import health_server_mixin
 from aiperf.common.mixins.health_server_mixin import HealthServerMixin
 
 
@@ -72,6 +73,14 @@ async def make_http_request(port: int, path: str) -> tuple[int, str]:
         await writer.wait_closed()
 
 
+@pytest.fixture(autouse=True)
+def clear_health_server_registry():
+    """Clear the process-level health server registry before each test."""
+    health_server_mixin._active_health_servers.clear()
+    yield
+    health_server_mixin._active_health_servers.clear()
+
+
 @pytest.fixture
 def mock_env_settings():
     """Fixture to mock Environment.SERVICE settings for health server."""
@@ -120,6 +129,42 @@ class TestHealthServerMixin:
 
             assert service._health_server is None
             service.info.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cli_health_port_overrides_env(self, mock_env_settings) -> None:
+        """Test --health-port CLI arg overrides environment config."""
+        service = MockServiceWithHealthServer()
+        service._health_port = 18094
+
+        with mock_env_settings(enabled=True, port=18088):
+            await service._health_server_start()
+
+            try:
+                assert service._health_server is not None
+                status, body = await make_http_request(18094, "/healthz")
+                assert status == 200
+                assert body == "ok"
+            finally:
+                await service._health_server_stop()
+
+    @pytest.mark.asyncio
+    async def test_cli_health_port_overrides_disabled_env(
+        self, mock_env_settings
+    ) -> None:
+        """Test --health-port starts server even when HEALTH_ENABLED=false."""
+        service = MockServiceWithHealthServer()
+        service._health_port = 18095
+
+        with mock_env_settings(enabled=False, port=18088):
+            await service._health_server_start()
+
+            try:
+                assert service._health_server is not None
+                status, body = await make_http_request(18095, "/healthz")
+                assert status == 200
+                assert body == "ok"
+            finally:
+                await service._health_server_stop()
 
     @pytest.mark.asyncio
     async def test_healthz_returns_ok_when_healthy(self, mock_env_settings) -> None:
@@ -251,3 +296,96 @@ class TestHealthServerMixin:
 
         assert service._health_server is None
         service.debug.assert_any_call("Health server skipped in subprocess.")
+
+    @pytest.mark.asyncio
+    async def test_multiple_services_same_port_skips_duplicate(
+        self, mock_env_settings
+    ) -> None:
+        """Test that second service skips binding when port already in use."""
+        service1 = MockServiceWithHealthServer()
+        service1.id = "service-1"
+        service2 = MockServiceWithHealthServer()
+        service2.id = "service-2"
+
+        with mock_env_settings(enabled=True, port=18090):
+            await service1._health_server_start()
+            assert service1._health_server is not None
+            service1.info.assert_called_once()
+
+            await service2._health_server_start()
+            assert service2._health_server is None
+            service2.debug.assert_any_call(
+                "Health server already running on 127.0.0.1:18090 (owned by service-1). "
+                "Skipping duplicate bind."
+            )
+
+            status, body = await make_http_request(18090, "/healthz")
+            assert status == 200
+            assert body == "ok"
+
+            await service1._health_server_stop()
+
+    @pytest.mark.asyncio
+    async def test_registry_cleared_on_stop(self, mock_env_settings) -> None:
+        """Test that registry entry is removed when service stops."""
+        service = MockServiceWithHealthServer()
+        service.id = "test-service"
+
+        with mock_env_settings(enabled=True, port=18091):
+            await service._health_server_start()
+            assert ("127.0.0.1", 18091) in health_server_mixin._active_health_servers
+
+            await service._health_server_stop()
+            assert (
+                "127.0.0.1",
+                18091,
+            ) not in health_server_mixin._active_health_servers
+
+    @pytest.mark.asyncio
+    async def test_second_service_can_start_after_first_stops(
+        self, mock_env_settings
+    ) -> None:
+        """Test that second service can start after first service stops."""
+        service1 = MockServiceWithHealthServer()
+        service1.id = "service-1"
+        service2 = MockServiceWithHealthServer()
+        service2.id = "service-2"
+
+        with mock_env_settings(enabled=True, port=18092):
+            await service1._health_server_start()
+            assert service1._health_server is not None
+            await service1._health_server_stop()
+            assert service1._health_server is None
+
+            await service2._health_server_start()
+            assert service2._health_server is not None
+
+            status, body = await make_http_request(18092, "/healthz")
+            assert status == 200
+
+            await service2._health_server_stop()
+
+    @pytest.mark.asyncio
+    async def test_binding_failure_raises_exception(self, mock_env_settings) -> None:
+        """Test that binding failure raises OSError to crash the process."""
+        import errno
+
+        service = MockServiceWithHealthServer()
+        service.id = "test-service"
+
+        with (
+            mock_env_settings(enabled=True, port=18093),
+            patch(
+                "aiperf.common.mixins.health_server_mixin.asyncio.start_server",
+                side_effect=OSError(errno.EADDRINUSE, "Address already in use"),
+            ),
+            pytest.raises(OSError) as exc_info,
+        ):
+            await service._health_server_start()
+
+        assert exc_info.value.errno == errno.EADDRINUSE
+
+        service.error.assert_called_once()
+        error_msg = service.error.call_args[0][0]
+        assert "failed to bind" in error_msg
+        assert "127.0.0.1:18093" in error_msg

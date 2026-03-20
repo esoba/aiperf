@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import ArrivalPattern, PluginType, RampType, TimingMode
+from aiperf.plugin.types import TypeNotFoundError
 from aiperf.timing.intervals import IntervalGeneratorConfig
 from aiperf.timing.ramping import RampConfig
 from aiperf.timing.strategies.core import TimingStrategyProtocol
@@ -283,8 +284,6 @@ class TestTimingStrategyPlugin:
             create_timing_strategy(timing_mode=TimingMode.REQUEST_RATE, config=cfg)
 
     def test_unregistered_type_error(self, ts_deps):
-        from aiperf.plugin.types import TypeNotFoundError
-
         cfg = make_phase_config(timing_mode=TimingMode.REQUEST_RATE)
         with pytest.raises((KeyError, ValueError, TypeNotFoundError)):
             create_timing_strategy(

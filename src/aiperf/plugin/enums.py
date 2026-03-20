@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TypeAlias
 from aiperf.plugin import plugins
 from aiperf.plugin.extensible_enums import create_enum
 
-__all__ = ["APIRouterType", "APIRouterTypeStr", "AccuracyBenchmarkType", "AccuracyBenchmarkTypeStr", "AccuracyGraderType", "AccuracyGraderTypeStr", "ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ComposerType", "ComposerTypeStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "CustomDatasetType", "CustomDatasetTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "PublicDatasetType", "PublicDatasetTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
+__all__ = ["APIRouterType", "APIRouterTypeStr", "AccuracyBenchmarkType", "AccuracyBenchmarkTypeStr", "AccuracyGraderType", "AccuracyGraderTypeStr", "ArrivalPattern", "ArrivalPatternStr", "CommClientType", "CommClientTypeStr", "CommunicationBackend", "CommunicationBackendStr", "ComposerType", "ComposerTypeStr", "ConsoleExporterType", "ConsoleExporterTypeStr", "CustomDatasetType", "CustomDatasetTypeStr", "DataExporterType", "DataExporterTypeStr", "DatasetBackingStoreType", "DatasetBackingStoreTypeStr", "DatasetClientStoreType", "DatasetClientStoreTypeStr", "DatasetSamplingStrategy", "DatasetSamplingStrategyStr", "EndpointType", "EndpointTypeStr", "GPUTelemetryCollectorType", "GPUTelemetryCollectorTypeStr", "PhaseType", "PhaseTypeStr", "PlotType", "PlotTypeStr", "PluginType", "PluginTypeStr", "PublicDatasetType", "PublicDatasetTypeStr", "RampType", "RampTypeStr", "RecordProcessorType", "RecordProcessorTypeStr", "ResultsProcessorType", "ResultsProcessorTypeStr", "ServiceRunType", "ServiceRunTypeStr", "ServiceType", "ServiceTypeStr", "TimingMode", "TimingModeStr", "TransportType", "TransportTypeStr", "UIType", "UITypeStr", "URLSelectionStrategy", "URLSelectionStrategyStr", "ZMQProxyType", "ZMQProxyTypeStr"]
 
 # Plugin Protocol Categories
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ else:
 
 APIRouterTypeStr: TypeAlias = str
 APIRouterType = plugins.create_enum(PluginType.API_ROUTER, "APIRouterType", module=__name__)
-"""Dynamic enum for api router. Example: APIRouterType.CORE, APIRouterType.METRICS, APIRouterType.PROGRESS"""
+"""Dynamic enum for api router. Example: APIRouterType.CORE, APIRouterType.DATASET, APIRouterType.METRICS"""
 
 TimingModeStr: TypeAlias = str
 TimingMode = plugins.create_enum(PluginType.TIMING_STRATEGY, "TimingMode", module=__name__)
@@ -132,3 +132,22 @@ PlotType = plugins.create_enum(PluginType.PLOT, "PlotType", module=__name__)
 GPUTelemetryCollectorTypeStr: TypeAlias = str
 GPUTelemetryCollectorType = plugins.create_enum(PluginType.GPU_TELEMETRY_COLLECTOR, "GPUTelemetryCollectorType", module=__name__)
 """Dynamic enum for gpu telemetry collector. Example: GPUTelemetryCollectorType.DCGM, GPUTelemetryCollectorType.PYNVML"""
+
+# =============================================================================
+# Composite Enums (merged from multiple categories)
+# =============================================================================
+
+PhaseTypeStr: TypeAlias = str
+_phasetype_members: dict[str, str] = {}
+for _entry in plugins.list_entries(PluginType.ARRIVAL_PATTERN):
+    _alias = {'concurrency_burst': 'concurrency'}.get(_entry.name, _entry.name)
+    if _alias.upper() not in _phasetype_members:
+        _phasetype_members[_alias.upper()] = _alias
+for _entry in plugins.list_entries(PluginType.TIMING_STRATEGY):
+    if _entry.name in {'request_rate'}:
+        continue
+    _alias = {'user_centric_rate': 'user_centric'}.get(_entry.name, _entry.name)
+    if _alias.upper() not in _phasetype_members:
+        _phasetype_members[_alias.upper()] = _alias
+PhaseType = create_enum("PhaseType", _phasetype_members, module=__name__)
+"""Load generation type for benchmark phases. Example: PhaseType.CONCURRENCY, PhaseType.CONSTANT, PhaseType.FIXED_SCHEDULE"""

@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 
@@ -28,7 +27,7 @@ class TestRecordProcessorCreateMetricRecordMetadata:
         sample_request_record.end_perf_ns = None
         sample_request_record.responses = []
         sample_request_record.credit_num = 1
-        sample_request_record.credit_phase = CreditPhase.PROFILING
+        sample_request_record.credit_phase = "profiling"
         sample_request_record.recv_start_perf_ns = (
             sample_request_record.start_perf_ns + 10_000
         )

@@ -4,16 +4,17 @@
 import orjson
 import pytest
 
-from aiperf.common.config import UserConfig
-from aiperf.common.config.config_defaults import OutputDefaults
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.models.record_models import RawRecordInfo
+from aiperf.config import AIPerfConfig
+from aiperf.config.defaults import OutputDefaults
 from aiperf.post_processors.raw_record_writer_processor import (
     RawRecordAggregator,
     RawRecordWriterProcessor,
 )
 from tests.unit.post_processors.conftest import (
+    _make_run,
     create_exporter_config,
     create_metric_metadata,
     raw_record_processor,
@@ -30,15 +31,15 @@ def sample_parsed_record(sample_parsed_record_with_raw_responses: ParsedResponse
 class TestRawRecordWriterProcessorInitialization:
     """Test RawRecordWriterProcessor initialization."""
 
-    def test_init_creates_output_directory(self, user_config_raw: UserConfig):
+    def test_init_creates_output_directory(self, user_config_raw: AIPerfConfig):
         """Test that initialization creates the raw_records directory."""
         processor = RawRecordWriterProcessor(
             service_id="processor-1",
-            user_config=user_config_raw,
+            run=_make_run(user_config_raw),
         )
 
         expected_dir = (
-            user_config_raw.output.artifact_directory
+            user_config_raw.artifacts.artifact_directory
             / OutputDefaults.RAW_RECORDS_FOLDER
         )
         assert expected_dir.exists()
@@ -57,22 +58,22 @@ class TestRawRecordWriterProcessorInitialization:
     )
     def test_filename_sanitization(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: AIPerfConfig,
         service_id: str,
         expected_filename: str,
     ):
         """Test various service_id sanitization scenarios."""
         processor = RawRecordWriterProcessor(
             service_id=service_id,
-            user_config=user_config_raw,
+            run=_make_run(user_config_raw),
         )
         assert processor.output_file.name == expected_filename
 
-    def test_init_with_none_service_id(self, user_config_raw: UserConfig):
+    def test_init_with_none_service_id(self, user_config_raw: AIPerfConfig):
         """Test initialization with None service_id defaults to 'processor'."""
         processor = RawRecordWriterProcessor(
             service_id=None,
-            user_config=user_config_raw,
+            run=_make_run(user_config_raw),
         )
 
         assert processor.service_id == "processor"
@@ -85,7 +86,7 @@ class TestRawRecordWriterProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_record_writes_valid_data(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
     ):
         """Test that process_record writes valid raw data to file."""
@@ -118,7 +119,7 @@ class TestRawRecordWriterProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_record_with_error(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: AIPerfConfig,
         error_parsed_record: ParsedResponseRecord,
     ):
         """Test that process_record handles error records correctly."""
@@ -143,7 +144,7 @@ class TestRawRecordWriterProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_multiple_records(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
     ):
         """Test processing multiple records."""
@@ -173,7 +174,7 @@ class TestRawRecordWriterProcessorFileFormat:
     @pytest.mark.asyncio
     async def test_output_is_valid_jsonl_and_record_structure(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
     ):
         """Test that output is valid JSONL format and record structure is complete."""
@@ -212,7 +213,7 @@ class TestRawRecordAggregator:
     @pytest.mark.asyncio
     async def test_aggregator_combines_multiple_files(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
     ):
         """Test that aggregator combines multiple processor files."""
@@ -242,13 +243,13 @@ class TestRawRecordAggregator:
 
         # Verify raw_records directory is cleaned up
         raw_records_dir = (
-            user_config_raw.output.artifact_directory
+            user_config_raw.artifacts.artifact_directory
             / OutputDefaults.RAW_RECORDS_FOLDER
         )
         assert not raw_records_dir.exists()
 
     @pytest.mark.asyncio
-    async def test_aggregator_with_no_files(self, user_config_raw: UserConfig):
+    async def test_aggregator_with_no_files(self, user_config_raw: AIPerfConfig):
         """Test that aggregator handles no input files gracefully."""
         exporter_config = create_exporter_config(user_config_raw)
         aggregator = RawRecordAggregator(exporter_config=exporter_config)
@@ -262,12 +263,12 @@ class TestRawRecordAggregator:
     @pytest.mark.asyncio
     async def test_aggregator_skips_empty_lines(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: AIPerfConfig,
     ):
         """Test that aggregator skips empty lines in input files."""
         # Create a processor file with some empty lines
         raw_records_dir = (
-            user_config_raw.output.artifact_directory
+            user_config_raw.artifacts.artifact_directory
             / OutputDefaults.RAW_RECORDS_FOLDER
         )
         raw_records_dir.mkdir(parents=True, exist_ok=True)
@@ -294,12 +295,12 @@ class TestRawRecordAggregator:
     @pytest.mark.asyncio
     async def test_aggregator_clears_existing_output(
         self,
-        user_config_raw: UserConfig,
+        user_config_raw: AIPerfConfig,
         sample_parsed_record: ParsedResponseRecord,
     ):
         """Test that aggregator clears existing output file."""
         # Create existing output file
-        output_file = user_config_raw.output.profile_export_raw_jsonl_file
+        output_file = user_config_raw.artifacts.profile_export_raw_jsonl_file
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.write_text("old content\n")
 

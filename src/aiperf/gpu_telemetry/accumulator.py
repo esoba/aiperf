@@ -1,11 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from aiperf.common.config import ServiceConfig, UserConfig
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
+
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import GPUTelemetryMode
 from aiperf.common.environment import Environment
@@ -46,8 +49,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         - Background task for periodic metric updates
 
     Args:
-        user_config: User configuration including GPU telemetry settings
-        service_config: Service configuration for communication and UI settings
+        config: BenchmarkConfig containing GPU telemetry settings and UI configuration
         pub_client: Publish client for sending realtime metric updates
         **kwargs: Additional arguments passed to base class
 
@@ -57,20 +59,17 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
 
     def __init__(
         self,
-        user_config: UserConfig,
-        service_config: ServiceConfig,
+        run: BenchmarkRun,
         pub_client: PubClientProtocol,
         **kwargs: Any,
     ):
-        if user_config.gpu_telemetry_disabled:
+        config = run.cfg
+        if config.gpu_telemetry_disabled:
             raise PostProcessorDisabled(
                 "GPU telemetry accumulator is disabled via --no-gpu-telemetry"
             )
         self.pub_client = pub_client
-        self.service_config = service_config
-        super().__init__(
-            user_config=user_config, service_config=service_config, **kwargs
-        )
+        super().__init__(run=run, **kwargs)
 
         self._hierarchy = TelemetryHierarchy()
         self._realtime_enable_event = asyncio.Event()
@@ -94,7 +93,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         """
         self.info("Received START_REALTIME_TELEMETRY command")
 
-        self.user_config.gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
+        self.run.resolved.gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
 
         # Wake up the sleeping telemetry task
         self._realtime_enable_event.set()
@@ -102,12 +101,18 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
     @background_task(interval=None, immediate=True)
     async def _report_realtime_telemetry_metrics_task(self) -> None:
         """Report GPU telemetry metrics - sleeps when disabled, resumes on command."""
-        if self.service_config.ui_type != UIType.DASHBOARD:
+        if (
+            self.run.cfg.ui_type != UIType.DASHBOARD
+            and not self.run.cfg.runtime.api_port
+        ):
             return
+
+        if self.run.cfg.runtime.api_port:
+            self.run.resolved.gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
 
         while not self.stop_requested:
             if (
-                self.user_config.gpu_telemetry_mode
+                self.run.resolved.gpu_telemetry_mode
                 != GPUTelemetryMode.REALTIME_DASHBOARD
             ):
                 # Disabled - sleep until command wakes us
@@ -199,7 +204,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         start_ns: int | None = None,
         end_ns: int | None = None,
         error_summary: list[ErrorDetailsCount] | None = None,
-    ) -> "TelemetryExportData | None":
+    ) -> TelemetryExportData | None:
         """Export accumulated telemetry data as a TelemetryExportData object.
 
         Transforms the internal numpy-backed telemetry hierarchy into a serializable

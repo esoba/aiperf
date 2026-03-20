@@ -8,9 +8,9 @@ from aiperf.common.models.record_models import ReasoningResponseData, TextRespon
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import (
+    create_config,
     create_endpoint_with_mock_transport,
     create_mock_response,
-    create_model_endpoint,
 )
 
 
@@ -20,8 +20,8 @@ class TestChatEndpointParseResponse:
     @pytest.fixture
     def endpoint(self):
         """Create a ChatEndpoint instance for parsing tests."""
-        model_endpoint = create_model_endpoint(EndpointType.CHAT)
-        return create_endpoint_with_mock_transport(ChatEndpoint, model_endpoint)
+        cfg = create_config(EndpointType.CHAT)
+        return create_endpoint_with_mock_transport(ChatEndpoint, cfg)
 
     def test_parse_response_chat_completion(self, endpoint):
         """Test parsing non-streaming chat completion response."""

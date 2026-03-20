@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Minimal Configuration
+# description: Bare minimum config using shorthand forms -- the fastest way to get started.
+# category: Getting Started
+# tags: quick-start, simple
+# difficulty: beginner
+# features: shorthand syntax
+#
+# Minimal Configuration
+# =====================
+# Absolute bare minimum using all shorthand forms.
+#
+# Run: aiperf profile --config minimal.yaml
+
+model: meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  url: http://localhost:8000
+
+dataset:
+  type: synthetic
+  entries: 100
+  prompts:
+    isl: 512
+    osl: 128
+
+phases:
+  type: concurrency
+  concurrency: 8
+  requests: 100

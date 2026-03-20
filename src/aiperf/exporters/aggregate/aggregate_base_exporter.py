@@ -20,7 +20,7 @@ class AggregateExporterConfig:
     - ProfileResults (single-run data)
     - TelemetryExportData (per-run telemetry)
     - ServerMetricsResults (per-run server metrics)
-    - Full UserConfig (just need output directory)
+    - AIPerfConfig (just need output directory)
 
     Attributes:
         result: AggregateResult to export

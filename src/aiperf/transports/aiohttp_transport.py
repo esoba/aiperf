@@ -123,12 +123,12 @@ class AioHttpTransport(BaseTransport):
     async def _init_aiohttp_client(self) -> None:
         """Initialize the AioHttpClient and lease manager if sticky-user-sessions strategy is used."""
         self.aiohttp_client = AioHttpClient(
-            timeout=self.model_endpoint.endpoint.timeout,
+            timeout=self.run.cfg.endpoint.timeout,
             tcp_kwargs=self.tcp_kwargs,
-            collect_trace_chunks=self.model_endpoint.endpoint.collect_trace_chunks,
+            collect_trace_chunks=self.run.cfg.artifacts.trace,
         )
         if (
-            self.model_endpoint.endpoint.connection_reuse_strategy
+            self.run.cfg.endpoint.connection_reuse
             == ConnectionReuseStrategy.STICKY_USER_SESSIONS
         ):
             self.lease_manager = ConnectionLeaseManager(tcp_kwargs=self.tcp_kwargs)
@@ -164,7 +164,7 @@ class AioHttpTransport(BaseTransport):
         """
         accept = (
             "text/event-stream"
-            if request_info.model_endpoint.endpoint.streaming
+            if request_info.config.endpoint.streaming
             else "application/json"
         )
         return {"Content-Type": "application/json", "Accept": accept}
@@ -184,22 +184,23 @@ class AioHttpTransport(BaseTransport):
         Returns:
             Complete HTTP URL with scheme and endpoint path
         """
-        endpoint_info = request_info.model_endpoint.endpoint
+        endpoint_info = request_info.config.endpoint
 
         # Start with base URL - use url_index for multi-URL load balancing
-        base_url = endpoint_info.get_url(request_info.url_index).rstrip("/")
+        url_index = request_info.url_index if request_info.url_index is not None else 0
+        base_url = endpoint_info.urls[url_index % len(endpoint_info.urls)].rstrip("/")
 
         # Determine the endpoint path
-        if endpoint_info.custom_endpoint:
+        if endpoint_info.path:
             # Use custom endpoint path if provided
-            path = endpoint_info.custom_endpoint.lstrip("/")
+            path = endpoint_info.path.lstrip("/")
             url = f"{base_url}/{path}"
         else:
             # Get endpoint path from endpoint metadata
             endpoint_metadata = plugins.get_endpoint_metadata(endpoint_info.type)
             endpoint_path = endpoint_metadata.endpoint_path
             if (
-                self.model_endpoint.endpoint.streaming
+                self.run.cfg.endpoint.streaming
                 and endpoint_metadata.streaming_path is not None
             ):
                 endpoint_path = endpoint_metadata.streaming_path
@@ -209,10 +210,17 @@ class AioHttpTransport(BaseTransport):
 
             else:
                 path = endpoint_path.lstrip("/")
+                # Avoid duplicate path when base URL already contains the full endpoint path
+                # (e.g. http://server:8000/v1/chat/completions with path v1/chat/completions)
+                if base_url.endswith(f"/{path}"):
+                    url = base_url
                 # Handle /v1 base URL with v1/ path prefix to avoid duplication
-                if base_url.endswith("/v1") and path.startswith("v1/"):
+                elif base_url.endswith("/v1") and path.startswith("v1/"):
                     path = path.removeprefix("v1/")
-                url = f"{base_url}/{path}"
+                    url = f"{base_url}/{path}"
+                else:
+                    url = f"{base_url}/{path}"
+        # Add scheme if missing for proper parsing
         return url if url.startswith("http") else f"http://{url}"
 
     async def send_request(
@@ -244,14 +252,14 @@ class AioHttpTransport(BaseTransport):
 
         start_perf_ns = time.perf_counter_ns()
         headers = None
-        reuse_strategy = self.model_endpoint.endpoint.connection_reuse_strategy
+        reuse_strategy = self.run.cfg.endpoint.connection_reuse
 
         # Capture lease_manager reference to avoid race with concurrent shutdown
         lease_manager = self.lease_manager
 
         # Route polling-based endpoints (e.g., video_generation) to polling implementation
         endpoint_metadata = plugins.get_endpoint_metadata(
-            request_info.model_endpoint.endpoint.type
+            request_info.config.endpoint.type
         )
         if endpoint_metadata.requires_polling:
             return await self._send_video_request_with_polling(request_info, payload)
@@ -293,7 +301,7 @@ class AioHttpTransport(BaseTransport):
 
                 case _:
                     raise ValueError(
-                        f"Invalid connection reuse strategy: {self.model_endpoint.endpoint.connection_reuse_strategy}"
+                        f"Invalid connection reuse strategy: {self.run.cfg.endpoint.connection_reuse}"
                     )
 
             record = await self.aiohttp_client.post_request(
@@ -538,7 +546,7 @@ class AioHttpTransport(BaseTransport):
         submit_url = self.build_url(request_info)
 
         # Check if video download is enabled via --download-video-content
-        download_content = request_info.model_endpoint.endpoint.download_video_content
+        download_content = request_info.config.endpoint.download_video_content
 
         try:
             # Submit job
@@ -554,7 +562,7 @@ class AioHttpTransport(BaseTransport):
                 job_id,
                 poll_url,
                 headers,
-                timeout=request_info.model_endpoint.endpoint.timeout,
+                timeout=request_info.config.endpoint.timeout,
                 poll_interval=Environment.HTTP.VIDEO_POLL_INTERVAL,
             )
             if isinstance(poll_result, ErrorDetails):

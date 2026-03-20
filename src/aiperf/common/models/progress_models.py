@@ -7,7 +7,7 @@ from pydantic import Field
 from aiperf.common.enums import WorkerStatus
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.credit_models import ProcessingStats
-from aiperf.common.models.health_models import ProcessHealth
+from aiperf.common.models.health_models import ProcessHealth, ProcessHealthAggregates
 from aiperf.common.models.worker_models import WorkerTaskStats
 
 
@@ -45,6 +45,10 @@ class WorkerStats(AIPerfBaseModel):
     health: ProcessHealth | None = Field(
         default=None,
         description="The health of the worker as reported by the Workers",
+    )
+    health_aggregates: ProcessHealthAggregates = Field(
+        default_factory=ProcessHealthAggregates,
+        description="Aggregated health statistics over time",
     )
     status: WorkerStatus = Field(
         default=WorkerStatus.IDLE,

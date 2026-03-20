@@ -77,22 +77,22 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         Raises:
             DataExporterDisabled: If server metrics are disabled or Parquet format not selected
         """
-        self.user_config = server_metrics_accumulator.user_config
-        if self.user_config.server_metrics_disabled:
+        self.run = server_metrics_accumulator.run
+        if self.run.cfg.server_metrics_disabled:
             raise DataExporterDisabled("Server metrics is disabled")
 
         # Check if Parquet format is enabled
-        if ServerMetricsFormat.PARQUET not in self.user_config.server_metrics_formats:
+        if ServerMetricsFormat.PARQUET not in self.run.cfg.server_metrics_formats:
             raise DataExporterDisabled(
                 "Server metrics Parquet export disabled: format not selected"
             )
 
         super().__init__(**kwargs)
-        self._file_path = self.user_config.output.server_metrics_export_parquet_file
+        self._file_path = self.run.cfg.output.server_metrics_export_parquet_file
         self._accumulator = server_metrics_accumulator
         self._time_filter = time_filter
         self.trace_or_debug(
-            lambda: f"Initializing ServerMetricsParquetExporter with config: {self.user_config}",
+            lambda: f"Initializing ServerMetricsParquetExporter with config: {self.run.cfg}",
             lambda: f"Initializing ServerMetricsParquetExporter with file path: {self._file_path}",
         )
 
@@ -264,7 +264,7 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         metadata = {
             b"aiperf.schema_version": b"1.0",
             b"aiperf.version": aiperf_version.encode("utf-8"),
-            b"aiperf.benchmark_id": self.user_config.benchmark_id.encode("utf-8"),
+            b"aiperf.benchmark_id": self.run.cfg.benchmark_id.encode("utf-8"),
             b"aiperf.export_timestamp_utc": datetime.now(timezone.utc)
             .isoformat()
             .encode("utf-8"),
@@ -306,23 +306,25 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
 
         # Benchmark configuration (full context)
         # Dump entire user config with exclude_unset to capture actual benchmark settings
-        config_dict = self.user_config.model_dump(
+        config_dict = self.run.cfg.model_dump(
             mode="json", exclude_unset=True, exclude_none=True
         )
         metadata[b"aiperf.input_config"] = orjson.dumps(config_dict)
 
         # Also add key config values for quick access (without parsing JSON)
-        metadata[b"aiperf.model_names"] = orjson.dumps(
-            self.user_config.endpoint.model_names
-        )
-        metadata[b"aiperf.concurrency"] = str(
-            self.user_config.loadgen.concurrency
-        ).encode("utf-8")
+        metadata[b"aiperf.model_names"] = orjson.dumps(self.run.cfg.get_model_names())
 
-        if self.user_config.loadgen.request_rate is not None:
-            metadata[b"aiperf.request_rate"] = str(
-                self.user_config.loadgen.request_rate
-            ).encode("utf-8")
+        # Add load config info from profiling phases
+        profiling_phases = self.run.cfg.get_profiling_phases()
+        if profiling_phases:
+            first_phase = next(iter(profiling_phases.values()))
+            if first_phase.concurrency is not None:
+                metadata[b"aiperf.concurrency"] = str(first_phase.concurrency).encode(
+                    "utf-8"
+                )
+            rate = getattr(first_phase, "rate", None)
+            if rate is not None:
+                metadata[b"aiperf.request_rate"] = str(rate).encode("utf-8")
 
         # Endpoint information
         hierarchy = self._accumulator.get_hierarchy_for_export()

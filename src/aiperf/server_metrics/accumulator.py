@@ -1,11 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from aiperf.common.config import UserConfig
+from aiperf.common.environment import Environment
+from aiperf.common.hooks import background_task
+from aiperf.common.messages import RealtimeServerMetricsMessage
+from aiperf.plugin.enums import UIType
+
+if TYPE_CHECKING:
+    from aiperf.common.protocols import PubClientProtocol
+    from aiperf.config import BenchmarkRun
 from aiperf.common.constants import (
     MILLIS_PER_SECOND,
     NANOS_PER_MILLIS,
@@ -66,11 +77,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         PostProcessorDisabled: If --no-server-metrics flag is set
 
     Example:
-        >>> from aiperf.common.config import UserConfig
+        >>> from aiperf.config import BenchmarkConfig
         >>> from aiperf.common.models import ServerMetricsRecord, MetricFamily, MetricSample
         >>> # Create accumulator
-        >>> config = UserConfig(...)
-        >>> accumulator = ServerMetricsAccumulator(user_config=config)
+        >>> config = BenchmarkConfig(...)
+        >>> accumulator = ServerMetricsAccumulator(config=config)
         >>>
         >>> # Process records from collection
         >>> record = ServerMetricsRecord(
@@ -95,17 +106,28 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         CounterMetricData(description="Total HTTP requests", series=[...])
     """
 
-    def __init__(self, user_config: UserConfig, **kwargs: Any):
-        if user_config.server_metrics_disabled:
+    def __init__(
+        self,
+        run: BenchmarkRun,
+        pub_client: PubClientProtocol | None = None,
+        **kwargs: Any,
+    ) -> None:
+        config = run.cfg
+        if config.server_metrics_disabled:
             raise PostProcessorDisabled(
                 "Server metrics results processor is disabled via --no-server-metrics"
             )
 
-        super().__init__(user_config=user_config, **kwargs)
+        self.pub_client = pub_client
+        super().__init__(run=run, **kwargs)
 
         self._server_metrics_hierarchy = ServerMetricsHierarchy()
         # Use slice_duration from config for windowed stats
-        self._slice_duration: float | None = user_config.output.slice_duration
+        self._slice_duration: float | None = config.output.slice_duration
+        # Track last endpoint summaries hash to avoid duplicate publishes
+        self._last_summaries_hash: int | None = None
+        # Track profiling start time for realtime computations
+        self._profiling_start_ns: int | None = None
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -160,7 +182,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         endpoint_list = list(self._server_metrics_hierarchy.endpoints.keys())
         results = ServerMetricsResults(
-            benchmark_id=self.user_config.benchmark_id,
+            benchmark_id=self.run.cfg.benchmark_id,
             endpoint_summaries=endpoint_summaries,
             start_ns=start_ns,
             end_ns=end_ns,
@@ -181,6 +203,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         profiling_start_ns: int,
         profiling_end_ns: int,
         slice_duration: float | None = None,
+        fast_histogram_percentiles: bool = False,
     ) -> dict[str, ServerMetricsEndpointSummary]:
         """Compute all server metrics summaries with per-endpoint time filters.
 
@@ -199,6 +222,9 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             profiling_end_ns: Profiling phase end time (benchmark completion time)
             slice_duration: Duration of each timeslice window in seconds for time-sliced stats.
                            If None, timeslice analysis is skipped (saves computation).
+            fast_histogram_percentiles: Algorithm selection for histogram percentile estimation.
+                                        True = Prometheus linear interpolation (fast, for realtime).
+                                        False = Polynomial histogram (accurate, for final export).
 
         Returns:
             Dict mapping endpoint display names (e.g., "localhost:8081") to
@@ -237,6 +263,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                     time_filter,
                     labels=metric_key.labels_dict,
                     slice_duration=slice_duration,
+                    fast_histogram_percentiles=fast_histogram_percentiles,
                 )
 
                 if series_stats is None:
@@ -327,7 +354,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             time_filter: Time range filter for the profiling period
         """
         # Check if Parquet format is enabled
-        if ServerMetricsFormat.PARQUET not in self.user_config.server_metrics_formats:
+        if ServerMetricsFormat.PARQUET not in self.run.cfg.server_metrics_formats:
             self.debug("Parquet format not selected, skipping export")
             return
 
@@ -356,3 +383,79 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             Empty list (server metrics exported via export_results instead)
         """
         return []
+
+    def set_profiling_start(self, start_ns: int) -> None:
+        """Set the profiling start time for realtime computations.
+
+        Args:
+            start_ns: Profiling phase start time in nanoseconds
+        """
+        self._profiling_start_ns = start_ns
+
+    @background_task(interval=None, immediate=True)
+    async def _report_realtime_server_metrics_task(self) -> None:
+        """Report server metrics periodically for realtime dashboard display.
+
+        Only runs when dashboard UI is enabled and pub_client is available.
+        Uses a longer interval than telemetry since server metrics computation
+        is more expensive.
+        """
+        if not self.pub_client or not self.run:
+            return
+
+        # Only publish when there's a consumer: dashboard UI or API server
+        has_dashboard = self.run.cfg.ui_type == UIType.DASHBOARD
+        has_api = bool(self.run.cfg.runtime.api_port)
+        if not has_dashboard and not has_api:
+            return
+
+        while not self.stop_requested:
+            await self._report_realtime_server_metrics()
+            # Use 2x the normal interval since server metrics computation is heavier
+            await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL * 2)
+
+    async def _report_realtime_server_metrics(self) -> None:
+        """Compute and publish realtime server metrics snapshot."""
+        if not self.pub_client:
+            return
+
+        if not self._server_metrics_hierarchy.endpoints:
+            return
+
+        # Use current time as end, and earliest data or profiling start as start
+        current_ns = time.time_ns()
+        start_ns = self._profiling_start_ns or 0
+
+        # Find earliest data timestamp if no profiling start set
+        if start_ns == 0:
+            for ts in self._server_metrics_hierarchy.endpoints.values():
+                if ts.first_update_ns and (
+                    start_ns == 0 or ts.first_update_ns < start_ns
+                ):
+                    start_ns = ts.first_update_ns
+
+        if start_ns == 0 or start_ns >= current_ns:
+            return
+
+        # Compute endpoint summaries for realtime display (no timeslices needed).
+        # Use fast Prometheus percentiles - accuracy matters less for live dashboard.
+        endpoint_summaries = self._compute_endpoint_summaries(
+            start_ns, current_ns, slice_duration=None, fast_histogram_percentiles=True
+        )
+
+        if not endpoint_summaries:
+            return
+
+        # Check if summaries changed using hash
+        summaries_hash = hash(str(endpoint_summaries))
+        if summaries_hash == self._last_summaries_hash:
+            return
+
+        self._last_summaries_hash = summaries_hash
+
+        await self.pub_client.publish(
+            RealtimeServerMetricsMessage(
+                service_id=self.id,
+                endpoint_summaries=endpoint_summaries,
+            )
+        )

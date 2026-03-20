@@ -1,12 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import asyncio
 import time
 import uuid
+from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
@@ -18,9 +24,10 @@ from aiperf.common.hooks import (
     on_start,
     on_stop,
 )
+from aiperf.common.memory_profiler import MemoryProfiler
 from aiperf.common.messages import (
-    CommandMessage,
     DatasetConfiguredNotification,
+    DatasetDownloadedNotification,
     ErrorMessage,
     InferenceResultsMessage,
     WorkerHealthMessage,
@@ -32,8 +39,9 @@ from aiperf.common.messages.dataset_messages import (
 from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
     Conversation,
+    DatasetClientMetadata,
+    DatasetMetadata,
     ErrorDetails,
-    ModelEndpointInfo,
     ProcessHealth,
     ReasoningResponseData,
     RequestInfo,
@@ -53,13 +61,15 @@ from aiperf.credit.messages import (
     CreditReturn,
     FirstToken,
     RouterToWorkerMessage,
+    TimePong,
     WorkerReady,
     WorkerShutdown,
 )
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, ServiceRunType
+from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.session_manager import UserSession, UserSessionManager
 
@@ -129,21 +139,22 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ):
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             **kwargs,
         )
 
         self.debug(lambda: f"Worker process __init__ (pid: {self._process.pid})")
 
-        self.event_loop_monitor = EventLoopMonitor(self.service_id)
+        self.event_loop_monitor = EventLoopMonitor(
+            self.service_id,
+            artifact_dir=self.run.cfg.output.artifact_directory,
+        )
 
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
@@ -155,16 +166,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         )
 
-        self.model_endpoint = ModelEndpointInfo.from_user_config(self.user_config)
-
         self.inference_client: InferenceClient = InferenceClient(
-            model_endpoint=self.model_endpoint,
+            run=self.run,
             service_id=self.service_id,
         )
         self.attach_child_lifecycle(self.inference_client)
         self.debug(
             lambda: (
-                f"Created inference client for {self.model_endpoint.endpoint.type}, "
+                f"Created inference client for {self.run.cfg.endpoint.type}, "
                 f"class: {self.inference_client.__class__.__name__}"
             ),
         )
@@ -184,17 +193,26 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self.session_manager: UserSessionManager = UserSessionManager()
 
+        self.clock_offset_tracker = ClockOffsetTracker(logger_name=self.service_id)
+
+        # Memory profiler for debugging memory growth (enabled via AIPERF_DEV_MEMORY_PROFILE_ENABLED)
+        self._memory_profiler = MemoryProfiler(service_id=self.service_id)
+
         # Dataset client for direct data access (eliminates DatasetManager bottleneck)
-        # Initialized when DatasetConfiguredNotification is received via factory
+        # Initialized when DatasetConfiguredNotification is received via factory.
+        # In Kubernetes mode (network client type), initialization is deferred until
+        # WorkerPodManager downloads the dataset and sends DatasetDownloadedNotification.
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
+        self._pending_dataset_config: DatasetConfiguredNotification | None = None
 
         # Only send FirstToken messages when prefill concurrency limiting is active.
         # Detecting first token requires parsing each SSE chunk, so skip this overhead
         # when the orchestrator doesn't need TTFT events for slot management.
-        self._prefill_concurrency_enabled: bool = (
-            self.user_config.loadgen.prefill_concurrency is not None
-            or self.user_config.loadgen.warmup_prefill_concurrency is not None
+        # Check all phases for prefill_concurrency settings
+        self._prefill_concurrency_enabled = any(
+            phase.prefill_concurrency is not None
+            for phase in self.run.cfg.phases.values()
         )
 
         # Only used as a fallback when dataset client is not initialized
@@ -209,8 +227,28 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
-        """Send WorkerReady to announce presence."""
+        """Send WorkerReady to announce presence.
+
+        In Kubernetes mode, deferred until the dataset is downloaded so the
+        worker never receives credits before it can serve them.
+        """
+        if self._is_kubernetes_mode():
+            self.debug(
+                "Kubernetes mode: deferring WorkerReady until dataset is downloaded"
+            )
+            return
+        await self._measure_baseline_rtt()
         await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
+
+    def _is_kubernetes_mode(self) -> bool:
+        """Check if running in Kubernetes mode."""
+        return self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+
+    async def _measure_baseline_rtt(self) -> None:
+        """Measure baseline RTT on the credit channel before announcing readiness."""
+        await self.clock_offset_tracker.measure_baseline_rtt(
+            send_ping=self.credit_dealer_client.send,
+        )
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
@@ -220,18 +258,78 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         The factory auto-extracts client_type from client_metadata, leveraging
         the discriminated union pattern for type-safe routing. This allows new
         storage backends (S3, Redis, etc.) to work without modifying Worker code.
+
+        In Kubernetes mode, initialization is deferred until WorkerPodManager
+        downloads the dataset and sends DatasetDownloadedNotification with
+        local file paths.
+        """
+        # In Kubernetes mode, wait for WorkerPodManager to download the dataset first.
+        # WorkerPodManager will send DatasetDownloadedNotification with local paths.
+        if self._is_kubernetes_mode():
+            self._pending_dataset_config = msg
+            self.debug(
+                "Kubernetes mode: waiting for DatasetDownloadedNotification "
+                "before initializing dataset client"
+            )
+            return
+
+        # Local mode: initialize immediately with provided client_metadata
+        await self._initialize_dataset_client(msg.client_metadata, msg.metadata)
+
+    @on_message(MessageType.DATASET_DOWNLOADED_NOTIFICATION)
+    async def _on_dataset_downloaded(self, msg: DatasetDownloadedNotification) -> None:
+        """Handle dataset download completion from WorkerPodManager.
+
+        In Kubernetes mode, WorkerPodManager downloads the dataset files once per pod.
+        This notification contains client_metadata with local file paths.
+        """
+        if self._pending_dataset_config is None:
+            self.debug("Received download notification but no pending config, ignoring")
+            return
+
+        if not msg.success:
+            self.error(f"Dataset download failed: {msg.error_message}")
+            # Still try to initialize - might work if files exist from previous attempt
+            self.warning(
+                "Attempting to initialize dataset client despite download failure"
+            )
+
+        # Use client_metadata from download notification (has local paths from WorkerPodManager)
+        dataset_metadata = (
+            self._pending_dataset_config.metadata
+            if self._pending_dataset_config
+            else None
+        )
+        await self._initialize_dataset_client(msg.client_metadata, dataset_metadata)
+        self._pending_dataset_config = None
+
+        # Measure RTT before announcing readiness
+        await self._measure_baseline_rtt()
+        await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
+
+    async def _initialize_dataset_client(
+        self,
+        client_metadata: DatasetClientMetadata,
+        dataset_metadata: DatasetMetadata | None = None,
+    ) -> None:
+        """Initialize the dataset client from metadata.
+
+        Args:
+            client_metadata: The client metadata with paths/config for dataset access.
+            dataset_metadata: Dataset structure metadata (conversations, context mode).
         """
         ClientStoreClass = plugins.get_class(
-            PluginType.DATASET_CLIENT_STORE, msg.client_metadata.client_type
+            PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
         )
-        self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
+        self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
         await self._dataset_client.initialize()
-        self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
+        if dataset_metadata is not None:
+            self.session_manager.set_default_context_mode(
+                dataset_metadata.default_context_mode
+            )
         self._dataset_configured_event.set()
         self.debug(
-            lambda: (
-                f"Dataset client initialized: type={msg.client_metadata.client_type}"
-            )
+            lambda: f"Dataset client initialized: type={client_metadata.client_type}"
         )
 
     @on_stop
@@ -269,15 +367,20 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     async def _on_credit_message(self, message: RouterToWorkerMessage) -> None:
         """Handle incoming credit message from TimingManager via StickyCreditRouter."""
-        match message:
-            case Credit():
-                self._schedule_credit_drop_task(message)
-            case CancelCredits():
-                await self._on_cancel_credits_message(message)
-            case _:
-                self.warning(
-                    f"Unknown credit message type: {message.__class__.__name__}"
-                )
+        with self.event_loop_monitor.activity(
+            f"credit msg={message.__class__.__name__}"
+        ):
+            match message:
+                case Credit():
+                    self._schedule_credit_drop_task(message)
+                case CancelCredits():
+                    await self._on_cancel_credits_message(message)
+                case TimePong():
+                    self.clock_offset_tracker.handle_pong(message)
+                case _:
+                    self.warning(
+                        f"Unknown credit message type: {message.__class__.__name__}"
+                    )
 
     def _schedule_credit_drop_task(self, credit: Credit) -> None:
         """Schedule a task to handle the credit drop message from TimingManager via StickyCreditRouter.
@@ -287,9 +390,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         ensure the credit is returned. It does not wait for it to actually execute.
         """
         drop_perf_ns = time.perf_counter_ns()
+        credit_received_ns = self.clock_offset_tracker._clock.now_ns()
+        self.clock_offset_tracker.update(credit.issued_at_ns)
         credit_context = CreditContext(
             credit=credit,
             drop_perf_ns=drop_perf_ns,
+            credit_received_ns=credit_received_ns,
         )
 
         task = self.execute_async(self._on_credit_drop_message_task(credit_context))
@@ -375,17 +481,21 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         Credit return is guaranteed via finally block to ensure accurate concurrency tracking.
         For tasks cancelled before they start, the done callback handles the return.
         """
+        credit_id = credit_context.credit.id
         try:
             if not self.inference_client:
                 raise NotInitializedError("Inference server client not initialized.")
-            await self._process_credit(credit_context)
-        except Exception as e:
-            self.exception(
-                f"Error occurred while processing credit {credit_context.credit.id}: {e!r}"
-            )
+            with (
+                self.event_loop_monitor.activity(f"credit id={credit_id} processing"),
+                self._memory_profiler.track("process_credit"),
+            ):
+                await self._process_credit(credit_context)
+            self._memory_profiler.on_request_complete()
         except asyncio.CancelledError:
-            self.debug(lambda: f"Credit {credit_context.credit.id} cancelled")
+            self.debug(lambda: f"Credit {credit_id} cancelled")
             credit_context.cancelled = True
+        except Exception as e:
+            self.exception(f"Error occurred while processing credit {credit_id}: {e!r}")
         finally:
             # ALWAYS return the credit here to ensure accurate tracking
             credit_return = CreditReturn(
@@ -394,7 +504,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
             )
-            await self.credit_dealer_client.send(credit_return)
+            with self.event_loop_monitor.activity(
+                f"credit id={credit_id} sending CreditReturn"
+            ):
+                await self.credit_dealer_client.send(credit_return)
             # Mark as returned AFTER send succeeds
             # If send fails/cancelled, done callback will retry
             # Router idempotency guard handles duplicates
@@ -476,6 +589,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             record: RequestRecord = await self.inference_client.send_request(
                 request_info, first_token_callback=first_token_callback
             )
+            # Store clock offset for cross-machine timestamp alignment.
+            # Do NOT overwrite timestamp_ns — it was set at record creation
+            # (pre-request) and serves as the wall-clock anchor for all
+            # exported timestamps. Overwriting it post-request would shift
+            # every exported timestamp forward by the request latency.
+            record.clock_offset_ns = self.clock_offset_tracker.offset_ns
             await self._send_inference_result_message(record)
 
             # Copy request-level errors to credit context for CreditReturn tracking
@@ -528,7 +647,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """
         credit = credit_context.credit
         return RequestInfo(
-            model_endpoint=self.model_endpoint,
+            config=self.run.cfg,
             credit_num=credit.id,
             credit_phase=credit.phase,
             cancel_after_ns=credit.cancel_after_ns,
@@ -539,6 +658,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             turns=session.turn_list,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
+            credit_received_ns=credit_context.credit_received_ns,
             system_message=system_message,
             user_context_message=user_context_message,
             is_final_turn=credit.is_final_turn,
@@ -599,7 +719,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             await self._send_inference_result_message(
                 RequestRecord(
                     request_info=RequestInfo(
-                        model_endpoint=self.model_endpoint,
+                        config=self.run.cfg,
                         conversation_id=conversation_id,
                         turn_index=0,
                         turns=[],
@@ -609,11 +729,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         x_correlation_id=credit_context.credit.x_correlation_id,
                         drop_perf_ns=credit_context.drop_perf_ns,
                     ),
-                    model_name=self.model_endpoint.primary_model_name,
-                    timestamp_ns=time.time_ns(),
+                    model_name=self.run.cfg.get_model_names()[0],
                     start_perf_ns=time.perf_counter_ns(),
                     end_perf_ns=time.perf_counter_ns(),
                     error=error,
+                    clock_offset_ns=self.clock_offset_tracker.offset_ns,
                 )
             )
             raise ValueError(f"Failed to retrieve conversation response: {error}")
@@ -629,14 +749,21 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         3. If text present: Create Turn with role="assistant"
         4. If no text: Return None (error response or no content)
 
+        Offloaded to a thread because extract_response_data parses every SSE
+        message (JSON decode + string ops) synchronously.  For long streaming
+        responses this can block the event loop for 10ms+.
+
         Args:
             record: RequestRecord with raw responses from inference server
 
         Returns:
             Turn object for storing in session, or None if no content
         """
+        return await asyncio.to_thread(self._process_response_sync, record)
+
+    def _process_response_sync(self, record: RequestRecord) -> Turn | None:
+        """Synchronous response processing — runs in a thread pool."""
         resp = self.inference_client.endpoint.extract_response_data(record)
-        # Skip reasoning responses in multi-turn conversations
         output_texts = []
         for response in resp:
             if not response.data:
@@ -663,21 +790,24 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         Flow:
         1. Update task statistics (total and success/failure counts)
         2. Wrap record in InferenceResultsMessage
-        3. Push to RecordProcessor via PUSH socket (fire-and-forget)
+        3. Serialize in thread pool (model_dump + orjson on large records blocks)
+        4. Push pre-serialized bytes to RecordProcessor via PUSH socket
 
-        Note: Uses execute_async() to avoid blocking on network I/O.
+        Note: Serialization is awaited so callers can safely mutate ``record``
+        afterwards (e.g. ``extract_response_data`` nulls out responses).
+        The ZMQ push is fire-and-forget to avoid blocking on network I/O.
         """
-        # All records will flow through here to be sent to the inference results push client.
         self.task_stats.task_finished(record.valid)
 
         msg = InferenceResultsMessage(
             service_id=self.service_id,
             record=record,
         )
-        self.execute_async(self.inference_results_push_client.push(msg))
+        data = await asyncio.to_thread(msg.to_json_bytes)
+        self.execute_async(self.inference_results_push_client.push_raw(data))
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _on_profile_configure_command(self, message: CommandMessage) -> None:
+    async def _on_profile_configure_command(self, message: Command) -> None:
         """Configure the worker."""
         self.debug("Waiting for dataset to be configured before starting profiling")
         await asyncio.wait_for(
@@ -688,12 +818,49 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             health = await asyncio.to_thread(self.get_process_health)
             memory_usage = health.memory_usage / BYTES_PER_MIB
             self.memory_usage_before_profiling = memory_usage
-            self.debug(f"Memory usage before profiling: {memory_usage:.2f} MiB")
+            pss = await asyncio.to_thread(self.get_pss_memory)
+            pss_mib = pss / BYTES_PER_MIB if pss is not None else None
+            self.debug(
+                f"Memory before profiling: RSS={memory_usage:.2f} MiB, "
+                f"PSS={pss_mib:.2f} MiB"
+                if pss_mib is not None
+                else f"Memory before profiling: RSS={memory_usage:.2f} MiB (PSS unavailable)"
+            )
 
         self.event_loop_monitor.start()
 
+        # Wire monitor into sub_client for message-level activity tracking
+        if hasattr(self, "sub_client"):
+            self.sub_client.event_loop_monitor = self.event_loop_monitor
+
+        # Start memory profiler if enabled via environment
+        self._memory_profiler.start()
+
     @on_stop
     async def _worker_stop(self) -> None:
+        # Stop memory profiler and log final stats
+        self._memory_profiler.stop()
+
+        if self.is_debug_enabled:
+            health = await asyncio.to_thread(self.get_process_health)
+            rss_mib = health.memory_usage / BYTES_PER_MIB
+            pss = await asyncio.to_thread(self.get_pss_memory)
+            pss_mib = pss / BYTES_PER_MIB if pss is not None else None
+            before = self.memory_usage_before_profiling
+            self.debug(
+                f"Memory after profiling: RSS={rss_mib:.2f} MiB, "
+                + (
+                    f"PSS={pss_mib:.2f} MiB"
+                    if pss_mib is not None
+                    else "PSS=unavailable"
+                )
+                + (
+                    f" (RSS delta={rss_mib - before:+.2f} MiB)"
+                    if before is not None
+                    else ""
+                )
+            )
+
         # Clean up dataset client resources using protocol lifecycle
         if self._dataset_client is not None:
             dataset_client = self._dataset_client

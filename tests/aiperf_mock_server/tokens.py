@@ -409,8 +409,8 @@ def _load_corpus() -> tuple[str, ...] | None:
             f"SERVER NOT READY - Loading corpus with tokenizer '{server_config.tokenizer}'... This may take a while..."
         )
         try:
-            from aiperf.common.config import PromptConfig
             from aiperf.common.tokenizer import Tokenizer
+            from aiperf.config import PromptConfig
             from aiperf.dataset.generator.prompt import PromptGenerator
 
             tokenizer = Tokenizer.from_pretrained(

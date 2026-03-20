@@ -1,28 +1,56 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.common.config import EndpointConfig, UserConfig
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation
+from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.dataset.loader.hf_instruction_response import (
     HFInstructionResponseDatasetLoader,
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["test-model"],
+    "endpoint": {
+        "type": "chat",
+        "urls": ["http://localhost:8000/v1/chat/completions"],
+    },
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+}
+
+
+def _make_run(**overrides: Any) -> BenchmarkRun:
+    kwargs = {**_MINIMAL_CONFIG_KWARGS, **overrides}
+    config = BenchmarkConfig(**kwargs)
+    return BenchmarkRun(
+        benchmark_id="test",
+        cfg=config,
+        artifact_dir=Path("/tmp/test"),
+    )
+
 
 @pytest.fixture
-def user_config() -> UserConfig:
-    return UserConfig(endpoint=EndpointConfig(model_names=["test-model"]))
+def run() -> BenchmarkRun:
+    return _make_run()
 
 
 @pytest.fixture
-async def loader(user_config: UserConfig) -> HFInstructionResponseDatasetLoader:
+async def loader(run: BenchmarkRun) -> HFInstructionResponseDatasetLoader:
     return HFInstructionResponseDatasetLoader(
-        user_config=user_config,
+        run=run,
         hf_dataset_name="AI-MO/NuminaMath-TIR",
         hf_split="train",
         prompt_column="problem",
@@ -42,9 +70,9 @@ class TestBaseHFDatasetLoader:
         assert loader.hf_split == "train"
         assert loader.hf_subset is None
 
-    async def test_subset_stored_when_provided(self, user_config):
+    async def test_subset_stored_when_provided(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            user_config=user_config,
+            run=run,
             hf_dataset_name="test/dataset",
             hf_split="validation",
             hf_subset="subset-a",
@@ -67,11 +95,9 @@ class TestBaseHFDatasetLoader:
             result = await loader.load_dataset()
         assert result == {"dataset": fake_dataset}
 
-    async def test_load_hf_dataset_calls_load_dataset_with_correct_args(
-        self, user_config
-    ):
+    async def test_load_hf_dataset_calls_load_dataset_with_correct_args(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            user_config=user_config,
+            run=run,
             hf_dataset_name="test/data",
             hf_split="test",
             hf_subset="my-subset",
@@ -142,9 +168,9 @@ class TestHFInstructionResponseDatasetLoader:
         conversations = await loader.convert_to_conversations(data)
         assert conversations == []
 
-    async def test_uses_configured_prompt_column(self, user_config):
+    async def test_uses_configured_prompt_column(self, run):
         loader = HFInstructionResponseDatasetLoader(
-            user_config=user_config,
+            run=run,
             hf_dataset_name="test/data",
             hf_split="train",
             prompt_column="question",

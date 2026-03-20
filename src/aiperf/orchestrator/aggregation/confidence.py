@@ -6,9 +6,6 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import numpy as np
-from scipy import stats
-
 from aiperf.common.constants import STAT_KEYS
 from aiperf.orchestrator.aggregation.base import AggregateResult, AggregationStrategy
 from aiperf.orchestrator.models import RunResult
@@ -218,6 +215,9 @@ class ConfidenceAggregation(AggregationStrategy):
         Returns:
             ConfidenceMetric with computed statistics
         """
+        import numpy as np
+        from scipy import stats
+
         n = len(values)
         mean = float(np.mean(values))
         std = float(np.std(values, ddof=1))  # Sample std (N-1)

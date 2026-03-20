@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.strategies.user_centric_rate import User, UserCentricStrategy
@@ -21,7 +20,7 @@ class TestUserCentricInit:
     )  # fmt: skip
     def test_missing_params_raises(self, num_users, rate, match) -> None:
         cfg = CreditPhaseConfig(
-            phase=CreditPhase.PROFILING,
+            phase="profiling",
             timing_mode=TimingMode.USER_CENTRIC_RATE,
             request_rate=rate,
             num_users=num_users,
@@ -47,7 +46,7 @@ class TestUserCentricInit:
         )
         await h.orchestrator.initialize()
         assert len(h.orchestrator._ordered_phase_configs) == 1
-        assert h.orchestrator._ordered_phase_configs[0].phase == CreditPhase.PROFILING
+        assert h.orchestrator._ordered_phase_configs[0].phase == "profiling"
 
 
 @pytest.mark.asyncio

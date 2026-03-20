@@ -4,37 +4,49 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+import orjson
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.config.zmq_config import ZMQDualBindConfig
+from aiperf.config.zmq import ZMQDualBindConfig
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
     CreditPhase,
     MessageType,
+    MetricFlags,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
+from aiperf.common.hooks import (
+    background_task,
+    on_command,
+    on_message,
+    on_pull_message,
+)
+
+if TYPE_CHECKING:
+    from aiperf.common.models.export_models import JsonExportData
+
+from aiperf.common.control_structs import Command
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
     MetricRecordsData,
     MetricRecordsMessage,
-    ProcessRecordsCommand,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    RealtimeMetricsCommand,
     RealtimeMetricsMessage,
     RecordsProcessingStatsMessage,
     ServerMetricsRecordMessage,
-    StartRealtimeTelemetryCommand,
     TelemetryRecordsMessage,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -98,15 +110,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     def __init__(
         self,
-        service_config: ServiceConfig,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         service_id: str | None = None,
         **kwargs,
     ) -> None:
         # For dual-bind mode (Kubernetes), also bind to TCP for remote record processors.
         # Controller binds to IPC + TCP; workers connect via TCP.
         additional_bind_address: str | None = None
-        comm_config = service_config.comm_config
+        comm_config = run.resolved.comm_config or run.cfg.comm_config
         if (
             isinstance(comm_config, ZMQDualBindConfig)
             and not comm_config.controller_host
@@ -114,8 +125,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             additional_bind_address = comm_config.records_push_pull_tcp_bind_address
 
         super().__init__(
-            service_config=service_config,
-            user_config=user_config,
+            run=run,
             service_id=service_id,
             pull_client_address=CommAddress.RECORDS,
             pull_client_bind=True,
@@ -146,8 +156,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
                 results_processor = ProcessorClass(
                     service_id=self.service_id,
-                    service_config=self.service_config,
-                    user_config=self.user_config,
+                    run=self.run,
                     pub_client=self.pub_client,
                 )
                 self.attach_child_lifecycle(results_processor)
@@ -185,17 +194,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if self.is_trace_enabled:
             self.trace(f"Received metric records: {message}")
 
-        if message.metadata.benchmark_phase != CreditPhase.PROFILING:
-            self.debug(
-                lambda: f"Skipping non-profiling record: {message.metadata.benchmark_phase}"
-            )
-            return
-
         record_data = message.to_data()
 
-        await self._send_results_to_results_processors(record_data)
-
         self._records_tracker.update_from_record_data(record_data)
+
+        # Only send non-excluded phase records to results processors
+        phase_stats = self._records_tracker.create_stats_for_phase(
+            record_data.metadata.benchmark_phase
+        )
+        if not phase_stats.exclude_from_results:
+            await self._send_results_to_results_processors(record_data)
         if record_data.error:
             self._error_tracker.increment_error_count_for_phase(
                 record_data.metadata.benchmark_phase, record_data.error
@@ -249,33 +257,49 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self._server_metrics_state.error_counts[message.error] += 1
 
     async def _handle_all_records_received(self, phase: CreditPhase) -> None:
-        """Handle the case where all records have been received."""
-        if phase != CreditPhase.PROFILING:
-            self.debug(lambda: f"Skipping non-profiling phase: {phase}")
-            return
-
+        """Handle the case where all records have been received for a phase."""
         phase_stats = self._records_tracker.create_stats_for_phase(phase)
         self.info(
-            lambda: f"Processed {phase_stats.success_records} valid requests and {phase_stats.error_records} errors ({phase_stats.total_records} total)."
+            lambda: f"Phase '{phase}': processed {phase_stats.success_records} valid requests and {phase_stats.error_records} errors ({phase_stats.total_records} total)."
         )
 
-        self.info("Received all records, processing now...")
+        if phase_stats.exclude_from_results:
+            self.debug(
+                lambda: f"Phase '{phase}' excluded from results, skipping finalization"
+            )
+            return
+
+        if not self._records_tracker.are_all_results_phases_complete():
+            self.debug(
+                lambda: f"Phase '{phase}' complete but waiting for other results phases"
+            )
+            return
+
+        self.info("All results phases complete, processing now...")
         self.execute_async(
             self._finalize_and_process_results(
-                phase=phase,
-                cancelled=self._records_tracker.was_phase_cancelled(phase),
+                cancelled=any(
+                    self._records_tracker.was_phase_cancelled(p)
+                    for p in self._records_tracker.get_results_phases()
+                ),
             )
         )
         await yield_to_event_loop()
 
-    async def _finalize_and_process_results(
-        self, phase: CreditPhase, cancelled: bool
-    ) -> None:
+    async def _finalize_and_process_results(self, cancelled: bool) -> None:
         """Finalize server metrics collection and process results.
 
         This runs as a background task to avoid blocking the message pump.
+        Aggregates across all non-excluded phases.
         """
-        phase_stats = self._records_tracker.create_stats_for_phase(phase)
+        # Use the first results phase for the AllRecordsReceived message
+        results_phases = self._records_tracker.get_results_phases()
+        if results_phases:
+            phase_stats = self._records_tracker.create_stats_for_phase(
+                results_phases[0]
+            )
+        else:
+            phase_stats = self._records_tracker.create_stats_for_phase("profiling")
 
         # Send a message to the event bus to signal that we received all the records
         await self.publish(
@@ -287,9 +311,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
 
         # Trigger final server metrics scrape and wait for completion
-        # This ensures final metrics are pushed before we export results
-        response = await self.send_command_and_wait_for_response(
-            ProfileCompleteCommand(service_id=self.service_id), timeout=10.0
+        response = await self.control_client.request(
+            Command(
+                cid=uuid.uuid4().hex,
+                cmd=CommandType.PROFILE_COMPLETE,
+            ),
+            timeout=10.0,
         )
 
         if isinstance(response, ErrorDetails):
@@ -298,13 +325,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self.debug("Server metrics final scrape completed")
 
         self.debug("Waiting for server metrics flush period...")
-        # Wait for server metrics flush period to allow final metrics to be collected
-        # This ensures metrics that are still being processed by the server are captured
         flush_period = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
-        phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.PROFILING
-        )
-        flush_end_ns = (phase_stats.requests_end_ns or time.time_ns()) + (
+        _start_ns, end_ns = self._records_tracker.get_results_time_window()
+        flush_end_ns = (end_ns or time.time_ns()) + (
             (flush_period or 0) * NANOS_PER_SECOND
         )
         sleep_dur_sec = (flush_end_ns - time.time_ns()) / NANOS_PER_SECOND
@@ -315,7 +338,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await asyncio.sleep(sleep_dur_sec)
 
         self.debug("Server metrics flush period complete, processing now...")
-        await self._process_results(phase=phase, cancelled=cancelled)
+        await self._process_results(cancelled=cancelled)
         self.info("_finalize_and_process_results completed")
 
     async def _send_results_to_results_processors(
@@ -387,10 +410,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, message: CreditPhaseSendingCompleteMessage
     ) -> None:
         """Handle a credit phase sending complete message in order to track the final request count."""
-        if message.stats.phase == CreditPhase.PROFILING:
-            self.info(
-                f"Sent {message.stats.final_requests_sent:,} requests. Waiting for all to complete..."
-            )
+        self.info(
+            f"Phase '{message.stats.phase}': sent {message.stats.final_requests_sent:,} requests. Waiting for all to complete..."
+        )
         self._records_tracker.update_phase_info(message.stats)
 
     @on_message(MessageType.CREDIT_PHASE_COMPLETE)
@@ -399,17 +421,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> None:
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
         self._records_tracker.update_phase_info(message.stats)
-        if message.stats.phase == CreditPhase.PROFILING:
-            phase_stats = self._records_tracker.create_stats_for_phase(
-                message.stats.phase
-            )
-            # TODO
-            self.info(
-                lambda: f"Received CREDIT_PHASE_COMPLETE message, Phase complete: {phase_stats!r}"
-            )
+        phase_stats = self._records_tracker.create_stats_for_phase(message.stats.phase)
+        self.info(
+            lambda: f"Phase '{message.stats.phase}' complete: {phase_stats.total_records:,} records"
+        )
+        if not phase_stats.exclude_from_results:
             self.notice(
-                f"All requests have completed, please wait for the results to be processed "
-                f"(currently {phase_stats.total_records:,} of {phase_stats.final_requests_completed:,} records processed)..."
+                f"Phase '{message.stats.phase}' requests complete, please wait for results "
+                f"({phase_stats.total_records:,} of {phase_stats.final_requests_completed:,} records processed)..."
             )
 
         # This check is to prevent a race condition where the records manager processes
@@ -425,25 +444,27 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.info(
             "All credits complete, please wait for the results to be processed..."
         )
-        # This check is to prevent a race condition where the records manager processes
-        # all records before the timing manager has sent the final completed count.
-        if self._records_tracker.check_and_set_all_records_received_for_phase(
-            CreditPhase.PROFILING
-        ):
-            await self._handle_all_records_received(CreditPhase.PROFILING)
+        # Check all results phases for completion
+        for phase in self._records_tracker.get_results_phases():
+            if self._records_tracker.check_and_set_all_records_received_for_phase(
+                phase
+            ):
+                await self._handle_all_records_received(phase)
 
     @background_task(
         interval=Environment.RECORD.PROGRESS_REPORT_INTERVAL, immediate=False
     )
     async def _report_records_task(self) -> None:
-        """Report the records processing stats."""
-        active_phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.PROFILING
-        )
-        if active_phase_stats.total_records == 0:
-            return  # TODO: What about worker stats?
-        overall_worker_stats = self._records_tracker.create_overall_worker_stats()
-        await self._publish_processing_stats(active_phase_stats, overall_worker_stats)
+        """Report the records processing stats for active non-excluded phases."""
+        for phase in self._records_tracker.get_results_phases():
+            active_phase_stats = self._records_tracker.create_stats_for_phase(phase)
+            if active_phase_stats.total_records == 0:
+                continue
+            overall_worker_stats = self._records_tracker.create_overall_worker_stats()
+            await self._publish_processing_stats(
+                active_phase_stats, overall_worker_stats
+            )
+            break  # Report first active results phase
 
     async def _publish_processing_stats(
         self,
@@ -461,17 +482,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     @on_command(CommandType.PROCESS_RECORDS)
     async def _on_process_records_command(
-        self, message: ProcessRecordsCommand
+        self, message: Command
     ) -> ProcessRecordsResult:
         """Handle the process records command by forwarding it to all of the results processors, and returning the results."""
         self.debug(lambda: f"Received process records command: {message}")
-        return await self._process_results(
-            phase=CreditPhase.PROFILING, cancelled=message.cancelled
-        )
+        payload = orjson.loads(message.payload) if message.payload else {}
+        cancelled = payload.get("cancelled", False)
+        return await self._process_results(cancelled=cancelled)
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _on_profile_cancel_command(
-        self, message: ProfileCancelCommand
+        self, message: Command
     ) -> ProcessRecordsResult:
         """Handle the profile cancel command by processing current results.
 
@@ -480,34 +501,35 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """
         self.warning(f"Received profile cancel command: {message}")
 
-        # Mark the phase as cancelled in the tracker
-        self._records_tracker.mark_phase_cancelled(CreditPhase.PROFILING)
+        # Mark all non-excluded phases as cancelled
+        for phase in self._records_tracker.get_results_phases():
+            self._records_tracker.mark_phase_cancelled(phase)
 
-        return await self._process_results(phase=CreditPhase.PROFILING, cancelled=True)
+        return await self._process_results(cancelled=True)
 
     @background_task(interval=None, immediate=True)
     async def _report_realtime_inference_metrics_task(self) -> None:
-        """Report inference metrics at regular intervals (dashboard only)."""
+        """Report inference metrics at regular intervals."""
         if (
-            self.service_config.ui_type != UIType.DASHBOARD
+            self.run.cfg.ui_type != UIType.DASHBOARD
+            and not self.run.cfg.runtime.api_port
             and not Environment.UI.REALTIME_METRICS_ENABLED
         ):
             return
 
         while not self.stop_requested:
             await asyncio.sleep(Environment.UI.REALTIME_METRICS_INTERVAL)
-            phase_stats = self._records_tracker.create_stats_for_phase(
-                CreditPhase.PROFILING
+            total_records = sum(
+                self._records_tracker.create_stats_for_phase(p).total_records
+                for p in self._records_tracker.get_results_phases()
             )
-            if phase_stats.total_records == self._previous_realtime_records:
+            if total_records == self._previous_realtime_records:
                 continue  # No new records have been processed, so no need to update the metrics
-            self._previous_realtime_records = phase_stats.total_records
+            self._previous_realtime_records = total_records
             await self._report_realtime_metrics()
 
     @on_command(CommandType.START_REALTIME_TELEMETRY)
-    async def _on_start_realtime_telemetry_command(
-        self, message: StartRealtimeTelemetryCommand
-    ) -> None:
+    async def _on_start_realtime_telemetry_command(self, message: Command) -> None:
         """Handle command to start the realtime telemetry background task.
 
         This is called when the user dynamically enables the telemetry dashboard
@@ -522,20 +544,40 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
 
     @on_command(CommandType.REALTIME_METRICS)
-    async def _on_realtime_metrics_command(
-        self, message: RealtimeMetricsCommand
-    ) -> None:
+    async def _on_realtime_metrics_command(self, message: Command) -> None:
         """Handle a real-time metrics command."""
         await self._report_realtime_metrics()
 
     async def _report_realtime_metrics(self) -> None:
-        """Report inference metrics (used by command handler)."""
-        metrics = await self._generate_realtime_metrics()
-        if metrics:
+        """Report inference metrics (used by command handler).
+
+        Filters out hidden metrics (INTERNAL/EXPERIMENTAL) and converts all
+        metrics to display units before publishing. This ensures all consumers
+        receive consistent, pre-processed metrics.
+        """
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        raw_metrics = await self._generate_realtime_metrics()
+        if not raw_metrics:
+            return
+
+        # Filter hidden metrics and convert to display units
+        hidden_flags = MetricFlags.INTERNAL | MetricFlags.EXPERIMENTAL
+        display_metrics = []
+        for m in raw_metrics:
+            try:
+                metric_cls = MetricRegistry.get_class(m.tag)
+                if metric_cls.flags.has_any_flags(hidden_flags):
+                    continue
+            except Exception:
+                pass
+            display_metrics.append(m)
+
+        if display_metrics:
             await self.publish(
                 RealtimeMetricsMessage(
                     service_id=self.service_id,
-                    metrics=metrics,
+                    metrics=display_metrics,
                 )
             )
 
@@ -564,10 +606,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
         return metric_results
 
-    async def _process_results(
-        self, phase: CreditPhase, cancelled: bool
-    ) -> ProcessRecordsResult:
-        """Process the results."""
+    async def _process_results(self, cancelled: bool) -> ProcessRecordsResult:
+        """Process the results across all non-excluded phases."""
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
         self.info("Processing records results...")
 
@@ -615,20 +655,25 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 self.error(f"Exception processing results: {result!r}")
                 error_results.append(ErrorDetails.from_exception(result))
 
-        phase_stats = self._records_tracker.create_stats_for_phase(phase)
+        start_ns, end_ns = self._records_tracker.get_results_time_window()
+        # Aggregate error summaries across all results phases
+        error_summary = []
+        for phase in self._records_tracker.get_results_phases():
+            error_summary.extend(self._error_tracker.get_error_summary_for_phase(phase))
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=records_results,
                 timeslice_metric_results=timeslice_metric_results,
                 completed=len(records_results),
-                start_ns=phase_stats.start_ns or time.time_ns(),
-                end_ns=phase_stats.requests_end_ns or time.time_ns(),
-                error_summary=self._error_tracker.get_error_summary_for_phase(phase),
+                start_ns=start_ns or time.time_ns(),
+                end_ns=end_ns or time.time_ns(),
+                error_summary=error_summary,
                 was_cancelled=cancelled,
             ),
             errors=error_results,
         )
         self.debug(lambda: f"Process records result: {result}")
+
         self.debug("Publishing ProcessRecordsResultMessage...")
         await self.publish(
             ProcessRecordsResultMessage(
@@ -638,17 +683,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
         self.debug("ProcessRecordsResultMessage published")
 
-        if self.user_config.gpu_telemetry_disabled:
+        if not self.run.cfg.gpu_telemetry.enabled:
             self.debug("GPU telemetry collection is disabled, skipping publish")
         else:
             try:
                 self.debug("Starting _publish_telemetry_results...")
-                await self._publish_telemetry_results(phase)
+                await self._publish_telemetry_results()
                 self.debug("_publish_telemetry_results completed")
             except Exception as e:
                 self.exception(f"Failed to publish telemetry results: {e!r}")
 
-        if self.user_config.server_metrics_disabled:
+        if not self.run.cfg.server_metrics.enabled:
             self.debug("Server metrics collection is disabled, skipping publish")
         else:
             try:
@@ -682,15 +727,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 results=None,
             )
 
-        # Get timing from profiling phase stats
+        # Get timing from non-excluded phase stats
         # Note: end_ns is not passed to include the final telemetry scrape that
         # occurs after PROFILE_COMPLETE but before export_results is called.
-        # If start_ns is None (no profiling phase), include all data.
-        phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.PROFILING
-        )
+        # If start_ns is None (no results phases), include all data.
+        start_ns, _end_ns = self._records_tracker.get_results_time_window()
         telemetry_export_data = self._gpu_telemetry_accumulator.export_results(
-            start_ns=phase_stats.start_ns,
+            start_ns=start_ns,
             error_summary=error_summary,
         )
 
@@ -698,7 +741,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             results=telemetry_export_data,
         )
 
-    async def _publish_telemetry_results(self, phase: CreditPhase) -> None:
+    async def _publish_telemetry_results(self) -> None:
         """Publish telemetry results independently from inference results.
 
         Processes and publishes telemetry data via ProcessTelemetryResultMessage.
@@ -732,13 +775,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 error_summary=error_summary,
             )
 
-        # Get timing from profiling phase stats (warmup is automatically excluded)
+        # Get timing from non-excluded phases
         # TimeFilter will be constructed per-endpoint in accumulator with per-endpoint end times
-        phase_stats = self._records_tracker.create_stats_for_phase(
-            CreditPhase.PROFILING
-        )
-        profiling_start_ns = phase_stats.start_ns or time.time_ns()
-        profiling_end_ns = phase_stats.requests_end_ns or time.time_ns()
+        start_ns, end_ns = self._records_tracker.get_results_time_window()
+        profiling_start_ns = start_ns or time.time_ns()
+        profiling_end_ns = end_ns or time.time_ns()
 
         server_metrics_export_data = (
             await self._server_metrics_accumulator.export_results(
@@ -776,6 +817,72 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug(
             "_publish_server_metrics_results: published ProcessServerMetricsResultMessage"
         )
+
+    def _generate_json_export_data(
+        self,
+        records: list[MetricResult],
+        profile_results: ProfileResults,
+    ) -> JsonExportData:
+        """Generate JsonExportData for ConfigMap publishing.
+
+        Args:
+            records: List of metric results from processing
+            profile_results: The profile results containing timing and error info
+
+        Returns:
+            JsonExportData ready for serialization to ConfigMap
+        """
+        from datetime import datetime
+        from importlib.metadata import version as get_version
+
+        from aiperf.common.models.export_models import JsonExportData
+
+        try:
+            aiperf_version = get_version("aiperf")
+        except Exception:
+            aiperf_version = "unknown"
+
+        # Calculate timestamps
+        start_time = (
+            datetime.fromtimestamp(profile_results.start_ns / NANOS_PER_SECOND)
+            if profile_results.start_ns
+            else None
+        )
+        end_time = (
+            datetime.fromtimestamp(profile_results.end_ns / NANOS_PER_SECOND)
+            if profile_results.end_ns
+            else None
+        )
+
+        # Get telemetry data if available
+        telemetry_data = None
+        if self._gpu_telemetry_accumulator and not self.run.cfg.gpu_telemetry_disabled:
+            phase_stats = self._records_tracker.create_stats_for_phase("profiling")
+            telemetry_data = self._gpu_telemetry_accumulator.export_results(
+                start_ns=phase_stats.start_ns or time.time_ns(),
+                end_ns=phase_stats.requests_end_ns or time.time_ns(),
+                error_summary=[],
+            )
+
+        # Create base export data
+        export_data = JsonExportData(
+            schema_version=JsonExportData.SCHEMA_VERSION,
+            aiperf_version=aiperf_version,
+            benchmark_id=self.run.cfg.benchmark_id,
+            input_config=self.run.cfg,
+            was_cancelled=profile_results.was_cancelled,
+            error_summary=profile_results.error_summary,
+            start_time=start_time,
+            end_time=end_time,
+            telemetry_data=telemetry_data,
+        )
+
+        # Add all metrics dynamically
+        for metric in records:
+            if metric.tag:
+                setattr(export_data, str(metric.tag), metric.to_json_result())
+
+        return export_data
 
 
 def main() -> None:

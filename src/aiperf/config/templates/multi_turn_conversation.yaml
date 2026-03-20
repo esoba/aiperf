@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Multi-Turn Conversation
+# description: Simulate realistic chatbot workloads with multi-turn context accumulation.
+# category: Datasets
+# tags: multi-turn, conversation, chatbot
+# difficulty: intermediate
+# features: multi-turn, turn delay, session tracking
+#
+# Multi-Turn Conversation Benchmark
+# =================================
+# Simulates realistic chatbot workloads with multi-turn conversations.
+# Each session includes multiple user/assistant turns with think time delays.
+#
+# Use case: Benchmark conversational AI with context accumulation
+#
+# Run: aiperf profile --config multi_turn_conversation.yaml
+
+random_seed: 42
+
+model: meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  url: http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 120.0
+  connection_reuse: sticky-user-sessions  # Maintain connection per session
+
+dataset:
+  type: synthetic
+  entries: 500  # 500 conversations
+  prompts:
+    isl: {mean: 200, stddev: 50}  # Per-turn input length
+    osl: {mean: 300, stddev: 75}  # Per-turn output length
+  turns: {mean: 5, stddev: 2}  # Average 5 turns per conversation
+  turn_delay: {mean: 2000, stddev: 500}  # 2 seconds average think time (ms)
+  turn_delay_ratio: 1.0
+
+
+phases:
+  warmup:
+    type: concurrency
+    exclude_from_results: true
+    sessions: 10  # 10 warmup conversations
+    concurrency: 4
+
+  conversation_test:
+    type: concurrency
+    sessions: 100  # 100 conversation sessions
+    concurrency: 20
+    duration: 300
+    grace_period: 120  # Long grace period for multi-turn completion
+
+artifacts:
+  dir: ./artifacts/multi_turn
+  summary: [json]
+  records: [jsonl, csv]

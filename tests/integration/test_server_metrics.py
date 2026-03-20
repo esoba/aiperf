@@ -9,6 +9,7 @@ the exported data (JSON, JSONL, CSV).
 
 import platform
 
+import pyarrow.parquet as pq
 import pytest
 
 from aiperf.common.models import SlimRecord
@@ -497,8 +498,6 @@ class TestServerMetrics:
         self, cli: AIPerfCLI, mock_server_factory
     ):
         """Test Parquet export with raw time-series data and delta calculations."""
-        import pyarrow.parquet as pq
-
         # Use isolated mock server with workers=1 to avoid Prometheus metrics issues
         async with mock_server_factory(fast=True, workers=1) as aiperf_mock_server:
             urls = aiperf_mock_server.get_server_metrics_url("vllm", "sglang")

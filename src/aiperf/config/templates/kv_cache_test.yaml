@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: KV Cache / Prefix Caching
+# description: Test KV cache efficiency with shared system prompts using user-centric mode.
+# category: Advanced
+# tags: kv-cache, prefix, user-centric
+# difficulty: advanced
+# features: user_centric mode, shared prefix, per-user rate
+#
+# KV Cache / Prefix Caching Benchmark
+# ===================================
+# Tests KV cache efficiency with shared system prompts and user contexts.
+# Uses user_centric mode to simulate N users sharing a global request rate.
+#
+# Use case: Measure KV cache hit rates and prefix caching performance
+#
+# Run: aiperf profile --config kv_cache_test.yaml
+
+random_seed: 42
+
+model: meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  url: http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 120.0
+
+datasets:
+  # Shared prefix pool approach
+  prefix_pool:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: {mean: 256, stddev: 30}
+      osl: {mean: 128, stddev: 20}
+    prefix_prompts:
+      pool_size: 10  # 10 distinct prefixes
+      length: 512  # Each prefix is 512 tokens
+
+  # Two-part prefix structure
+  system_context:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: {mean: 200, stddev: 25}
+      osl: {mean: 150, stddev: 30}
+    prefix_prompts:
+      shared_system_length: 1000  # System prompt shared by all users
+      user_context_length: 256  # Per-user context
+
+
+phases:
+  # Test with prefix pool
+  prefix_pool_test:
+    type: user_centric
+    dataset: prefix_pool
+    duration: 120
+    users: 30  # 30 simulated users
+    rate: 2.0  # 2 QPS across all users
+    grace_period: 60
+
+  # Test with shared system + user context
+  system_context_test:
+    type: user_centric
+    dataset: system_context
+    duration: 120
+    users: 30
+    rate: 2.0
+    seamless: true
+    grace_period: 60
+
+artifacts:
+  dir: ./artifacts/kv_cache_test
+  summary: [json]
+  records: [jsonl, csv]
+  slice_duration: 30
+
+# Enable server metrics to see cache hit rates
+server_metrics:
+  enabled: true
+  urls:
+    - http://localhost:8000/metrics
+  formats: [json, csv]

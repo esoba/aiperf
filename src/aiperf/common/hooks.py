@@ -45,14 +45,13 @@ class AIPerfHook(CaseInsensitiveStrEnum):
     ON_MESSAGE = "@on_message"
     ON_REALTIME_METRICS = "@on_realtime_metrics"
     ON_REALTIME_TELEMETRY_METRICS = "@on_realtime_telemetry_metrics"
-    ON_PROFILING_PROGRESS = "@on_profiling_progress"
+    ON_PHASE_PROGRESS = "@on_phase_progress"
     ON_PULL_MESSAGE = "@on_pull_message"
     ON_RECORDS_PROGRESS = "@on_records_progress"
     ON_START = "@on_start"
     ON_STATE_CHANGE = "@on_state_change"
     ON_STOP = "@on_stop"
     ON_REQUEST = "@on_request"
-    ON_WARMUP_PROGRESS = "@on_warmup_progress"
     ON_WORKER_STATUS_SUMMARY = "@on_worker_status_summary"
     ON_WORKER_UPDATE = "@on_worker_update"
 
@@ -121,9 +120,18 @@ class Hook(BaseModel, Generic[HookParamsT]):
 
 
 class BackgroundTaskParams(BaseModel):
-    interval: float | Callable[[Any], float] | None = Field(default=None)
-    immediate: bool = Field(default=False)
-    stop_on_error: bool = Field(default=False)
+    interval: float | Callable[[Any], float] | None = Field(
+        default=None,
+        description="Seconds between executions, callable returning interval, or None for one-shot.",
+    )
+    immediate: bool = Field(
+        default=False,
+        description="Run immediately on start instead of waiting for first interval.",
+    )
+    stop_on_error: bool = Field(
+        default=False,
+        description="Stop the background task on any unhandled exception.",
+    )
 
 
 def _hook_decorator(hook_type: HookType, func: Callable) -> Callable:
@@ -387,24 +395,24 @@ def on_pull_message(
     return _hook_decorator_with_params(AIPerfHook.ON_PULL_MESSAGE, message_types)
 
 
-def on_profiling_progress(func: Callable) -> Callable:
-    """Decorator to specify that the function is a hook that should be called when a profiling progress update is received.
+def on_phase_progress(func: Callable) -> Callable:
+    """Decorator to specify that the function is a hook that should be called when any phase progress update is received.
     See :func:`aiperf.common.hooks._hook_decorator`.
 
     Example:
     ```python
     class MyPlugin(ProgressTrackerMixin):
-        @on_profiling_progress
-        def _on_profiling_progress(self, profiling_stats: RequestsStats) -> None:
+        @on_phase_progress
+        def _on_phase_progress(self, phase_stats: CombinedPhaseStats) -> None:
             pass
     ```
 
     The above is the equivalent to setting:
     ```python
-    MyPlugin._on_profiling_progress.__aiperf_hook_type__ = AIPerfHook.ON_PROFILING_PROGRESS
+    MyPlugin._on_phase_progress.__aiperf_hook_type__ = AIPerfHook.ON_PHASE_PROGRESS
     ```
     """
-    return _hook_decorator(AIPerfHook.ON_PROFILING_PROGRESS, func)
+    return _hook_decorator(AIPerfHook.ON_PHASE_PROGRESS, func)
 
 
 def on_records_progress(func: Callable) -> Callable:
@@ -458,45 +466,17 @@ def on_request(
 def on_command(
     *command_types: CommandTypeT | Callable[[SelfT], Iterable[CommandTypeT]],
 ) -> Callable:
-    """Decorator to specify that the function is a hook that should be called when a CommandMessage with the given
-    command type(s) is received from the message bus.
-    See :func:`aiperf.common.hooks._hook_decorator_for_message_types`.
+    """Decorator to register a handler for commands received on the DEALER/ROUTER control channel.
 
     Example:
     ```python
     class MyService(BaseComponentService):
         @on_command(CommandType.PROFILE_START)
-        def _on_profile_start(self, message: ProfileStartCommand) -> CommandResponse:
+        async def _on_profile_start(self, message: Command) -> None:
             pass
-    ```
-
-    The above is the equivalent to setting:
-    ```python
-    MyService._on_profile_start.__aiperf_hook_type__ = AIPerfHook.ON_COMMAND
-    MyService._on_profile_start.__aiperf_hook_params__ = (CommandType.PROFILE_START,)
     ```
     """
     return _hook_decorator_with_params(AIPerfHook.ON_COMMAND, command_types)
-
-
-def on_warmup_progress(func: Callable) -> Callable:
-    """Decorator to specify that the function is a hook that should be called when a warmup progress update is received.
-    See :func:`aiperf.common.hooks._hook_decorator`.
-
-    Example:
-    ```python
-    class MyPlugin(ProgressTrackerMixin):
-        @on_warmup_progress
-        def _on_warmup_progress(self, warmup_stats: RequestsStats) -> None:
-            pass
-    ```
-
-    The above is the equivalent to setting:
-    ```python
-    MyPlugin._on_warmup_progress.__aiperf_hook_type__ = AIPerfHook.ON_WARMUP_PROGRESS
-    ```
-    """
-    return _hook_decorator(AIPerfHook.ON_WARMUP_PROGRESS, func)
 
 
 def on_worker_status_summary(func: Callable) -> Callable:

@@ -360,15 +360,21 @@ class TestPoissonValueAt:
 
 class TestEdgeCasesAndFactory:
     @pytest.mark.parametrize(
-        "strategy",
+        "make_strategy",
         [
-            LinearStrategy(lin(1, 1_000_000, 100.0)),
-            LinearStrategy(lin(1, 1_000_000, 100.0, step=10)),
-            ExponentialStrategy(exp(1, 1_000_000, 100.0)),
-            PoissonStrategy(poi(1, 1_000, 100.0)),
+            pytest.param(lambda: LinearStrategy(lin(1, 1_000_000, 100.0)), id="linear"),
+            pytest.param(
+                lambda: LinearStrategy(lin(1, 1_000_000, 100.0, step=10)),
+                id="linear_step",
+            ),
+            pytest.param(
+                lambda: ExponentialStrategy(exp(1, 1_000_000, 100.0)), id="exponential"
+            ),
+            pytest.param(lambda: PoissonStrategy(poi(1, 1_000, 100.0)), id="poisson"),
         ],
     )
-    def test_large_values(self, strategy: RampStrategy) -> None:
+    def test_large_values(self, make_strategy) -> None:
+        strategy = make_strategy()
         r = strategy.next_step(1, elapsed_sec=0.0)
         assert r is not None and r[1] > 1 and r[0] > 0
 

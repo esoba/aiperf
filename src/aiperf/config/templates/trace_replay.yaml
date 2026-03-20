@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=../schema/aiperf-config.schema.json
+# @template
+# title: Production Trace Replay
+# description: Replay production traffic from a trace file with exact request timestamps.
+# category: Datasets
+# tags: trace, replay, production, mooncake
+# difficulty: advanced
+# features: fixed_schedule, mooncake format, trace replay
+#
+# Production Trace Replay
+# =======================
+# Replays production traffic patterns from a trace file with exact timestamps.
+# Uses fixed_schedule mode for temporal accuracy - requests sent at predetermined times.
+#
+# Use case: Validate performance against real production workloads
+#
+# Run: aiperf profile --config trace_replay.yaml
+#
+# Note: You need a mooncake_trace format file. Example structure:
+# {"timestamp": 0, "input_length": 512, "output_length": 128, "hash_ids": [...]}
+# {"timestamp": 150, "input_length": 256, "output_length": 64, "hash_ids": [...]}
+
+random_seed: 42
+
+model: meta-llama/Llama-3.1-8B-Instruct
+
+endpoint:
+  url: http://localhost:8000/v1/chat/completions
+  type: chat
+  streaming: true
+  timeout: 300.0
+
+dataset:
+  type: file
+  path: ./data/production_trace.jsonl  # Replace with your trace file
+  format: mooncake_trace
+  sampling: sequential
+  synthesis:
+    speedup_ratio: 2.0  # Replay at 2x speed
+    prefix_len_multiplier: 1.0
+    prompt_len_multiplier: 1.0
+    max_isl: 8192  # Filter out requests > 8K input tokens
+    max_osl: 2048  # Cap output at 2K tokens
+
+
+phases:
+  type: fixed_schedule
+  auto_offset: true  # Normalize timestamps to start at 0
+  concurrency: 200  # High concurrency ceiling for bursts
+  duration: 600
+  grace_period: 120s
+
+artifacts:
+  dir: ./artifacts/trace_replay
+  summary: [json]
+  records: [jsonl, csv]
+  slice_duration: 30
+
+server_metrics:
+  enabled: true
+  urls:
+    - http://localhost:8000/metrics
+  formats: [json, csv, parquet]

@@ -5,6 +5,9 @@
 import json
 from unittest.mock import patch
 
+import pytest
+
+from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.exporters.aggregate import (
     AggregateConfidenceCsvExporter,
     AggregateConfidenceJsonExporter,
@@ -15,6 +18,7 @@ from aiperf.orchestrator.aggregation.base import AggregateResult
 from aiperf.orchestrator.aggregation.confidence import ConfidenceMetric
 
 
+@pytest.mark.asyncio
 class TestAggregateExporters:
     """Tests for aggregate exporters."""
 
@@ -202,8 +206,6 @@ class TestAggregateExporters:
         json_result = metric.to_json_result()
 
         # Check that it's a JsonMetricResult
-        from aiperf.common.models.export_models import JsonMetricResult
-
         assert isinstance(json_result, JsonMetricResult)
 
         # Check field mapping

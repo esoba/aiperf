@@ -15,8 +15,12 @@ import pytest
 from pytest import param
 
 from aiperf.common.models import TelemetryRecord
+from aiperf.gpu_telemetry import pynvml_collector
 from aiperf.gpu_telemetry.constants import PYNVML_SOURCE_IDENTIFIER
-from aiperf.gpu_telemetry.pynvml_collector import ScalingFactors
+from aiperf.gpu_telemetry.pynvml_collector import (
+    PyNVMLTelemetryCollector,
+    ScalingFactors,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -131,9 +135,6 @@ def mock_pynvml():
 @pytest.fixture
 def patch_pynvml(mock_pynvml):
     """Patch pynvml module reference in the collector module for testing."""
-    from aiperf.gpu_telemetry import pynvml_collector
-    from aiperf.gpu_telemetry.pynvml_collector import PyNVMLTelemetryCollector
-
     # Patch the pynvml reference in the collector module's namespace
     with patch.object(pynvml_collector, "pynvml", mock_pynvml):
         yield mock_pynvml, PyNVMLTelemetryCollector

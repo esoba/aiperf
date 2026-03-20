@@ -19,7 +19,6 @@ import aiohttp
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ErrorDetails
-from aiperf.transports.aiohttp_client import create_tcp_connector
 from aiperf.transports.http_defaults import AioHttpDefaults
 
 
@@ -247,6 +246,8 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             connect=self._reachability_timeout,  # Fast connection timeout only
         )
         trace_config = self._create_trace_config()
+        from aiperf.transports.aiohttp_client import create_tcp_connector
+
         self._connector = create_tcp_connector()
         self._session = aiohttp.ClientSession(
             connector=self._connector,
@@ -362,6 +363,8 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         else:
             # Create a temporary session for reachability check with proper connector
             timeout = aiohttp.ClientTimeout(total=self._reachability_timeout)
+            from aiperf.transports.aiohttp_client import create_tcp_connector
+
             connector = create_tcp_connector()
             try:
                 async with aiohttp.ClientSession(

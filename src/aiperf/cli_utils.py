@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from contextlib import AbstractContextManager
 
@@ -93,7 +94,9 @@ class exit_on_error(AbstractContextManager):
 
         if (
             not self.exceptions
-            and not isinstance(exc_value, (SystemExit | KeyboardInterrupt))
+            and not isinstance(
+                exc_value, (SystemExit | KeyboardInterrupt | asyncio.CancelledError)
+            )
         ) or issubclass(exc_type, self.exceptions):
             # Only show full traceback if requested
             # Don't show locals as they are very noisy and not useful for most errors

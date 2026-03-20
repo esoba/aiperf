@@ -5,12 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import CommandType
+from aiperf.common.control_structs import CommandErr, Registration, RegistrationAck
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
-from aiperf.common.messages.command_messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
+from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.controller.system_controller import SystemController
+from aiperf.plugin.enums import ServiceRunType, ServiceType
 from tests.unit.controller.conftest import MockTestException
 
 
@@ -57,18 +58,16 @@ class TestSystemController:
     ):
         """Test that SystemController does not exit when start services succeeds."""
         mock_service_manager.start.return_value = None
-        mock_service_manager.wait_for_all_services_registration.return_value = None
         system_controller._start_profiling_all_services = AsyncMock(return_value=None)
-        system_controller._profile_configure_all_services = AsyncMock(return_value=None)
+        system_controller._wait_for_all_configured = AsyncMock(return_value=None)
 
         await system_controller._start_services()
         # Verify that no exit errors were recorded
         assert len(system_controller._exit_errors) == 0
 
         assert mock_service_manager.start.called
-        assert mock_service_manager.wait_for_all_services_registration.called
+        assert system_controller._wait_for_all_configured.called
         assert system_controller._start_profiling_all_services.called
-        assert system_controller._profile_configure_all_services.called
 
 
 class TestSystemControllerExitScenarios:
@@ -79,48 +78,38 @@ class TestSystemControllerExitScenarios:
         self,
         system_controller: SystemController,
         mock_exception: MockTestException,
-        error_response: CommandErrorResponse,
     ):
-        """Test that SystemController exits when receiving a CommandErrorResponse for profile_configure."""
-        error_responses = [
-            error_response.model_copy(
-                deep=True, update={"command": CommandType.PROFILE_CONFIGURE}
-            )
-        ]
-        # Mock the command responses (using fail-fast method)
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
-            return_value=error_responses
+        """Test that SystemController records configure errors when a service returns CommandErr."""
+        error_response = CommandErr(
+            cid="test-cid",
+            sid="test-service",
+            error=str(mock_exception),
+            traceback="",
         )
+        system_controller._send_control_command = AsyncMock(return_value=error_response)
 
-        with pytest.raises(
-            LifecycleOperationError,
-            match="Failed to perform operation 'Configure Profiling'",
-        ):
-            await system_controller._profile_configure_all_services()
+        await system_controller._configure_single_service("test-service")
 
-        # Verify that exit errors were recorded
-        assert_exit_error(
-            system_controller,
-            error_response.error,
-            "Configure Profiling",
-            error_responses[0].service_id,
-        )
+        assert len(system_controller._configure_errors) == 1
+        assert isinstance(system_controller._configure_errors[0], CommandErr)
+        assert system_controller._configure_errors[0].error == str(mock_exception)
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_profile_start_error_response(
         self,
         system_controller: SystemController,
         mock_exception: MockTestException,
-        error_response: CommandErrorResponse,
     ):
-        """Test that SystemController exits when receiving a CommandErrorResponse for profile_start."""
+        """Test that SystemController exits when receiving a CommandErr for profile_start."""
         error_responses = [
-            error_response.model_copy(
-                deep=True, update={"command": CommandType.PROFILE_START}
+            CommandErr(
+                cid="test-cid",
+                sid="test-service",
+                error=str(mock_exception),
+                traceback="",
             )
         ]
-        # Mock the command responses (using fail-fast method)
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
+        system_controller._send_control_command_to_all_fail_fast = AsyncMock(
             return_value=error_responses
         )
 
@@ -130,13 +119,9 @@ class TestSystemControllerExitScenarios:
         ):
             await system_controller._start_profiling_all_services()
 
-        # Verify that exit errors were recorded
-        assert_exit_error(
-            system_controller,
-            error_response.error,
-            "Start Profiling",
-            error_responses[0].service_id,
-        )
+        assert len(system_controller._exit_errors) == 1
+        assert system_controller._exit_errors[0].operation == "Start Profiling"
+        assert system_controller._exit_errors[0].service_id == "test-service"
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_service_manager_initialize_error(
@@ -187,17 +172,17 @@ class TestSystemControllerExitScenarios:
         )
 
     @pytest.mark.asyncio
-    async def test_system_controller_exits_on_wait_for_all_services_registration_error(
+    async def test_system_controller_exits_on_wait_for_all_configured_error(
         self,
         system_controller: SystemController,
         mock_service_manager: AsyncMock,
         mock_exception: MockTestException,
     ):
-        """Test that SystemController exits when the service manager wait_for_all_services_registration fails."""
+        """Test that SystemController exits when _wait_for_all_configured fails."""
         mock_service_manager.start.return_value = None
-        mock_service_manager.wait_for_all_services_registration.side_effect = (
-            LifecycleOperationError(
-                operation="Register Service",
+        system_controller._wait_for_all_configured = AsyncMock(
+            side_effect=LifecycleOperationError(
+                operation="Configure Profiling",
                 original_exception=mock_exception,
                 lifecycle_id=system_controller.id,
             )
@@ -209,11 +194,11 @@ class TestSystemControllerExitScenarios:
         assert_exit_error(
             system_controller,
             LifecycleOperationError(
-                operation="Register Service",
+                operation="Configure Profiling",
                 original_exception=mock_exception,
                 lifecycle_id=system_controller.id,
             ),
-            "Register Services",
+            "Configure Services",
             system_controller.id,
         )
 
@@ -262,11 +247,9 @@ class TestSignalHandling:
         self, system_controller: SystemController, mock_service_manager: AsyncMock
     ):
         """First Ctrl+C sets _was_cancelled flag via _cancel_profiling."""
-        # Mock the command response
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            return_value=[]
-        )
-        system_controller.stop = AsyncMock()  # Prevent actual stop
+        system_controller._send_control_command_to_all = AsyncMock(return_value=[])
+        system_controller.control_router = AsyncMock()
+        system_controller.stop = AsyncMock()
 
         assert system_controller._was_cancelled is False
 
@@ -279,18 +262,14 @@ class TestSignalHandling:
     async def test_cancel_profiling_sends_profile_cancel_command(
         self, system_controller: SystemController, mock_service_manager: AsyncMock
     ):
-        """_cancel_profiling sends ProfileCancelCommand to all services."""
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            return_value=[]
-        )
+        """_cancel_profiling sends PROFILE_CANCEL to all services."""
+        system_controller._send_control_command_to_all = AsyncMock(return_value=[])
+        system_controller.control_router = AsyncMock()
         system_controller.stop = AsyncMock()
 
         await system_controller._cancel_profiling()
 
-        # Verify ProfileCancelCommand was sent
-        system_controller.send_command_and_wait_for_all_responses.assert_called_once()
-        call_args = system_controller.send_command_and_wait_for_all_responses.call_args
-        assert call_args[0][0].command == CommandType.PROFILE_CANCEL
+        system_controller._send_control_command_to_all.assert_called_once()
 
     def test_print_cancel_warning_uses_console(
         self, system_controller: SystemController
@@ -348,6 +327,218 @@ class TestSignalHandling:
         system_controller._kill.assert_called_once()
 
 
+class TestKubernetesMode:
+    """Test Kubernetes-specific behavior in SystemController."""
+
+    def _create_system_controller(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> tuple[SystemController, MagicMock]:
+        """Create a SystemController with custom config, mimicking the conftest pattern.
+
+        Returns:
+            Tuple of (controller, mock_proxy_class) so callers can inspect ProxyManager kwargs.
+        """
+        from pathlib import Path
+
+        run = BenchmarkRun(
+            benchmark_id="test",
+            cfg=config,
+            artifact_dir=Path("/tmp/test"),
+        )
+        mock_ui = AsyncMock()
+        mock_comm = AsyncMock()
+        mock_comm.create_reply_client = MagicMock(return_value=AsyncMock())
+
+        def mock_get_class(protocol, name):
+            if protocol == "service_manager":
+                return lambda **kwargs: mock_service_manager
+            if protocol == "ui":
+                return lambda **kwargs: mock_ui
+            if protocol == "communication":
+                return lambda **kwargs: mock_comm
+            raise ValueError(f"Unknown protocol: {protocol}")
+
+        with (
+            patch(
+                "aiperf.controller.system_controller.plugins.get_class",
+                side_effect=mock_get_class,
+            ),
+            patch("aiperf.controller.system_controller.ProxyManager") as mock_proxy,
+            patch(
+                "aiperf.common.mixins.communication_mixin.plugins.get_class",
+                side_effect=mock_get_class,
+            ),
+        ):  # fmt: skip
+            mock_proxy.return_value = AsyncMock()
+            controller = SystemController(
+                run=run,
+                service_id="test_controller",
+            )
+            controller.stop = AsyncMock()
+            return controller, mock_proxy
+
+    def test_kubernetes_mode_includes_workers_and_rps_in_required_services(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In K8s mode, WORKER and RECORD_PROCESSOR are in required_services.
+
+        KubernetesServiceManager handles them as external services via
+        expect_services() rather than spawning subprocesses.
+        """
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.record_processors = 2
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        assert ServiceType.WORKER in controller.required_services
+        assert ServiceType.RECORD_PROCESSOR in controller.required_services
+
+    def test_multiprocessing_mode_does_not_include_worker_in_required(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In local mode, WORKER is not in required_services.
+
+        Workers are spawned by MultiprocessServiceManager, not tracked
+        as required services that the controller waits for.
+        """
+        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        assert ServiceType.WORKER not in controller.required_services
+
+    def test_keep_api_running_true_in_kubernetes_with_api_port(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In K8s mode with api_port set, keep_api_running should be True."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.api_port = 9090
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        is_k8s_mode = (
+            controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        )
+        keep_api_running = is_k8s_mode and controller.run.cfg.runtime.api_port
+        assert keep_api_running
+
+    def test_keep_api_running_false_in_local_mode(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In local mode, keep_api_running should be False."""
+        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        is_k8s_mode = (
+            controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        )
+        keep_api_running = is_k8s_mode and controller.run.cfg.runtime.api_port
+        assert not keep_api_running
+
+    def test_keep_api_running_false_in_kubernetes_without_api_port(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In K8s mode without api_port, keep_api_running should be False."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        config.runtime.api_port = None
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+        is_k8s_mode = (
+            controller.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        )
+        keep_api_running = is_k8s_mode and controller.run.cfg.runtime.api_port
+        assert not keep_api_running
+
+    def test_kubernetes_mode_disables_raw_inference_proxy(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In K8s mode, raw inference proxy is disabled (worker pods run it locally)."""
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
+        call_kwargs = mock_proxy_cls.call_args[1]
+        assert call_kwargs["enable_event_bus"] is True
+        assert call_kwargs["enable_dataset_manager"] is True
+        assert call_kwargs["enable_raw_inference"] is False
+
+    def test_multiprocessing_mode_enables_all_proxies(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """In local mode, all proxies including raw inference are enabled."""
+        config.runtime.service_run_type = ServiceRunType.MULTIPROCESSING
+        _, mock_proxy_cls = self._create_system_controller(config, mock_service_manager)
+        call_kwargs = mock_proxy_cls.call_args[1]
+        assert call_kwargs["enable_event_bus"] is True
+        assert call_kwargs["enable_dataset_manager"] is True
+        assert call_kwargs["enable_raw_inference"] is True
+
+    @pytest.mark.asyncio
+    async def test_wpm_registration_logs_capacity(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """WPM Registration with capacity fields logs pod capacity info."""
+        from aiperf.common.service_registry import ServiceRegistry
+
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        msg = Registration(
+            sid="wpm_pod0",
+            rid="r1",
+            stype="worker_pod_manager",
+            state="running",
+            num_workers=4,
+            num_record_processors=1,
+        )
+        result = await controller._handle_control_message("identity_0", msg)
+
+        assert isinstance(result, RegistrationAck)
+        assert ServiceRegistry.is_registered("wpm_pod0")
+
+    @pytest.mark.asyncio
+    async def test_registration_without_capacity_does_not_modify_expectations(
+        self,
+        config: AIPerfConfig,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Regular service Registration (no capacity fields) should not change expectations."""
+        from aiperf.common.service_registry import ServiceRegistry
+
+        config.runtime.service_run_type = ServiceRunType.KUBERNETES
+        controller, _ = self._create_system_controller(config, mock_service_manager)
+
+        workers_before = ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)
+        rps_before = ServiceRegistry.expected_by_type.get(
+            ServiceType.RECORD_PROCESSOR, 0
+        )
+
+        msg = Registration(
+            sid="timing_manager_0",
+            rid="r1",
+            stype="timing_manager",
+            state="running",
+        )
+        await controller._handle_control_message("id_0", msg)
+
+        assert (
+            ServiceRegistry.expected_by_type.get(ServiceType.WORKER, 0)
+            == workers_before
+        )
+        assert (
+            ServiceRegistry.expected_by_type.get(ServiceType.RECORD_PROCESSOR, 0)
+            == rps_before
+        )
+
+
 class TestSSLVerificationWarning:
     """Test SSL verification warning in SystemController."""
 
@@ -358,12 +549,13 @@ class TestSSLVerificationWarning:
         """Test that a warning is logged when SSL verification is disabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", False)
 
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
-            return_value=[]
-        )
-
-        with patch.object(system_controller, "warning") as mock_warning:
-            await system_controller._profile_configure_all_services()
+        with (
+            patch.object(
+                system_controller, "_all_expected_configured", return_value=True
+            ),
+            patch.object(system_controller, "warning") as mock_warning,
+        ):
+            await system_controller._wait_for_all_configured(timeout=5.0)
 
             mock_warning.assert_called_once()
             warning_message = mock_warning.call_args[0][0]
@@ -376,11 +568,12 @@ class TestSSLVerificationWarning:
         """Test that no warning is logged when SSL verification is enabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", True)
 
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
-            return_value=[]
-        )
-
-        with patch.object(system_controller, "warning") as mock_warning:
-            await system_controller._profile_configure_all_services()
+        with (
+            patch.object(
+                system_controller, "_all_expected_configured", return_value=True
+            ),
+            patch.object(system_controller, "warning") as mock_warning,
+        ):
+            await system_controller._wait_for_all_configured(timeout=5.0)
 
             mock_warning.assert_not_called()

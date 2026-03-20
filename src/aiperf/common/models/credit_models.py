@@ -15,7 +15,12 @@ class BasePhaseStats(AIPerfBaseModel):
     model_config = ConfigDict(frozen=True)
 
     phase: CreditPhase = Field(
-        ..., description="The type of credit phase, such as warmup or profiling."
+        ...,
+        description="The name of the credit phase (e.g. 'warmup', 'main', 'cooldown').",
+    )
+    exclude_from_results: bool = Field(
+        default=False,
+        description="Whether this phase is excluded from final results (e.g. warmup phases).",
     )
 
     # Timestamp fields

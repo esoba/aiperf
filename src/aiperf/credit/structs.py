@@ -68,6 +68,7 @@ class CreditContext(
 
     credit: Credit
     drop_perf_ns: int
+    credit_received_ns: int = 0
     cancelled: bool = False
     returned: bool = False
     first_token_sent: bool = False

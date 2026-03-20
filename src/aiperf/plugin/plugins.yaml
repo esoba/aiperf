@@ -123,6 +123,17 @@ service:
       required: true
       auto_start: true
 
+  worker_pod_manager:
+    class: aiperf.workers.worker_pod_manager:WorkerPodManager
+    description: |
+      Kubernetes worker pod manager service. Runs as the main process in worker pods,
+      downloads the dataset once, and spawns multiple workers and record processors as
+      subprocesses. Reduces network overhead by sharing dataset across workers in the pod.
+    metadata:
+      required: false
+      auto_start: false
+      replicable: true
+
 # =============================================================================
 # API Routers
 # =============================================================================
@@ -134,9 +145,9 @@ api_router:
     class: aiperf.api.routers.core:CoreRouter
     description: Config, health, and readiness endpoints.
 
-  # dataset:
-  #   class: aiperf.api.routers.dataset:DatasetRouter
-  #   description: Dataset metadata and file streaming with compression support.
+  dataset:
+    class: aiperf.api.routers.dataset:DatasetRouter
+    description: Dataset metadata and file streaming with compression support.
 
   metrics:
     class: aiperf.api.routers.metrics:MetricsRouter
@@ -150,17 +161,21 @@ api_router:
     class: aiperf.api.routers.results:ResultsRouter
     description: Final benchmark results and artifact file downloads.
 
-  # static:
-  #   class: aiperf.api.routers.static:StaticRouter
-  #   description: Static HTML file serving for dashboard and index pages.
+  static:
+    class: aiperf.api.routers.static:StaticRouter
+    description: Static HTML file serving for dashboard and index pages.
 
-  # websocket:
-  #   class: aiperf.api.routers.websocket:WebSocketRouter
-  #   description: WebSocket endpoint for real-time ZMQ message streaming.
+  websocket:
+    class: aiperf.api.routers.websocket:WebSocketRouter
+    description: WebSocket endpoint for real-time ZMQ message streaming.
 
   workers:
     class: aiperf.api.routers.workers:WorkersRouter
     description: Worker health tracking and /api/workers endpoint.
+
+  server_metrics:
+    class: aiperf.api.routers.server_metrics:ServerMetricsRouter
+    description: Real-time server metrics from Prometheus scraping.
 
 # =============================================================================
 # Service Managers
@@ -172,8 +187,9 @@ service_manager:
   kubernetes:
     class: aiperf.controller.kubernetes_service_manager:KubernetesServiceManager
     description: |
-      Kubernetes service manager for multi-node deployments. Runs each service as
-      a Kubernetes pod with ZMQ TCP communication for distributed cloud execution.
+      Kubernetes service manager for distributed deployments. Spawns control-plane
+      services as subprocesses within a single container, while workers and record
+      processors are external Kubernetes pods managed by JobSet.
 
   multiprocessing:
     class: aiperf.controller.multiprocess_service_manager:MultiProcessServiceManager
@@ -528,7 +544,8 @@ dataset_client_store:
     class: aiperf.dataset.memory_map_utils:MemoryMapDatasetClientStore
     description: |
       Memory-mapped file client store for zero-copy reads. Reads from memory-mapped
-      files with O(1) lookup performance.
+      files with O(1) lookup performance. In Kubernetes mode, WorkerPodManager
+      downloads the dataset once per pod and workers use local mmap access.
 
 # =============================================================================
 # Timing Strategies

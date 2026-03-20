@@ -10,7 +10,6 @@ from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.messages import (
     ErrorMessage,
     HeartbeatMessage,
-    ShutdownCommand,
     StatusMessage,
 )
 from aiperf.common.models import ErrorDetails
@@ -102,8 +101,10 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_returns_bytes(self):
         """Test that to_json_bytes() returns bytes type."""
-        message = ShutdownCommand(
+        message = HeartbeatMessage(
             service_id="test-service",
+            service_type=ServiceType.WORKER,
+            state=LifecycleState.RUNNING,
             request_id="test-request",
         )
         result = message.to_json_bytes()
@@ -170,8 +171,10 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_equivalent_to_model_dump_json(self):
         """Test that to_json_bytes() produces equivalent output to model_dump_json(exclude_none=True)."""
-        message = ShutdownCommand(
+        message = HeartbeatMessage(
             service_id="controller",
+            service_type=ServiceType.WORKER,
+            state=LifecycleState.RUNNING,
             request_id="shutdown-001",
         )
 
@@ -248,7 +251,12 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_multiple_messages_independence(self):
         """Test that to_json_bytes() calls don't interfere with each other."""
-        msg1 = ShutdownCommand(service_id="service-1", request_id="req-1")
+        msg1 = HeartbeatMessage(
+            service_id="service-1",
+            service_type=ServiceType.WORKER,
+            state=LifecycleState.RUNNING,
+            request_id="req-1",
+        )
         msg2 = HeartbeatMessage(
             service_id="service-2",
             service_type=ServiceType.WORKER,
@@ -263,7 +271,7 @@ class TestMessageToJsonBytes:
         assert bytes1 != bytes2
 
         # Each should deserialize to correct type
-        restored1 = ShutdownCommand.from_json(bytes1)
+        restored1 = HeartbeatMessage.from_json(bytes1)
         restored2 = HeartbeatMessage.from_json(bytes2)
 
         assert restored1.service_id == "service-1"
@@ -287,9 +295,10 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_empty_optional_fields(self):
         """Test to_json_bytes() with minimal required fields only."""
-        message = ShutdownCommand(
+        message = HeartbeatMessage(
             service_id="minimal",
-            # request_id omitted (None by default)
+            service_type=ServiceType.WORKER,
+            state=LifecycleState.RUNNING,
         )
 
         json_bytes = message.to_json_bytes()
@@ -303,7 +312,7 @@ class TestMessageToJsonBytes:
     @pytest.mark.parametrize(
         "message_type,kwargs",
         [
-            (ShutdownCommand, {"service_id": "test"}),
+            (HeartbeatMessage, {"service_id": "test", "service_type": ServiceType.WORKER, "state": LifecycleState.RUNNING}),
             (
                 StatusMessage,
                 {

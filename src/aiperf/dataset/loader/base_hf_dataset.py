@@ -1,17 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasets import load_dataset as hf_load_dataset
 
-from aiperf.common.config.user_config import UserConfig
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
 from aiperf.plugin.enums import DatasetSamplingStrategy
+
+if TYPE_CHECKING:
+    from aiperf.config import BenchmarkRun
 
 
 class BaseHFDatasetLoader(BasePublicDatasetLoader):
@@ -19,7 +22,7 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
 
     def __init__(
         self,
-        user_config: UserConfig,
+        run: BenchmarkRun,
         hf_dataset_name: str,
         hf_split: str = "train",
         hf_subset: str | None = None,
@@ -28,7 +31,7 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         self.hf_dataset_name = hf_dataset_name
         self.hf_split = hf_split
         self.hf_subset = hf_subset
-        super().__init__(user_config=user_config, **kwargs)
+        super().__init__(run=run, **kwargs)
 
     async def load_dataset(self) -> dict[str, Any]:
         """Load the dataset from HuggingFace"""

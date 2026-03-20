@@ -85,7 +85,7 @@ def mock_callback() -> MagicMock:
 
 
 def cfg(
-    phase: CreditPhase = CreditPhase.PROFILING,
+    phase: CreditPhase = "profiling",
     mode: TimingMode = TimingMode.REQUEST_RATE,
     reqs: int | None = 10,
     dur: float | None = None,
@@ -240,7 +240,7 @@ class TestPhaseRunnerLifecycle:
             r._progress.all_credits_returned_event.set()
             await r.run(is_final_phase=True)
             cb.register_phase.assert_called_once()
-            assert cb.register_phase.call_args.kwargs["phase"] == CreditPhase.PROFILING
+            assert cb.register_phase.call_args.kwargs["phase"] == "profiling"
 
     async def test_run_configures_concurrency_manager(
         self,
@@ -301,10 +301,7 @@ class TestPhaseRunnerLifecycle:
             r._progress.all_credits_sent_event.set()
             r._progress.all_credits_returned_event.set()
             result = await r.run(is_final_phase=True)
-            assert (
-                isinstance(result, CreditPhaseStats)
-                and result.phase == CreditPhase.PROFILING
-            )
+            assert isinstance(result, CreditPhaseStats) and result.phase == "profiling"
 
 
 class TestRamperCreation:
@@ -517,7 +514,7 @@ class TestStuckSlotsRelease:
     ) -> None:
         r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         r._release_stuck_slots()
-        conc.release_stuck_slots.assert_called_once_with(CreditPhase.PROFILING)
+        conc.release_stuck_slots.assert_called_once_with("profiling")
 
 
 class TestProgressReporting:
@@ -582,11 +579,11 @@ class TestSeamlessMode:
 
 class TestComponentOwnership:
     def test_phase_property_returns_configured_phase(self, runner: PhaseRunner) -> None:
-        assert runner.phase == CreditPhase.PROFILING
+        assert runner.phase == "profiling"
 
 
 class TestPhaseTypes:
-    @pytest.mark.parametrize("phase", [CreditPhase.WARMUP, CreditPhase.PROFILING])
+    @pytest.mark.parametrize("phase", ["warmup", "profiling"])
     async def test_runner_works_with_both_phases(
         self,
         conv_src: MagicMock,

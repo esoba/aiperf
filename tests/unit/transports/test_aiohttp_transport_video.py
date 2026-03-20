@@ -2,23 +2,45 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for AioHttpTransport video generation functionality."""
 
+import time
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import orjson
 import pytest
 
-from aiperf.common.models import ErrorDetails, RequestRecord, TextResponse
-from aiperf.plugin.enums import EndpointType
+from aiperf.common.models import (
+    BinaryResponse,
+    ErrorDetails,
+    RequestRecord,
+    TextResponse,
+)
+from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.transports.aiohttp_transport import AioHttpTransport
 from tests.unit.transports.test_aiohttp_transport import create_request_info
+
+_MINIMAL_CONFIG_KWARGS: dict[str, Any] = {
+    "models": ["sora-2"],
+    "endpoint": {
+        "type": "video_generation",
+        "urls": ["http://localhost:8000"],
+        "path": "/v1/videos",
+        "streaming": False,
+    },
+    "datasets": {
+        "default": {
+            "type": "synthetic",
+            "entries": 1,
+            "prompts": {"isl": 128, "osl": 64},
+        }
+    },
+    "phases": {"default": {"type": "concurrency", "requests": 10, "concurrency": 1}},
+}
 
 
 def create_request_record(status: int = 200, body: str | bytes = "") -> RequestRecord:
     """Create a test RequestRecord with the given status and body."""
-    import time
-
-    from aiperf.common.models import ErrorDetails, TextResponse
-
     perf_ns = time.perf_counter_ns()
 
     # Create error for HTTP error status codes
@@ -50,49 +72,23 @@ def create_request_record(status: int = 200, body: str | bytes = "") -> RequestR
     )
 
 
-def create_video_model_endpoint_info():
-    """Create a video generation model endpoint."""
-    from aiperf.common.enums import ConnectionReuseStrategy, ModelSelectionStrategy
-    from aiperf.common.models.model_endpoint_info import (
-        EndpointInfo,
-        ModelEndpointInfo,
-        ModelInfo,
-        ModelListInfo,
-    )
-
-    return ModelEndpointInfo(
-        models=ModelListInfo(
-            models=[ModelInfo(name="sora-2")],
-            model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
-        ),
-        endpoint=EndpointInfo(
-            type=EndpointType.VIDEO_GENERATION,
-            base_urls=["http://localhost:8000"],
-            custom_endpoint="/v1/videos",
-            streaming=False,
-            api_key=None,
-            headers=[],
-            connection_reuse_strategy=ConnectionReuseStrategy.POOLED,
-        ),
-    )
-
-
 @pytest.fixture
 def video_model_endpoint():
-    """Create a video generation model endpoint."""
-    return create_video_model_endpoint_info()
+    """Create a video generation BenchmarkRun."""
+    cfg = BenchmarkConfig(**_MINIMAL_CONFIG_KWARGS)
+    return BenchmarkRun(benchmark_id="test", cfg=cfg, artifact_dir=Path("/tmp/test"))
 
 
 @pytest.fixture
 def video_request_info(video_model_endpoint):
     """Create a RequestInfo for video generation."""
-    return create_request_info(video_model_endpoint)
+    return create_request_info(video_model_endpoint.cfg)
 
 
 @pytest.fixture
 def transport(video_model_endpoint):
     """Create an AioHttpTransport instance."""
-    transport = AioHttpTransport(model_endpoint=video_model_endpoint)
+    transport = AioHttpTransport(run=video_model_endpoint)
     transport.aiohttp_client = AsyncMock()
     return transport
 
@@ -190,7 +186,7 @@ class TestVideoJobSubmission:
     @pytest.mark.asyncio
     async def test_submit_video_job_not_initialized(self, video_model_endpoint):
         """Test video job submission when client not initialized."""
-        transport = AioHttpTransport(model_endpoint=video_model_endpoint)
+        transport = AioHttpTransport(run=video_model_endpoint)
         # Don't initialize aiohttp_client
 
         with pytest.raises(Exception, match="not initialized"):
@@ -290,10 +286,6 @@ class TestVideoContentDownload:
     @pytest.mark.asyncio
     async def test_download_video_content_success(self, transport):
         """Test successful video content download."""
-        import time
-
-        from aiperf.common.models import BinaryResponse
-
         perf_ns = time.perf_counter_ns()
         mock_record = RequestRecord(
             request_headers={},
@@ -354,10 +346,6 @@ class TestVideoRequestWorkflow:
             patch.object(transport, "_download_video_content") as mock_download,
         ):
             # Configure mocks with proper response objects
-            import time
-
-            from aiperf.common.models import BinaryResponse, TextResponse
-
             submit_response = TextResponse(
                 perf_ns=time.perf_counter_ns(),
                 text='{"id":"video-123","status":"queued"}',
@@ -375,7 +363,7 @@ class TestVideoRequestWorkflow:
 
             # Mock download_video_content to be True for this test
             with patch.object(
-                video_request_info.model_endpoint.endpoint,
+                video_request_info.config.endpoint,
                 "download_video_content",
                 True,
             ):
@@ -423,10 +411,6 @@ class TestVideoRequestWorkflow:
             patch.object(transport, "_download_video_content") as mock_download,
         ):
             # Configure mocks with proper response objects
-            import time
-
-            from aiperf.common.models import TextResponse
-
             submit_response = TextResponse(
                 perf_ns=time.perf_counter_ns(),
                 text='{"id":"video-123","status":"queued"}',
@@ -440,7 +424,7 @@ class TestVideoRequestWorkflow:
 
             # Mock download_video_content as False for this test
             with patch.object(
-                video_request_info.model_endpoint.endpoint,
+                video_request_info.config.endpoint,
                 "download_video_content",
                 False,
             ):
