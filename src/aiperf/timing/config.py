@@ -186,7 +186,7 @@ class CreditPhaseConfig(AIPerfBaseModel):
         default=None,
         gt=0,
         description="Scaling factor for fixed schedule timestamps. "
-        "2.0 = twice as fast, 0.5 = half speed.",
+        "2.0 = twice as fast, 0.5 = half speed. Only applicable when using fixed schedule timing mode.",
     )
 
 

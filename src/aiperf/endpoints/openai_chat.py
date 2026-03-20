@@ -77,9 +77,14 @@ class ChatEndpoint(BaseEndpoint):
             model_endpoint.endpoint.streaming
             and model_endpoint.endpoint.use_server_token_count
         ):
-            stream_opts = payload.setdefault("stream_options", {})
-            if isinstance(stream_opts, dict):
-                stream_opts.setdefault("include_usage", True)
+            existing = payload.get("stream_options")
+            if existing is None:
+                payload["stream_options"] = {"include_usage": True}
+            elif isinstance(existing, dict):
+                payload["stream_options"] = {
+                    **existing,
+                    "include_usage": existing.get("include_usage", True),
+                }
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload

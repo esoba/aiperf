@@ -1,11 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
+import orjson
 import pytest
 
-from aiperf.common.config import SynthesisConfig
+from aiperf.common.config import (
+    EndpointConfig,
+    InputConfig,
+    SynthesisConfig,
+    UserConfig,
+)
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.composer.custom import CustomDatasetComposer
 from aiperf.dataset.loader import (
@@ -285,3 +292,155 @@ class TestSynthesisValidation:
 
         # Should not raise - max_isl doesn't trigger should_synthesize()
         composer._validate_synthesis_config(CustomDatasetType.SINGLE_TURN)
+
+
+class TestConfluxAutoDetection:
+    """Integration tests for Conflux dataset auto-detection and loading."""
+
+    @staticmethod
+    def _make_conflux_record(
+        *,
+        agent_id: str = "agent-A",
+        timestamp: float = 1000.0,
+        messages: list | None = None,
+        tokens: dict | None = None,
+        hyperparameters: dict | None = None,
+    ) -> dict:
+        rec = {
+            "session_id": "sess-1",
+            "agent_id": agent_id,
+            "timestamp": timestamp,
+            "duration_ms": 500,
+        }
+        if messages is not None:
+            rec["messages"] = messages
+        if tokens is not None:
+            rec["tokens"] = tokens
+        if hyperparameters is not None:
+            rec["hyperparameters"] = hyperparameters
+        return rec
+
+    @staticmethod
+    def _write_pretty_json(path: Path, data: list) -> None:
+        path.write_bytes(orjson.dumps(data, option=orjson.OPT_INDENT_2))
+
+    @staticmethod
+    def _make_config(
+        file_path: str, dataset_type: CustomDatasetType | None = None
+    ) -> UserConfig:
+        return UserConfig(
+            endpoint=EndpointConfig(model_names=["test-model"]),
+            input=InputConfig.model_construct(
+                file=Path(file_path),
+                custom_dataset_type=dataset_type,
+                conflux_include_utility_calls=False,
+            ),
+        )
+
+    def test_auto_detect_pretty_printed_conflux(self, tmp_path):
+        """Full pipeline: pretty-printed JSON auto-detects as Conflux and loads."""
+        records = [
+            self._make_conflux_record(
+                agent_id="coder",
+                timestamp=1000.0,
+                messages=[{"role": "user", "content": "Write hello world"}],
+                tokens={"input": 50, "output": 100},
+                hyperparameters={"temperature": 0.3},
+            ),
+            self._make_conflux_record(
+                agent_id="coder",
+                timestamp=3000.0,
+                messages=[
+                    {"role": "user", "content": "Write hello world"},
+                    {"role": "assistant", "content": "print('hello world')"},
+                    {"role": "user", "content": "Add error handling"},
+                ],
+                tokens={"input": 150, "output": 200, "output_reasoning": 30},
+            ),
+        ]
+        path = tmp_path / "session.json"
+        self._write_pretty_json(path, records)
+
+        config = self._make_config(str(path))
+        composer = CustomDatasetComposer(config, None)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 1
+        convo = conversations[0]
+        assert convo.session_id == "conflux_coder"
+        assert len(convo.turns) == 2
+        assert convo.turns[0].max_tokens == 100
+        assert convo.turns[0].extra_params == {"temperature": 0.3}
+        assert convo.turns[1].max_tokens == 230
+        assert len(convo.turns[1].raw_messages) == 3
+
+    def test_auto_detect_compact_conflux(self, tmp_path):
+        """Compact (single-line) JSON also auto-detects as Conflux."""
+        records = [
+            self._make_conflux_record(
+                messages=[{"role": "user", "content": "Hello"}],
+                tokens={"input": 10, "output": 20},
+            ),
+        ]
+        path = tmp_path / "compact.json"
+        path.write_bytes(orjson.dumps(records))
+
+        config = self._make_config(str(path))
+        composer = CustomDatasetComposer(config, None)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 1
+        assert len(conversations[0].turns) == 1
+
+    def test_auto_detect_conflux_directory(self, tmp_path):
+        """Directory of pretty-printed JSON files auto-detects as Conflux."""
+        for i, agent in enumerate(["planner", "executor"]):
+            self._write_pretty_json(
+                tmp_path / f"session_{i}.json",
+                [
+                    self._make_conflux_record(
+                        agent_id=agent, timestamp=1000.0 + i * 1000
+                    )
+                ],
+            )
+
+        config = self._make_config(str(tmp_path))
+        composer = CustomDatasetComposer(config, None)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 2
+
+    def test_explicit_type_skips_auto_detection(self, tmp_path):
+        """With --custom-dataset-type conflux, auto-detection is bypassed."""
+        records = [self._make_conflux_record()]
+        path = tmp_path / "data.json"
+        self._write_pretty_json(path, records)
+
+        config = self._make_config(str(path), dataset_type=CustomDatasetType.CONFLUX)
+        composer = CustomDatasetComposer(config, None)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 1
+
+    def test_multi_agent_with_utility_filtering(self, tmp_path):
+        """Multi-agent session with utility calls filtered by default."""
+        records = [
+            self._make_conflux_record(agent_id="planner", timestamp=1000.0),
+            self._make_conflux_record(agent_id=None, timestamp=2000.0),
+            self._make_conflux_record(agent_id="executor", timestamp=3000.0),
+            self._make_conflux_record(agent_id="planner", timestamp=4000.0),
+        ]
+        path = tmp_path / "session.json"
+        self._write_pretty_json(path, records)
+
+        config = self._make_config(str(path))
+        composer = CustomDatasetComposer(config, None)
+        conversations = composer.create_dataset()
+
+        assert len(conversations) == 2
+        session_ids = {c.session_id for c in conversations}
+        assert "conflux_planner" in session_ids
+        assert "conflux_executor" in session_ids
+
+        planner = next(c for c in conversations if c.session_id == "conflux_planner")
+        assert len(planner.turns) == 2

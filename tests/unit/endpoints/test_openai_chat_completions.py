@@ -492,6 +492,23 @@ class TestChatEndpoint:
             "include_usage": True,
         }
 
+    def test_extra_params_stream_options_not_mutated(self, model_endpoint):
+        """format_payload must not mutate the original extra_params dict."""
+        endpoint = ChatEndpoint(model_endpoint)
+        original_stream_opts = {"continuous_updates": True}
+        extra = {"stream_options": original_stream_opts}
+        turn = Turn(
+            texts=[Text(contents=["Hello"])],
+            extra_params=extra,
+        )
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.use_server_token_count = True
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        endpoint.format_payload(request_info)
+
+        assert original_stream_opts == {"continuous_updates": True}
+        assert "include_usage" not in original_stream_opts
+
     def test_extra_params_with_raw_messages(self, model_endpoint):
         """extra_params work with raw_messages path (Conflux replay)."""
         endpoint = ChatEndpoint(model_endpoint)

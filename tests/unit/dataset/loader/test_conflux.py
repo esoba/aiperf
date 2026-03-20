@@ -59,9 +59,15 @@ def _make_record(
     return rec
 
 
-def _write_json(path: Path, data: Any) -> str:
-    """Write data as JSON and return the string path."""
-    path.write_bytes(orjson.dumps(data))
+def _write_json(path: Path, data: Any, *, pretty: bool = True) -> str:
+    """Write data as JSON and return the string path.
+
+    Uses pretty-printed format by default to match Conflux CLI export behavior.
+    """
+    if pretty:
+        path.write_text(orjson.dumps(data, option=orjson.OPT_INDENT_2).decode("utf-8"))
+    else:
+        path.write_bytes(orjson.dumps(data))
     return str(path)
 
 
@@ -217,16 +223,22 @@ class TestConfluxLoaderClassMethods:
 class TestConfluxCanLoad:
     """Tests for ConfluxLoader.can_load auto-detection."""
 
-    def test_valid_single_file(self, tmp_path):
+    def test_pretty_printed_single_file(self, tmp_path):
         records = [_make_record()]
         path = tmp_path / "session.json"
         _write_json(path, records)
         assert ConfluxLoader.can_load(filename=str(path)) is True
 
-    def test_valid_directory(self, tmp_path):
+    def test_pretty_printed_directory(self, tmp_path):
         records = [_make_record()]
         _write_json(tmp_path / "a.json", records)
         assert ConfluxLoader.can_load(filename=str(tmp_path)) is True
+
+    def test_compact_json_detected(self, tmp_path):
+        """Compact (single-line) JSON is also auto-detected."""
+        path = tmp_path / "compact.json"
+        _write_json(path, [_make_record()], pretty=False)
+        assert ConfluxLoader.can_load(filename=str(path)) is True
 
     def test_empty_array_returns_false(self, tmp_path):
         path = tmp_path / "empty.json"
@@ -272,6 +284,31 @@ class TestConfluxCanLoad:
         _write_json(tmp_path / "valid.json", [_make_record()])
         result = ConfluxLoader.can_load(filename=str(tmp_path))
         assert result is True
+
+    def test_multiline_whitespace_variants(self, tmp_path):
+        """Array bracket on its own line with leading whitespace."""
+        path = tmp_path / "spaced.json"
+        path.write_text(
+            '[\n  {\n    "session_id": "s1",\n    "timestamp": 1000.0\n  }\n]\n'
+        )
+        assert ConfluxLoader.can_load(filename=str(path)) is True
+
+    def test_large_first_record_within_probe_limit(self, tmp_path):
+        """A record with a large messages array still probes correctly."""
+        big_messages = [
+            {"role": "user", "content": f"msg-{'x' * 500}-{i}"} for i in range(200)
+        ]
+        records = [_make_record(messages=big_messages)]
+        path = tmp_path / "big_record.json"
+        _write_json(path, records)
+        assert ConfluxLoader.can_load(filename=str(path)) is True
+
+    def test_multiple_records_probe_only_first(self, tmp_path):
+        """Probe validates only the first record, even with many in the array."""
+        records = [_make_record(agent_id=f"agent-{i}") for i in range(100)]
+        path = tmp_path / "many.json"
+        _write_json(path, records)
+        assert ConfluxLoader.can_load(filename=str(path)) is True
 
 
 # ---------------------------------------------------------------------------

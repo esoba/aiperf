@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import orjson
+from pydantic import ValidationError
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_loader import BaseFileLoader
@@ -27,6 +29,9 @@ _EXTRA_PARAMS_SKIP = frozenset(
         "max_output_tokens",
     }
 )
+
+
+_logger = AIPerfLogger(__name__)
 
 
 class ConfluxLoader(BaseFileLoader):
@@ -57,39 +62,19 @@ class ConfluxLoader(BaseFileLoader):
             return first is not None and cls._probe_file(first)
         return cls._probe_file(path)
 
-    _PROBE_BYTES = 1 << 20  # 1MB
-
     @classmethod
     def _probe_file(cls, path: Path) -> bool:
-        """Return True if a single file looks like a Conflux JSON capture.
-
-        Reads only a bounded prefix to avoid loading multi-MB captures
-        during auto-detection.
-        """
+        """Return True if the file loads as a valid Conflux JSON array."""
         if not path.is_file() or path.suffix != ".json":
             return False
         try:
-            with path.open("rb") as f:
-                head = f.read(cls._PROBE_BYTES)
-        except OSError:
-            return False
-        if not head or head.lstrip()[:1] != b"[":
-            return False
-        # Extract first object from the JSON array prefix
-        try:
-            stripped = head.rstrip(b", \t\n\r")
-            if stripped.endswith(b"]"):
-                decoded = orjson.loads(stripped)
-            else:
-                decoded = orjson.loads(stripped + b"]")
-        except orjson.JSONDecodeError:
-            return False
-        if not isinstance(decoded, list) or not decoded:
-            return False
-        try:
-            ConfluxRecord.model_validate(decoded[0])
+            raw_records: list[dict[str, Any]] = orjson.loads(path.read_bytes())
+            if not raw_records or not isinstance(raw_records, list):
+                return False
+            ConfluxRecord.model_validate(raw_records[0])
             return True
-        except Exception:
+        except (orjson.JSONDecodeError, ValidationError) as e:
+            _logger.debug(f"Failed to validate Conflux JSON array: {e!r}")
             return False
 
     def load_dataset(self) -> dict[str, list[ConfluxRecord]]:

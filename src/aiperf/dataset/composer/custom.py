@@ -5,11 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import orjson
+
 from aiperf.common.config import UserConfig
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.common.utils import load_json_str
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.loader.base_loader import BaseLoader
 from aiperf.dataset.utils import check_file_exists
@@ -83,12 +84,20 @@ class CustomDatasetComposer(BaseDatasetComposer):
             if path.is_dir():
                 return self._infer_type(data=None, filename=file_path)
 
-            # For files, read first non-empty line and use both content and path detection
+            # For files, read first non-empty line and use both content and path detection.
+            # If the first line isn't valid JSON (e.g. pretty-printed JSON arrays start
+            # with "["), fall through to filename-only detection so file-probing loaders
+            # like ConfluxLoader can inspect the file directly.
             with open(file_path) as f:
                 for line in f:
                     if not (line := line.strip()):
                         continue
-                    data = load_json_str(line)
+                    try:
+                        data = orjson.loads(line)
+                    except orjson.JSONDecodeError:
+                        return self._infer_type(data=None, filename=file_path)
+                    if not isinstance(data, dict):
+                        return self._infer_type(data=None, filename=file_path)
                     return self._infer_type(data=data, filename=file_path)
 
         except ValueError as e:
