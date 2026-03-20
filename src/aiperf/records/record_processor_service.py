@@ -5,13 +5,14 @@ import traceback
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
-from aiperf.common.enums import CommAddress, CommandType, MessageType
+from aiperf.common.enums import CommAddress, CommandType, ExportLevel, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PluginDisabled
 from aiperf.common.hooks import on_command, on_pull_message
 from aiperf.common.messages import (
     InferenceResultsMessage,
     MetricRecordsMessage,
+    ProfileCompleteCommand,
     ProfileConfigureCommand,
 )
 from aiperf.common.mixins import PullClientMixin
@@ -20,7 +21,9 @@ from aiperf.common.models import (
     ParsedResponseRecord,
     RequestRecord,
 )
+from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import compute_time_ns
@@ -96,6 +99,20 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Configure the tokenizers."""
         await self.inference_result_parser.configure()
 
+    @on_command(CommandType.PROFILE_COMPLETE)
+    async def _profile_complete_command(
+        self,
+        message: ProfileCompleteCommand,  # noqa: ARG002
+    ) -> None:
+        """Flush child record processors (e.g. RawRecordWriterProcessor buffers).
+
+        RecordsManager sends ProfileCompleteCommand after all records are processed
+        but before exporting/aggregating results. Stopping children here ensures
+        buffered writers flush to disk before the RawRecordAggregator reads them.
+        """
+        for child in self._children:
+            await child.stop()
+
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model."""
         async with self.tokenizer_lock:
@@ -111,20 +128,25 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             return self.tokenizers[model]
 
     def _create_metric_record_metadata(
-        self, record: RequestRecord, worker_id: str
+        self,
+        record: RequestRecord,
+        worker_id: str,
+        last_response_perf_ns: int | None = None,
     ) -> MetricRecordMetadata:
         """Create a metric record metadata based on a parsed response record."""
 
         start_time_ns = record.timestamp_ns
         start_perf_ns = record.start_perf_ns
 
+        end_perf_ns = (
+            last_response_perf_ns or record.end_perf_ns or record.start_perf_ns
+        )
+
         # Convert all timestamps from perf_ns to time_ns for the user
         request_end_ns = compute_time_ns(
             start_time_ns,
             start_perf_ns,
-            record.responses[-1].perf_ns
-            if record.responses
-            else record.end_perf_ns or record.start_perf_ns,
+            end_perf_ns,
         )
         request_ack_ns = compute_time_ns(
             start_time_ns, start_perf_ns, record.recv_start_perf_ns
@@ -153,13 +175,27 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     @on_pull_message(MessageType.INFERENCE_RESULTS)
     async def _on_inference_results(self, message: InferenceResultsMessage) -> None:
         """Handle an inference results message."""
-        parsed_record = await self.inference_result_parser.parse_request_record(
-            message.record
+        record = message.record
+
+        # Capture last response timestamp before parsing frees raw SSE data.
+        last_response_perf_ns = (
+            record.responses[-1].perf_ns if record.responses else None
         )
+
+        parsed_record = await self.inference_result_parser.parse_request_record(record)
+
+        # Free raw SSE messages now that parsing extracted what it needs.
+        # Skip when RAW export is active -- the raw writer needs them.
+        if self.user_config.output.export_level != ExportLevel.RAW:
+            record.responses = None
+
         metadata = self._create_metric_record_metadata(
-            message.record, message.service_id
+            record, message.service_id, last_response_perf_ns
         )
         raw_results = await self._process_record(parsed_record, metadata)
+
+        trace_data, error = self._free_record_data(record, parsed_record)
+
         results = []
         for result in raw_results:
             if isinstance(result, BaseException):
@@ -174,10 +210,37 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
                 service_id=self.service_id,
                 metadata=metadata,
                 results=results,
-                trace_data=message.record.trace_data,
-                error=message.record.error,
+                trace_data=trace_data,
+                error=error,
             )
         )
+
+    def _free_record_data(
+        self, record: RequestRecord, parsed_record: ParsedResponseRecord
+    ) -> tuple[BaseTraceData | None, ErrorDetails | None]:
+        """Free large data structures from the record after all processors have run.
+
+        All metrics and post-processors consume these fields during _process_record().
+        The only data sent downstream in MetricRecordsMessage is metadata, results,
+        trace_data, and error -- so everything else can be released here.
+
+        We assign None to fields typed as non-optional lists (turns, responses) to let
+        the GC reclaim the underlying objects. Using .clear() would keep the empty list
+        alive, and reassigning [] would allocate a new object for no reason.
+        """
+        trace_data = record.trace_data
+        error = record.error
+        if self.user_config.output.export_level != ExportLevel.RAW:
+            record.responses = None
+        record.turns = None
+        record.trace_data = None
+        record.request_headers = None
+        if record.request_info:
+            record.request_info.turns = None
+            record.request_info.system_message = None
+            record.request_info.user_context_message = None
+        parsed_record.responses = None
+        return trace_data, error
 
     async def _process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata

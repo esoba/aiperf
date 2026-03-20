@@ -68,6 +68,7 @@ def metric_result_from_array(
         min=clean[0],
         max=clean[-1],
         avg=arr_sum / n,
+        sum=arr_sum,
         std=std,
         p1=pcts[0],
         p5=pcts[1],

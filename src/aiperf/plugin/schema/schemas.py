@@ -337,6 +337,63 @@ class RecordRoutingMetadata(BaseModel):
     )
 
 
+class CustomDatasetLoaderMetadata(BaseModel):
+    """Metadata schema for custom dataset loader plugins.
+
+    Defines format-specific defaults for dataset loaders. When a loader specifies
+    ``block_size``, it overrides the user's ``--isl-block-size`` config default,
+    ensuring hash-based prompt generation uses the correct token block size for the
+    trace format (e.g. 16 for Bailian, 512 for Mooncake).
+
+    Referenced by: categories.yaml custom_dataset_loader.metadata_class
+    Used in: plugins.yaml custom_dataset_loader entries
+    """
+
+    is_trace: bool = Field(
+        default=False,
+        description=(
+            "Whether this loader handles trace-format datasets. "
+            "Trace datasets use hash_ids-based prompt generation, support synthesis "
+            "options, and prefer sequential sampling with fixed_schedule timing."
+        ),
+    )
+    default_block_size: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Default token block size for hash-based prompt caching. "
+            "Used when the user does not explicitly set --isl-block-size. "
+            "Must match the block size used to generate the trace's hash_ids "
+            "(e.g. 16 for Bailian, 512 for Mooncake)."
+        ),
+    )
+
+
+class PublicDatasetLoaderMetadata(BaseModel):
+    """Metadata schema for public dataset loader plugins.
+
+    Referenced by: categories.yaml public_dataset_loader.metadata_class
+    Used in: plugins.yaml public_dataset_loader entries
+    """
+
+    hf_dataset_name: str | None = Field(
+        default=None,
+        description="HuggingFace dataset identifier (e.g. 'AI-MO/NuminaMath-TIR'). Required for HF-backed loaders.",
+    )
+    hf_split: str = Field(
+        default="train",
+        description="HuggingFace dataset split to load (e.g. 'train', 'test', 'validation').",
+    )
+    hf_subset: str | None = Field(
+        default=None,
+        description="HuggingFace dataset subset/config name. Only needed for datasets with multiple configs.",
+    )
+    prompt_column: str | None = Field(
+        default=None,
+        description="Column name containing the prompt/instruction text. Required for HFInstructionResponseDatasetLoader.",
+    )
+
+
 class ServiceMetadata(BaseModel):
     """Metadata schema for service plugins.
 

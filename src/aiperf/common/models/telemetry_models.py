@@ -258,7 +258,7 @@ class GpuMetricTimeSeries:
                 f"No telemetry data available for metric '{metric_name}'"
             )
 
-        # arr is a view into stored data — copy before in-place sort
+        # arr is a view into stored data -- copy before in-place sort
         # ddof=1: telemetry scrapes are samples from a continuous signal
         result = metric_result_from_array(
             tag, header, unit, arr.copy(), float(np.sum(arr)), ddof=1

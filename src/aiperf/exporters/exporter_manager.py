@@ -164,6 +164,10 @@ class ExporterManager(AIPerfLoggerMixin):
         """
         self.info("Publishing artifacts to remote storage")
 
+        if not hasattr(PluginType, "ARTIFACT_PUBLISHER"):
+            self.debug("No artifact_publisher category registered, skipping")
+            return
+
         for entry, PublisherClass in plugins.iter_all(PluginType.ARTIFACT_PUBLISHER):
             try:
                 publisher: ArtifactPublisherProtocol = PublisherClass(

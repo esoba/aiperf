@@ -1,7 +1,8 @@
-<!--
+---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
--->
+sidebar-title: Plugin System
+---
 # AIPerf Plugin System
 
 The AIPerf plugin system provides a flexible, extensible architecture for customizing benchmark behavior. It uses YAML-based configuration with lazy loading, priority-based conflict resolution, and dynamic enum generation.
@@ -99,7 +100,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 23 plugin categories organized by function:
+AIPerf supports 25 plugin categories organized by function:
 
 ### Timing Categories
 
@@ -135,6 +136,13 @@ AIPerf supports 23 plugin categories organized by function:
 | `stream_exporter` | `StreamExporterType` | Streaming record export (e.g. JSONL files) |
 | `data_exporter` | `DataExporterType` | File format exporters (CSV, JSON, Parquet) |
 | `console_exporter` | `ConsoleExporterType` | Terminal output exporters |
+
+### Accuracy Categories
+
+| Category | Enum | Description |
+|----------|------|-------------|
+| `accuracy_benchmark` | `AccuracyBenchmarkType` | Accuracy benchmark problem sets (MMLU, AIME, HellaSwag, BigBench, etc.) |
+| `accuracy_grader` | `AccuracyGraderType` | Grading strategies for accuracy evaluation (exact match, math, multiple choice, code execution) |
 
 ### UI and Selection Categories
 
@@ -197,12 +205,13 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 
 ## Creating Custom Plugins
 
-> [!TIP]
-> **Contributing directly to AIPerf?** You only need two things:
-> 1. Add your class under `src/aiperf/`
-> 2. Register it in `src/aiperf/plugin/plugins.yaml`
->
-> The `pyproject.toml` entry points and separate package install below are only needed for external/third-party plugins.
+<Tip>
+**Contributing directly to AIPerf?** You only need two things:
+1. Add your class under `src/aiperf/`
+2. Register it in `src/aiperf/plugin/plugins.yaml`
+
+The `pyproject.toml` entry points and separate package install below are only needed for external/third-party plugins.
+</Tip>
 
 **Quick Start** (4 steps):
 
@@ -240,7 +249,9 @@ endpoint:
     metadata: { endpoint_path: /v1/generate, supports_streaming: true, produces_tokens: true, tokenizes_input: true, metrics_title: My Custom Metrics }
 ```
 
-> **Note**: Extend base classes (`BaseEndpoint`, etc.) to get logging, helpers, and default implementations. Only implement core methods.
+<Note>
+Extend base classes (`BaseEndpoint`, etc.) to get logging, helpers, and default implementations. Only implement core methods.
+</Note>
 
 ## Plugin Configuration
 
@@ -326,7 +337,9 @@ $ aiperf plugins endpoint chat
 | 2 | External packages beat built-in (equal priority) |
 | 3 | First registered wins (with warning) |
 
-> **Tip**: Shadowed plugins remain accessible via full class path: `plugins.get_class("endpoint", "my_pkg.endpoints:MyEndpoint")`
+<Tip>
+Shadowed plugins remain accessible via full class path: `plugins.get_class("endpoint", "my_pkg.endpoints:MyEndpoint")`
+</Tip>
 
 ### API Reference
 
@@ -402,6 +415,29 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `dashboard` | `AIPerfDashboardUI` | Rich terminal dashboard |
 | `simple` | `TQDMProgressUI` | Simple tqdm progress bar |
 | `none` | `NoUI` | Headless execution |
+
+### Accuracy Benchmarks
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `mmlu` | `MMLUBenchmark` | Massive Multitask Language Understanding |
+| `aime` | `AIMEBenchmark` | American Invitational Mathematics Examination |
+| `aime24` | `AIME24Benchmark` | AIME 2024 competition problems |
+| `aime25` | `AIME25Benchmark` | AIME 2025 competition problems |
+| `hellaswag` | `HellaSwagBenchmark` | HellaSwag commonsense reasoning |
+| `bigbench` | `BigBenchBenchmark` | BIG-Bench benchmark tasks |
+| `math_500` | `Math500Benchmark` | MATH-500 problem set |
+| `gpqa_diamond` | `GPQADiamondBenchmark` | GPQA Diamond graduate-level science |
+| `lcb_codegeneration` | `LCBCodeGenerationBenchmark` | LiveCodeBench code generation |
+
+### Accuracy Graders
+
+| Name | Class | Description |
+|------|-------|-------------|
+| `exact_match` | `ExactMatchGrader` | Exact string matching |
+| `math` | `MathGrader` | Mathematical expression evaluation |
+| `multiple_choice` | `MultipleChoiceGrader` | Multiple choice answer extraction |
+| `code_execution` | `CodeExecutionGrader` | Code execution and output comparison |
 
 ## Troubleshooting
 

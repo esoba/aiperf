@@ -112,11 +112,14 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self._column_store = ColumnStore(initial_capacity=1024)
 
         # Derive functions for DERIVED metrics
+        # _setup_metrics includes transitive dependencies (RECORD/AGGREGATE),
+        # so filter to only metrics that actually have derive_value.
         self._derive_funcs: dict[
             MetricTagT, Callable[[MetricResultsDict], MetricValueTypeT]
         ] = {
             metric_cls.tag: metric_cls.derive_value  # type: ignore
             for metric_cls in self._setup_metrics(MetricType.DERIVED)
+            if metric_cls.type == MetricType.DERIVED
         }
 
         # Metric type lookup

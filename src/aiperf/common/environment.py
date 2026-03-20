@@ -7,6 +7,8 @@ Provides a hierarchical, type-safe configuration system using Pydantic BaseSetti
 All settings can be configured via environment variables with the AIPERF_ prefix.
 
 Structure:
+    Environment.API_SERVER.*     - API server settings
+    Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.CONFIG.*         - Configuration file paths for distributed deployments
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
@@ -50,6 +52,67 @@ from aiperf.plugin.enums import ServiceType
 _logger = AIPerfLogger(__name__)
 
 __all__ = ["Environment"]
+
+
+class _APIServerSettings(BaseSettings):
+    """API server settings.
+
+    Controls the host and port of the API server.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_API_SERVER_")
+
+    HOST: str = Field(
+        default="127.0.0.1",
+        description="Host to bind the API server to",
+    )
+    PORT: int | None = Field(
+        ge=1,
+        le=65535,
+        default=None,
+        description="Port to bind the API server to",
+    )
+    CORS_ORIGINS: list[str] = Field(
+        default=[],
+        description="List of CORS origins to allow (empty = no CORS, ['*'] = all origins)",
+    )
+    SHUTDOWN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=5.0,
+        description="Timeout in seconds for graceful API server shutdown before force-cancelling",
+    )
+
+
+class _CompressionSettings(BaseSettings):
+    """Compression settings for streaming file transfers.
+
+    Controls chunk size and compression levels for zstd and gzip encodings
+    used in dataset and results file transfers.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_COMPRESSION_",
+    )
+
+    CHUNK_SIZE: int = Field(
+        ge=1024,
+        le=1048576,
+        default=65536,
+        description="Chunk size in bytes for streaming compressed data (default: 64KB)",
+    )
+    ZSTD_LEVEL: int = Field(
+        ge=1,
+        le=22,
+        default=3,
+        description="Zstandard compression level (1=fastest, 22=best compression, default: 3)",
+    )
+    GZIP_LEVEL: int = Field(
+        ge=1,
+        le=9,
+        default=6,
+        description="Gzip compression level (1=fastest, 9=best compression, default: 6)",
+    )
 
 
 class _ConfigSettings(BaseSettings):
@@ -636,8 +699,8 @@ class _ServiceSettings(BaseSettings):
     EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS: float = Field(
         gt=1.0,
         le=10000.0,
-        default=10.0,
-        description="Warning threshold in milliseconds for event loop latency (default: 10ms). "
+        default=25.0,
+        description="Warning threshold in milliseconds for event loop latency (default: 25ms). "
         "If the actual sleep duration exceeds the expected duration by this amount, a warning is logged.",
     )
     # Health server settings for Kubernetes probes
@@ -924,6 +987,14 @@ class _Environment(BaseSettings):
     )
 
     # Nested subsystem settings (alphabetically ordered)
+    API_SERVER: _APIServerSettings = Field(
+        default_factory=_APIServerSettings,
+        description="API server settings",
+    )
+    COMPRESSION: _CompressionSettings = Field(
+        default_factory=_CompressionSettings,
+        description="Compression settings for streaming file transfers",
+    )
     CONFIG: _ConfigSettings = Field(
         default_factory=_ConfigSettings,
         description="Configuration file paths for distributed deployments",
