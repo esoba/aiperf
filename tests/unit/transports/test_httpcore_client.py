@@ -605,3 +605,175 @@ class TestBinaryResponseHandling:
         assert isinstance(record.responses[0], BinaryResponse)
         assert record.responses[0].raw_bytes == raw_data
         assert len(record.responses[0].raw_bytes) == 256
+
+
+# ---------------------------------------------------------------------------
+# Trace data population
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestHttpCoreTraceData:
+    """Verify BaseTraceData is populated on both SSE and non-SSE paths."""
+
+    async def test_trace_data_not_none_non_sse(
+        self,
+        httpcore_client: HttpCoreClient,
+    ) -> None:
+        """record.trace_data is set after a non-SSE request."""
+        response = make_non_sse_response(body=b'{"ok": true}')
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/complete",
+                b"{}",
+                {"Content-Type": "application/json"},
+            )
+
+        assert record.trace_data is not None
+
+    async def test_trace_type_is_httpcore_non_sse(
+        self,
+        httpcore_client: HttpCoreClient,
+    ) -> None:
+        """trace_data.trace_type is 'httpcore' for non-SSE responses."""
+        response = make_non_sse_response(body=b'{"ok": true}')
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/complete",
+                b"{}",
+                {"Content-Type": "application/json"},
+            )
+
+        assert record.trace_data.trace_type == "httpcore"
+
+    async def test_trace_data_timing_populated_non_sse(
+        self,
+        httpcore_client: HttpCoreClient,
+    ) -> None:
+        """response_receive_start/end_perf_ns are populated for non-SSE responses."""
+        response = make_non_sse_response(body=b'{"result": "data"}')
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/complete",
+                b"{}",
+                {"Content-Type": "application/json"},
+            )
+
+        assert record.trace_data.response_receive_start_perf_ns is not None
+        assert record.trace_data.response_receive_end_perf_ns is not None
+
+    async def test_trace_data_bytes_and_chunks_non_sse(
+        self,
+        httpcore_client: HttpCoreClient,
+    ) -> None:
+        """response_bytes_total > 0 and response_chunks_count > 0 for non-SSE."""
+        body = b'{"result": "data"}'
+        response = make_non_sse_response(body=body)
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/complete",
+                b"{}",
+                {"Content-Type": "application/json"},
+            )
+
+        assert record.trace_data.response_bytes_total == len(body)
+        assert record.trace_data.response_chunks_count == 1
+
+    async def test_trace_data_not_none_sse(
+        self,
+        httpcore_client: HttpCoreClient,
+        sse_headers: dict[str, str],
+    ) -> None:
+        """record.trace_data is set after an SSE request."""
+        sse_chunks = [b"data: hello\n\n", b"data: world\n\n"]
+        response = make_sse_response()
+        ctx = build_stream_context(response, sse_chunks)
+
+        with patch.object(httpcore_client.pool, "stream", ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/stream",
+                b"{}",
+                sse_headers,
+            )
+
+        assert record.trace_data is not None
+
+    async def test_trace_type_is_httpcore_sse(
+        self,
+        httpcore_client: HttpCoreClient,
+        sse_headers: dict[str, str],
+    ) -> None:
+        """trace_data.trace_type is 'httpcore' for SSE responses."""
+        sse_chunks = [b"data: hello\n\n"]
+        response = make_sse_response()
+        ctx = build_stream_context(response, sse_chunks)
+
+        with patch.object(httpcore_client.pool, "stream", ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/stream",
+                b"{}",
+                sse_headers,
+            )
+
+        assert record.trace_data.trace_type == "httpcore"
+
+    async def test_trace_data_timing_populated_sse(
+        self,
+        httpcore_client: HttpCoreClient,
+        sse_headers: dict[str, str],
+    ) -> None:
+        """response_receive_start/end_perf_ns are populated for SSE responses."""
+        sse_chunks = [b"data: hello\n\n", b"data: world\n\n"]
+        response = make_sse_response()
+        ctx = build_stream_context(response, sse_chunks)
+
+        with patch.object(httpcore_client.pool, "stream", ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/stream",
+                b"{}",
+                sse_headers,
+            )
+
+        assert record.trace_data.response_receive_start_perf_ns is not None
+        assert record.trace_data.response_receive_end_perf_ns is not None
+
+    async def test_trace_data_bytes_and_chunks_sse(
+        self,
+        httpcore_client: HttpCoreClient,
+        sse_headers: dict[str, str],
+    ) -> None:
+        """response_bytes_total > 0 and response_chunks_count > 0 for SSE responses."""
+        sse_chunks = [b"data: hello\n\n", b"data: world\n\n"]
+        response = make_sse_response()
+        ctx = build_stream_context(response, sse_chunks)
+
+        with patch.object(httpcore_client.pool, "stream", ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/stream",
+                b"{}",
+                sse_headers,
+            )
+
+        expected_bytes = sum(len(c) for c in sse_chunks)
+        assert record.trace_data.response_bytes_total == expected_bytes
+        assert record.trace_data.response_chunks_count == len(sse_chunks)

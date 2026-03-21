@@ -16,6 +16,7 @@ from aiperf.common.models import (
     RequestRecord,
     TextResponse,
 )
+from aiperf.common.models.trace_models import BaseTraceData
 from aiperf.transports.http_defaults import HttpCoreDefaults, SocketDefaults
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
@@ -103,7 +104,11 @@ class HttpCoreClient(AIPerfLoggerMixin):
         """
         self.debug(lambda: f"Sending {method} request to {url}")
 
-        record = RequestRecord(start_perf_ns=time.perf_counter_ns())
+        trace_data = BaseTraceData(trace_type="httpcore")
+        record = RequestRecord(
+            start_perf_ns=time.perf_counter_ns(),
+            trace_data=trace_data,
+        )
 
         try:
             is_sse_request = headers.get("Accept", "").startswith("text/event-stream")
@@ -162,12 +167,26 @@ class HttpCoreClient(AIPerfLoggerMixin):
                 }
                 content_type = response_headers.get("content-type", "")
 
+                async def tracked_stream(raw_stream):
+                    """Yield chunks while tracking timing and byte counts for trace data."""
+                    awaiting_first_chunk = True
+                    async for chunk in raw_stream:
+                        chunk_ns = time.perf_counter_ns()
+                        chunk_len = len(chunk)
+                        trace_data.response_chunks_count += 1
+                        trace_data.response_bytes_total += chunk_len
+                        if awaiting_first_chunk:
+                            trace_data.response_receive_start_perf_ns = chunk_ns
+                            awaiting_first_chunk = False
+                        trace_data.response_receive_end_perf_ns = chunk_ns
+                        yield chunk
+
                 if is_sse_request and content_type.startswith("text/event-stream"):
                     self.debug("Processing SSE stream")
                     if first_token_callback:
                         first_token_acquired = False
                         async for message in AsyncSSEStreamReader(
-                            response.aiter_stream()
+                            tracked_stream(response.aiter_stream())
                         ):
                             AsyncSSEStreamReader.inspect_message_for_error(message)
                             record.responses.append(message)
@@ -178,7 +197,7 @@ class HttpCoreClient(AIPerfLoggerMixin):
                                 )
                     else:
                         async for message in AsyncSSEStreamReader(
-                            response.aiter_stream()
+                            tracked_stream(response.aiter_stream())
                         ):
                             AsyncSSEStreamReader.inspect_message_for_error(message)
                             record.responses.append(message)
@@ -186,7 +205,7 @@ class HttpCoreClient(AIPerfLoggerMixin):
                 else:
                     self.debug("Processing regular response")
                     response_body = bytearray()
-                    async for chunk in response.aiter_stream():
+                    async for chunk in tracked_stream(response.aiter_stream()):
                         response_body.extend(chunk)
 
                     record.end_perf_ns = time.perf_counter_ns()
