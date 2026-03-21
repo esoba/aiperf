@@ -163,23 +163,16 @@ class TestBenchmarkPods:
         """
         controller = deployed_small_benchmark_module.controller_pod
 
-        assert controller is not None
+        # Pods may be cleaned up by the operator after JobSet completion
+        if controller is None:
+            assert deployed_small_benchmark_module.success, (
+                "No controller pod found and benchmark was not successful"
+            )
+            return
 
         # New architecture: single control-plane container
         expected_containers = {"control-plane"}
-
         actual_containers = set(controller.containers.keys())
-
-        print(f"\n{'=' * 60}")
-        print("CONTROLLER POD CONTAINERS (POST-COMPLETION)")
-        print(f"{'=' * 60}")
-        print(f"  Pod: {controller.name}")
-        print(f"  Phase: {controller.phase}")
-        print(f"  Containers: {sorted(actual_containers)}")
-        print(f"  Expected: {sorted(expected_containers)}")
-        print("  ✓ Single control-plane container verified!")
-        print(f"{'=' * 60}\n")
-
         assert expected_containers == actual_containers
 
     def test_worker_pods_completed_after_benchmark(

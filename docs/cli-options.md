@@ -120,6 +120,12 @@ Run pre-flight checks against the target Kubernetes cluster
 
 [Kubernetes](#kubernetes) • [Parameters](#parameters)
 
+### [`kube dashboard`](#aiperf-kube-dashboard)
+
+Open the operator results server UI in your browser
+
+[Kubernetes](#kubernetes) • [Parameters](#parameters)
+
 <hr/>
 
 ## `aiperf --install-completion`
@@ -4217,3 +4223,39 @@ Planned number of worker pods (for resource projection).
 
 Output format: "text" for human-readable, "json" for machine-parseable.
 <br/>_Default: `text`_
+
+<hr/>
+
+## `aiperf kube dashboard`
+
+Open the operator results server UI in your browser
+
+### Kubernetes
+
+#### `--kubeconfig` `<str>`
+
+Path to kubeconfig file (defaults to ~/.kube/config or KUBECONFIG env).
+
+#### `--kube-context` `<str>`
+
+Kubernetes context to use (defaults to current context in kubeconfig).
+
+#### `--namespace` `<str>`
+
+Kubernetes namespace (default: aiperf-benchmarks).
+
+### Parameters
+
+#### `--port` `<int>`
+
+Local port to bind (default: 0 = ephemeral).
+<br/>_Default: `0`_
+
+#### `--operator-namespace` `<str>`
+
+Namespace where the operator is deployed.
+<br/>_Default: `aiperf-system`_
+
+#### `--no-browser`, `--no-no-browser`
+
+Print the URL instead of opening a browser.

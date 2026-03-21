@@ -293,8 +293,9 @@ class TestKubeGenerateCommand:
         assert cr["kind"] == "AIPerfJob"
         assert cr["apiVersion"] == "aiperf.nvidia.com/v1alpha1"
         assert "spec" in cr
-        assert "endpoint" in cr["spec"]
-        assert "models" in cr["spec"]
+        assert "benchmark" in cr["spec"]
+        assert "endpoint" in cr["spec"]["benchmark"]
+        assert "models" in cr["spec"]["benchmark"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

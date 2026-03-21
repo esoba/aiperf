@@ -381,6 +381,27 @@ async def _dump_diagnostics(
     logger.info("=" * 70)
 
 
+# All engine server namespaces (used for GPU-exclusive cleanup)
+_ENGINE_NAMESPACES = ("dynamo-server", "sglang-server", "trtllm-server", "vllm-server")
+
+
+async def _release_gpu(kubectl: KubectlClient, keep_namespace: str) -> None:
+    """Delete other engine namespaces to free the GPU before deploying.
+
+    With a single GPU, only one engine server can run at a time. Pytest
+    package-scoped fixture teardowns may not execute before the next
+    package's setup begins, leaving stale GPU-holding pods that block
+    scheduling. This explicitly cleans up any leftover engine namespaces.
+    """
+    for ns in _ENGINE_NAMESPACES:
+        if ns == keep_namespace:
+            continue
+        result = await kubectl.run("get", "namespace", ns, check=False)
+        if result.returncode == 0:
+            logger.info(f"[GPU] Releasing GPU: deleting leftover namespace {ns}")
+            await kubectl.delete_namespace(ns, wait=True)
+
+
 # ============================================================================
 # Pytest hooks
 # ============================================================================

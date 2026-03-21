@@ -63,3 +63,8 @@ app.command(
     name="preflight",
     help="Run pre-flight checks against the target Kubernetes cluster",
 )
+app.command(
+    "aiperf.cli_commands.kube.dashboard:app",
+    name="dashboard",
+    help="Open the operator results server UI in your browser",
+)

@@ -19,6 +19,7 @@ from tests.kubernetes.gpu.conftest import (
     _dump_diagnostics,
     _log_container_logs,
     _log_pod_statuses,
+    _release_gpu,
 )
 from tests.kubernetes.gpu.trtllm.helpers import TRTLLMConfig, TRTLLMDeployer
 from tests.kubernetes.gpu.vllm.helpers import GPUBenchmarkDeployer
@@ -68,6 +69,7 @@ async def trtllm_server(
         yield s.trtllm_endpoint
         return
 
+    await _release_gpu(kubectl, trtllm_config.namespace)
     deployer = TRTLLMDeployer(kubectl=kubectl, config=trtllm_config)
 
     logger.info(

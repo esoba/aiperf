@@ -54,21 +54,22 @@ def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
     """
     doc = copy.deepcopy(doc)
     spec = doc["spec"]
+    bench = spec.setdefault("benchmark", {})
 
     # -- models --
-    spec["models"] = [MOCK_MODEL]
+    bench["models"] = [MOCK_MODEL]
 
     # -- endpoint --
-    ep = spec.get("endpoint", {})
+    ep = bench.get("endpoint", {})
     ep["urls"] = [MOCK_SERVER_URL]
     ep.pop("custom_endpoint", None)
-    spec["endpoint"] = ep
+    bench["endpoint"] = ep
 
     # -- tokenizer --
-    spec["tokenizer"] = {"name": MOCK_TOKENIZER}
+    bench["tokenizer"] = {"name": MOCK_TOKENIZER}
 
     # -- datasets: replace with small synthetic --
-    spec["datasets"] = {
+    bench["datasets"] = {
         "main": {
             "type": "synthetic",
             "entries": 100,
@@ -80,7 +81,7 @@ def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
     }
 
     # -- phases (small counts) --
-    spec["phases"] = {
+    bench["phases"] = {
         "warmup": {
             "type": "concurrency",
             "concurrency": TEST_CONCURRENCY,
@@ -95,11 +96,11 @@ def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
     }
 
     # -- runtime: disable UI --
-    spec.setdefault("runtime", {})["ui"] = "none"
+    bench.setdefault("runtime", {})["ui"] = "none"
 
     # -- remove sections that won't work in test env --
-    spec.pop("server_metrics", None)
-    spec.pop("artifacts", None)
+    bench.pop("server_metrics", None)
+    bench.pop("artifacts", None)
 
     # -- image --
     spec["image"] = image

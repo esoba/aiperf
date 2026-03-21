@@ -220,9 +220,6 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     Args:
         results_dir: Base directory for stored results. Defaults to RESULTS_DIR.
     """
-    from starlette.middleware.wsgi import WSGIMiddleware
-
-    from aiperf.operator.dashboard_mount import DashboardProxy, build_dashboard
     from aiperf.operator.results_db import ResultsDB
 
     base_dir = results_dir or RESULTS_DIR
@@ -230,8 +227,6 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
 
     # Mutable holder for kr8s client - populated during lifespan, read by router
     kube_client_holder: list = [None]
-    dashboard_proxy_holder: list[DashboardProxy | None] = [None]
-    dashboard_run_count: list[int] = [0]
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -248,32 +243,7 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
         except Exception as e:
             logger.warning(f"kr8s unavailable, live job endpoints disabled: {e}")
 
-        # Build dashboard in background so startup isn't blocked
-        # (Dash+Plotly import + layout build can take 30-60s)
-        async def _build_dashboard_background():
-            try:
-                dash_app, run_count = await asyncio.to_thread(build_dashboard, base_dir)
-                if dash_app is not None and dashboard_proxy_holder[0] is not None:
-                    dashboard_proxy_holder[0].app = dash_app.server
-                    dashboard_run_count[0] = run_count
-                    logger.info(
-                        f"Dash dashboard mounted at /dashboard/ ({run_count} runs)"
-                    )
-                else:
-                    logger.info("No runs found on PVC, dashboard placeholder active")
-            except Exception as e:
-                logger.warning(f"Failed to build dashboard: {e}")
-
-        # TODO: re-enable once OOM is resolved (Dash+Plotly needs ~2Gi)
-        # bg_task = asyncio.create_task(_build_dashboard_background())
-        bg_task = None
-
         yield
-
-        if bg_task is not None:
-            bg_task.cancel()
-        db.close()
-        logger.info("DuckDB analytics engine closed")
 
         db.close()
         logger.info("DuckDB analytics engine closed")
@@ -466,28 +436,6 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
         if result is None:
             raise HTTPException(404, f"No summary for {namespace}/{job_id}")
         return result
-
-    # Dashboard placeholder proxy -- inner app swapped during lifespan
-    def _dashboard_not_ready(environ, start_response):
-        start_response("503 Service Unavailable", [("Content-Type", "text/plain")])
-        return [b"Dashboard not available - no benchmark results found"]
-
-    dashboard_proxy_holder[0] = DashboardProxy(_dashboard_not_ready)
-    app.mount("/dashboard", WSGIMiddleware(dashboard_proxy_holder[0]))
-
-    @app.post("/api/v1/dashboard/refresh")
-    async def refresh_dashboard() -> dict[str, int]:
-        """Rescan PVC and rebuild dashboard."""
-        try:
-            dash_app, run_count = await asyncio.to_thread(build_dashboard, base_dir)
-            if dash_app is not None and dashboard_proxy_holder[0] is not None:
-                dashboard_proxy_holder[0].app = dash_app.server
-                dashboard_run_count[0] = run_count
-                return {"runs_found": run_count}
-            return {"runs_found": 0}
-        except Exception as e:
-            logger.warning(f"Dashboard refresh failed: {e}")
-            raise HTTPException(500, f"Dashboard refresh failed: {e}") from e
 
     # Mount UI static files last (catch-all for SPA routing)
     ui_dir = Path(__file__).parent / "ui"

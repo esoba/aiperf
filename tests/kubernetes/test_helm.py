@@ -398,9 +398,11 @@ class TestHelmErrorHandling:
             "spec": {
                 "image": "aiperf:local",
                 "imagePullPolicy": "Never",
-                "endpoint": {},  # Missing required fields
-                "phases": {
-                    "profiling": {"type": "concurrency", "concurrency": 5},
+                "benchmark": {
+                    "endpoint": {},  # Missing required fields
+                    "phases": {
+                        "profiling": {"type": "concurrency", "concurrency": 5},
+                    },
                 },
             },
         }
@@ -535,6 +537,7 @@ class TestHelmUninstall:
     uninstalling here is safe - subsequent test runs will reinstall cleanly.
     """
 
+    @pytest.mark.timeout(600)
     @pytest.mark.asyncio
     async def test_uninstall_removes_operator(
         self,
@@ -542,10 +545,21 @@ class TestHelmUninstall:
         kubectl: KubectlClient,
         operator_ready,
     ) -> None:
-        """Verify Helm uninstall removes operator deployment."""
-        await helm_deployed.uninstall_chart()
+        """Verify Helm uninstall removes operator deployment.
 
-        await asyncio.sleep(5)
+        Uses --keep-history so the benchmark namespace is not deleted,
+        avoiding the Terminating-namespace deadlock on redeploy.
+        """
+        # Uninstall without waiting (keep-history avoids cascade deletion)
+        await helm_deployed.uninstall_chart(wait=False)
+
+        # Wait briefly for pods to terminate
+        for _ in range(30):
+            pods = await kubectl.get_pods(HelmDeployer.OPERATOR_NAMESPACE)
+            operator_pods = [p for p in pods if "aiperf-operator" in p.name]
+            if not operator_pods:
+                break
+            await asyncio.sleep(2)
 
         # Verify operator deployment is gone
         pods = await kubectl.get_pods(HelmDeployer.OPERATOR_NAMESPACE)
@@ -553,6 +567,33 @@ class TestHelmUninstall:
         assert len(operator_pods) == 0, (
             f"Expected no operator pods after uninstall, found: {operator_pods}"
         )
+
+        # Force-delete any terminating namespaces before redeploy
+        for ns in ("aiperf-operator", "aiperf-benchmarks"):
+            result = await kubectl.run(
+                "get",
+                "namespace",
+                ns,
+                "-o",
+                "jsonpath={.status.phase}",
+                check=False,
+            )
+            if result.returncode == 0 and result.stdout.strip() == "Terminating":
+                await kubectl.run(
+                    "patch",
+                    "namespace",
+                    ns,
+                    "--type=merge",
+                    "-p",
+                    '{"metadata":{"finalizers":null}}',
+                    check=False,
+                )
+                # Wait for it to actually be gone
+                for _ in range(30):
+                    r = await kubectl.run("get", "namespace", ns, check=False)
+                    if r.returncode != 0:
+                        break
+                    await asyncio.sleep(1)
 
         # Re-deploy the package-scoped operator so subsequent test modules
         # that depend on it continue to work.

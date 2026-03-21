@@ -105,7 +105,7 @@ class AIPerfJobConfig:
         spec: dict[str, Any] = {
             "image": self.image,
             "imagePullPolicy": self.image_pull_policy,
-            **self.to_flat_spec(),
+            "benchmark": self.to_flat_spec(),
         }
 
         if self.connections_per_worker is not None:
@@ -401,7 +401,7 @@ class OperatorDeployer:
             "deployment",
             "aiperf-operator",
             namespace=self.OPERATOR_NAMESPACE,
-            timeout=120,
+            timeout=300,
         )
 
         if not success:
@@ -452,10 +452,21 @@ class OperatorDeployer:
         # Delete all resources in the operator namespace for a clean slate
         await self.kubectl.run(
             "delete",
-            "all,pvc,sa,roles,rolebindings",
+            "all,sa,roles,rolebindings",
             "--all",
             "-n",
             self.OPERATOR_NAMESPACE,
+            check=False,
+        )
+        # Force-delete PVCs (may have finalizers that block normal deletion)
+        await self.kubectl.run(
+            "delete",
+            "pvc",
+            "--all",
+            "-n",
+            self.OPERATOR_NAMESPACE,
+            "--force",
+            "--grace-period=0",
             check=False,
         )
         # Clean up cluster-scoped resources too

@@ -19,6 +19,7 @@ from tests.kubernetes.gpu.conftest import (
     _dump_diagnostics,
     _log_container_logs,
     _log_pod_statuses,
+    _release_gpu,
 )
 from tests.kubernetes.gpu.sglang.helpers import SGLangConfig, SGLangDeployer
 from tests.kubernetes.gpu.vllm.helpers import GPUBenchmarkDeployer
@@ -66,6 +67,7 @@ async def sglang_server(
         yield s.sglang_endpoint
         return
 
+    await _release_gpu(kubectl, sglang_config.namespace)
     deployer = SGLangDeployer(kubectl=kubectl, config=sglang_config)
 
     logger.info(

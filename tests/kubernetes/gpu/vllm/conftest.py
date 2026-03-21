@@ -19,6 +19,7 @@ from tests.kubernetes.gpu.conftest import (
     _dump_diagnostics,
     _log_container_logs,
     _log_pod_statuses,
+    _release_gpu,
 )
 from tests.kubernetes.gpu.vllm.helpers import (
     GPUBenchmarkDeployer,
@@ -73,6 +74,7 @@ async def vllm_server(
         yield s.vllm_endpoint
         return
 
+    await _release_gpu(kubectl, vllm_config.namespace)
     deployer = VLLMDeployer(kubectl=kubectl, config=vllm_config)
 
     logger.info(

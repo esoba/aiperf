@@ -36,6 +36,22 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _DEPLOY_DIR = _PROJECT_ROOT / "dev" / "deploy"
 
 
+def _strip_localhost_proxy() -> None:
+    """Remove localhost-bound proxy env vars that break Kind containers.
+
+    Kind propagates HTTP_PROXY/HTTPS_PROXY into the node. If the proxy
+    is on 127.0.0.1 (e.g. corporate proxies), it's unreachable from
+    inside the container and breaks image pulls, apt-get, and curl.
+    """
+    import os
+
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        val = os.environ.get(var, "")
+        if "127.0.0.1" in val or "localhost" in val:
+            logger.info(f"Stripping {var}={val} (unreachable from Kind node)")
+            os.environ.pop(var, None)
+
+
 # ============================================================================
 # Shared helpers
 # ============================================================================
@@ -312,16 +328,19 @@ class KindGpuSetup:
                 "umount -R /proc/driver/nvidia 2>/dev/null || true",
                 check=False,
             )
+            # Unset proxy vars: Kind inherits host proxies pointing at
+            # 127.0.0.1 which is unreachable inside the node container.
             install_cmd = (
-                "apt-get update -qq >/dev/null 2>&1 && "
-                "apt-get install -y -qq gpg curl >/dev/null 2>&1 && "
+                "unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY; "
+                "apt-get update -qq && "
+                "apt-get install -y -qq gpg curl && "
                 "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | "
                 "gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null && "
                 "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | "
                 "sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | "
                 "tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null && "
-                "apt-get update -qq >/dev/null 2>&1 && "
-                "apt-get install -y -qq nvidia-container-toolkit >/dev/null 2>&1"
+                "apt-get update -qq && "
+                "apt-get install -y -qq nvidia-container-toolkit"
             )
             rc, stdout, stderr = await self._exec(
                 "bash", "-c", install_cmd, check=False
@@ -508,6 +527,7 @@ class KindBackend:
         return self._config.name in stdout.splitlines()
 
     async def create(self) -> None:
+        _strip_localhost_proxy()
         async with timed_operation(f"Creating Kind cluster '{self._config.name}'"):
             cmd = self._base_create_cmd()
             if self._config.gpus:

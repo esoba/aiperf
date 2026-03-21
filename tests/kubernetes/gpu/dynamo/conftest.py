@@ -22,6 +22,7 @@ from tests.kubernetes.gpu.conftest import (
     _dump_diagnostics,
     _log_events,
     _log_pod_statuses,
+    _release_gpu,
 )
 from tests.kubernetes.gpu.dynamo.helpers import (
     DynamoBackend,
@@ -399,6 +400,7 @@ async def dynamo_server(
         yield s.dynamo_endpoint
         return
 
+    await _release_gpu(kubectl, dynamo_config.namespace)
     deployer = DynamoDeployer(kubectl=kubectl, config=dynamo_config)
 
     logger.info(
