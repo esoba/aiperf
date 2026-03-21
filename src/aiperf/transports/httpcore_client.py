@@ -86,6 +86,7 @@ class HttpCoreClient(AIPerfLoggerMixin):
         headers: dict[str, str],
         data: bytes | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
+        trace_data: BaseTraceData | None = None,
         **kwargs: Any,
     ) -> RequestRecord:
         """Execute HTTP requests with nanosecond-precision timing and error handling.
@@ -99,6 +100,7 @@ class HttpCoreClient(AIPerfLoggerMixin):
             headers: Request headers dict
             data: Optional request body bytes
             first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            trace_data: Optional pre-created trace data (for cancellation scenarios)
             **kwargs: Additional arguments for future extension
 
         Returns:
@@ -106,7 +108,8 @@ class HttpCoreClient(AIPerfLoggerMixin):
         """
         self.debug(lambda: f"Sending {method} request to {url}")
 
-        trace_data = BaseTraceData(trace_type="httpcore")
+        if trace_data is None:
+            trace_data = BaseTraceData(trace_type="httpcore")
         record = RequestRecord(
             start_perf_ns=time.perf_counter_ns(),
             trace_data=trace_data,
@@ -203,6 +206,7 @@ class HttpCoreClient(AIPerfLoggerMixin):
                         ):
                             AsyncSSEStreamReader.inspect_message_for_error(message)
                             record.responses.append(message)
+                    record.end_perf_ns = time.perf_counter_ns()
                     self.debug(lambda: f"Parsed {len(record.responses)} SSE messages")
                 else:
                     self.debug("Processing regular response")
@@ -363,6 +367,9 @@ class HttpCoreClient(AIPerfLoggerMixin):
         start_perf_ns = time.perf_counter_ns()
         timeout_s = cancel_after_ns / 1e9
 
+        # Create trace_data outside the task so it survives cancellation
+        trace_data = BaseTraceData(trace_type="httpcore")
+
         request_task = asyncio.create_task(
             self._request(
                 "POST",
@@ -370,6 +377,7 @@ class HttpCoreClient(AIPerfLoggerMixin):
                 headers,
                 data=payload,
                 first_token_callback=first_token_callback,
+                trace_data=trace_data,
             )
         )
 
@@ -386,6 +394,7 @@ class HttpCoreClient(AIPerfLoggerMixin):
                 start_perf_ns=start_perf_ns,
                 end_perf_ns=end_perf_ns,
                 cancellation_perf_ns=end_perf_ns,
+                trace_data=trace_data,
                 error=ErrorDetails(
                     type="RequestCancellationError",
                     message=f"Request cancelled {timeout_s:.3f}s after submission",

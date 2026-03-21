@@ -49,6 +49,7 @@ class HttpCoreTransport(BaseHTTPTransport):
         """
         super().__init__(**kwargs)
         self.httpcore_client: HttpCoreClient | None = None
+        self._sticky_warned: bool = False
 
     @property
     def http_client(self) -> HttpCoreClient | None:
@@ -139,10 +140,12 @@ class HttpCoreTransport(BaseHTTPTransport):
                         await client.close()
 
                 case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
-                    self.warning(
-                        "STICKY_USER_SESSIONS is not applicable for HTTP/2 "
-                        "(multiplexing inherently shares connections); falling back to POOLED"
-                    )
+                    if not self._sticky_warned:
+                        self._sticky_warned = True
+                        self.warning(
+                            "STICKY_USER_SESSIONS is not applicable for HTTP/2 "
+                            "(multiplexing inherently shares connections); falling back to POOLED"
+                        )
                     record = await self.httpcore_client.post_request(
                         url,
                         json_bytes,
