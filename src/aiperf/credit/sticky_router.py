@@ -32,7 +32,6 @@ from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.protocols import StreamingRouterClientProtocol
 from aiperf.credit.messages import (
     CancelCredits,
-    CreditAck,
     CreditReturn,
     FirstToken,
     TimePing,
@@ -407,8 +406,7 @@ class StickyCreditRouter(CommunicationMixin):
         """Handle all worker -> router messages on the return channel.
 
         All worker-initiated messages arrive here. The router replies with
-        CreditAck (for CreditReturn) and TimePong (for TimePing) on the
-        same return channel.
+        TimePong (for TimePing) on the same return channel.
         """
         match message:
             case CreditReturn():
@@ -422,11 +420,6 @@ class StickyCreditRouter(CommunicationMixin):
                     # Await directly instead of execute_async - credit returns release
                     # concurrency slots, so delays here directly impact throughput.
                     await self._on_return_callback(worker_id, message)
-                # Acknowledge receipt so the worker knows the return was processed
-                await self._return_router_client.send_to(
-                    worker_id,
-                    CreditAck(credit_id=message.credit.id),
-                )
             case FirstToken():
                 if self._on_first_token_callback:
                     await self._on_first_token_callback(message)

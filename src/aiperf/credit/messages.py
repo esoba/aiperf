@@ -174,20 +174,6 @@ class CancelCredits(Struct, frozen=True, kw_only=True, tag_field="t", tag="cc"):
     credit_ids: set[int]
 
 
-class CreditAck(Struct, frozen=True, kw_only=True, tag_field="t", tag="ca"):
-    """Router acknowledges receipt of a CreditReturn.
-
-    Sent by router to worker on the return channel after processing a
-    CreditReturn. Lets the worker confirm the router received and tracked
-    the return.
-
-    Attributes:
-        credit_id: ID of the credit that was acknowledged.
-    """
-
-    credit_id: int
-
-
 # =============================================================================
 # Channel Union Types
 # =============================================================================
@@ -200,8 +186,8 @@ WorkerToRouterMessage: TypeAlias = (
     WorkerReady | WorkerShutdown | CreditReturn | FirstToken | TimePing
 )
 
-# Return channel (Router -> Worker replies): acks and pongs
-ReturnChannelReply: TypeAlias = CreditAck | TimePong
+# Return channel (Router -> Worker replies): pongs for RTT measurement
+ReturnChannelReply: TypeAlias = TimePong
 
 # Backwards-compat alias: default decode type for DEALER clients that
 # haven't been migrated to explicit channel types yet.

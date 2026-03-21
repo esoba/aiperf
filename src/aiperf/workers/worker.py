@@ -58,7 +58,6 @@ from aiperf.common.protocols import (
 )
 from aiperf.credit.messages import (
     CancelCredits,
-    CreditAck,
     CreditChannelMessage,
     CreditReturn,
     FirstToken,
@@ -396,11 +395,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     )
 
     async def _on_return_channel_reply(self, message: ReturnChannelReply) -> None:
-        """Handle replies from router on the return channel (CreditAck, TimePong)."""
+        """Handle replies from router on the return channel (TimePong)."""
         match message:
-            case CreditAck():
-                if self.is_trace_enabled:
-                    self.trace(f"Credit {message.credit_id} acknowledged by router")
             case TimePong():
                 self.clock_offset_tracker.handle_pong(message)
             case _:
