@@ -448,3 +448,32 @@ class HttpCoreClient(AIPerfLoggerMixin):
             RequestRecord with status, timing data, responses, and optional error
         """
         return await self._request("GET", url, headers, **kwargs)
+
+    @classmethod
+    def create_ephemeral(cls, timeout: float | None = None) -> "HttpCoreClient":
+        """Create a lightweight single-connection client for one-shot requests.
+
+        Bypasses normal __init__ to avoid heavy pool creation. The pool uses
+        max_connections=1 and keepalive_expiry=0 so the connection is closed
+        after the response body is consumed.
+        """
+        instance = cls.__new__(cls)
+        AIPerfLoggerMixin.__init__(instance)
+
+        ssl_context = ssl.create_default_context()
+        if not Environment.HTTP.SSL_VERIFY:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+        instance.pool = httpcore.AsyncConnectionPool(
+            http1=HttpCoreDefaults.HTTP1,
+            http2=HttpCoreDefaults.HTTP2,
+            max_connections=1,
+            max_keepalive_connections=0,
+            keepalive_expiry=0,
+            retries=0,
+            socket_options=SocketDefaults.build_socket_options(),
+            ssl_context=ssl_context,
+        )
+        instance.timeout_seconds = timeout or 300.0
+        return instance

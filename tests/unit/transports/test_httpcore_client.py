@@ -3,13 +3,17 @@
 """Unit tests for HttpCoreClient SSE handling, first_token_callback, and error inspection."""
 
 from contextlib import asynccontextmanager
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import SSEEventType, SSEFieldType
+from aiperf.common.enums import ConnectionReuseStrategy, SSEEventType, SSEFieldType
 from aiperf.common.models import SSEField, SSEMessage
+from aiperf.config import BenchmarkConfig, BenchmarkRun
+from aiperf.plugin.enums import EndpointType
 from aiperf.transports.httpcore_client import HttpCoreClient
+from aiperf.transports.httpcore_transport import HttpCoreTransport
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
 # ---------------------------------------------------------------------------
@@ -927,3 +931,218 @@ class TestCancelAfterNs:
         assert record.error is not None
         assert record.error.type == "RequestCancellationError"
         assert "cancelled" in record.error.message.lower()
+
+
+# ---------------------------------------------------------------------------
+# create_ephemeral
+# ---------------------------------------------------------------------------
+
+
+class TestCreateEphemeral:
+    """Verify HttpCoreClient.create_ephemeral() builds a minimal single-connection pool."""
+
+    def test_create_ephemeral_returns_httpcore_client(self) -> None:
+        """create_ephemeral() returns an HttpCoreClient instance."""
+        with patch("httpcore.AsyncConnectionPool"):
+            client = HttpCoreClient.create_ephemeral(timeout=10.0)
+
+        assert isinstance(client, HttpCoreClient)
+
+    def test_create_ephemeral_uses_single_connection(self) -> None:
+        """create_ephemeral() creates pool with max_connections=1."""
+        with patch("httpcore.AsyncConnectionPool") as mock_pool_cls:
+            HttpCoreClient.create_ephemeral(timeout=10.0)
+
+        kwargs = mock_pool_cls.call_args[1]
+        assert kwargs["max_connections"] == 1
+
+    def test_create_ephemeral_disables_keepalive(self) -> None:
+        """create_ephemeral() sets max_keepalive_connections=0 and keepalive_expiry=0."""
+        with patch("httpcore.AsyncConnectionPool") as mock_pool_cls:
+            HttpCoreClient.create_ephemeral(timeout=5.0)
+
+        kwargs = mock_pool_cls.call_args[1]
+        assert kwargs["max_keepalive_connections"] == 0
+        assert kwargs["keepalive_expiry"] == 0
+
+    def test_create_ephemeral_no_retries(self) -> None:
+        """create_ephemeral() disables retries."""
+        with patch("httpcore.AsyncConnectionPool") as mock_pool_cls:
+            HttpCoreClient.create_ephemeral()
+
+        kwargs = mock_pool_cls.call_args[1]
+        assert kwargs["retries"] == 0
+
+    def test_create_ephemeral_sets_timeout(self) -> None:
+        """create_ephemeral() stores the given timeout on the instance."""
+        with patch("httpcore.AsyncConnectionPool"):
+            client = HttpCoreClient.create_ephemeral(timeout=42.0)
+
+        assert client.timeout_seconds == 42.0
+
+    def test_create_ephemeral_default_timeout(self) -> None:
+        """create_ephemeral() defaults to 300s when timeout is None."""
+        with patch("httpcore.AsyncConnectionPool"):
+            client = HttpCoreClient.create_ephemeral()
+
+        assert client.timeout_seconds == 300.0
+
+
+# ---------------------------------------------------------------------------
+# Connection reuse strategies in HttpCoreTransport
+# ---------------------------------------------------------------------------
+
+
+def _make_transport_run(
+    reuse_strategy: ConnectionReuseStrategy = ConnectionReuseStrategy.POOLED,
+) -> BenchmarkRun:
+    """Build a minimal BenchmarkRun with the given connection reuse strategy."""
+    cfg = BenchmarkConfig(
+        models=["test-model"],
+        endpoint={
+            "type": EndpointType.CHAT,
+            "urls": ["http://localhost:8000"],
+            "path": "/v1/chat/completions",
+            "streaming": False,
+            "connection_reuse": reuse_strategy,
+        },
+        datasets={
+            "default": {
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {"isl": 128, "osl": 64},
+            }
+        },
+        phases={"default": {"type": "concurrency", "requests": 1, "concurrency": 1}},
+    )
+    return BenchmarkRun(benchmark_id="test", cfg=cfg, artifact_dir=Path("/tmp/test"))
+
+
+def _make_transport(run: BenchmarkRun) -> HttpCoreTransport:
+    """Instantiate HttpCoreTransport with a mocked httpcore_client."""
+    with patch("httpcore.AsyncConnectionPool"):
+        transport = HttpCoreTransport(run=run)
+        transport.httpcore_client = HttpCoreClient(timeout=30.0)
+    return transport
+
+
+def _make_request_info(run: BenchmarkRun) -> MagicMock:
+    """Build a minimal RequestInfo mock."""
+    ri = MagicMock()
+    ri.cancel_after_ns = None
+    ri.endpoint_headers = {}
+    ri.config = run
+    return ri
+
+
+@pytest.mark.asyncio
+class TestHttpCoreTransportConnectionReuse:
+    """Verify connection reuse strategies are applied correctly in HttpCoreTransport."""
+
+    async def test_pooled_strategy_uses_shared_client(self) -> None:
+        """POOLED strategy calls post_request on the shared httpcore_client."""
+        run = _make_transport_run(ConnectionReuseStrategy.POOLED)
+        transport = _make_transport(run)
+
+        record_mock = MagicMock()
+        record_mock.request_headers = {}
+        transport.httpcore_client.post_request = AsyncMock(return_value=record_mock)
+
+        ri = _make_request_info(run)
+        with (
+            patch.object(
+                transport,
+                "build_url",
+                return_value="http://localhost:8000/v1/chat/completions",
+            ),
+            patch.object(transport, "build_headers", return_value={}),
+        ):
+            await transport.send_request(ri, {"messages": []})
+
+        transport.httpcore_client.post_request.assert_awaited_once()
+
+    async def test_never_strategy_creates_and_closes_ephemeral_client(self) -> None:
+        """NEVER strategy creates an ephemeral client and closes it after the request."""
+        run = _make_transport_run(ConnectionReuseStrategy.NEVER)
+        transport = _make_transport(run)
+
+        record_mock = MagicMock()
+        record_mock.request_headers = {}
+
+        ephemeral_mock = MagicMock(spec=HttpCoreClient)
+        ephemeral_mock.post_request = AsyncMock(return_value=record_mock)
+        ephemeral_mock.close = AsyncMock()
+
+        ri = _make_request_info(run)
+        with (
+            patch.object(
+                transport,
+                "build_url",
+                return_value="http://localhost:8000/v1/chat/completions",
+            ),
+            patch.object(transport, "build_headers", return_value={}),
+            patch(
+                "aiperf.transports.httpcore_transport.HttpCoreClient.create_ephemeral",
+                return_value=ephemeral_mock,
+            ),
+        ):
+            await transport.send_request(ri, {"messages": []})
+
+        ephemeral_mock.post_request.assert_awaited_once()
+        ephemeral_mock.close.assert_awaited_once()
+
+    async def test_never_strategy_closes_ephemeral_on_error(self) -> None:
+        """NEVER strategy closes ephemeral client even if post_request raises."""
+        run = _make_transport_run(ConnectionReuseStrategy.NEVER)
+        transport = _make_transport(run)
+
+        ephemeral_mock = MagicMock(spec=HttpCoreClient)
+        ephemeral_mock.post_request = AsyncMock(side_effect=RuntimeError("boom"))
+        ephemeral_mock.close = AsyncMock()
+
+        ri = _make_request_info(run)
+        with (
+            patch.object(
+                transport,
+                "build_url",
+                return_value="http://localhost:8000/v1/chat/completions",
+            ),
+            patch.object(transport, "build_headers", return_value={}),
+            patch(
+                "aiperf.transports.httpcore_transport.HttpCoreClient.create_ephemeral",
+                return_value=ephemeral_mock,
+            ),
+        ):
+            record = await transport.send_request(ri, {"messages": []})
+
+        ephemeral_mock.close.assert_awaited_once()
+        assert record.error is not None
+
+    async def test_sticky_user_sessions_falls_back_to_pooled_with_warning(
+        self,
+    ) -> None:
+        """STICKY_USER_SESSIONS logs a warning and uses the shared pool."""
+        run = _make_transport_run(ConnectionReuseStrategy.STICKY_USER_SESSIONS)
+        transport = _make_transport(run)
+
+        record_mock = MagicMock()
+        record_mock.request_headers = {}
+        transport.httpcore_client.post_request = AsyncMock(return_value=record_mock)
+
+        ri = _make_request_info(run)
+        with (
+            patch.object(
+                transport,
+                "build_url",
+                return_value="http://localhost:8000/v1/chat/completions",
+            ),
+            patch.object(transport, "build_headers", return_value={}),
+            patch.object(transport, "warning") as mock_warning,
+        ):
+            await transport.send_request(ri, {"messages": []})
+
+        transport.httpcore_client.post_request.assert_awaited_once()
+        mock_warning.assert_called_once()
+        warning_msg = mock_warning.call_args[0][0]
+        assert "STICKY_USER_SESSIONS" in warning_msg
+        assert "POOLED" in warning_msg

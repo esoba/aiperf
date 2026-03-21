@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
 import orjson
 
+from aiperf.common.enums import ConnectionReuseStrategy
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.models import (
@@ -79,6 +81,12 @@ class HttpCoreTransport(BaseHTTPTransport):
     ) -> RequestRecord:
         """Send HTTP POST request with JSON payload via httpcore HTTP/2 client.
 
+        Connection behavior depends on the configured connection_reuse strategy:
+        - POOLED: Uses the shared connection pool (default)
+        - NEVER: Creates a single-connection ephemeral client, closed after use
+        - STICKY_USER_SESSIONS: HTTP/2 multiplexing makes per-session connections
+          redundant; logs a warning and falls back to POOLED
+
         Args:
             request_info: Request context and metadata
             payload: JSON-serializable request payload
@@ -94,21 +102,55 @@ class HttpCoreTransport(BaseHTTPTransport):
 
         start_perf_ns = time.perf_counter_ns()
         headers = None
+        reuse_strategy = self.run.cfg.endpoint.connection_reuse
 
         try:
             url = self.build_url(request_info)
             headers = self.build_headers(request_info)
             json_bytes = orjson.dumps(payload)
 
-            record = await self.httpcore_client.post_request(
-                url,
-                json_bytes,
-                headers,
-                cancel_after_ns=request_info.cancel_after_ns,
-                first_token_callback=first_token_callback,
-            )
+            match reuse_strategy:
+                case ConnectionReuseStrategy.NEVER:
+                    client = HttpCoreClient.create_ephemeral(
+                        timeout=self.run.cfg.endpoint.timeout
+                    )
+                    try:
+                        record = await client.post_request(
+                            url,
+                            json_bytes,
+                            headers,
+                            cancel_after_ns=request_info.cancel_after_ns,
+                            first_token_callback=first_token_callback,
+                        )
+                    finally:
+                        await client.close()
+
+                case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
+                    self.warning(
+                        "STICKY_USER_SESSIONS is not applicable for HTTP/2 "
+                        "(multiplexing inherently shares connections); falling back to POOLED"
+                    )
+                    record = await self.httpcore_client.post_request(
+                        url,
+                        json_bytes,
+                        headers,
+                        cancel_after_ns=request_info.cancel_after_ns,
+                        first_token_callback=first_token_callback,
+                    )
+
+                case _:
+                    record = await self.httpcore_client.post_request(
+                        url,
+                        json_bytes,
+                        headers,
+                        cancel_after_ns=request_info.cancel_after_ns,
+                        first_token_callback=first_token_callback,
+                    )
+
             record.request_headers = redact_headers(headers)
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             record = RequestRecord(
                 request_headers=redact_headers(
