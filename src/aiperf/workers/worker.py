@@ -61,7 +61,8 @@ from aiperf.credit.messages import (
     CreditChannelMessage,
     CreditReturn,
     FirstToken,
-    ReturnChannelReply,
+    InFlightReconciliation,
+    InFlightReport,
     TimePong,
     WorkerReady,
     WorkerShutdown,
@@ -191,17 +192,15 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self.credit_dealer_client.register_receiver(self._on_credit_message)
 
-        # Return channel (Worker -> Router): sends CreditReturn, FirstToken,
-        # WorkerReady, WorkerShutdown, TimePing. Receives CreditAck and TimePong.
+        # Return channel (Worker -> Router): send-only. CreditReturn, FirstToken,
+        # WorkerReady, WorkerShutdown, TimePing. No incoming messages.
         self.return_dealer_client: StreamingDealerClientProtocol = (
             self.comms.create_streaming_dealer_client(
                 address=CommAddress.CREDIT_RETURN_ROUTER,
                 identity=self.service_id,
                 bind=False,
-                decode_type=ReturnChannelReply,
             )
         )
-        self.return_dealer_client.register_receiver(self._on_return_channel_reply)
 
         self.memory_usage_before_profiling: float | None = None
 
@@ -389,20 +388,20 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     self._schedule_credit_drop_task(message)
                 case CancelCredits():
                     await self._on_cancel_credits_message(message)
+                case TimePong():
+                    self.clock_offset_tracker.handle_pong(message)
+                case InFlightReconciliation():
+                    await self._on_reconciliation(message)
                 case _:
                     self.warning(
                         f"Unknown credit channel message: {message.__class__.__name__}"
                     )
 
-    async def _on_return_channel_reply(self, message: ReturnChannelReply) -> None:
-        """Handle replies from router on the return channel (TimePong)."""
-        match message:
-            case TimePong():
-                self.clock_offset_tracker.handle_pong(message)
-            case _:
-                self.warning(
-                    f"Unknown return channel reply: {message.__class__.__name__}"
-                )
+    async def _on_reconciliation(self, message: InFlightReconciliation) -> None:
+        """Respond to router's reconciliation request with current in-flight credits."""
+        await self.return_dealer_client.send(
+            InFlightReport(credit_ids=frozenset(self.credit_tasks.keys()))
+        )
 
     def _schedule_credit_drop_task(self, credit: Credit) -> None:
         """Schedule a task to handle the credit drop message from TimingManager via StickyCreditRouter.

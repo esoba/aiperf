@@ -7,6 +7,7 @@ import pytest
 from aiperf.credit.messages import FirstToken
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit
+from tests.unit.credit.conftest import stub_credit
 from tests.unit.timing.conftest import make_credit
 
 
@@ -150,11 +151,11 @@ class TestStickyCreditRouterLoadTracking:
 
         assert router._workers["worker-1"].in_flight_credits == 0
 
-        router._track_credit_sent("worker-1", 1)
+        router._track_credit_sent("worker-1", stub_credit(1))
         assert router._workers["worker-1"].in_flight_credits == 1
         assert router._workers["worker-1"].total_sent_credits == 1
 
-        router._track_credit_sent("worker-1", 2)
+        router._track_credit_sent("worker-1", stub_credit(2))
         assert router._workers["worker-1"].in_flight_credits == 2
         assert router._workers["worker-1"].total_sent_credits == 2
 
@@ -596,11 +597,11 @@ class TestStickyCreditRouterMinLoadTracking:
 
         assert router._min_load == 0
 
-        router._track_credit_sent("worker-1", 1)
+        router._track_credit_sent("worker-1", stub_credit(1))
         # worker-2 still at 0, so min_load stays 0
         assert router._min_load == 0
 
-        router._track_credit_sent("worker-2", 2)
+        router._track_credit_sent("worker-2", stub_credit(2))
         # Both workers now at 1, min_load should be 1
         assert router._min_load == 1
 
@@ -612,9 +613,9 @@ class TestStickyCreditRouterMinLoadTracking:
         router._register_worker("worker-2")
 
         # Send credits to both workers
-        router._track_credit_sent("worker-1", 1)
-        router._track_credit_sent("worker-2", 2)
-        router._track_credit_sent("worker-1", 3)
+        router._track_credit_sent("worker-1", stub_credit(1))
+        router._track_credit_sent("worker-2", stub_credit(2))
+        router._track_credit_sent("worker-1", stub_credit(3))
 
         # worker-1: 2 in-flight, worker-2: 1 in-flight
         assert router._min_load == 1
@@ -657,7 +658,7 @@ class TestStickyCreditRouterErrorTracking:
         router = StickyCreditRouter(run=run, service_id="test-router")
 
         router._register_worker("worker-1")
-        router._track_credit_sent("worker-1", 1)
+        router._track_credit_sent("worker-1", stub_credit(1))
 
         router._track_credit_returned(
             "worker-1", 1, cancelled=False, error_reported=True
@@ -671,7 +672,7 @@ class TestStickyCreditRouterErrorTracking:
         router = StickyCreditRouter(run=run, service_id="test-router")
 
         router._register_worker("worker-1")
-        router._track_credit_sent("worker-1", 1)
+        router._track_credit_sent("worker-1", stub_credit(1))
 
         router._track_credit_returned(
             "worker-1", 1, cancelled=True, error_reported=True

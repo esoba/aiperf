@@ -495,9 +495,11 @@ class TestOperatorErrorHandling:
             "spec": {
                 "image": config.image,
                 "imagePullPolicy": config.image_pull_policy,
-                "endpoint": {},  # Missing required fields
-                "phases": {
-                    "profiling": {"type": "concurrency", "concurrency": 5},
+                "benchmark": {
+                    "endpoint": {},  # Missing required fields
+                    "phases": {
+                        "profiling": {"type": "concurrency", "concurrency": 5},
+                    },
                 },
             },
         }

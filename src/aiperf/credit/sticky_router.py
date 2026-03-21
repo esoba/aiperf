@@ -28,12 +28,16 @@ from aiperf.config.zmq import ZMQDualBindConfig
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
 from aiperf.common.enums import CommAddress
+from aiperf.common.environment import Environment
+from aiperf.common.hooks import background_task
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.protocols import StreamingRouterClientProtocol
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
     FirstToken,
+    InFlightReconciliation,
+    InFlightReport,
     TimePing,
     TimePong,
     WorkerReady,
@@ -73,6 +77,7 @@ class WorkerLoad:
     total_errors_reported: int = 0
     in_flight_credits: int = 0
     active_credit_ids: set[int] = field(default_factory=set)
+    active_credits: dict[int, Credit] = field(default_factory=dict)
     active_sessions: int = 0  # Sticky sessions assigned to this worker
     active_session_ids: set[str] = field(default_factory=set)
     last_sent_at_ns: int = (
@@ -266,6 +271,11 @@ class StickyCreditRouter(CommunicationMixin):
         # Keep track of the minimum load to avoid recalculating it on every credit sent O(1) vs O(n)
         self._min_load: int = 0
 
+        # Reconciliation state: detect orphaned credits via two-consecutive-misses
+        self._first_token_received: set[int] = set()
+        self._pending_reconciliation: dict[str, frozenset[int]] = {}
+        self._suspected_orphans: dict[str, set[int]] = defaultdict(set)
+
     # =============================================================================
     # Public Methods
     # =============================================================================
@@ -351,7 +361,7 @@ class StickyCreditRouter(CommunicationMixin):
             load.active_sessions -= 1
             load.active_session_ids.discard(x_correlation_id)
 
-        self._track_credit_sent(worker_id, credit.id)
+        self._track_credit_sent(worker_id, credit)
 
         await self._credit_router_client.send_to(worker_id, credit)
 
@@ -405,8 +415,8 @@ class StickyCreditRouter(CommunicationMixin):
     ) -> None:
         """Handle all worker -> router messages on the return channel.
 
-        All worker-initiated messages arrive here. The router replies with
-        TimePong (for TimePing) on the same return channel.
+        All worker-initiated messages arrive here. TimePong is sent back
+        on the credit channel so both channels are truly unidirectional.
         """
         match message:
             case CreditReturn():
@@ -421,10 +431,15 @@ class StickyCreditRouter(CommunicationMixin):
                     # concurrency slots, so delays here directly impact throughput.
                     await self._on_return_callback(worker_id, message)
             case FirstToken():
+                self._first_token_received.add(message.credit_id)
                 if self._on_first_token_callback:
                     await self._on_first_token_callback(message)
+            case InFlightReport():
+                await self._handle_reconciliation_report(worker_id, message)
             case TimePing():
-                await self._return_router_client.send_to(
+                # Reply on the credit channel so both channels stay unidirectional.
+                # RTT measurement spans both sockets, which is fine for clock offset.
+                await self._credit_router_client.send_to(
                     worker_id,
                     TimePong(sequence=message.sequence, sent_at_ns=message.sent_at_ns),
                 )
@@ -508,7 +523,7 @@ class StickyCreditRouter(CommunicationMixin):
             else:
                 self._min_load = 0
 
-    def _track_credit_sent(self, worker_id: str, credit_id: int) -> None:
+    def _track_credit_sent(self, worker_id: str, credit: Credit) -> None:
         """Update worker load: increment in_flight_credits. Lock-free."""
         if worker_load := self._workers.get(worker_id):
             old_load = worker_load.in_flight_credits
@@ -516,7 +531,8 @@ class StickyCreditRouter(CommunicationMixin):
             worker_load.total_sent_credits += 1
             worker_load.virtual_sent_credits += 1
             worker_load.in_flight_credits += 1
-            worker_load.active_credit_ids.add(credit_id)
+            worker_load.active_credit_ids.add(credit.id)
+            worker_load.active_credits[credit.id] = credit
             worker_load.last_sent_at_ns = time.perf_counter_ns()
 
             new_load = worker_load.in_flight_credits
@@ -538,6 +554,8 @@ class StickyCreditRouter(CommunicationMixin):
         """Update worker load: decrement in_flight_credits. Lock-free."""
         if worker_load := self._workers.get(worker_id):
             worker_load.active_credit_ids.discard(credit_id)
+            worker_load.active_credits.pop(credit_id, None)
+            self._first_token_received.discard(credit_id)
 
             if cancelled:
                 worker_load.total_cancelled_credits += 1
@@ -561,6 +579,121 @@ class StickyCreditRouter(CommunicationMixin):
                 )
         else:
             self._warn_missing_worker(worker_id, "returned")
+
+    # =============================================================================
+    # Reconciliation
+    # =============================================================================
+
+    @background_task(
+        immediate=False,
+        interval=Environment.TIMING.RECONCILIATION_INTERVAL,
+    )
+    async def _send_reconciliation(self) -> None:
+        """Send InFlightReconciliation to each worker with in-flight credits.
+
+        Skips workers that already have a pending reconciliation (prevents stacking).
+        Runs periodically as a background task.
+        """
+        if self._credits_complete or self._cancellation_pending:
+            return
+
+        for worker_load in self._workers_cache:
+            worker_id = worker_load.worker_id
+            if worker_id in self._pending_reconciliation:
+                continue
+            if worker_load.in_flight_credits == 0:
+                # Clear any stale suspected orphans for idle workers
+                self._suspected_orphans.pop(worker_id, None)
+                continue
+
+            credit_ids = frozenset(worker_load.active_credit_ids)
+            self._pending_reconciliation[worker_id] = credit_ids
+            await self._credit_router_client.send_to(
+                worker_id,
+                InFlightReconciliation(credit_ids=credit_ids),
+            )
+
+    async def _handle_reconciliation_report(
+        self, worker_id: str, report: InFlightReport
+    ) -> None:
+        """Compare worker's reported in-flight credits against what we sent.
+
+        Two-consecutive-misses: a credit must be missing from two consecutive
+        reports before it is treated as orphaned. This eliminates false positives
+        from messages in transit between channels.
+        """
+        sent_set = self._pending_reconciliation.pop(worker_id, None)
+        if sent_set is None:
+            self.warning(
+                f"Received InFlightReport from {worker_id} with no pending reconciliation"
+            )
+            return
+
+        reported_set = report.credit_ids
+        missing = sent_set - reported_set
+
+        worker_suspects = self._suspected_orphans.get(worker_id)
+
+        if not missing:
+            # All clear — drop any prior suspicions for this worker
+            if worker_suspects:
+                self._suspected_orphans.pop(worker_id, None)
+            return
+
+        # Check which missing credits are confirmed (second consecutive miss)
+        confirmed_orphans: set[int] = set()
+        new_suspects: set[int] = set()
+        for credit_id in missing:
+            if worker_suspects and credit_id in worker_suspects:
+                confirmed_orphans.add(credit_id)
+            else:
+                new_suspects.add(credit_id)
+
+        # Update suspected set: only keep new suspects (confirmed ones get acted on)
+        if new_suspects:
+            self._suspected_orphans[worker_id] = new_suspects
+        else:
+            self._suspected_orphans.pop(worker_id, None)
+
+        # Act on confirmed orphans
+        for credit_id in confirmed_orphans:
+            await self._handle_orphaned_credit(worker_id, credit_id)
+
+    async def _handle_orphaned_credit(self, worker_id: str, credit_id: int) -> None:
+        """Handle a confirmed orphaned credit by synthesizing a CreditReturn.
+
+        The credit was missing from the worker's report for two consecutive
+        reconciliation cycles, meaning it was either never received or its
+        return was lost.
+        """
+        worker_load = self._workers.get(worker_id)
+        if not worker_load:
+            return
+
+        credit = worker_load.active_credits.get(credit_id)
+        if credit is None:
+            # Already returned between report and handling
+            return
+
+        self.warning(
+            f"Orphaned credit {credit_id} on worker {worker_id} "
+            f"(missing for 2 consecutive reconciliation cycles)"
+        )
+
+        first_token_sent = credit_id in self._first_token_received
+
+        self._track_credit_returned(
+            worker_id, credit_id, cancelled=True, error_reported=True
+        )
+
+        if self._on_return_callback:
+            synthetic_return = CreditReturn(
+                credit=credit,
+                cancelled=True,
+                first_token_sent=first_token_sent,
+                error="orphaned: missing from worker for 2 consecutive reconciliation cycles",
+            )
+            await self._on_return_callback(worker_id, synthetic_return)
 
     def _warn_missing_worker(self, worker_id: str, credit_action: str) -> None:
         """Warn if worker is missing when tracking credit sent or returned."""

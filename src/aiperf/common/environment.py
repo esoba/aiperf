@@ -563,6 +563,14 @@ class _TimingSettings(BaseSettings):
         default=0.1,
         description="Update interval in seconds for continuous rate ramping (default 0.1s = 100ms)",
     )
+    RECONCILIATION_INTERVAL: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=5.0,
+        description="Interval in seconds between credit reconciliation cycles. "
+        "The router periodically checks that workers agree on which credits are in-flight. "
+        "Credits missing for two consecutive cycles are treated as orphaned.",
+    )
 
 
 class _ConfigSettings(BaseSettings):

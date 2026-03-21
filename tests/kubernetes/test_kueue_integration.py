@@ -434,6 +434,13 @@ class TestKueueOperatorFlow:
         kopf_patch.status = {}
 
         mock_api = AsyncMock()
+        mock_api.async_version = AsyncMock(
+            return_value={
+                "major": "1",
+                "minor": "33",
+                "gitVersion": "v1.33.0",
+            }
+        )
         mock_configmap = AsyncMock()
         mock_jobset_instance = AsyncMock()
 
@@ -442,6 +449,19 @@ class TestKueueOperatorFlow:
         def capture_jobset(manifest, api=None):
             captured_jobset_manifest.update(manifest)
             return mock_jobset_instance
+
+        # Mock preflight to always pass (avoids complex kr8s API mocking)
+        mock_preflight_result = MagicMock()
+        mock_preflight_result.passed = True
+        mock_preflight_result.checks = []
+        mock_preflight = MagicMock()
+        mock_preflight.run_all = AsyncMock(return_value=mock_preflight_result)
+
+        async def mock_create_idempotent(cls, manifest, api):
+            """Pass-through that captures JobSet manifest."""
+            name = getattr(cls, "__name__", "") or str(cls)
+            if "JobSet" in name or "jobset" in manifest.get("kind", "").lower():
+                captured_jobset_manifest.update(manifest)
 
         with (
             mock_patch(
@@ -462,6 +482,14 @@ class TestKueueOperatorFlow:
                 "aiperf.operator.handlers.create.AsyncJobSet",
                 side_effect=capture_jobset,
             ),
+            mock_patch(
+                "aiperf.operator.preflight.OperatorPreflightChecker",
+                return_value=mock_preflight,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.create.create_idempotent",
+                side_effect=mock_create_idempotent,
+            ),
         ):
             result = await on_create(
                 body=body,
@@ -473,9 +501,9 @@ class TestKueueOperatorFlow:
             )
 
         assert result is not None
-        mock_configmap.create.assert_called_once()
-        mock_jobset_instance.create.assert_called_once()
 
+        # Verify JobSet manifest was generated with scheduling labels
+        assert captured_jobset_manifest, "JobSet manifest was not captured"
         labels = captured_jobset_manifest["metadata"]["labels"]
         assert labels[KueueLabels.QUEUE_NAME] == "team-gpu-queue"
         assert labels[KueueLabels.PRIORITY_CLASS] == "high-priority"

@@ -175,19 +175,52 @@ class CancelCredits(Struct, frozen=True, kw_only=True, tag_field="t", tag="cc"):
 
 
 # =============================================================================
+# Reconciliation Messages
+# =============================================================================
+
+
+class InFlightReconciliation(
+    Struct, frozen=True, kw_only=True, tag_field="t", tag="ifr"
+):
+    """Router sends its view of in-flight credits for a worker.
+
+    Sent periodically on the credit channel. The worker compares against
+    its own state and responds with an InFlightReport on the return channel.
+    Credits missing from the worker's report for two consecutive cycles
+    are treated as orphaned.
+
+    Attributes:
+        credit_ids: Credit IDs the router believes are in-flight for this worker.
+    """
+
+    credit_ids: frozenset[int]
+
+
+class InFlightReport(Struct, frozen=True, kw_only=True, tag_field="t", tag="ifp"):
+    """Worker reports which credits it actually has in-flight.
+
+    Sent on the return channel in response to InFlightReconciliation.
+
+    Attributes:
+        credit_ids: Credit IDs the worker is currently processing.
+    """
+
+    credit_ids: frozenset[int]
+
+
+# =============================================================================
 # Channel Union Types
 # =============================================================================
 
-# Credit channel (Router -> Worker): send-only from router, receive-only on worker
-CreditChannelMessage: TypeAlias = Credit | CancelCredits
-
-# Return channel (Worker -> Router): all worker-initiated messages
-WorkerToRouterMessage: TypeAlias = (
-    WorkerReady | WorkerShutdown | CreditReturn | FirstToken | TimePing
+# Credit channel (Router -> Worker): truly unidirectional
+CreditChannelMessage: TypeAlias = (
+    Credit | CancelCredits | TimePong | InFlightReconciliation
 )
 
-# Return channel (Router -> Worker replies): pongs for RTT measurement
-ReturnChannelReply: TypeAlias = TimePong
+# Return channel (Worker -> Router): truly unidirectional
+WorkerToRouterMessage: TypeAlias = (
+    WorkerReady | WorkerShutdown | CreditReturn | FirstToken | TimePing | InFlightReport
+)
 
 # Backwards-compat alias: default decode type for DEALER clients that
 # haven't been migrated to explicit channel types yet.

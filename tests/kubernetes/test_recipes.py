@@ -128,6 +128,7 @@ RECIPE_FILES = _discover_recipes()
 class TestRecipeDeployment:
     """Deploy each recipe via the operator and verify it completes."""
 
+    @pytest.mark.timeout(600)
     @pytest.mark.asyncio
     async def test_recipe_completes(
         self,

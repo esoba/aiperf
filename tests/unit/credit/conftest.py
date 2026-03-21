@@ -5,6 +5,20 @@
 import pytest
 
 from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
+from aiperf.credit.structs import Credit
+
+
+def stub_credit(credit_id: int, phase: str = "profiling") -> Credit:
+    """Create a minimal Credit for unit tests that only need a credit_id."""
+    return Credit(
+        id=credit_id,
+        phase=phase,
+        conversation_id="test-conv",
+        x_correlation_id=f"test-xcorr-{credit_id}",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=0,
+    )
 
 
 @pytest.fixture

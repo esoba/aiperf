@@ -15,6 +15,7 @@ from aiperf.timing.phase.credit_counter import CreditCounter
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.phase.stop_conditions import StopConditionChecker
+from tests.unit.credit.conftest import stub_credit
 
 
 def _turn(cid="c1", tidx=0, nt=1, xcid=None):
@@ -660,7 +661,7 @@ class TestRouterLoadBalancing:
         r._register_worker("w1")
         w = r._workers["w1"]
         for i in range(100):
-            r._track_credit_sent("w1", i)
+            r._track_credit_sent("w1", stub_credit(i))
             assert w.in_flight_credits == i + 1
         for i in range(100):
             r._track_credit_returned("w1", i, cancelled=False, error_reported=False)
