@@ -1031,7 +1031,7 @@ def _make_request_info(run: BenchmarkRun) -> MagicMock:
     ri = MagicMock()
     ri.cancel_after_ns = None
     ri.endpoint_headers = {}
-    ri.config = run
+    ri.config = run.cfg
     return ri
 
 

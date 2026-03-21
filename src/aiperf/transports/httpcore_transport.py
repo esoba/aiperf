@@ -18,6 +18,7 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.redact import redact_headers
+from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
 from aiperf.transports.base_http_transport import BaseHTTPTransport
 from aiperf.transports.base_transports import (
@@ -48,6 +49,11 @@ class HttpCoreTransport(BaseHTTPTransport):
         """
         super().__init__(**kwargs)
         self.httpcore_client: HttpCoreClient | None = None
+
+    @property
+    def http_client(self) -> HttpCoreClient | None:
+        """Return the underlying httpcore client instance."""
+        return self.httpcore_client
 
     @on_init
     async def _init_httpcore_client(self) -> None:
@@ -99,6 +105,13 @@ class HttpCoreTransport(BaseHTTPTransport):
             raise NotInitializedError(
                 "HttpCoreTransport not initialized. Call initialize() before send_request()."
             )
+
+        # Route polling-based endpoints (e.g., video_generation) to polling implementation
+        endpoint_metadata = plugins.get_endpoint_metadata(
+            request_info.config.endpoint.type
+        )
+        if endpoint_metadata.requires_polling:
+            return await self._send_video_request_with_polling(request_info, payload)
 
         start_perf_ns = time.perf_counter_ns()
         headers = None
