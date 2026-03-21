@@ -90,6 +90,11 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
 
     @property
     @abstractmethod
+    def credit_return_router_address(self) -> str:
+        """Get the credit return router address for dedicated ROUTER-DEALER credit return channel."""
+
+    @property
+    @abstractmethod
     def control_address(self) -> str:
         """Get the control channel address for ROUTER-DEALER control plane."""
 
@@ -113,6 +118,8 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
                 return self.raw_inference_proxy_config.resolve_backend(None)
             case CommAddress.CREDIT_ROUTER:
                 return self.credit_router_address
+            case CommAddress.CREDIT_RETURN_ROUTER:
+                return self.credit_return_router_address
             case CommAddress.RECORDS:
                 return self.records_push_pull_address
             case CommAddress.CONTROL:
@@ -236,6 +243,13 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
             default=5564, description="Port for credit router (ROUTER-DEALER streaming)"
         ),
     ] = 5564
+    credit_return_router_port: Annotated[
+        int,
+        Field(
+            default=5668,
+            description="Port for credit return router (ROUTER-DEALER credit returns)",
+        ),
+    ] = 5668
     control_port: Annotated[
         int,
         Field(default=5667, description="Port for control channel (ROUTER-DEALER)"),
@@ -277,6 +291,11 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     def credit_router_address(self) -> str:
         """Get the credit router address for streaming ROUTER-DEALER."""
         return f"tcp://{self.host}:{self.credit_router_port}"
+
+    @property
+    def credit_return_router_address(self) -> str:
+        """Get the credit return router address for dedicated return channel."""
+        return f"tcp://{self.host}:{self.credit_return_router_port}"
 
     @property
     def control_address(self) -> str:
@@ -345,6 +364,13 @@ class ZMQIPCConfig(BaseZMQCommunicationConfig):
         if not self.path:
             raise ValueError("Path is required for IPC transport")
         return f"ipc://{self.path / 'credit_router.ipc'}"
+
+    @property
+    def credit_return_router_address(self) -> str:
+        """Get the credit return router address for dedicated return channel."""
+        if not self.path:
+            raise ValueError("Path is required for IPC transport")
+        return f"ipc://{self.path / 'credit_return_router.ipc'}"
 
     @property
     def control_address(self) -> str:
@@ -507,6 +533,10 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         default=5564,
         description="TCP port for credit router communication with remote workers.",
     )
+    credit_return_router_tcp_port: int = Field(
+        default=5668,
+        description="TCP port for credit return router communication with remote workers.",
+    )
     control_tcp_port: int = Field(
         default=5667,
         description="TCP port for control channel (ROUTER-DEALER) with remote workers.",
@@ -558,6 +588,13 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
         return self._ipc_addr("credit_router")
 
     @property
+    def credit_return_router_address(self) -> str:
+        """Get credit return router address based on deployment mode."""
+        if self.controller_host:
+            return f"tcp://{self.controller_host}:{self.credit_return_router_tcp_port}"
+        return self._ipc_addr("credit_return_router")
+
+    @property
     def control_address(self) -> str:
         """Get control channel address based on deployment mode."""
         if self.controller_host:
@@ -573,6 +610,11 @@ class ZMQDualBindConfig(BaseZMQCommunicationConfig):
     def credit_router_tcp_bind_address(self) -> str:
         """Get TCP bind address for credit router dual binding (controller-side)."""
         return f"tcp://{self.tcp_host}:{self.credit_router_tcp_port}"
+
+    @property
+    def credit_return_router_tcp_bind_address(self) -> str:
+        """Get TCP bind address for credit return router dual binding (controller-side)."""
+        return f"tcp://{self.tcp_host}:{self.credit_return_router_tcp_port}"
 
     @property
     def records_push_pull_tcp_bind_address(self) -> str:

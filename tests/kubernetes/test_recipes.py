@@ -85,7 +85,7 @@ def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
             "type": "concurrency",
             "concurrency": TEST_CONCURRENCY,
             "requests": TEST_WARMUP,
-            "exclude": True,
+            "exclude_from_results": True,
         },
         "profiling": {
             "type": "concurrency",
@@ -191,4 +191,9 @@ class TestRecipeDeployment:
         )
 
         if status.results:
-            assert status.results.get("requestThroughput", 0) > 0
+            metrics = status.results.get("metrics", {})
+            throughput = metrics.get("request_throughput", {})
+            if isinstance(throughput, dict):
+                assert throughput.get("avg", 0) > 0
+            else:
+                assert status.results.get("requestThroughput", throughput or 0) > 0

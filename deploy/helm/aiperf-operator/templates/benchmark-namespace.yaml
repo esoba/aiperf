@@ -8,4 +8,8 @@ metadata:
   labels:
     {{- include "aiperf-operator.labels" . | nindent 4 }}
     aiperf.nvidia.com/auto-generated: "true"
+  {{- if .Values.kueue.defaultQueueName }}
+  annotations:
+    kueue.x-k8s.io/default-queue-name: {{ .Values.kueue.defaultQueueName | quote }}
+  {{- end }}
 {{- end }}

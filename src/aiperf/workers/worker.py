@@ -58,9 +58,11 @@ from aiperf.common.protocols import (
 )
 from aiperf.credit.messages import (
     CancelCredits,
+    CreditAck,
+    CreditChannelMessage,
     CreditReturn,
     FirstToken,
-    RouterToWorkerMessage,
+    ReturnChannelReply,
     TimePong,
     WorkerReady,
     WorkerShutdown,
@@ -178,16 +180,29 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             ),
         )
 
-        # Identity must be unique - ZMQ ROUTER uses it to address messages to specific
-        # DEALERs. The sticky router tracks workers by this identity.
+        # Credit channel (Router -> Worker): receive-only, gets Credit and CancelCredits.
+        # Identity must be unique - ZMQ ROUTER uses it to address messages.
         self.credit_dealer_client: StreamingDealerClientProtocol = (
             self.comms.create_streaming_dealer_client(
                 address=CommAddress.CREDIT_ROUTER,
                 identity=self.service_id,
                 bind=False,
+                decode_type=CreditChannelMessage,
             )
         )
         self.credit_dealer_client.register_receiver(self._on_credit_message)
+
+        # Return channel (Worker -> Router): sends CreditReturn, FirstToken,
+        # WorkerReady, WorkerShutdown, TimePing. Receives CreditAck and TimePong.
+        self.return_dealer_client: StreamingDealerClientProtocol = (
+            self.comms.create_streaming_dealer_client(
+                address=CommAddress.CREDIT_RETURN_ROUTER,
+                identity=self.service_id,
+                bind=False,
+                decode_type=ReturnChannelReply,
+            )
+        )
+        self.return_dealer_client.register_receiver(self._on_return_channel_reply)
 
         self.memory_usage_before_profiling: float | None = None
 
@@ -238,7 +253,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
             return
         await self._measure_baseline_rtt()
-        await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        await self.return_dealer_client.send(WorkerReady(worker_id=self.service_id))
 
     def _is_kubernetes_mode(self) -> bool:
         """Check if running in Kubernetes mode."""
@@ -247,7 +262,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _measure_baseline_rtt(self) -> None:
         """Measure baseline RTT on the credit channel before announcing readiness."""
         await self.clock_offset_tracker.measure_baseline_rtt(
-            send_ping=self.credit_dealer_client.send,
+            send_ping=self.return_dealer_client.send,
         )
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
@@ -305,7 +320,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         # Measure RTT before announcing readiness
         await self._measure_baseline_rtt()
-        await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        await self.return_dealer_client.send(WorkerReady(worker_id=self.service_id))
 
     async def _initialize_dataset_client(
         self,
@@ -336,7 +351,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _send_worker_shutdown_message(self) -> None:
         """Send WorkerShutdown to announce shutdown."""
         try:
-            await self.credit_dealer_client.send(
+            await self.return_dealer_client.send(
                 WorkerShutdown(worker_id=self.service_id)
             )
             self.debug(
@@ -365,8 +380,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             task_stats=self.task_stats,
         )
 
-    async def _on_credit_message(self, message: RouterToWorkerMessage) -> None:
-        """Handle incoming credit message from TimingManager via StickyCreditRouter."""
+    async def _on_credit_message(self, message: CreditChannelMessage) -> None:
+        """Handle incoming messages on the credit channel (Router -> Worker)."""
         with self.event_loop_monitor.activity(
             f"credit msg={message.__class__.__name__}"
         ):
@@ -375,12 +390,23 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     self._schedule_credit_drop_task(message)
                 case CancelCredits():
                     await self._on_cancel_credits_message(message)
-                case TimePong():
-                    self.clock_offset_tracker.handle_pong(message)
                 case _:
                     self.warning(
-                        f"Unknown credit message type: {message.__class__.__name__}"
+                        f"Unknown credit channel message: {message.__class__.__name__}"
                     )
+
+    async def _on_return_channel_reply(self, message: ReturnChannelReply) -> None:
+        """Handle replies from router on the return channel (CreditAck, TimePong)."""
+        match message:
+            case CreditAck():
+                if self.is_trace_enabled:
+                    self.trace(f"Credit {message.credit_id} acknowledged by router")
+            case TimePong():
+                self.clock_offset_tracker.handle_pong(message)
+            case _:
+                self.warning(
+                    f"Unknown return channel reply: {message.__class__.__name__}"
+                )
 
     def _schedule_credit_drop_task(self, credit: Credit) -> None:
         """Schedule a task to handle the credit drop message from TimingManager via StickyCreditRouter.
@@ -445,7 +471,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
         )
-        self.execute_async(self.credit_dealer_client.send(credit_return))
+        self.execute_async(self.return_dealer_client.send(credit_return))
         credit_context.returned = True
 
         # Explicitly clear references to help refcounting (GC is disabled on workers)
@@ -507,7 +533,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             with self.event_loop_monitor.activity(
                 f"credit id={credit_id} sending CreditReturn"
             ):
-                await self.credit_dealer_client.send(credit_return)
+                await self.return_dealer_client.send(credit_return)
             # Mark as returned AFTER send succeeds
             # If send fails/cancelled, done callback will retry
             # Router idempotency guard handles duplicates
@@ -550,7 +576,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     return False  # Keep looking for meaningful content
 
                 # Meaningful content found - send FirstToken to router
-                await self.credit_dealer_client.send(
+                await self.return_dealer_client.send(
                     FirstToken(
                         credit_id=credit.id,
                         phase=credit.phase,

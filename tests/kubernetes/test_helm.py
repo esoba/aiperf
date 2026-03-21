@@ -590,9 +590,8 @@ class TestHelmScaling:
 
         assert result.success
         assert result.status is not None
-        if result.status.workers_total == 0:
-            return
-        assert result.status.workers_total >= 2
+        # Workers may fit in 1 pod (workers_per_pod default is 10)
+        assert result.status.workers_total >= 1
 
 
 @pytest.mark.skip(

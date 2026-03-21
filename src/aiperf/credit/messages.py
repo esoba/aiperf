@@ -157,13 +157,8 @@ class TimePong(Struct, frozen=True, kw_only=True, tag_field="t", tag="tpo"):
     sent_at_ns: int
 
 
-# Union type for decoding worker -> router messages
-WorkerToRouterMessage: TypeAlias = (
-    WorkerReady | WorkerShutdown | CreditReturn | FirstToken | TimePing
-)
-
 # =============================================================================
-# Router -> Worker Messages
+# Router -> Worker Messages (Credit Channel)
 # =============================================================================
 
 
@@ -179,6 +174,35 @@ class CancelCredits(Struct, frozen=True, kw_only=True, tag_field="t", tag="cc"):
     credit_ids: set[int]
 
 
-# Union type for decoding router -> worker messages
-# Credit is sent directly (no wrapper), CancelCredits for cancellation
+class CreditAck(Struct, frozen=True, kw_only=True, tag_field="t", tag="ca"):
+    """Router acknowledges receipt of a CreditReturn.
+
+    Sent by router to worker on the return channel after processing a
+    CreditReturn. Lets the worker confirm the router received and tracked
+    the return.
+
+    Attributes:
+        credit_id: ID of the credit that was acknowledged.
+    """
+
+    credit_id: int
+
+
+# =============================================================================
+# Channel Union Types
+# =============================================================================
+
+# Credit channel (Router -> Worker): send-only from router, receive-only on worker
+CreditChannelMessage: TypeAlias = Credit | CancelCredits
+
+# Return channel (Worker -> Router): all worker-initiated messages
+WorkerToRouterMessage: TypeAlias = (
+    WorkerReady | WorkerShutdown | CreditReturn | FirstToken | TimePing
+)
+
+# Return channel (Router -> Worker replies): acks and pongs
+ReturnChannelReply: TypeAlias = CreditAck | TimePong
+
+# Backwards-compat alias: default decode type for DEALER clients that
+# haven't been migrated to explicit channel types yet.
 RouterToWorkerMessage: TypeAlias = Credit | CancelCredits | TimePong

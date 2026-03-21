@@ -32,6 +32,7 @@ from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.protocols import StreamingRouterClientProtocol
 from aiperf.credit.messages import (
     CancelCredits,
+    CreditAck,
     CreditReturn,
     FirstToken,
     TimePing,
@@ -202,24 +203,44 @@ class StickyCreditRouter(CommunicationMixin):
         # Controller services use IPC (fast, same-pod) but workers connect via TCP.
         # Only bind to TCP if we're in controller mode (controller_host not set).
         additional_bind_address: str | None = None
+        additional_return_bind_address: str | None = None
         comm_config = self.run.resolved.comm_config or self.run.cfg.comm_config
         if (
             isinstance(comm_config, ZMQDualBindConfig)
             and not comm_config.controller_host
         ):
             additional_bind_address = comm_config.credit_router_tcp_bind_address
+            additional_return_bind_address = (
+                comm_config.credit_return_router_tcp_bind_address
+            )
             self.info(
                 f"Dual-bind mode: credit router will also bind to {additional_bind_address}"
             )
+            self.info(
+                f"Dual-bind mode: credit return router will also bind to {additional_return_bind_address}"
+            )
 
-        self._router_client: StreamingRouterClientProtocol = (
+        # Credit channel: Router -> Worker only (Credit, CancelCredits).
+        # Send-only from the router's perspective. Workers connect DEALERs
+        # to receive credits but never send on this channel.
+        self._credit_router_client: StreamingRouterClientProtocol = (
             self.comms.create_streaming_router_client(
                 address=CommAddress.CREDIT_ROUTER,
                 bind=True,
                 additional_bind_address=additional_bind_address,
             )
         )
-        self._router_client.register_receiver(self._handle_router_message)
+
+        # Return channel: Worker -> Router (CreditReturn, FirstToken, WorkerReady,
+        # WorkerShutdown, TimePing). Router replies with CreditAck / TimePong.
+        self._return_router_client: StreamingRouterClientProtocol = (
+            self.comms.create_streaming_router_client(
+                address=CommAddress.CREDIT_RETURN_ROUTER,
+                bind=True,
+                additional_bind_address=additional_return_bind_address,
+            )
+        )
+        self._return_router_client.register_receiver(self._handle_return_router_message)
 
         self._on_return_callback: (
             Callable[[str, CreditReturn], Awaitable[None]] | None
@@ -333,7 +354,7 @@ class StickyCreditRouter(CommunicationMixin):
 
         self._track_credit_sent(worker_id, credit.id)
 
-        await self._router_client.send_to(worker_id, credit)
+        await self._credit_router_client.send_to(worker_id, credit)
 
     async def cancel_all_credits(self) -> None:
         """Send cancellation requests to all workers with in-flight credits."""
@@ -359,7 +380,7 @@ class StickyCreditRouter(CommunicationMixin):
                     f"Sending CancelCredits to worker {worker_id} for {len(credit_ids)} credits"
                 )
 
-            await self._router_client.send_to(
+            await self._credit_router_client.send_to(
                 worker_id,
                 CancelCredits(credit_ids=credit_ids),
             )
@@ -380,10 +401,15 @@ class StickyCreditRouter(CommunicationMixin):
     # Private Methods
     # =============================================================================
 
-    async def _handle_router_message(
+    async def _handle_return_router_message(
         self, worker_id: str, message: WorkerToRouterMessage
     ) -> None:
-        """Handle CreditReturn, FirstToken, WorkerReady, WorkerShutdown from workers."""
+        """Handle all worker -> router messages on the return channel.
+
+        All worker-initiated messages arrive here. The router replies with
+        CreditAck (for CreditReturn) and TimePong (for TimePing) on the
+        same return channel.
+        """
         match message:
             case CreditReturn():
                 self._track_credit_returned(
@@ -396,12 +422,16 @@ class StickyCreditRouter(CommunicationMixin):
                     # Await directly instead of execute_async - credit returns release
                     # concurrency slots, so delays here directly impact throughput.
                     await self._on_return_callback(worker_id, message)
+                # Acknowledge receipt so the worker knows the return was processed
+                await self._return_router_client.send_to(
+                    worker_id,
+                    CreditAck(credit_id=message.credit.id),
+                )
             case FirstToken():
                 if self._on_first_token_callback:
-                    # Forward TTFT to orchestrator so it can release the prefill slot.
                     await self._on_first_token_callback(message)
             case TimePing():
-                await self._router_client.send_to(
+                await self._return_router_client.send_to(
                     worker_id,
                     TimePong(sequence=message.sequence, sent_at_ns=message.sent_at_ns),
                 )

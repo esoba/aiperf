@@ -857,16 +857,56 @@ class OperatorPreflightChecker:
             )
 
     async def _check_kueue_queue(self) -> CheckResult:
-        """If scheduling.queueName is set, verify the LocalQueue exists."""
-        import kr8s
+        """Verify Kueue queue configuration.
+
+        If scheduling.queueName is set, verify the LocalQueue exists.
+        If not set, check whether Kueue is installed and warn that the job
+        will bypass gang-scheduling unless a namespace default queue is configured.
+        """
 
         queue_name = self.deploy_config.scheduling.queue_name
-        if not queue_name:
+
+        if queue_name:
+            return await self._verify_kueue_local_queue(queue_name)
+
+        # No explicit queue — check if Kueue is installed
+        kueue_installed = await self._is_kueue_installed()
+        if not kueue_installed:
             return CheckResult(
                 name="Kueue Queue",
                 status=CheckStatus.SKIP,
-                message="No Kueue queue specified",
+                message="Kueue not installed (queue check skipped)",
             )
+
+        # Kueue is installed — check namespace default queue annotation
+        has_default = await self._namespace_has_default_queue()
+        if has_default:
+            return CheckResult(
+                name="Kueue Queue",
+                status=CheckStatus.PASS,
+                message=(
+                    "No explicit queue specified but namespace has "
+                    "kueue.x-k8s.io/default-queue-name annotation"
+                ),
+            )
+
+        return CheckResult(
+            name="Kueue Queue",
+            status=CheckStatus.WARN,
+            message=(
+                "Kueue is installed but no queue configured. "
+                "Job will bypass gang-scheduling and quota management."
+            ),
+            hints=[
+                "Set scheduling.queueName in the CR spec, or",
+                f"Annotate the namespace: kubectl annotate namespace {self.namespace} "
+                "kueue.x-k8s.io/default-queue-name=<queue-name>",
+            ],
+        )
+
+    async def _verify_kueue_local_queue(self, queue_name: str) -> CheckResult:
+        """Verify a specific Kueue LocalQueue exists."""
+        import kr8s
 
         try:
             async with self.api.call_api(
@@ -893,7 +933,6 @@ class OperatorPreflightChecker:
         except kr8s.ServerError as e:
             status_code = e.response.status_code if e.response else "unknown"
             if status_code == 404:
-                # Kueue CRD not installed — skip
                 return CheckResult(
                     name="Kueue Queue",
                     status=CheckStatus.SKIP,
@@ -904,6 +943,32 @@ class OperatorPreflightChecker:
                 status=CheckStatus.WARN,
                 message=f"Could not verify Kueue queue: HTTP {status_code}",
             )
+
+    async def _is_kueue_installed(self) -> bool:
+        """Check if the Kueue CRD is available on the cluster."""
+        try:
+            async with self.api.call_api(
+                "GET",
+                base="/apis/kueue.x-k8s.io",
+                version="v1beta1",
+                url=f"namespaces/{self.namespace}/localqueues",
+                params={"limit": "1"},
+            ) as resp:
+                resp.raise_for_status()
+            return True
+        except Exception:
+            return False
+
+    async def _namespace_has_default_queue(self) -> bool:
+        """Check if the namespace has a Kueue default queue annotation."""
+        from kr8s.asyncio.objects import Namespace
+
+        try:
+            ns = await Namespace.get(self.namespace, api=self.api)
+            annotations = ns.raw.get("metadata", {}).get("annotations", {})
+            return bool(annotations.get("kueue.x-k8s.io/default-queue-name"))
+        except Exception:
+            return False
 
     async def _check_configmap_size(self) -> CheckResult:
         """Verify generated ConfigMap data fits within 1 MiB limit."""

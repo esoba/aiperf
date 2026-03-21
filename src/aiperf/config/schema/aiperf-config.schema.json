@@ -5191,7 +5191,8 @@
     },
     "TransportType": {
       "enum": [
-        "http"
+        "http",
+        "http2"
       ],
       "title": "TransportType",
       "type": "string"

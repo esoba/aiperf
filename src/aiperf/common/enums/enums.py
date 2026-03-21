@@ -59,6 +59,9 @@ class CommAddress(CaseInsensitiveStrEnum):
     CREDIT_ROUTER = "credit_router"
     """Address for bidirectional ROUTER-DEALER credit routing (all timing modes)."""
 
+    CREDIT_RETURN_ROUTER = "credit_return_router"
+    """Address for dedicated ROUTER-DEALER credit return channel (Worker -> Router acks)."""
+
     RECORDS = "records"
     """Address to send parsed records from InferenceParser to RecordManager."""
 

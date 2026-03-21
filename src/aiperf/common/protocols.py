@@ -332,6 +332,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         bind: bool = True,
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
+        decode_type: Any = None,
     ) -> StreamingRouterClientProtocol:
         """Create a STREAMING_ROUTER client for the given address, which will be automatically
         started and stopped with the CommunicationProtocol instance.
@@ -342,6 +343,8 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
             socket_ops: Additional socket options to set.
             additional_bind_address: Optional second address to bind to for dual-bind mode
                 (e.g., IPC + TCP in Kubernetes). Only used when bind=True.
+            decode_type: The msgspec type (or union) to decode incoming messages.
+                If None, defaults to WorkerToRouterMessage.
         """
         ...
 
@@ -351,9 +354,19 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         identity: str,
         bind: bool = False,
         socket_ops: dict | None = None,
+        decode_type: Any = None,
     ) -> StreamingDealerClientProtocol:
         """Create a STREAMING_DEALER client for the given address and identity, which will be automatically
-        started and stopped with the CommunicationProtocol instance."""
+        started and stopped with the CommunicationProtocol instance.
+
+        Args:
+            address: The address to bind or connect to.
+            identity: Unique identity for this DEALER (used by ROUTER for routing).
+            bind: Whether to bind (True) or connect (False) the socket.
+            socket_ops: Additional socket options to set.
+            decode_type: The msgspec type (or union) to decode incoming messages.
+                If None, defaults to RouterToWorkerMessage.
+        """
         ...
 
 

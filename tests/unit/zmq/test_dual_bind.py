@@ -745,7 +745,9 @@ class TestStickyRouterDualBind(_DualBindServiceFixtures):
             run=dual_bind_config,
             service_id="test-router",
         )
-        assert router._router_client.additional_bind_address == "tcp://0.0.0.0:5564"
+        assert (
+            router._credit_router_client.additional_bind_address == "tcp://0.0.0.0:5564"
+        )
 
     def test_worker_mode_does_not_pass_tcp_bind_address(
         self, remote_dual_bind_config
@@ -754,7 +756,7 @@ class TestStickyRouterDualBind(_DualBindServiceFixtures):
             run=remote_dual_bind_config,
             service_id="test-router",
         )
-        assert router._router_client.additional_bind_address is None
+        assert router._credit_router_client.additional_bind_address is None
 
     def test_ipc_mode_does_not_pass_tcp_bind_address(self) -> None:
         config = self._make_base_config()
@@ -762,4 +764,4 @@ class TestStickyRouterDualBind(_DualBindServiceFixtures):
             run=config,
             service_id="test-router",
         )
-        assert router._router_client.additional_bind_address is None
+        assert router._credit_router_client.additional_bind_address is None

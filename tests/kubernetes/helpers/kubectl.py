@@ -185,6 +185,7 @@ class KubectlClient:
         namespace: str | None = None,
         check: bool = True,
         capture_output: bool = True,
+        timeout: int = 120,
     ) -> subprocess.CompletedProcess:
         """Run a kubectl command.
 
@@ -193,6 +194,7 @@ class KubectlClient:
             namespace: Kubernetes namespace.
             check: Raise exception on failure.
             capture_output: Capture stdout/stderr.
+            timeout: Timeout in seconds (prevents hangs on finalizers).
 
         Returns:
             Completed process result.
@@ -205,7 +207,14 @@ class KubectlClient:
             stdout=asyncio.subprocess.PIPE if capture_output else None,
             stderr=asyncio.subprocess.PIPE if capture_output else None,
         )
-        stdout, stderr = await proc.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            logger.warning(f"kubectl timed out after {timeout}s: {' '.join(cmd)}")
+            stdout = b""
+            stderr = f"kubectl timed out after {timeout}s".encode()
 
         result = subprocess.CompletedProcess(
             cmd,

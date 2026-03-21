@@ -41,7 +41,7 @@ class TestPerCreditIntegration:
         """Test complete flow for a single-turn conversation."""
         # Setup StickyCreditRouter
         router = StickyCreditRouter(run=run, service_id="test-service")
-        router._router_client.send_to = AsyncMock()
+        router._credit_router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
         router._register_worker("worker-B")
 
@@ -56,7 +56,7 @@ class TestPerCreditIntegration:
 
         # Route and send credit
         await router.send_credit(credit)
-        worker_id = router._router_client.send_to.call_args[0][0]
+        worker_id = router._credit_router_client.send_to.call_args[0][0]
         assert worker_id in ["worker-A", "worker-B"]
         assert router._workers[worker_id].in_flight_credits == 1
 
@@ -78,7 +78,7 @@ class TestPerCreditIntegration:
         async def mock_send_to(*args, **kwargs):
             return None
 
-        router._router_client.send_to = MagicMock(side_effect=mock_send_to)
+        router._credit_router_client.send_to = MagicMock(side_effect=mock_send_to)
         router._register_worker("worker-1")
         router._register_worker("worker-2")
         router._register_worker("worker-3")
@@ -99,7 +99,7 @@ class TestPerCreditIntegration:
 
             # Route and send credit
             await router.send_credit(credit)
-            worker_id = router._router_client.send_to.call_args[0][0]
+            worker_id = router._credit_router_client.send_to.call_args[0][0]
 
             # First turn: fair load
             if turn_index == 0:
@@ -121,7 +121,7 @@ class TestPerCreditIntegration:
     async def test_load_balancing_across_multiple_conversations(self, run):
         """Test that multiple conversations are balanced across workers."""
         router = StickyCreditRouter(run=run, service_id="test-service")
-        router._router_client.send_to = AsyncMock()
+        router._credit_router_client.send_to = AsyncMock()
 
         # Register 3 workers
         for i in range(3):
@@ -140,7 +140,7 @@ class TestPerCreditIntegration:
             )
 
             await router.send_credit(credit)
-            worker_id = router._router_client.send_to.call_args[0][0]
+            worker_id = router._credit_router_client.send_to.call_args[0][0]
             conversations.append((instance_id, worker_id))
 
         # Verify even distribution by checking in-flight credits
@@ -160,7 +160,7 @@ class TestPerCreditIntegration:
             )
 
             await router.send_credit(credit)
-            worker_id = router._router_client.send_to.call_args[0][0]
+            worker_id = router._credit_router_client.send_to.call_args[0][0]
             assert worker_id == expected_worker  # Sticky!
 
     @pytest.mark.asyncio
@@ -196,7 +196,7 @@ class TestPerCreditIntegration:
 
         # Setup router
         router = StickyCreditRouter(run=run, service_id="test-service")
-        router._router_client.send_to = AsyncMock()
+        router._credit_router_client.send_to = AsyncMock()
         router._register_worker("worker-X")
 
         # Process 3-turn conversation
@@ -220,7 +220,7 @@ class TestPerCreditIntegration:
 
             # StickyCreditRouter: route to worker
             await router.send_credit(credit)
-            worker_id = router._router_client.send_to.call_args[0][0]
+            worker_id = router._credit_router_client.send_to.call_args[0][0]
             assert worker_id == "worker-X"
 
             # Worker: process credit
@@ -245,7 +245,7 @@ class TestPerCreditIntegration:
     async def test_error_handling_missing_turn_data(self, run):
         """Test error handling when turn data is not embedded."""
         router = StickyCreditRouter(run=run, service_id="test-service")
-        router._router_client.send_to = AsyncMock()
+        router._credit_router_client.send_to = AsyncMock()
         router._register_worker("worker-err")
 
         # Create credit (simulating fetch failure)
@@ -259,7 +259,7 @@ class TestPerCreditIntegration:
 
         # Router should still route successfully
         await router.send_credit(credit)
-        worker_id = router._router_client.send_to.call_args[0][0]
+        worker_id = router._credit_router_client.send_to.call_args[0][0]
         assert worker_id == "worker-err"
 
         # But worker should detect missing data and raise error
@@ -277,7 +277,7 @@ class TestPerCreditIntegration:
     async def test_concurrent_conversations_different_workers(self, run):
         """Test that concurrent conversations can be processed by different workers."""
         router = StickyCreditRouter(run=run, service_id="test-service")
-        router._router_client.send_to = AsyncMock()
+        router._credit_router_client.send_to = AsyncMock()
         router._register_worker("worker-1")
         router._register_worker("worker-2")
 
@@ -300,9 +300,9 @@ class TestPerCreditIntegration:
 
         # Route both
         await router.send_credit(conv1_credit)
-        worker1 = router._router_client.send_to.call_args[0][0]
+        worker1 = router._credit_router_client.send_to.call_args[0][0]
         await router.send_credit(conv2_credit)
-        worker2 = router._router_client.send_to.call_args[0][0]
+        worker2 = router._credit_router_client.send_to.call_args[0][0]
 
         # Both should be routed (possibly to different workers)
         assert worker1 in ["worker-1", "worker-2"]
@@ -319,7 +319,7 @@ class TestPerCreditIntegration:
     async def test_same_session_different_instances_balanced(self, run):
         """Test that same session sampled multiple times is balanced."""
         router = StickyCreditRouter(run=run, service_id="test-service")
-        router._router_client.send_to = AsyncMock()
+        router._credit_router_client.send_to = AsyncMock()
         router._register_worker("worker-A")
         router._register_worker("worker-B")
 
@@ -371,7 +371,7 @@ class TestPerCreditIntegration:
     async def test_worker_failure_and_reassignment(self, run):
         """Test that conversations can be reassigned if worker fails."""
         router = StickyCreditRouter(run=run, service_id="test-service")
-        router._router_client.send_to = AsyncMock()
+        router._credit_router_client.send_to = AsyncMock()
         router._register_worker("worker-1")
         router._register_worker("worker-2")
 
@@ -387,7 +387,7 @@ class TestPerCreditIntegration:
         )
 
         await router.send_credit(credit1)
-        worker1 = router._router_client.send_to.call_args[0][0]
+        worker1 = router._credit_router_client.send_to.call_args[0][0]
         router._track_credit_returned(
             worker1, credit1.id, cancelled=False, error_reported=False
         )
@@ -411,7 +411,7 @@ class TestPerCreditIntegration:
 
         # Should fallback to fair load balancing
         await router.send_credit(credit2)
-        worker2 = router._router_client.send_to.call_args[0][0]
+        worker2 = router._credit_router_client.send_to.call_args[0][0]
 
         # Should route to remaining worker
         remaining_worker = [w for w in ["worker-1", "worker-2"] if w != worker1][0]

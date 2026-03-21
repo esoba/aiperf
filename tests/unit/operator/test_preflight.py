@@ -856,10 +856,51 @@ class TestCheckKueueQueue:
     """Verify Kueue LocalQueue check."""
 
     @pytest.mark.asyncio
-    async def test_no_queue_specified_skips(self) -> None:
+    async def test_no_queue_kueue_not_installed_skips(self) -> None:
         checker = _make_checker()
+        # _is_kueue_installed returns False when call_api raises
+        checker.api.call_api = _mock_call_api_raises(
+            create_server_error(404, "Not Found")
+        )
         result = await checker._check_kueue_queue()
         assert result.status == CheckStatus.SKIP
+
+    @pytest.mark.asyncio
+    async def test_no_queue_kueue_installed_namespace_has_default_passes(
+        self,
+    ) -> None:
+        checker = _make_checker()
+        # _is_kueue_installed returns True
+        checker.api.call_api = _mock_call_api_response({"items": []})
+        # _namespace_has_default_queue returns True
+        with patch("kr8s.asyncio.objects.Namespace") as MockNs:
+            ns_obj = MagicMock()
+            ns_obj.raw = {
+                "metadata": {
+                    "annotations": {
+                        "kueue.x-k8s.io/default-queue-name": "my-queue",
+                    },
+                },
+            }
+            MockNs.get = AsyncMock(return_value=ns_obj)
+            result = await checker._check_kueue_queue()
+        assert result.status == CheckStatus.PASS
+        assert "default-queue-name" in result.message
+
+    @pytest.mark.asyncio
+    async def test_no_queue_kueue_installed_no_default_warns(self) -> None:
+        checker = _make_checker()
+        # _is_kueue_installed returns True
+        checker.api.call_api = _mock_call_api_response({"items": []})
+        # _namespace_has_default_queue returns False (no annotation)
+        with patch("kr8s.asyncio.objects.Namespace") as MockNs:
+            ns_obj = MagicMock()
+            ns_obj.raw = {"metadata": {"annotations": {}}}
+            MockNs.get = AsyncMock(return_value=ns_obj)
+            result = await checker._check_kueue_queue()
+        assert result.status == CheckStatus.WARN
+        assert "bypass" in result.message
+        assert result.hints
 
     @pytest.mark.asyncio
     async def test_queue_found(self) -> None:

@@ -146,6 +146,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         bind: bool = True,
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
+        decode_type: Any = None,
     ) -> StreamingRouterClientProtocol:
         return cast(
             StreamingRouterClientProtocol,
@@ -155,6 +156,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
                 bind,
                 socket_ops,
                 additional_bind_address=additional_bind_address,
+                decode_type=decode_type,
             ),
         )
 
@@ -164,6 +166,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         identity: str,
         bind: bool = False,
         socket_ops: dict | None = None,
+        decode_type: Any = None,
     ) -> StreamingDealerClientProtocol:
         # Identity must be passed through client_kwargs since it's specific to DEALER
         return cast(
@@ -174,5 +177,6 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
                 bind,
                 socket_ops,
                 identity=identity,
+                decode_type=decode_type,
             ),
         )

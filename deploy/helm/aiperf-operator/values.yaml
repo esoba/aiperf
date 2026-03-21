@@ -128,6 +128,14 @@ benchmarkNamespace:
   # benchmarkNamespace.name is the benchmark namespace name
   name: "aiperf-benchmarks"
 
+# kueue configures Kueue gang-scheduling integration
+kueue:
+  # kueue.defaultQueueName is the default Kueue LocalQueue name.
+  # When set, the benchmark namespace is annotated with
+  # kueue.x-k8s.io/default-queue-name so all AIPerf jobs are automatically
+  # admitted through Kueue even without an explicit --queue-name flag.
+  defaultQueueName: ""
+
 # defaults contains default settings for AIPerfJob resources
 defaults:
   # defaults.image is the default container image for benchmark jobs
