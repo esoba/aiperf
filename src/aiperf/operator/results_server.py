@@ -423,10 +423,12 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
     ) -> CompareResponse:
         """Compare specific jobs side-by-side."""
         rows = await _get_db().compare(job_ids=jobs, metrics=metrics)
+        metric_list = metrics or list(DEFAULT_COMPARE_METRICS)
+        entries = _pivot_compare_rows(rows, metric_list)
         return CompareResponse(
             job_ids=jobs,
-            metrics=metrics or list(DEFAULT_COMPARE_METRICS),
-            entries=rows,
+            metrics=metric_list,
+            entries=entries,
         )
 
     @app.get("/api/v1/analytics/summary/{namespace}/{job_id}")
@@ -436,6 +438,78 @@ def create_app(results_dir: Path | None = None) -> FastAPI:
         if result is None:
             raise HTTPException(404, f"No summary for {namespace}/{job_id}")
         return result
+
+    @app.get("/api/v1/index")
+    async def get_index() -> dict[str, Any]:
+        """Get the full job index for fast lookups."""
+        from aiperf.operator.job_index import get_index as _get_idx
+
+        return await _get_idx()
+
+    @app.get("/api/v1/config/{namespace}/{job_id}")
+    async def get_job_config(namespace: str, job_id: str) -> dict[str, Any]:
+        """Get the original CR spec/config for a job.
+
+        First checks the index, then falls back to the standalone spec file,
+        then falls back to extracting input_config from the summary JSON.
+        """
+        from aiperf.operator.job_index import get_job_spec
+
+        # Try index first
+        spec = await get_job_spec(namespace, job_id)
+        if spec is not None:
+            return {"source": "index", "spec": spec}
+
+        # Try standalone spec file
+        spec_file = base_dir / namespace / job_id / "job_spec.json"
+        if spec_file.exists():
+            import orjson
+
+            data = orjson.loads(await asyncio.to_thread(spec_file.read_bytes))
+            return {"source": "file", "spec": data}
+
+        # Fall back to input_config from profile_export_aiperf.json
+        result = await _get_db().summary(namespace, job_id)
+        if result and result.get("input_config"):
+            return {"source": "summary", "spec": {"benchmark": result["input_config"]}}
+
+        raise HTTPException(404, f"No config found for {namespace}/{job_id}")
+
+    def _pivot_compare_rows(
+        rows: list[dict[str, Any]], metric_list: list[str]
+    ) -> list[dict[str, Any]]:
+        """Pivot raw DuckDB rows (one per job) into the format the UI expects.
+
+        Input:  [{job_id, request_throughput_avg, request_throughput_unit, ...}, ...]
+        Output: [{metric, stat, unit, values: {job_id: value}}, ...]
+        """
+        stats = ["avg", "p50", "p99"]
+        entries: list[dict[str, Any]] = []
+        for metric in metric_list:
+            for stat in stats:
+                col = f"{metric}_{stat}"
+                unit_col = f"{metric}_unit"
+                values: dict[str, float | None] = {}
+                unit = None
+                has_value = False
+                for row in rows:
+                    job_id = row.get("job_id", "")
+                    val = row.get(col)
+                    if val is not None:
+                        has_value = True
+                    values[job_id] = val
+                    if unit is None and row.get(unit_col):
+                        unit = row[unit_col]
+                if has_value:
+                    entries.append(
+                        {
+                            "metric": metric,
+                            "stat": stat,
+                            "unit": unit,
+                            "values": values,
+                        }
+                    )
+        return entries
 
     # Mount UI static files last (catch-all for SPA routing)
     ui_dir = Path(__file__).parent / "ui"

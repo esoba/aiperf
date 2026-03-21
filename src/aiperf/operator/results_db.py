@@ -200,27 +200,18 @@ class ResultsDB:
         for m in metrics:
             _validate_identifier(m)
 
-        metric_selects = []
-        for m in metrics:
-            metric_selects.extend(
-                [
-                    f"t.{m}.avg::DOUBLE AS {m}_avg",
-                    f"t.{m}.p50::DOUBLE AS {m}_p50",
-                    f"t.{m}.p99::DOUBLE AS {m}_p99",
-                    f"t.{m}.unit AS {m}_unit",
-                ]
-            )
-
         # Build job ID filter
         job_id_list = ", ".join(f"'{_escape_like(j)}'" for j in job_ids)
 
-        sql = f"""
+        # First, query just the base job info to avoid missing-column errors
+        # when some jobs don't have certain metrics (e.g., non-streaming has no TTFT).
+        # Then query each metric separately to be resilient to missing columns.
+        base_sql = f"""
             SELECT
                 {self._extract_job_path_parts()},
                 t.start_time::VARCHAR AS start_time,
                 t.input_config.models.items[1].name AS model,
-                t.input_config.endpoint.urls[1] AS endpoint,
-                {", ".join(metric_selects)}
+                t.input_config.endpoint.urls[1] AS endpoint
             FROM (
                 SELECT *, filename
                 FROM read_json({files},
@@ -230,7 +221,45 @@ class ResultsDB:
             WHERE string_split(filename, '/')[-2] IN ({job_id_list})
         """  # noqa: S608
 
-        return await self._query(sql)
+        base_rows = await self._query(base_sql)
+        if not base_rows:
+            return []
+
+        # Build a dict of job_id -> base info
+        job_data: dict[str, dict[str, Any]] = {}
+        for row in base_rows:
+            jid = row.get("job_id", "")
+            job_data[jid] = row
+
+        # Query each metric separately to handle missing columns gracefully
+        for m in metrics:
+            _validate_identifier(m)
+            json_expr = f"to_json(t.{m})"
+            metric_sql = f"""
+                SELECT
+                    string_split(filename, '/')[-2] AS job_id,
+                    TRY_CAST({json_expr}->>'avg' AS DOUBLE) AS {m}_avg,
+                    TRY_CAST({json_expr}->>'p50' AS DOUBLE) AS {m}_p50,
+                    TRY_CAST({json_expr}->>'p99' AS DOUBLE) AS {m}_p99,
+                    {json_expr}->>'unit' AS {m}_unit
+                FROM (
+                    SELECT *, filename
+                    FROM read_json({files},
+                        compression='auto_detect',
+                        union_by_name=true)
+                ) t
+                WHERE string_split(filename, '/')[-2] IN ({job_id_list})
+            """  # noqa: S608
+
+            metric_rows = await self._query(metric_sql)
+            for row in metric_rows:
+                jid = row.get("job_id", "")
+                if jid in job_data:
+                    job_data[jid].update(
+                        {k: v for k, v in row.items() if k != "job_id"}
+                    )
+
+        return list(job_data.values())
 
     async def summary(self, namespace: str, job_id: str) -> dict[str, Any] | None:
         """Get the full aggregated summary for a single job.

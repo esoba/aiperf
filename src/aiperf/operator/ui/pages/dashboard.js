@@ -6,6 +6,7 @@ import { phaseColor, colors, palette } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
+import { fmtNumber, fmtInt, fmtThroughput, fmtLatencyStr } from '../lib/format.js';
 
 function formatElapsed(ms) {
   const s = Math.floor(ms / 1000);
@@ -94,7 +95,7 @@ function ThroughputLatencyScatter({ completedJobs }) {
         callbacks: {
           label: ctx => {
             const pt = ctx.raw;
-            return ` ${pt.jobName}: ${pt.x.toFixed(1)} req/s, ${pt.y.toFixed(0)} ms p99`;
+            return ` ${pt.jobName}: ${fmtThroughput(pt.x)} req/s, ${fmtNumber(pt.y, 0)} ms p99`;
           },
         },
       },
@@ -181,9 +182,9 @@ function StatusSummaryBar({ allJobs, cluster, best }) {
 
   const parts = [];
   parts.push(`Cluster: ${nodes} node${nodes !== 1 ? 's' : ''}, ${gpus} GPU${gpus !== 1 ? 's' : ''}`);
-  parts.push(`${completed} completed, ${running} running, ${failed} failed`);
+  parts.push(`${fmtInt(completed)} completed, ${fmtInt(running)} running, ${fmtInt(failed)} failed`);
   if (best.value != null && best.name) {
-    parts.push(`Best: ${best.value.toFixed(1)} req/s (${best.name})`);
+    parts.push(`Best: ${fmtThroughput(best.value)} req/s (${best.name})`);
   }
 
   return html`
@@ -326,7 +327,7 @@ export function Dashboard() {
         />
         <${KpiCard}
           label="Best Throughput"
-          value=${best.value != null ? best.value.toFixed(1) : '---'}
+          value=${best.value != null ? fmtThroughput(best.value) : '---'}
           unit=${best.value != null ? 'req/s' : ''}
           color=${palette.yellow}
         />
@@ -387,7 +388,7 @@ export function Dashboard() {
                   <div class="active-job-meta text-dim" style="font-size: var(--font-size-sm); margin: var(--space-1) 0">
                     ${job.model ?? '---'}
                     ${elapsed && html` · ${elapsed}`}
-                    ${job.throughputRps != null && html` · ${job.throughputRps.toFixed(1)} req/s`}
+                    ${job.throughputRps != null && html` · ${fmtThroughput(job.throughputRps)} req/s`}
                   </div>
                   ${pct > 0 && html`
                     <div class="progress-track" style="margin-top: var(--space-2)">
@@ -471,8 +472,8 @@ export function Dashboard() {
                   >
                     <td class="job-table-td job-table-name">${job.name}</td>
                     <td class="job-table-td text-dim">${job.model ?? '---'}</td>
-                    <td class="job-table-td">${job.throughputRps != null ? job.throughputRps.toFixed(1) + ' req/s' : '---'}</td>
-                    <td class="job-table-td">${job.latencyP99Ms != null ? (job.latencyP99Ms > 1000 ? (job.latencyP99Ms / 1000).toFixed(1) + ' s' : job.latencyP99Ms.toFixed(0) + ' ms') : '---'}</td>
+                    <td class="job-table-td">${job.throughputRps != null ? fmtThroughput(job.throughputRps) + ' req/s' : '---'}</td>
+                    <td class="job-table-td">${job.latencyP99Ms != null ? fmtLatencyStr(job.latencyP99Ms) : '---'}</td>
                     <td class="job-table-td text-dim">${age}</td>
                   </tr>
                 `;

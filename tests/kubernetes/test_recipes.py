@@ -101,6 +101,7 @@ def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
     bench.pop("server_metrics", None)
     bench.pop("artifacts", None)
     bench.pop("random_seed", None)
+    bench.pop("slos", None)
 
     # -- image --
     spec["image"] = image

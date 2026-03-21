@@ -22,6 +22,7 @@ from aiperf.kubernetes.resources import KubernetesDeployment
 from aiperf.operator import events
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.health import check_endpoint_health
+from aiperf.operator.job_index import index_job_created, save_job_spec_file
 from aiperf.operator.k8s_helpers import create_idempotent
 from aiperf.operator.models import AIPerfJobSpec, OwnerReference
 from aiperf.operator.spec_converter import (
@@ -37,6 +38,17 @@ from aiperf.operator.status import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _to_plain(obj: Any) -> Any:
+    """Recursively convert kopf Mapping subclasses to plain dicts/lists."""
+    from collections.abc import Mapping
+
+    if isinstance(obj, Mapping):
+        return {k: _to_plain(v) for k, v in obj.items()}
+    if isinstance(obj, list | tuple):
+        return [_to_plain(v) for v in obj]
+    return obj
 
 
 async def on_create(
@@ -201,6 +213,16 @@ async def on_create(
         )
         events.resources_created(body, configmap_name, jobset_name)
         events.created(body, job_id, total_workers)
+
+        # Step 8: Save original CR spec and update job index
+        # kopf wraps spec in special Spec/Body types that orjson can't serialize.
+        # Recursively convert all Mapping subclasses to plain dicts.
+        try:
+            plain_spec = _to_plain(spec)
+            save_job_spec_file(namespace, job_id, plain_spec)
+            await index_job_created(namespace, job_id, plain_spec)
+        except Exception as e:
+            logger.warning(f"Failed to save job spec/index for {namespace}/{name}: {e}")
 
         # Set initial status
         status.set_phase(Phase.PENDING)

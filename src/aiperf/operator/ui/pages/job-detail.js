@@ -8,6 +8,7 @@ import { ChartWrapper } from '../components/chart-wrapper.js';
 import { PhaseBar } from '../components/phase-bar.js';
 import { Conditions } from '../components/conditions.js';
 import { PodsBar } from '../components/pods-bar.js';
+import { fmtNumber, fmtInt, fmtThroughput, fmtBytes } from '../lib/format.js';
 
 const MAX_CHART_POINTS = 60;
 
@@ -40,17 +41,17 @@ function extractSummary(data) {
 
 function fmtMs(val) {
   if (val == null) return null;
-  return val.toFixed(0);
+  return fmtNumber(val, 0);
 }
 
 function fmtRps(val) {
   if (val == null) return null;
-  return val.toFixed(1);
+  return fmtThroughput(val);
 }
 
 function fmtNum(val, decimals = 1) {
   if (val == null) return '---';
-  return val.toFixed(decimals);
+  return fmtNumber(val, decimals);
 }
 
 // Metrics table: group definitions
@@ -213,7 +214,7 @@ function LatencyPercentileChart({ results }) {
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: ctx => ` ${ctx.parsed.x.toFixed(1)} ms`,
+          label: ctx => ` ${fmtNumber(ctx.parsed.x, 1)} ms`,
         },
       },
     },
@@ -293,7 +294,7 @@ function ConcurrencyThroughputChart({ status }) {
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: ctx => ` ${ctx.parsed.y.toFixed(1)} req/s at concurrency ${ctx.label}`,
+          label: ctx => ` ${fmtThroughput(ctx.parsed.y)} req/s at concurrency ${ctx.label}`,
         },
       },
     },
@@ -354,7 +355,7 @@ function ISLDistributionChart({ results }) {
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: ctx => ` ${ctx.parsed.y.toFixed(0)} tokens`,
+          label: ctx => ` ${fmtInt(ctx.parsed.y)} tokens`,
         },
       },
     },
@@ -413,7 +414,7 @@ function SLACompliance({ results, summary }) {
     checks.push({
       label: 'TTFT p99 < 500ms',
       pass: ttftP99 < 500,
-      value: `${ttftP99.toFixed(0)} ms`,
+      value: `${fmtNumber(ttftP99, 0)} ms`,
     });
   }
 
@@ -421,7 +422,7 @@ function SLACompliance({ results, summary }) {
     checks.push({
       label: 'ITL p99 < 100ms',
       pass: itlP99 < 100,
-      value: `${itlP99.toFixed(0)} ms`,
+      value: `${fmtNumber(itlP99, 0)} ms`,
     });
   }
 
@@ -429,7 +430,7 @@ function SLACompliance({ results, summary }) {
     checks.push({
       label: 'Error rate < 1%',
       pass: errorRate < 1,
-      value: `${errorRate.toFixed(2)}%`,
+      value: `${fmtNumber(errorRate, 2)}%`,
     });
   }
 
@@ -452,6 +453,96 @@ function SLACompliance({ results, summary }) {
           </div>
         `)}
       </div>
+    </div>
+  `;
+}
+
+// Job Configuration Section
+function JobConfigSection({ config }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!config) return null;
+
+  const spec = config.spec ?? {};
+  const benchmark = spec.benchmark ?? spec;
+
+  // Extract key config items for the summary row
+  const endpoint = benchmark.endpoint ?? {};
+  const models = benchmark.models ?? {};
+  const phases = benchmark.phases ?? {};
+  const datasets = benchmark.datasets ?? {};
+  const runtime = benchmark.runtime ?? {};
+
+  const modelItems = models.items ?? models.modelNames ?? [];
+  const modelName = Array.isArray(modelItems) && modelItems.length > 0
+    ? (typeof modelItems[0] === 'object' ? modelItems[0].name : modelItems[0])
+    : null;
+  const urls = endpoint.urls ?? endpoint.url ?? [];
+  const endpointUrl = Array.isArray(urls) ? urls[0] : urls;
+  const streaming = endpoint.streaming ?? null;
+  const endpointType = endpoint.type ?? null;
+
+  // Phase summary
+  const phaseNames = Array.isArray(phases) ? phases.map(p => p.name ?? 'unnamed') : Object.keys(phases);
+
+  // Config key-value pairs for the summary grid
+  const summaryItems = [];
+  if (modelName) summaryItems.push({ label: 'Model', value: modelName });
+  if (endpointUrl) summaryItems.push({ label: 'Endpoint', value: endpointUrl });
+  if (endpointType) summaryItems.push({ label: 'API Type', value: endpointType });
+  if (streaming != null) summaryItems.push({ label: 'Streaming', value: streaming ? 'Yes' : 'No' });
+  if (phaseNames.length > 0) summaryItems.push({ label: 'Phases', value: phaseNames.join(', ') });
+
+  // Extract concurrency/request info from phases
+  const phaseList = Array.isArray(phases) ? phases : Object.values(phases);
+  for (const p of phaseList) {
+    const pName = p.name ?? '';
+    if (p.concurrency != null) {
+      summaryItems.push({ label: `${pName} Concurrency`, value: fmtInt(p.concurrency) });
+    }
+    const rc = p.request_count ?? p.requestCount ?? p.num_requests ?? null;
+    if (rc != null) {
+      summaryItems.push({ label: `${pName} Requests`, value: fmtInt(rc) });
+    }
+  }
+
+  // Image
+  const image = spec.image ?? null;
+  if (image) summaryItems.push({ label: 'Image', value: image });
+
+  // Workers
+  const workers = spec.workers ?? spec.numWorkers ?? runtime.workers ?? null;
+  if (workers != null) summaryItems.push({ label: 'Workers', value: fmtInt(workers) });
+
+  return html`
+    <div class="card" style="margin-top: var(--space-4)">
+      <div
+        onclick=${() => setExpanded(e => !e)}
+        style=${'display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none'}
+      >
+        <div class="card-title" style="margin: 0">Job Configuration</div>
+        <span class="text-dim" style="font-size: var(--font-size-xs)">${expanded ? '\u25B2 Collapse' : '\u25BC Expand'}</span>
+      </div>
+
+      ${summaryItems.length > 0 && html`
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-3); margin-top: var(--space-3)">
+          ${summaryItems.map(item => html`
+            <div key=${item.label} style="display: flex; flex-direction: column; gap: var(--space-1)">
+              <span style=${'font-size: var(--font-size-xs); color: ' + palette.overlay0 + '; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600'}>${item.label}</span>
+              <span style=${'font-size: var(--font-size-sm); color: ' + palette.text + '; font-weight: 500; word-break: break-all'}>${item.value}</span>
+            </div>
+          `)}
+        </div>
+      `}
+
+      ${expanded && html`
+        <div style="margin-top: var(--space-4)">
+          <div style=${'font-size: var(--font-size-xs); font-weight: 600; color: ' + palette.overlay1 + '; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: var(--space-2)'}>Full Spec (${config.source ?? 'unknown'})</div>
+          <pre style=${'margin: 0; font-family: monospace; font-size: var(--font-size-xs); line-height: 1.6; white-space: pre; color: ' + palette.text + '; background: ' + palette.base + '; padding: var(--space-3); border-radius: var(--radius-sm); max-height: 400px; overflow: auto'}>
+            ${JSON.stringify(spec, null, 2)}
+          </pre>
+        </div>
+      `}
     </div>
   `;
 }
@@ -479,9 +570,9 @@ function RunMetadata({ status, results, info }) {
 
   const items = [];
   if (duration) items.push({ label: 'Duration', value: duration });
-  if (totalRequests != null) items.push({ label: 'Total Requests', value: String(totalRequests) });
-  if (islMean != null) items.push({ label: 'Avg ISL', value: `${islMean.toFixed(0)} tokens` });
-  if (oslMean != null) items.push({ label: 'Avg OSL', value: `${oslMean.toFixed(0)} tokens` });
+  if (totalRequests != null) items.push({ label: 'Total Requests', value: fmtInt(totalRequests) });
+  if (islMean != null) items.push({ label: 'Avg ISL', value: `${fmtInt(islMean)} tokens` });
+  if (oslMean != null) items.push({ label: 'Avg OSL', value: `${fmtInt(oslMean)} tokens` });
   if (streaming != null) items.push({ label: 'Streaming', value: streaming ? 'Yes' : 'No' });
 
   if (items.length === 0) return null;
@@ -803,7 +894,7 @@ function ServerMetricsSection({ serverMetrics }) {
       <${KpiCard}
         key="kv"
         label="KV Cache Usage"
-        value=${(kvCacheRaw * 100).toFixed(1)}
+        value=${fmtNumber(kvCacheRaw * 100, 1)}
         unit="%"
         color=${palette.peach}
       />
@@ -814,7 +905,7 @@ function ServerMetricsSection({ serverMetrics }) {
       <${KpiCard}
         key="running"
         label="Requests Running"
-        value=${reqRunning.toFixed(0)}
+        value=${fmtInt(reqRunning)}
         color=${palette.blue}
       />
     `);
@@ -824,7 +915,7 @@ function ServerMetricsSection({ serverMetrics }) {
       <${KpiCard}
         key="waiting"
         label="Requests Waiting"
-        value=${reqWaiting.toFixed(0)}
+        value=${fmtInt(reqWaiting)}
         color=${palette.yellow}
       />
     `);
@@ -834,7 +925,7 @@ function ServerMetricsSection({ serverMetrics }) {
       <${KpiCard}
         key="preempt"
         label="Preemptions"
-        value=${preemptions.toFixed(0)}
+        value=${fmtInt(preemptions)}
         color=${palette.maroon}
       />
     `);
@@ -844,7 +935,7 @@ function ServerMetricsSection({ serverMetrics }) {
       <${KpiCard}
         key="prefix"
         label="Prefix Cache Hit Rate"
-        value=${(prefixHitRate * 100).toFixed(1)}
+        value=${fmtNumber(prefixHitRate * 100, 1)}
         unit="%"
         color=${palette.teal}
       />
@@ -978,7 +1069,7 @@ function PerRecordAnalysis({ records }) {
       quadrantLabels: false,
       tooltip: {
         callbacks: {
-          label: ctx => ` Request #${ctx.parsed.x}: ${ctx.parsed.y.toFixed(1)} ms`,
+          label: ctx => ` Request #${fmtInt(ctx.parsed.x)}: ${fmtNumber(ctx.parsed.y, 1)} ms`,
         },
       },
     },
@@ -1022,7 +1113,7 @@ function PerRecordAnalysis({ records }) {
       quadrantLabels: false,
       tooltip: {
         callbacks: {
-          label: ctx => ` ISL ${ctx.parsed.x} tokens: TTFT ${ctx.parsed.y.toFixed(1)} ms`,
+          label: ctx => ` ISL ${fmtInt(ctx.parsed.x)} tokens: TTFT ${fmtNumber(ctx.parsed.y, 1)} ms`,
         },
       },
     },
@@ -1043,12 +1134,12 @@ function PerRecordAnalysis({ records }) {
   // Sortable table
   const hasItl = rows.some(r => r.itl != null);
   const COL_DEFS = [
-    { key: '#', label: '#', get: r => r.index, fmt: v => String(v) },
-    { key: 'isl', label: 'ISL', get: r => r.isl, fmt: v => v != null ? v.toFixed(0) : '---' },
-    { key: 'osl', label: 'OSL', get: r => r.osl, fmt: v => v != null ? v.toFixed(0) : '---' },
-    { key: 'ttft', label: 'TTFT (ms)', get: r => r.ttft, fmt: v => v != null ? v.toFixed(1) : '---' },
-    { key: 'latency', label: 'Latency (ms)', get: r => r.latency, fmt: v => v != null ? v.toFixed(1) : '---' },
-    ...(hasItl ? [{ key: 'itl', label: 'ITL (ms)', get: r => r.itl, fmt: v => v != null ? v.toFixed(1) : '---' }] : []),
+    { key: '#', label: '#', get: r => r.index, fmt: v => fmtInt(v) },
+    { key: 'isl', label: 'ISL', get: r => r.isl, fmt: v => fmtInt(v) },
+    { key: 'osl', label: 'OSL', get: r => r.osl, fmt: v => fmtInt(v) },
+    { key: 'ttft', label: 'TTFT (ms)', get: r => r.ttft, fmt: v => fmtNumber(v, 1) },
+    { key: 'latency', label: 'Latency (ms)', get: r => r.latency, fmt: v => fmtNumber(v, 1) },
+    ...(hasItl ? [{ key: 'itl', label: 'ITL (ms)', get: r => r.itl, fmt: v => fmtNumber(v, 1) }] : []),
   ];
 
   function handleSort(col) {
@@ -1155,6 +1246,7 @@ export function JobDetail({ namespace, name }) {
   const [serverMetrics, setServerMetrics] = useState(null);
   const [fileViewer, setFileViewer] = useState(null); // { filename, url }
   const [jsonlRecords, setJsonlRecords] = useState(null);
+  const [jobConfig, setJobConfig] = useState(null);
 
   const PREVIEWABLE = new Set(['json', 'csv', 'txt', 'ansi']);
 
@@ -1226,6 +1318,12 @@ export function JobDetail({ namespace, name }) {
       ac.signal,
     );
 
+    // Fetch job config (original CR spec)
+    fetch(`/api/v1/config/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setJobConfig(d); })
+      .catch(() => {});
+
     // Fetch available result files directly
     fetch(`/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`)
       .then(r => r.ok ? r.json() : null)
@@ -1260,9 +1358,7 @@ export function JobDetail({ namespace, name }) {
   }, [namespace, name]);
 
   function humanSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KiB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MiB';
+    return fmtBytes(bytes);
   }
 
   function downloadFile(fileName) {
@@ -1348,7 +1444,7 @@ export function JobDetail({ namespace, name }) {
   const ttftAvg = summary.ttft_avg_ms ?? null;
   const latP99 = summary.latency_p99_ms ?? info.latencyP99Ms ?? null;
   const errorRate = summary.error_rate ?? null;
-  const errorCount = errorRate != null ? (errorRate > 0 ? errorRate.toFixed(1) + '%' : '0') : null;
+  const errorCount = errorRate != null ? (errorRate > 0 ? fmtNumber(errorRate, 1) + '%' : '0') : null;
 
   // Metrics from results (nested under .metrics in the CR status)
   const rawResults = status.results ?? null;
@@ -1503,7 +1599,7 @@ export function JobDetail({ namespace, name }) {
         />
         <${KpiCard}
           label="Latency P99"
-          value=${latP99 != null ? latP99.toFixed(0) : '---'}
+          value=${latP99 != null ? fmtNumber(latP99, 0) : '---'}
           unit=${latP99 != null ? 'ms' : ''}
           color=${palette.peach}
         />
@@ -1559,6 +1655,9 @@ export function JobDetail({ namespace, name }) {
 
       <!-- Server Metrics (completed only, when available) -->
       ${isCompleted && serverMetrics && html`<${ServerMetricsSection} serverMetrics=${serverMetrics} />`}
+
+      <!-- Job Configuration (always shown if available) -->
+      ${jobConfig && html`<${JobConfigSection} config=${jobConfig} />`}
 
       <!-- Feature 8: Run Metadata (completed only) -->
       ${isCompleted && html`<${RunMetadata} status=${status} results=${results} info=${info} />`}

@@ -3,6 +3,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { api } from '../lib/api.js';
 import { palette } from '../lib/theme.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
+import { fmtNumber } from '../lib/format.js';
 
 // Metrics where lower is better
 const LOWER_IS_BETTER = new Set([
@@ -34,8 +35,8 @@ function bestValue(metric, values) {
 }
 
 function formatNum(v) {
-  if (v == null) return '—';
-  return typeof v === 'number' ? v.toFixed(3) : String(v);
+  if (v == null) return '\u2014';
+  return typeof v === 'number' ? fmtNumber(v, 3) : String(v);
 }
 
 export function Compare() {

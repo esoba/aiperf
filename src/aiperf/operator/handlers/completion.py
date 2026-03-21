@@ -17,6 +17,7 @@ from aiperf.kubernetes.kr8s_resources import AsyncJobSet
 from aiperf.operator import events
 from aiperf.operator.client_cache import get_or_create_progress_client, job_key
 from aiperf.operator.environment import OperatorEnvironment
+from aiperf.operator.job_index import index_job_completed
 from aiperf.operator.k8s_helpers import retry_with_backoff
 from aiperf.operator.models import FetchResult, MetricsSummary
 from aiperf.operator.status import ConditionType, Phase, StatusBuilder, parse_timestamp
@@ -124,6 +125,18 @@ async def handle_completion(
 
     sb.finalize()
     events.completed(body, job_id, duration_sec)
+
+    # Update job index with completion data
+    try:
+        await index_job_completed(
+            namespace=namespace,
+            job_id=job_id,
+            phase="Completed",
+            metrics=result.metrics,
+            downloaded_files=result.downloaded,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to update job index for {job_id}: {e}")
 
     # Delete the JobSet to free cluster resources after results are stored.
     # Only delete if we successfully fetched results — keep pods alive for

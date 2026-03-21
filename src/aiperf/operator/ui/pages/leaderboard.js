@@ -4,6 +4,7 @@ import { api } from '../lib/api.js';
 import { palette } from '../lib/theme.js';
 import { MetricSelector } from '../components/metric-selector.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
+import { fmtNumber } from '../lib/format.js';
 
 const CHART_COLORS = [
   palette.mauve,
@@ -25,7 +26,7 @@ function formatDate(iso) {
 
 function formatValue(value, unit) {
   if (value == null) return '---';
-  const formatted = typeof value === 'number' ? value.toFixed(2) : value;
+  const formatted = typeof value === 'number' ? fmtNumber(value, 2) : value;
   return unit ? `${formatted} ${unit}` : String(formatted);
 }
 
@@ -106,7 +107,7 @@ function PercentileHeatmap({ entry, allEntries, metric }) {
         return html`
           <div
             key=${cell.label}
-            title="${cell.label}: ${cell.value.toFixed(1)}"
+            title="${cell.label}: ${fmtNumber(cell.value, 1)}"
             style=${'width: 24px; height: 18px; border-radius: 2px; background: ' + bg + '88; border: 1px solid ' + bg}
           />
         `;

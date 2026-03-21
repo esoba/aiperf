@@ -1,6 +1,7 @@
 import { html } from 'htm/preact';
 import { useState, useMemo } from 'preact/hooks';
 import { phaseColor, palette } from '../lib/theme.js';
+import { fmtNumber, fmtThroughput } from '../lib/format.js';
 
 const COLUMNS = [
   { key: 'name', label: 'Name' },
@@ -121,7 +122,7 @@ export function JobTable({ jobs, onRowClick, filter }) {
 
     return html`
       <div style="display: flex; align-items: center; gap: var(--space-2); min-width: 120px">
-        <span style="white-space: nowrap; min-width: 60px">${val.toFixed(1)} req/s</span>
+        <span style="white-space: nowrap; min-width: 60px">${fmtThroughput(val)} req/s</span>
         ${isComplete && maxThroughput > 0 && html`
           <div
             style=${'flex: 1; height: 4px; background: ' + palette.surface0 + '; border-radius: 2px; overflow: hidden; min-width: 40px'}
@@ -138,8 +139,8 @@ export function JobTable({ jobs, onRowClick, filter }) {
   function renderLatency(job) {
     const val = job.latencyP99Ms;
     if (val == null) return html`<span class="text-dim">---</span>`;
-    if (val > 1000) return html`<span>${(val / 1000).toFixed(1)} s</span>`;
-    return html`<span>${val.toFixed(0)} ms</span>`;
+    if (val > 1000) return html`<span>${fmtNumber(val / 1000, 1)} s</span>`;
+    return html`<span>${fmtNumber(val, 0)} ms</span>`;
   }
 
   function renderWorkers(job) {

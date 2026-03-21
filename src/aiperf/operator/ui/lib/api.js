@@ -74,6 +74,18 @@ export const api = {
   listResults() {
     return apiFetch('/results');
   },
+
+  /** Get original CR config for a job */
+  getJobConfig(ns, jobId) {
+    return apiFetch(
+      `/config/${encodeURIComponent(ns)}/${encodeURIComponent(jobId)}`,
+    );
+  },
+
+  /** Get the full job index */
+  getIndex() {
+    return apiFetch('/index');
+  },
 };
 
 /**

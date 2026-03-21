@@ -1,4 +1,5 @@
 import { html } from 'htm/preact';
+import { fmtInt } from '../lib/format.js';
 
 /**
  * Phase progress bar row.
@@ -27,7 +28,7 @@ export function PhaseBar({ phases }) {
             <div class="phase-bar-header">
               <span class="phase-bar-name">${phase.name}</span>
               <span class="phase-bar-fraction">
-                ${phase.completed}/${phase.total}
+                ${fmtInt(phase.completed)}/${fmtInt(phase.total)}
               </span>
             </div>
             <div class="phase-bar-track">
