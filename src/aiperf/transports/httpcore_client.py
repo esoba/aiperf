@@ -3,11 +3,12 @@
 
 import ssl
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpcore
 
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -16,6 +17,9 @@ from aiperf.common.models import (
 )
 from aiperf.transports.http_defaults import HttpCoreDefaults, SocketDefaults
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
+
+if TYPE_CHECKING:
+    from aiperf.transports.base_transports import FirstTokenCallback
 
 
 class HttpCoreClient(AIPerfLoggerMixin):
@@ -77,6 +81,7 @@ class HttpCoreClient(AIPerfLoggerMixin):
         url: str,
         headers: dict[str, str],
         data: bytes | None = None,
+        first_token_callback: "FirstTokenCallback | None" = None,
         **kwargs: Any,
     ) -> RequestRecord:
         """Execute HTTP requests with nanosecond-precision timing and error handling.
@@ -89,6 +94,7 @@ class HttpCoreClient(AIPerfLoggerMixin):
             url: Target URL with scheme
             headers: Request headers dict
             data: Optional request body bytes
+            first_token_callback: Optional callback fired on first SSE message with ttft_ns
             **kwargs: Additional arguments for future extension
 
         Returns:
@@ -157,8 +163,24 @@ class HttpCoreClient(AIPerfLoggerMixin):
 
                 if is_sse_request and content_type.startswith("text/event-stream"):
                     self.debug("Processing SSE stream")
-                    async for message in AsyncSSEStreamReader(response.aiter_stream()):
-                        record.responses.append(message)
+                    if first_token_callback:
+                        first_token_acquired = False
+                        async for message in AsyncSSEStreamReader(
+                            response.aiter_stream()
+                        ):
+                            AsyncSSEStreamReader.inspect_message_for_error(message)
+                            record.responses.append(message)
+                            if not first_token_acquired:
+                                ttft_ns = message.perf_ns - record.start_perf_ns
+                                first_token_acquired = await first_token_callback(
+                                    ttft_ns, message
+                                )
+                    else:
+                        async for message in AsyncSSEStreamReader(
+                            response.aiter_stream()
+                        ):
+                            AsyncSSEStreamReader.inspect_message_for_error(message)
+                            record.responses.append(message)
                     self.debug(lambda: f"Parsed {len(record.responses)} SSE messages")
                 else:
                     self.debug("Processing regular response")
@@ -255,6 +277,11 @@ class HttpCoreClient(AIPerfLoggerMixin):
                 message=f"HTTP/2 protocol error: {e!r}",
             )
 
+        except SSEResponseError as e:
+            record.end_perf_ns = time.perf_counter_ns()
+            self.error(f"Error in SSE response: {e!r}")
+            record.error = ErrorDetails.from_exception(e)
+
         except Exception as e:
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Unexpected error in HTTP request: {e!r}")
@@ -267,6 +294,8 @@ class HttpCoreClient(AIPerfLoggerMixin):
         url: str,
         payload: bytes,
         headers: dict[str, str],
+        *,
+        first_token_callback: "FirstTokenCallback | None" = None,
         **kwargs: Any,
     ) -> RequestRecord:
         """Send an HTTP POST request with optional SSE streaming support.
@@ -275,12 +304,20 @@ class HttpCoreClient(AIPerfLoggerMixin):
             url: Target URL with scheme
             payload: Request body bytes
             headers: HTTP headers dict
+            first_token_callback: Optional callback fired on first SSE message with ttft_ns
             **kwargs: Additional arguments passed to _request()
 
         Returns:
             RequestRecord with status, timing data, responses, and optional error
         """
-        return await self._request("POST", url, headers, data=payload, **kwargs)
+        return await self._request(
+            "POST",
+            url,
+            headers,
+            data=payload,
+            first_token_callback=first_token_callback,
+            **kwargs,
+        )
 
     async def get_request(
         self, url: str, headers: dict[str, str], **kwargs: Any

@@ -104,6 +104,7 @@ class HttpCoreTransport(BaseHTTPTransport):
                 url,
                 json_bytes,
                 headers,
+                first_token_callback=first_token_callback,
             )
             record.request_headers = redact_headers(headers)
 
