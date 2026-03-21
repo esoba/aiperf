@@ -493,3 +493,115 @@ class TestHttpCoreClientHTTPErrors:
         assert record.error is not None
         assert record.error.code == status_code
         assert record.status == status_code
+
+
+# ---------------------------------------------------------------------------
+# Binary response handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestBinaryResponseHandling:
+    """Verify binary content types return BinaryResponse instead of TextResponse."""
+
+    @pytest.mark.parametrize(
+        "content_type",
+        [
+            "video/mp4",
+            "image/png",
+            "audio/wav",
+            "application/octet-stream",
+        ],
+    )  # fmt: skip
+    async def test_binary_content_types_return_binary_response(
+        self,
+        httpcore_client: HttpCoreClient,
+        content_type: str,
+    ) -> None:
+        """Binary content types yield a BinaryResponse with the raw bytes."""
+        from aiperf.common.models import BinaryResponse
+
+        raw_data = b"\x00\x01\x02\x03\xff"
+        response = make_non_sse_response(body=raw_data, content_type=content_type)
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/generate",
+                b"{}",
+                {"Content-Type": "application/json"},
+            )
+
+        assert record.error is None
+        assert len(record.responses) == 1
+        resp = record.responses[0]
+        assert isinstance(resp, BinaryResponse)
+        assert resp.raw_bytes == raw_data
+        assert resp.content_type == content_type
+
+    @pytest.mark.parametrize(
+        "content_type",
+        [
+            "application/json",
+            "text/plain",
+            "text/html",
+            "application/xml",
+        ],
+    )  # fmt: skip
+    async def test_text_content_types_return_text_response(
+        self,
+        httpcore_client: HttpCoreClient,
+        content_type: str,
+    ) -> None:
+        """Non-binary content types still yield a TextResponse."""
+        from aiperf.common.models import TextResponse
+
+        body = b'{"ok": true}'
+        response = make_non_sse_response(body=body, content_type=content_type)
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/complete",
+                b"{}",
+                {"Content-Type": "application/json"},
+            )
+
+        assert record.error is None
+        assert len(record.responses) == 1
+        resp = record.responses[0]
+        assert isinstance(resp, TextResponse)
+        assert resp.text == '{"ok": true}'
+        assert resp.content_type == content_type
+
+    async def test_binary_response_preserves_exact_bytes(
+        self,
+        httpcore_client: HttpCoreClient,
+    ) -> None:
+        """BinaryResponse raw_bytes is an exact copy of the response body."""
+        from aiperf.common.models import BinaryResponse
+
+        # Simulate arbitrary binary payload (e.g. video frame header)
+        raw_data = bytes(range(256))
+        response = make_non_sse_response(body=raw_data, content_type="video/mp4")
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/video",
+                b"{}",
+                {"Content-Type": "application/json"},
+            )
+
+        assert isinstance(record.responses[0], BinaryResponse)
+        assert record.responses[0].raw_bytes == raw_data
+        assert len(record.responses[0].raw_bytes) == 256

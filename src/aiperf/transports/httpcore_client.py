@@ -11,6 +11,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
+    BinaryResponse,
     ErrorDetails,
     RequestRecord,
     TextResponse,
@@ -188,16 +189,38 @@ class HttpCoreClient(AIPerfLoggerMixin):
                     async for chunk in response.aiter_stream():
                         response_body.extend(chunk)
 
-                    response_text = response_body.decode("utf-8", errors="replace")
                     record.end_perf_ns = time.perf_counter_ns()
-                    record.responses.append(
-                        TextResponse(
-                            perf_ns=record.end_perf_ns,
-                            content_type=content_type,
-                            text=response_text,
-                        )
+                    is_binary = (
+                        content_type.startswith("video/")
+                        or content_type.startswith("image/")
+                        or content_type.startswith("audio/")
+                        or content_type == "application/octet-stream"
                     )
-                    self.debug(lambda: f"Response complete: {len(response_text)} bytes")
+                    if is_binary:
+                        record.responses.append(
+                            BinaryResponse(
+                                perf_ns=record.end_perf_ns,
+                                content_type=content_type,
+                                raw_bytes=bytes(response_body),
+                            )
+                        )
+                        self.debug(
+                            lambda: (
+                                f"Binary response complete: {len(response_body)} bytes"
+                            )
+                        )
+                    else:
+                        response_text = response_body.decode("utf-8", errors="replace")
+                        record.responses.append(
+                            TextResponse(
+                                perf_ns=record.end_perf_ns,
+                                content_type=content_type,
+                                text=response_text,
+                            )
+                        )
+                        self.debug(
+                            lambda: f"Response complete: {len(response_text)} bytes"
+                        )
 
                 if not record.end_perf_ns:
                     record.end_perf_ns = time.perf_counter_ns()
