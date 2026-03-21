@@ -12,6 +12,7 @@ import orjson
 from aiperf.common.enums import ConnectionReuseStrategy
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
+from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     ErrorDetails,
     RequestInfo,
@@ -26,6 +27,43 @@ from aiperf.transports.base_transports import (
     TransportMetadata,
 )
 from aiperf.transports.httpcore_client import HttpCoreClient
+
+
+class HttpCoreLeaseManager(AIPerfLoggerMixin):
+    """Manages per-session httpcore clients for sticky-user-sessions strategy.
+
+    Each user session (identified by x_correlation_id) gets a dedicated
+    HttpCoreClient with max_connections=1, pinning the session to a single
+    backend connection through load balancers.
+    """
+
+    def __init__(self, timeout: float | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._timeout = timeout
+        self._leases: dict[str, HttpCoreClient] = {}
+
+    def get_client(self, session_id: str) -> HttpCoreClient:
+        """Get or create a single-connection client for a session."""
+        if session_id not in self._leases:
+            self._leases[session_id] = HttpCoreClient.create_ephemeral(
+                timeout=self._timeout
+            )
+            self.debug(lambda: f"Created connection lease for session {session_id}")
+        return self._leases[session_id]
+
+    async def release(self, session_id: str) -> None:
+        """Release and close the client for a session."""
+        if session_id in self._leases:
+            client = self._leases.pop(session_id)
+            await client.close()
+            self.debug(lambda: f"Released connection lease for session {session_id}")
+
+    async def close_all(self) -> None:
+        """Close all active session clients."""
+        clients = list(self._leases.values())
+        self._leases.clear()
+        for client in clients:
+            await client.close()
 
 
 class HttpCoreTransport(BaseHTTPTransport):
@@ -49,7 +87,7 @@ class HttpCoreTransport(BaseHTTPTransport):
         """
         super().__init__(**kwargs)
         self.httpcore_client: HttpCoreClient | None = None
-        self._sticky_warned: bool = False
+        self.lease_manager: HttpCoreLeaseManager | None = None
 
     @property
     def http_client(self) -> HttpCoreClient | None:
@@ -62,10 +100,21 @@ class HttpCoreTransport(BaseHTTPTransport):
         self.httpcore_client = HttpCoreClient(
             timeout=self.run.cfg.endpoint.timeout,
         )
+        if (
+            self.run.cfg.endpoint.connection_reuse
+            == ConnectionReuseStrategy.STICKY_USER_SESSIONS
+        ):
+            self.lease_manager = HttpCoreLeaseManager(
+                timeout=self.run.cfg.endpoint.timeout
+            )
 
     @on_stop
     async def _close_httpcore_client(self) -> None:
         """Cleanup hook to close httpcore connection pool on stop."""
+        if self.lease_manager:
+            lease_manager = self.lease_manager
+            self.lease_manager = None
+            await lease_manager.close_all()
         if self.httpcore_client:
             client = self.httpcore_client
             self.httpcore_client = None
@@ -91,8 +140,8 @@ class HttpCoreTransport(BaseHTTPTransport):
         Connection behavior depends on the configured connection_reuse strategy:
         - POOLED: Uses the shared connection pool (default)
         - NEVER: Creates a single-connection ephemeral client, closed after use
-        - STICKY_USER_SESSIONS: HTTP/2 multiplexing makes per-session connections
-          redundant; logs a warning and falls back to POOLED
+        - STICKY_USER_SESSIONS: Per-session client with max_connections=1,
+          pins each conversation to one backend through load balancers
 
         Args:
             request_info: Request context and metadata
@@ -107,7 +156,6 @@ class HttpCoreTransport(BaseHTTPTransport):
                 "HttpCoreTransport not initialized. Call initialize() before send_request()."
             )
 
-        # Route polling-based endpoints (e.g., video_generation) to polling implementation
         endpoint_metadata = plugins.get_endpoint_metadata(
             request_info.config.endpoint.type
         )
@@ -117,6 +165,9 @@ class HttpCoreTransport(BaseHTTPTransport):
         start_perf_ns = time.perf_counter_ns()
         headers = None
         reuse_strategy = self.run.cfg.endpoint.connection_reuse
+
+        # Capture reference to avoid race with concurrent shutdown
+        lease_manager = self.lease_manager
 
         try:
             url = self.build_url(request_info)
@@ -140,13 +191,14 @@ class HttpCoreTransport(BaseHTTPTransport):
                         await client.close()
 
                 case ConnectionReuseStrategy.STICKY_USER_SESSIONS:
-                    if not self._sticky_warned:
-                        self._sticky_warned = True
-                        self.warning(
-                            "STICKY_USER_SESSIONS is not applicable for HTTP/2 "
-                            "(multiplexing inherently shares connections); falling back to POOLED"
+                    if lease_manager is None:
+                        raise NotInitializedError(
+                            "HttpCoreLeaseManager not initialized for sticky-user-sessions strategy"
                         )
-                    record = await self.httpcore_client.post_request(
+                    session_client = lease_manager.get_client(
+                        request_info.x_correlation_id
+                    )
+                    record = await session_client.post_request(
                         url,
                         json_bytes,
                         headers,
@@ -165,7 +217,24 @@ class HttpCoreTransport(BaseHTTPTransport):
 
             record.request_headers = redact_headers(headers)
 
+            if (
+                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
+                and lease_manager is not None
+            ):
+                should_release = (
+                    request_info.is_final_turn
+                    or record.cancellation_perf_ns is not None
+                    or record.error is not None
+                )
+                if should_release:
+                    await lease_manager.release(request_info.x_correlation_id)
+
         except asyncio.CancelledError:
+            if (
+                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
+                and lease_manager is not None
+            ):
+                await lease_manager.release(request_info.x_correlation_id)
             raise
         except Exception as e:
             record = RequestRecord(
@@ -177,5 +246,10 @@ class HttpCoreTransport(BaseHTTPTransport):
                 error=ErrorDetails.from_exception(e),
             )
             self.exception(f"HTTP/2 request failed: {e!r}")
+            if (
+                reuse_strategy == ConnectionReuseStrategy.STICKY_USER_SESSIONS
+                and lease_manager is not None
+            ):
+                await lease_manager.release(request_info.x_correlation_id)
 
         return record

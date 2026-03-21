@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.enums import ConnectionReuseStrategy, SSEEventType, SSEFieldType
-from aiperf.common.models import SSEField, SSEMessage
+from aiperf.common.models import ErrorDetails, SSEField, SSEMessage
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.transports.httpcore_client import HttpCoreClient
@@ -1118,18 +1118,24 @@ class TestHttpCoreTransportConnectionReuse:
         ephemeral_mock.close.assert_awaited_once()
         assert record.error is not None
 
-    async def test_sticky_user_sessions_falls_back_to_pooled_with_warning(
-        self,
-    ) -> None:
-        """STICKY_USER_SESSIONS logs a warning and uses the shared pool."""
+    async def test_sticky_user_sessions_uses_per_session_client(self) -> None:
+        """STICKY_USER_SESSIONS uses a dedicated client per session via lease manager."""
         run = _make_transport_run(ConnectionReuseStrategy.STICKY_USER_SESSIONS)
         transport = _make_transport(run)
 
+        from aiperf.transports.httpcore_transport import HttpCoreLeaseManager
+
+        transport.lease_manager = HttpCoreLeaseManager(timeout=30.0)
+
         record_mock = MagicMock()
         record_mock.request_headers = {}
-        transport.httpcore_client.post_request = AsyncMock(return_value=record_mock)
+        record_mock.cancellation_perf_ns = None
+        record_mock.error = None
 
         ri = _make_request_info(run)
+        ri.x_correlation_id = "session-1"
+        ri.is_final_turn = False
+
         with (
             patch.object(
                 transport,
@@ -1137,12 +1143,94 @@ class TestHttpCoreTransportConnectionReuse:
                 return_value="http://localhost:8000/v1/chat/completions",
             ),
             patch.object(transport, "build_headers", return_value={}),
-            patch.object(transport, "warning") as mock_warning,
+            patch.object(
+                transport.lease_manager,
+                "get_client",
+                return_value=MagicMock(
+                    post_request=AsyncMock(return_value=record_mock)
+                ),
+            ) as mock_get_client,
         ):
             await transport.send_request(ri, {"messages": []})
 
-        transport.httpcore_client.post_request.assert_awaited_once()
-        mock_warning.assert_called_once()
-        warning_msg = mock_warning.call_args[0][0]
-        assert "STICKY_USER_SESSIONS" in warning_msg
-        assert "POOLED" in warning_msg
+        mock_get_client.assert_called_once_with("session-1")
+
+    async def test_sticky_user_sessions_releases_on_final_turn(self) -> None:
+        """Lease is released when is_final_turn is True."""
+        run = _make_transport_run(ConnectionReuseStrategy.STICKY_USER_SESSIONS)
+        transport = _make_transport(run)
+
+        from aiperf.transports.httpcore_transport import HttpCoreLeaseManager
+
+        transport.lease_manager = HttpCoreLeaseManager(timeout=30.0)
+
+        record_mock = MagicMock()
+        record_mock.request_headers = {}
+        record_mock.cancellation_perf_ns = None
+        record_mock.error = None
+
+        ri = _make_request_info(run)
+        ri.x_correlation_id = "session-2"
+        ri.is_final_turn = True
+
+        with (
+            patch.object(
+                transport,
+                "build_url",
+                return_value="http://localhost:8000/v1/chat/completions",
+            ),
+            patch.object(transport, "build_headers", return_value={}),
+            patch.object(
+                transport.lease_manager,
+                "get_client",
+                return_value=MagicMock(
+                    post_request=AsyncMock(return_value=record_mock)
+                ),
+            ),
+            patch.object(
+                transport.lease_manager, "release", new_callable=AsyncMock
+            ) as mock_release,
+        ):
+            await transport.send_request(ri, {"messages": []})
+
+        mock_release.assert_awaited_once_with("session-2")
+
+    async def test_sticky_user_sessions_releases_on_error(self) -> None:
+        """Lease is released when the request returns an error."""
+        run = _make_transport_run(ConnectionReuseStrategy.STICKY_USER_SESSIONS)
+        transport = _make_transport(run)
+
+        from aiperf.transports.httpcore_transport import HttpCoreLeaseManager
+
+        transport.lease_manager = HttpCoreLeaseManager(timeout=30.0)
+
+        record_mock = MagicMock()
+        record_mock.request_headers = {}
+        record_mock.cancellation_perf_ns = None
+        record_mock.error = ErrorDetails(type="TestError", message="fail")
+
+        ri = _make_request_info(run)
+        ri.x_correlation_id = "session-3"
+        ri.is_final_turn = False
+
+        with (
+            patch.object(
+                transport,
+                "build_url",
+                return_value="http://localhost:8000/v1/chat/completions",
+            ),
+            patch.object(transport, "build_headers", return_value={}),
+            patch.object(
+                transport.lease_manager,
+                "get_client",
+                return_value=MagicMock(
+                    post_request=AsyncMock(return_value=record_mock)
+                ),
+            ),
+            patch.object(
+                transport.lease_manager, "release", new_callable=AsyncMock
+            ) as mock_release,
+        ):
+            await transport.send_request(ri, {"messages": []})
+
+        mock_release.assert_awaited_once_with("session-3")
