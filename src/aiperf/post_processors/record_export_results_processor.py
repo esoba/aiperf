@@ -38,7 +38,11 @@ class RecordExportResultsProcessor(
             raise PostProcessorDisabled(
                 "Record export results processor is disabled (artifacts.records is not enabled)"
             )
-        if not (isinstance(artifacts.records, list) and "jsonl" in artifacts.records):
+        if (
+            isinstance(artifacts.records, list)
+            and "jsonl" not in artifacts.records
+            and not raw_enabled
+        ):
             raise PostProcessorDisabled(
                 "JSONL record export disabled: 'jsonl' not in artifacts.records"
             )
