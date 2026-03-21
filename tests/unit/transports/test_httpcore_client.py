@@ -777,3 +777,153 @@ class TestHttpCoreTraceData:
         expected_bytes = sum(len(c) for c in sse_chunks)
         assert record.trace_data.response_bytes_total == expected_bytes
         assert record.trace_data.response_chunks_count == len(sse_chunks)
+
+
+# ---------------------------------------------------------------------------
+# cancel_after_ns
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestCancelAfterNs:
+    """Verify cancel_after_ns causes cancellation and correct record fields."""
+
+    async def test_cancel_after_ns_returns_499_error(
+        self,
+        httpcore_client: HttpCoreClient,
+    ) -> None:
+        """cancel_after_ns causes the request to be cancelled with error code 499."""
+        import asyncio
+        from contextlib import asynccontextmanager
+
+        response = MagicMock()
+        response.status = 200
+        response.headers = [(b"content-type", b"application/json")]
+        response.extensions = {"http_version": b"2"}
+
+        # Use an asyncio.Event that never resolves — not affected by looptime speedup
+        never_resolves = asyncio.Event()
+
+        async def _blocking_stream():
+            await never_resolves.wait()
+            yield b'{"ok": true}'
+
+        response.aiter_stream = _blocking_stream
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/complete",
+                b"{}",
+                {"Content-Type": "application/json"},
+                cancel_after_ns=1,  # 1ns — fires immediately
+            )
+
+        assert record.error is not None
+        assert record.error.code == 499
+        assert record.error.type == "RequestCancellationError"
+
+    async def test_cancel_after_ns_sets_cancellation_perf_ns(
+        self,
+        httpcore_client: HttpCoreClient,
+    ) -> None:
+        """cancel_after_ns sets cancellation_perf_ns on the returned record."""
+        import asyncio
+        from contextlib import asynccontextmanager
+
+        response = MagicMock()
+        response.status = 200
+        response.headers = [(b"content-type", b"application/json")]
+        response.extensions = {"http_version": b"2"}
+
+        never_resolves = asyncio.Event()
+
+        async def _blocking_stream():
+            await never_resolves.wait()
+            yield b'{"ok": true}'
+
+        response.aiter_stream = _blocking_stream
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/complete",
+                b"{}",
+                {"Content-Type": "application/json"},
+                cancel_after_ns=1,  # 1ns — fires immediately
+            )
+
+        assert record.cancellation_perf_ns is not None
+        assert record.cancellation_perf_ns > 0
+        assert record.end_perf_ns is not None
+        assert record.cancellation_perf_ns == record.end_perf_ns
+
+    async def test_cancel_after_ns_none_completes_normally(
+        self,
+        httpcore_client: HttpCoreClient,
+    ) -> None:
+        """Without cancel_after_ns, requests complete normally."""
+        from aiperf.common.models import TextResponse
+
+        body = b'{"result": "ok"}'
+        response = make_non_sse_response(body=body)
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/complete",
+                b"{}",
+                {"Content-Type": "application/json"},
+                cancel_after_ns=None,
+            )
+
+        assert record.error is None
+        assert record.cancellation_perf_ns is None
+        assert len(record.responses) == 1
+        assert isinstance(record.responses[0], TextResponse)
+
+    async def test_cancel_after_ns_error_message_contains_type(
+        self,
+        httpcore_client: HttpCoreClient,
+    ) -> None:
+        """Cancellation error message references RequestCancellationError."""
+        import asyncio
+        from contextlib import asynccontextmanager
+
+        response = MagicMock()
+        response.status = 200
+        response.headers = [(b"content-type", b"application/json")]
+        response.extensions = {"http_version": b"2"}
+
+        never_resolves = asyncio.Event()
+
+        async def _blocking_stream():
+            await never_resolves.wait()
+            yield b'{"ok": true}'
+
+        response.aiter_stream = _blocking_stream
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield response
+
+        with patch.object(httpcore_client.pool, "stream", _ctx):
+            record = await httpcore_client.post_request(
+                "http://test.example.com/v1/complete",
+                b"{}",
+                {"Content-Type": "application/json"},
+                cancel_after_ns=1,
+            )
+
+        assert record.error is not None
+        assert record.error.type == "RequestCancellationError"
+        assert "cancelled" in record.error.message.lower()

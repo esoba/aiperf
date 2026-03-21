@@ -104,6 +104,7 @@ class HttpCoreTransport(BaseHTTPTransport):
                 url,
                 json_bytes,
                 headers,
+                cancel_after_ns=request_info.cancel_after_ns,
                 first_token_callback=first_token_callback,
             )
             record.request_headers = redact_headers(headers)

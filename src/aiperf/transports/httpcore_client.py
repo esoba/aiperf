@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import contextlib
 import ssl
 import time
 from typing import TYPE_CHECKING, Any
@@ -324,6 +326,17 @@ class HttpCoreClient(AIPerfLoggerMixin):
             self.error(f"Error in SSE response: {e!r}")
             record.error = ErrorDetails.from_exception(e)
 
+        except asyncio.CancelledError:
+            record.end_perf_ns = time.perf_counter_ns()
+            record.cancellation_perf_ns = record.end_perf_ns
+            record.error = ErrorDetails(
+                type="RequestCancellationError",
+                message="Request cancelled by external signal",
+                code=499,
+            )
+            self.debug("Request cancelled by external signal")
+            raise
+
         except Exception as e:
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Unexpected error in HTTP request: {e!r}")
@@ -331,12 +344,62 @@ class HttpCoreClient(AIPerfLoggerMixin):
 
         return record
 
+    async def _request_with_cancellation(
+        self,
+        url: str,
+        payload: bytes,
+        headers: dict[str, str],
+        cancel_after_ns: int,
+        first_token_callback: "FirstTokenCallback | None" = None,
+    ) -> RequestRecord:
+        """Send POST request with cancellation after specified delay.
+
+        The timer starts from request submission (conservative vs. aiohttp which
+        waits for send-complete). This is safe but may cancel slightly earlier.
+
+        When cancelled, returns a RequestRecord with cancellation_perf_ns set and
+        error code 499.
+        """
+        start_perf_ns = time.perf_counter_ns()
+        timeout_s = cancel_after_ns / 1e9
+
+        request_task = asyncio.create_task(
+            self._request(
+                "POST",
+                url,
+                headers,
+                data=payload,
+                first_token_callback=first_token_callback,
+            )
+        )
+
+        try:
+            return await asyncio.wait_for(request_task, timeout=timeout_s)
+        except asyncio.TimeoutError:
+            request_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await request_task
+
+            end_perf_ns = time.perf_counter_ns()
+            self.debug(f"Request cancelled {timeout_s:.3f}s after submission")
+            return RequestRecord(
+                start_perf_ns=start_perf_ns,
+                end_perf_ns=end_perf_ns,
+                cancellation_perf_ns=end_perf_ns,
+                error=ErrorDetails(
+                    type="RequestCancellationError",
+                    message=f"Request cancelled {timeout_s:.3f}s after submission",
+                    code=499,
+                ),
+            )
+
     async def post_request(
         self,
         url: str,
         payload: bytes,
         headers: dict[str, str],
         *,
+        cancel_after_ns: int | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
         **kwargs: Any,
     ) -> RequestRecord:
@@ -346,12 +409,22 @@ class HttpCoreClient(AIPerfLoggerMixin):
             url: Target URL with scheme
             payload: Request body bytes
             headers: HTTP headers dict
+            cancel_after_ns: If set, cancel the request this many nanoseconds after
+                submission. Returns a record with cancellation_perf_ns set and error code 499.
             first_token_callback: Optional callback fired on first SSE message with ttft_ns
             **kwargs: Additional arguments passed to _request()
 
         Returns:
             RequestRecord with status, timing data, responses, and optional error
         """
+        if cancel_after_ns is not None:
+            return await self._request_with_cancellation(
+                url,
+                payload,
+                headers,
+                cancel_after_ns,
+                first_token_callback=first_token_callback,
+            )
         return await self._request(
             "POST",
             url,
