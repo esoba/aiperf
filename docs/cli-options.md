@@ -228,7 +228,7 @@ Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a r
 #### `--transport`, `--transport-type` `<str>`
 
 HTTP transport protocol (http/https). Auto-detected from URL scheme if not specified. Explicit setting overrides auto-detection.
-<br/>_Choices: [`http`]_
+<br/>_Choices: [`http`, `http2`]_
 
 #### `--use-legacy-max-tokens`
 
@@ -1329,7 +1329,7 @@ Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a r
 #### `--transport`, `--transport-type` `<str>`
 
 HTTP transport protocol (http/https). Auto-detected from URL scheme if not specified. Explicit setting overrides auto-detection.
-<br/>_Choices: [`http`]_
+<br/>_Choices: [`http`, `http2`]_
 
 #### `--use-legacy-max-tokens`
 
@@ -2160,7 +2160,7 @@ Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a r
 #### `--transport`, `--transport-type` `<str>`
 
 HTTP transport protocol (http/https). Auto-detected from URL scheme if not specified. Explicit setting overrides auto-detection.
-<br/>_Choices: [`http`]_
+<br/>_Choices: [`http`, `http2`]_
 
 #### `--use-legacy-max-tokens`
 
@@ -3086,7 +3086,7 @@ Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a r
 #### `--transport`, `--transport-type` `<str>`
 
 HTTP transport protocol (http/https). Auto-detected from URL scheme if not specified. Explicit setting overrides auto-detection.
-<br/>_Choices: [`http`]_
+<br/>_Choices: [`http`, `http2`]_
 
 #### `--use-legacy-max-tokens`
 

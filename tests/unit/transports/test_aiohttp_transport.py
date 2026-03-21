@@ -185,6 +185,35 @@ class TestAioHttpTransport:
             == "http://localhost:8000/v1/chat/completions"
         )
 
+    @pytest.mark.parametrize(
+        "base_url,custom_endpoint,expected_url",
+        [
+            (
+                "http://localhost:8000/v1/chat/completions",
+                "/v1/chat/completions",
+                "http://localhost:8000/v1/chat/completions",
+            ),
+            (
+                "http://localhost:8000/v1/chat/completions",
+                "v1/chat/completions",
+                "http://localhost:8000/v1/chat/completions",
+            ),
+            (
+                "https://api.example.com/v1",
+                "v1/chat/completions",
+                "https://api.example.com/v1/chat/completions",
+            ),
+        ],
+        ids=["custom-path-full-url", "custom-path-no-slash", "v1-prefix-dedup"],
+    )
+    def test_get_url_dedup_custom_path(self, base_url, custom_endpoint, expected_url):
+        """Custom endpoint path is deduped when URL already contains it."""
+        model_endpoint = make_run(base_url=base_url, custom_endpoint=custom_endpoint)
+        transport = AioHttpTransport(run=model_endpoint)
+        request_info = create_request_info(model_endpoint.cfg)
+        url = transport.get_url(request_info)
+        assert url == expected_url
+
     @pytest.mark.asyncio
     async def test_send_request_success(self, transport, config_non_streaming):
         """Test successful HTTP request."""

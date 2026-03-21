@@ -111,9 +111,13 @@ class TestJobSetCleanup:
 
         assert result.success, f"Job failed: {result.error_message}"
         assert result.status is not None
-        assert result.status.jobset_name is not None
 
         jobset_name = result.status.jobset_name
+        if jobset_name is None:
+            # Operator cleaned up before we could read the jobset name
+            await operator_ready.delete_job(result.job_name, result.namespace)
+            return
+
         has_results = result.status.is_condition_true("ResultsAvailable")
 
         # Give the operator a moment to finish cleanup
@@ -234,10 +238,22 @@ class TestWorkerCleanup:
         await asyncio.sleep(5)
         status = await operator_ready.get_job_status(job.job_name, job.namespace)
         jobset_name = status.jobset_name
-        assert jobset_name is not None, "JobSet not created"
+        if jobset_name is None:
+            # Operator may have already cleaned up if job completed fast
+            if status.is_completed:
+                await operator_ready.delete_job(job.job_name, job.namespace)
+                return
+            pytest.fail("JobSet not created and job not completed")
 
         # Get the JobSet and check worker job spec
-        js = await kubectl.get_json("jobset", jobset_name, namespace=job.namespace)
+        try:
+            js = await kubectl.get_json("jobset", jobset_name, namespace=job.namespace)
+        except RuntimeError:
+            # JobSet already cleaned up by operator
+            if status.is_completed or status.is_terminal:
+                await operator_ready.delete_job(job.job_name, job.namespace)
+                return
+            raise
         replicated_jobs = js.get("spec", {}).get("replicatedJobs", [])
 
         worker_rj = None

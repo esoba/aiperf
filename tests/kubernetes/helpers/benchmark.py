@@ -985,8 +985,8 @@ class BenchmarkDeployer:
                 check=False,
             )
 
-    async def cleanup_all(self) -> None:
-        """Clean up all deployed benchmarks in parallel."""
+    async def cleanup_all(self, timeout: int = 120) -> None:
+        """Clean up all deployed benchmarks, deduplicating by namespace."""
 
         async def _safe_cleanup(result: BenchmarkResult) -> None:
             try:
@@ -995,7 +995,19 @@ class BenchmarkDeployer:
                 logger.warning(f"Failed to cleanup {result.namespace}: {e}")
 
         if self._deployments:
-            await asyncio.gather(*[_safe_cleanup(r) for r in self._deployments])
+            seen: set[str] = set()
+            unique = []
+            for r in self._deployments:
+                if r.namespace not in seen:
+                    seen.add(r.namespace)
+                    unique.append(r)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*[_safe_cleanup(r) for r in unique]),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Cleanup timed out after {timeout}s, continuing")
 
         self._deployments.clear()
 

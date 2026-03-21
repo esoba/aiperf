@@ -27,8 +27,8 @@ from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
 from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
+from aiperf.transports.base_http_transport import BaseHTTPTransport
 from aiperf.transports.base_transports import (
-    BaseTransport,
     FirstTokenCallback,
     TransportMetadata,
 )
@@ -94,7 +94,7 @@ class ConnectionLeaseManager(AIPerfLoggerMixin):
             await lease.close()
 
 
-class AioHttpTransport(BaseTransport):
+class AioHttpTransport(BaseHTTPTransport):
     """HTTP/1.1 transport implementation using aiohttp.
 
     Provides high-performance async HTTP client with:
@@ -152,76 +152,6 @@ class AioHttpTransport(BaseTransport):
             transport_type=TransportType.HTTP,
             url_schemes=["http", "https"],
         )
-
-    def get_transport_headers(self, request_info: RequestInfo) -> dict[str, str]:
-        """Build HTTP-specific headers based on streaming mode.
-
-        Args:
-            request_info: Request context with endpoint configuration
-
-        Returns:
-            HTTP headers (Content-Type and Accept)
-        """
-        accept = (
-            "text/event-stream"
-            if request_info.config.endpoint.streaming
-            else "application/json"
-        )
-        return {"Content-Type": "application/json", "Accept": accept}
-
-    def get_url(self, request_info: RequestInfo) -> str:
-        """Build HTTP URL from base_url and endpoint path.
-
-        Constructs the full URL by combining the base URL with the endpoint path
-        from metadata or custom endpoint. Adds http:// scheme if missing.
-
-        When multiple URLs are configured, uses request_info.url_index to select
-        the appropriate URL for load balancing.
-
-        Args:
-            request_info: Request context with model endpoint info
-
-        Returns:
-            Complete HTTP URL with scheme and endpoint path
-        """
-        endpoint_info = request_info.config.endpoint
-
-        # Start with base URL - use url_index for multi-URL load balancing
-        url_index = request_info.url_index if request_info.url_index is not None else 0
-        base_url = endpoint_info.urls[url_index % len(endpoint_info.urls)].rstrip("/")
-
-        # Determine the endpoint path
-        if endpoint_info.path:
-            # Use custom endpoint path if provided
-            path = endpoint_info.path.lstrip("/")
-            url = f"{base_url}/{path}"
-        else:
-            # Get endpoint path from endpoint metadata
-            endpoint_metadata = plugins.get_endpoint_metadata(endpoint_info.type)
-            endpoint_path = endpoint_metadata.endpoint_path
-            if (
-                self.run.cfg.endpoint.streaming
-                and endpoint_metadata.streaming_path is not None
-            ):
-                endpoint_path = endpoint_metadata.streaming_path
-            if not endpoint_path:
-                # No endpoint path, just use base URL
-                url = base_url
-
-            else:
-                path = endpoint_path.lstrip("/")
-                # Avoid duplicate path when base URL already contains the full endpoint path
-                # (e.g. http://server:8000/v1/chat/completions with path v1/chat/completions)
-                if base_url.endswith(f"/{path}"):
-                    url = base_url
-                # Handle /v1 base URL with v1/ path prefix to avoid duplication
-                elif base_url.endswith("/v1") and path.startswith("v1/"):
-                    path = path.removeprefix("v1/")
-                    url = f"{base_url}/{path}"
-                else:
-                    url = f"{base_url}/{path}"
-        # Add scheme if missing for proper parsing
-        return url if url.startswith("http") else f"http://{url}"
 
     async def send_request(
         self,

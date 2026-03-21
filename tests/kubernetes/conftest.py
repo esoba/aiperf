@@ -13,6 +13,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -1163,10 +1164,14 @@ async def helm_deployed(
 
     yield helm_deployer
 
-    # Cleanup Helm release
+    # Only clean up deployed jobs, NOT the Helm release.
+    # The operator must persist across modules for tests that share
+    # the package-scoped cluster.
     if not k8s_settings.skip_cleanup:
-        async with timed_operation("Uninstalling Helm release"):
-            await helm_deployer.uninstall_chart()
+        try:
+            await asyncio.wait_for(helm_deployer.cleanup_all(), timeout=120)
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"Job cleanup timed out: {e}")
 
 
 @pytest.fixture

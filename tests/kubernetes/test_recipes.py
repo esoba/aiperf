@@ -59,11 +59,8 @@ def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
     # -- models --
     bench["models"] = [MOCK_MODEL]
 
-    # -- endpoint --
-    ep = bench.get("endpoint", {})
-    ep["urls"] = [MOCK_SERVER_URL]
-    ep.pop("custom_endpoint", None)
-    bench["endpoint"] = ep
+    # -- endpoint: replace entirely with mock-compatible config --
+    bench["endpoint"] = {"urls": [MOCK_SERVER_URL]}
 
     # -- tokenizer --
     bench["tokenizer"] = {"name": MOCK_TOKENIZER}
@@ -80,7 +77,9 @@ def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
         },
     }
 
-    # -- phases (small counts) --
+    # -- phases (small counts) - replace any existing warmup/profiling --
+    bench.pop("warmup", None)
+    bench.pop("profiling", None)
     bench["phases"] = {
         "warmup": {
             "type": "concurrency",
@@ -101,20 +100,14 @@ def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
     # -- remove sections that won't work in test env --
     bench.pop("server_metrics", None)
     bench.pop("artifacts", None)
+    bench.pop("random_seed", None)
 
     # -- image --
     spec["image"] = image
     spec["imagePullPolicy"] = "Never"
 
-    # -- strip podTemplate of PVC volumes and imagePullSecrets --
-    pt = spec.get("podTemplate", {})
-    pt.pop("imagePullSecrets", None)
-    pt.pop("volumes", None)
-    pt.pop("volumeMounts", None)
-    if not pt:
-        spec.pop("podTemplate", None)
-    else:
-        spec["podTemplate"] = pt
+    # -- strip podTemplate of production-only fields --
+    spec.pop("podTemplate", None)
 
     # -- short unique name (job_id max 35 chars) --
     original_name = doc["metadata"]["name"]

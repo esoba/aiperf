@@ -408,6 +408,16 @@ transport:
       transport_type: http
       url_schemes: [http, https]
 
+  http2:
+    class: aiperf.transports.httpcore_transport:HttpCoreTransport
+    description: |
+      HTTP/2 transport implementation using httpcore.
+      Provides HTTP/2 multiplexing with ~100 concurrent streams per connection,
+      automatic HTTP/1.1 fallback, and connection pooling.
+    metadata:
+      transport_type: http2
+      url_schemes: [http, https]
+
 # =============================================================================
 # Dataset Composers
 # =============================================================================

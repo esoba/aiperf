@@ -515,11 +515,16 @@ class OperatorDeployer:
             stderr.decode() if stderr else "",
         )
 
-    async def uninstall_operator(self) -> None:
-        """Uninstall the operator."""
+    async def uninstall_operator(self, timeout: int = 90) -> None:
+        """Uninstall the operator with a timeout to prevent fixture hangs."""
         logger.info("Uninstalling operator")
+        try:
+            await asyncio.wait_for(self._do_uninstall(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning(f"Operator uninstall timed out after {timeout}s")
 
-        # Also clean up any helm release
+    async def _do_uninstall(self) -> None:
+        """Inner uninstall logic."""
         await self._cleanup_existing_operator()
 
         await self.kubectl.delete(

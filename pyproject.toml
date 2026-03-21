@@ -67,6 +67,7 @@ dependencies = [
   "python-multipart>=0.0.22",
   "kr8s>=0.20.15",
   "duckdb>=1.5.0",
+  "httpcore[http2]>=1.0.0",
 ]
 
 # CLI Entrypoints

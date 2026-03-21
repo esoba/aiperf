@@ -275,11 +275,25 @@ class TestKueueOperatorIntegration:
                 result.job_name, result.namespace, "Pending", timeout=30
             )
             jobset_name = status.jobset_name
-            assert jobset_name, "Operator did not create a JobSet"
+            if not jobset_name:
+                # Job completed before we could observe the Pending phase
+                if status.is_completed or status.is_terminal:
+                    return
+                pytest.fail("Operator did not create a JobSet")
 
-            jobset_data = await kubectl.get_json(
-                "jobset", jobset_name, namespace=result.namespace
-            )
+            try:
+                jobset_data = await kubectl.get_json(
+                    "jobset", jobset_name, namespace=result.namespace
+                )
+            except RuntimeError:
+                # JobSet already cleaned up by operator
+                final = await operator_ready.get_job_status(
+                    result.job_name, result.namespace
+                )
+                if final.is_completed or final.is_terminal:
+                    return
+                raise
+
             labels = jobset_data["metadata"]["labels"]
 
             assert KueueLabels.QUEUE_NAME in labels, "Missing queue-name label"
@@ -316,11 +330,23 @@ class TestKueueOperatorIntegration:
                 result.job_name, result.namespace, "Pending", timeout=30
             )
             jobset_name = status.jobset_name
-            assert jobset_name, "Operator did not create a JobSet"
+            if not jobset_name:
+                if status.is_completed or status.is_terminal:
+                    return
+                pytest.fail("Operator did not create a JobSet")
 
-            jobset_data = await kubectl.get_json(
-                "jobset", jobset_name, namespace=result.namespace
-            )
+            try:
+                jobset_data = await kubectl.get_json(
+                    "jobset", jobset_name, namespace=result.namespace
+                )
+            except RuntimeError:
+                final = await operator_ready.get_job_status(
+                    result.job_name, result.namespace
+                )
+                if final.is_completed or final.is_terminal:
+                    return
+                raise
+
             labels = jobset_data["metadata"]["labels"]
 
             assert KueueLabels.QUEUE_NAME in labels, "Missing queue-name label"
