@@ -298,7 +298,7 @@ class TestDeadlockPrevention:
         lc, pr, _ = _components(cfg)
         lc.start()
         for i in range(3):
-            _, final = pr.increment_sent(_turn(f"c{i}"))
+            _, _, final = pr.increment_sent(_turn(f"c{i}"))
             if final:
                 lc.mark_sending_complete()
                 pr.freeze_sent_counts()
@@ -421,7 +421,7 @@ class TestMultiTurnCreditRace:
                 conversation_id="cA", x_correlation_id="x-cA", turn_index=2, num_turns=3
             )
         )
-        _, final = pr.increment_sent(
+        _, _, final = pr.increment_sent(
             TurnToSend(
                 conversation_id="cB", x_correlation_id="x-cB", turn_index=2, num_turns=3
             )

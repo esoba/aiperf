@@ -822,6 +822,96 @@ class TestRecordExportResultsProcessorHttpTrace:
         assert record.trace_data is None
 
 
+class TestRecordExportResultsProcessorPerChunkData:
+    """Test RecordExportResultsProcessor per-chunk data filtering."""
+
+    @pytest.mark.asyncio
+    async def test_list_metrics_excluded_by_default(
+        self,
+        user_config_records_export: AIPerfConfig,
+        sample_metric_records_message: MetricRecordsMessage,
+        mock_metric_registry: Mock,
+    ):
+        """Test that list-valued metrics are excluded when export_per_chunk_data is False (default)."""
+        mock_display_dict = {
+            "request_latency": MetricValue(value=1.0, unit="ms"),
+            "inter_chunk_latency": MetricValue(value=[0.1, 0.2, 0.3], unit="ms"),
+        }
+
+        processor = RecordExportResultsProcessor(
+            service_id="records-manager",
+            run=_make_run(user_config_records_export),
+        )
+        assert processor.export_per_chunk_data is False
+
+        async with aiperf_lifecycle(processor):
+            with patch.object(
+                MetricRecordDict, "to_display_dict", return_value=mock_display_dict
+            ):
+                await processor.process_result(sample_metric_records_message.to_data())
+
+        lines = processor.output_file.read_text().splitlines()
+        assert len(lines) == 1
+        record = MetricRecordInfo.model_validate_json(lines[0])
+        assert "request_latency" in record.metrics
+        assert "inter_chunk_latency" not in record.metrics
+
+    @pytest.mark.asyncio
+    async def test_list_metrics_included_when_enabled(
+        self,
+        tmp_artifact_dir: Path,
+        sample_metric_records_message: MetricRecordsMessage,
+        mock_metric_registry: Mock,
+    ):
+        """Test that list-valued metrics are included when export_per_chunk_data is True."""
+        config = AIPerfConfig(
+            models=["test-model"],
+            endpoint={
+                "urls": ["http://localhost:8000/v1/chat/completions"],
+                "type": EndpointType.CHAT,
+            },
+            datasets={
+                "default": {
+                    "type": "synthetic",
+                    "entries": 100,
+                    "prompts": {"isl": 128, "osl": 64},
+                }
+            },
+            phases={
+                "default": {"type": "concurrency", "requests": 10, "concurrency": 1}
+            },
+            artifacts={
+                "dir": str(tmp_artifact_dir),
+                "records": ["jsonl"],
+                "per_chunk_data": True,
+            },
+        )
+
+        mock_display_dict = {
+            "request_latency": MetricValue(value=1.0, unit="ms"),
+            "inter_chunk_latency": MetricValue(value=[0.1, 0.2, 0.3], unit="ms"),
+        }
+
+        processor = RecordExportResultsProcessor(
+            service_id="records-manager",
+            run=_make_run(config),
+        )
+        assert processor.export_per_chunk_data is True
+
+        async with aiperf_lifecycle(processor):
+            with patch.object(
+                MetricRecordDict, "to_display_dict", return_value=mock_display_dict
+            ):
+                await processor.process_result(sample_metric_records_message.to_data())
+
+        lines = processor.output_file.read_text().splitlines()
+        assert len(lines) == 1
+        record = MetricRecordInfo.model_validate_json(lines[0])
+        assert "request_latency" in record.metrics
+        assert "inter_chunk_latency" in record.metrics
+        assert record.metrics["inter_chunk_latency"].value == [0.1, 0.2, 0.3]
+
+
 class TestRecordExportResultsProcessorLifecycle:
     """Test RecordExportResultsProcessor lifecycle."""
 

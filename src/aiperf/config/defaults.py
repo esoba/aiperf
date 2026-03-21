@@ -9,6 +9,7 @@ from aiperf.common.enums import (
     ConnectionReuseStrategy,
     ExportLevel,
     ModelSelectionStrategy,
+    RecordExportFormat,
 )
 from aiperf.plugin.enums import (
     CommunicationBackend,
@@ -76,6 +77,7 @@ class OutputDefaults:
     PROFILE_EXPORT_AIPERF_TIMESLICES_JSON_FILE = Path(
         "profile_export_aiperf_timeslices.json"
     )
+    PROFILE_EXPORT_RECORDS_CSV_FILE = Path("profile_export_records.csv")
     PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
     PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")
@@ -85,7 +87,9 @@ class OutputDefaults:
     SERVER_METRICS_EXPORT_PARQUET_FILE = Path("server_metrics_export.parquet")
     EXPORT_LEVEL = ExportLevel.RECORDS
     EXPORT_HTTP_TRACE = False
+    EXPORT_PER_CHUNK_DATA = False
     SHOW_TRACE_TIMING = False
+    RECORD_EXPORT_FORMATS = [RecordExportFormat.JSONL]
     SLICE_DURATION = None
 
 

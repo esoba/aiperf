@@ -649,6 +649,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         return RequestInfo(
             config=self.run.cfg,
             credit_num=credit.id,
+            session_num=credit.session_num,
             credit_phase=credit.phase,
             cancel_after_ns=credit.cancel_after_ns,
             x_request_id=x_request_id,
@@ -724,6 +725,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         turn_index=0,
                         turns=[],
                         credit_num=credit_context.credit.id,
+                        session_num=credit_context.credit.session_num,
                         credit_phase=credit_context.credit.phase,
                         x_request_id=str(uuid.uuid4()),
                         x_correlation_id=credit_context.credit.x_correlation_id,

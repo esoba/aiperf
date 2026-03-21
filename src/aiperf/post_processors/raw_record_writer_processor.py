@@ -93,7 +93,9 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
                 model_endpoint=self._model_endpoint,
                 turns=record.request.turns,
                 turn_index=metadata.turn_index or 0,
-                credit_num=metadata.session_num,
+                credit_num=metadata.request_num
+                if metadata.request_num is not None
+                else metadata.session_num,
                 credit_phase=metadata.benchmark_phase,
                 x_request_id=metadata.x_request_id or "",
                 x_correlation_id=metadata.x_correlation_id or "",

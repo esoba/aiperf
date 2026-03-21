@@ -103,6 +103,16 @@ class ArtifactsConfig(BaseModel):
         ),
     ]
 
+    per_chunk_data: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Include per-chunk list data (e.g., inter_chunk_latency arrays) "
+            "in per-record exports. These arrays contain one timing value per SSE "
+            "chunk and can be very large for long responses.",
+        ),
+    ]
+
     slice_duration: Annotated[
         float | None,
         BeforeValidator(_normalize_duration),
@@ -181,6 +191,11 @@ class ArtifactsConfig(BaseModel):
     def profile_export_timeslices_json_file(self) -> Path:
         """Get the path for the timeslices JSON export file."""
         return self.dir / f"profile_export_{self.prefix}_timeslices.json"
+
+    @property
+    def profile_export_records_csv_file(self) -> Path:
+        """Get the path for the per-record CSV export file."""
+        return self.dir / "profile_export_records.csv"
 
     @property
     def profile_export_jsonl_file(self) -> Path:

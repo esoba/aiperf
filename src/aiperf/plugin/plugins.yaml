@@ -694,6 +694,12 @@ results_processor:
       Record export processor that writes per-record metrics to JSONL files with
       display unit conversion and filtering. Enabled when export_level is RECORDS.
 
+  record_export_csv:
+    class: aiperf.post_processors.record_export_csv_processor:RecordExportCSVProcessor
+    description: |
+      Record export processor that writes per-record metrics to CSV files with
+      flat column layout. Enabled when export_level is RECORDS or RAW.
+
   server_metrics_accumulator:
     class: aiperf.server_metrics.accumulator:ServerMetricsAccumulator
     description: |

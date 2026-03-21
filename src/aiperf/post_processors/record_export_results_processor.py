@@ -38,6 +38,10 @@ class RecordExportResultsProcessor(
             raise PostProcessorDisabled(
                 "Record export results processor is disabled (artifacts.records is not enabled)"
             )
+        if not (isinstance(artifacts.records, list) and "jsonl" in artifacts.records):
+            raise PostProcessorDisabled(
+                "JSONL record export disabled: 'jsonl' not in artifacts.records"
+            )
 
         # Build output file path from artifacts config
         output_file = artifacts.profile_export_jsonl_file
@@ -59,9 +63,12 @@ class RecordExportResultsProcessor(
             Environment.DEV.MODE and Environment.DEV.SHOW_EXPERIMENTAL_METRICS
         )
         self.export_http_trace = config.artifacts.trace
+        self.export_per_chunk_data = config.artifacts.per_chunk_data
         self.info(f"Record metrics export enabled: {self.output_file}")
         if self.export_http_trace:
             self.info("HTTP trace export enabled (artifacts.trace)")
+        if self.export_per_chunk_data:
+            self.info("Per-chunk data export enabled (artifacts.per_chunk_data)")
 
     async def process_result(self, record_data: MetricRecordsData) -> None:
         try:
@@ -73,6 +80,14 @@ class RecordExportResultsProcessor(
             # (error records should always be exported for debugging/analysis)
             if not display_metrics and not record_data.error:
                 return
+
+            # Filter out list-valued metrics (per-chunk arrays) unless explicitly enabled
+            if not self.export_per_chunk_data:
+                display_metrics = {
+                    k: v
+                    for k, v in display_metrics.items()
+                    if not isinstance(v.value, list)
+                }
 
             # Convert trace data to export format (wall-clock timestamps) if enabled
             export_trace_data = None

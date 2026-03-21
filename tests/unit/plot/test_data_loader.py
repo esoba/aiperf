@@ -148,6 +148,7 @@ class TestDataLoaderLoadJsonl:
                 orjson.dumps(
                     {
                         "metadata": {
+                            "request_num": 0,
                             "session_num": 0,
                             "request_start_ns": 1000000000,
                             "request_end_ns": 1500000000,
@@ -167,6 +168,7 @@ class TestDataLoaderLoadJsonl:
                 orjson.dumps(
                     {
                         "metadata": {
+                            "request_num": 1,
                             "session_num": 1,
                             "request_start_ns": 2000000000,
                             "request_end_ns": 2500000000,

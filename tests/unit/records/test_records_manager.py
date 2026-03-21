@@ -43,6 +43,7 @@ def create_metric_record_data(
     """Create a MetricRecordsData object with sensible defaults for testing."""
     return MetricRecordsData(
         metadata=MetricRecordMetadata(
+            request_num=0,
             session_num=0,
             conversation_id="test",
             turn_index=0,
