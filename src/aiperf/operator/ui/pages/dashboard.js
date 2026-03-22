@@ -216,24 +216,30 @@ function ThroughputLatencyScatter({ completedJobs }) {
 // --- Main Dashboard ---
 
 /**
- * Merge leaderboard entries into jobs list by job_id.
- * Creates a map of jobId -> { throughputRps, latencyP99Ms, ttftMs, tokenThroughput }.
+ * Build a metrics map from per-job summaries fetched in parallel.
+ * Single leaderboard call for throughput ranking, then fetch summaries
+ * only for jobs that appear in the leaderboard (completed + have results).
  */
-function buildMetricsMap(tpsEntries, latEntries, ttftEntries, tokEntries) {
-  const map = {};
-  const ensure = (id) => { if (!map[id]) map[id] = {}; return map[id]; };
-  for (const e of (tpsEntries ?? [])) ensure(e.job_id).throughputRps = e.value;
-  for (const e of (latEntries ?? [])) ensure(e.job_id).latencyP99Ms = e.value;
-  for (const e of (ttftEntries ?? [])) ensure(e.job_id).ttftMs = e.value;
-  for (const e of (tokEntries ?? [])) ensure(e.job_id).tokenThroughput = e.value;
-  return map;
+function enrichJobsFromSummaries(jobList, summaryMap) {
+  return jobList.map(j => {
+    const id = j.jobId ?? j.name;
+    const s = summaryMap[id];
+    if (!s) return j;
+    return {
+      ...j,
+      throughputRps: j.throughputRps ?? s.throughputRps ?? null,
+      latencyP99Ms: j.latencyP99Ms ?? s.latencyP99Ms ?? null,
+      ttftMs: j.ttftMs ?? s.ttftMs ?? null,
+      tokenThroughput: j.tokenThroughput ?? s.tokenThroughput ?? null,
+    };
+  });
 }
 
 export function Dashboard() {
   const [localJobs, setLocalJobs] = useState(jobs.value);
   const [cluster, setCluster] = useState(clusterInfo.value);
   const [clusterError, setClusterError] = useState(false);
-  const [metricsMap, setMetricsMap] = useState({});
+  const [summaryMap, setSummaryMap] = useState({});
 
   useEffect(() => {
     const ac = new AbortController();
@@ -250,35 +256,38 @@ export function Dashboard() {
         setCluster(data);
         setClusterError(false);
       } catch (_e) { setClusterError(true); }
-    }, 5000, ac.signal);
-    // Fetch leaderboard data for all metrics to enrich jobs
+    }, 10000, ac.signal);
+    // Single leaderboard call to discover which jobs have results,
+    // then fetch per-job summaries for the top entries
     poll(async () => {
       try {
-        const [tps, lat, ttft, tok] = await Promise.all([
-          api.getLeaderboard('request_throughput', 'avg'),
-          api.getLeaderboard('request_latency', 'p99'),
-          api.getLeaderboard('time_to_first_token', 'avg'),
-          api.getLeaderboard('output_token_throughput', 'avg'),
-        ]);
-        setMetricsMap(buildMetricsMap(
-          tps?.entries, lat?.entries, ttft?.entries, tok?.entries,
-        ));
-      } catch (_e) { /* leaderboard not available yet */ }
-    }, 10000, ac.signal);
+        const lb = await api.getLeaderboard('request_throughput', 'avg');
+        const entries = lb?.entries ?? [];
+        if (entries.length === 0) return;
+        // Fetch summaries in parallel for all leaderboard entries
+        const results = await Promise.allSettled(
+          entries.map(e =>
+            api.getJobSummary(e.namespace, e.job_id).then(s => ({ id: e.job_id, ns: e.namespace, summary: s }))
+          )
+        );
+        const newMap = { ...summaryMap };
+        for (const r of results) {
+          if (r.status !== 'fulfilled') continue;
+          const { id, summary: s } = r.value;
+          newMap[id] = {
+            throughputRps: s?.request_throughput?.avg ?? null,
+            latencyP99Ms: s?.request_latency?.p99 ?? null,
+            ttftMs: s?.time_to_first_token?.avg ?? null,
+            tokenThroughput: s?.output_token_throughput?.avg ?? null,
+          };
+        }
+        setSummaryMap(newMap);
+      } catch (_e) { /* not available yet */ }
+    }, 15000, ac.signal);
     return () => ac.abort();
   }, []);
 
-  // Enrich jobs with metrics from leaderboard data
-  const allJobs = localJobs.map(j => {
-    const m = metricsMap[j.jobId ?? j.name] ?? {};
-    return {
-      ...j,
-      throughputRps: j.throughputRps ?? m.throughputRps ?? null,
-      latencyP99Ms: j.latencyP99Ms ?? m.latencyP99Ms ?? null,
-      ttftMs: j.ttftMs ?? m.ttftMs ?? null,
-      tokenThroughput: j.tokenThroughput ?? m.tokenThroughput ?? null,
-    };
-  });
+  const allJobs = enrichJobsFromSummaries(localJobs, summaryMap);
   const running = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'running' || p === 'initializing' || p === 'pending'; });
   const completed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'completed' || p === 'succeeded'; });
   const failed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'failed' || p === 'error'; });
