@@ -215,10 +215,25 @@ function ThroughputLatencyScatter({ completedJobs }) {
 
 // --- Main Dashboard ---
 
+/**
+ * Merge leaderboard entries into jobs list by job_id.
+ * Creates a map of jobId -> { throughputRps, latencyP99Ms, ttftMs, tokenThroughput }.
+ */
+function buildMetricsMap(tpsEntries, latEntries, ttftEntries, tokEntries) {
+  const map = {};
+  const ensure = (id) => { if (!map[id]) map[id] = {}; return map[id]; };
+  for (const e of (tpsEntries ?? [])) ensure(e.job_id).throughputRps = e.value;
+  for (const e of (latEntries ?? [])) ensure(e.job_id).latencyP99Ms = e.value;
+  for (const e of (ttftEntries ?? [])) ensure(e.job_id).ttftMs = e.value;
+  for (const e of (tokEntries ?? [])) ensure(e.job_id).tokenThroughput = e.value;
+  return map;
+}
+
 export function Dashboard() {
   const [localJobs, setLocalJobs] = useState(jobs.value);
   const [cluster, setCluster] = useState(clusterInfo.value);
   const [clusterError, setClusterError] = useState(false);
+  const [metricsMap, setMetricsMap] = useState({});
 
   useEffect(() => {
     const ac = new AbortController();
@@ -236,10 +251,34 @@ export function Dashboard() {
         setClusterError(false);
       } catch (_e) { setClusterError(true); }
     }, 5000, ac.signal);
+    // Fetch leaderboard data for all metrics to enrich jobs
+    poll(async () => {
+      try {
+        const [tps, lat, ttft, tok] = await Promise.all([
+          api.getLeaderboard('request_throughput', 'avg'),
+          api.getLeaderboard('request_latency', 'p99'),
+          api.getLeaderboard('time_to_first_token', 'avg'),
+          api.getLeaderboard('output_token_throughput', 'avg'),
+        ]);
+        setMetricsMap(buildMetricsMap(
+          tps?.entries, lat?.entries, ttft?.entries, tok?.entries,
+        ));
+      } catch (_e) { /* leaderboard not available yet */ }
+    }, 10000, ac.signal);
     return () => ac.abort();
   }, []);
 
-  const allJobs = localJobs;
+  // Enrich jobs with metrics from leaderboard data
+  const allJobs = localJobs.map(j => {
+    const m = metricsMap[j.jobId ?? j.name] ?? {};
+    return {
+      ...j,
+      throughputRps: j.throughputRps ?? m.throughputRps ?? null,
+      latencyP99Ms: j.latencyP99Ms ?? m.latencyP99Ms ?? null,
+      ttftMs: j.ttftMs ?? m.ttftMs ?? null,
+      tokenThroughput: j.tokenThroughput ?? m.tokenThroughput ?? null,
+    };
+  });
   const running = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'running' || p === 'initializing' || p === 'pending'; });
   const completed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'completed' || p === 'succeeded'; });
   const failed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'failed' || p === 'error'; });
