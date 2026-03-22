@@ -10,30 +10,31 @@
 # features: multiple URLs, round-robin
 #
 # Multi-URL Load Balancing Test
-# =============================
-# Distributes requests across multiple server replicas.
-# Tests load balancing and aggregate cluster performance.
+# ==============================
+# Measures aggregate throughput across multiple server replicas.
+# AIPerf round-robins requests across URLs so each server gets equal
+# load — useful for testing horizontal scaling without an external
+# load balancer in the path.
 #
-# Use case: Benchmark a multi-replica inference deployment
+# Pair with serverMetrics scraping all replicas to compare per-server
+# utilization and detect hot spots.
 #
 # Run: aiperf profile --config multi_url_load_balancing.yaml
 
-random_seed: 42
+randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
 endpoint:
-  # Multiple server URLs
   urls:
     - http://server1:8000/v1/chat/completions
     - http://server2:8000/v1/chat/completions
     - http://server3:8000/v1/chat/completions
     - http://server4:8000/v1/chat/completions
-  url_strategy: round_robin  # Cycle through URLs
+  urlStrategy: round_robin
   type: chat
   streaming: true
   timeout: 120.0
-  connection_reuse: pooled  # Share connections
 
 dataset:
   type: synthetic
@@ -42,28 +43,25 @@ dataset:
     isl: {mean: 512, stddev: 100}
     osl: {mean: 256, stddev: 50}
 
+warmup:
+  type: concurrency
+  requests: 200          # 50 per server
+  concurrency: 16
 
-phases:
-  warmup:
-    type: concurrency
-    exclude_from_results: true
-    requests: 200  # 50 per server
-    concurrency: 16
-
-  cluster_throughput:
-    type: concurrency
-    duration: 300
-    concurrency: 256  # 64 per server
-    concurrency_ramp: 60  # Ramp over 60 seconds
-    grace_period: 120
+profiling:
+  type: concurrency
+  duration: 300
+  concurrency: 256       # 64 per server
+  concurrencyRamp: 60    # Gradual ramp avoids overwhelming cold servers
+  gracePeriod: 120
 
 artifacts:
   dir: ./artifacts/multi_url
   summary: [json]
   records: [jsonl, csv]
 
-# Scrape metrics from all servers
-server_metrics:
+# Scrape all replicas to compare per-server behavior
+serverMetrics:
   enabled: true
   urls:
     - http://server1:8000/metrics

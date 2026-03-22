@@ -20,7 +20,7 @@
 #
 # Run: aiperf profile --config goodput_slo.yaml
 
-random_seed: 42
+randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
@@ -43,7 +43,7 @@ phases:
   # Warmup
   warmup:
     type: concurrency
-    exclude_from_results: true
+    excludeFromResults: true
     requests: 100
     concurrency: 16
 
@@ -54,7 +54,7 @@ phases:
     rate: 10.0
     concurrency: 50
     seamless: true
-    grace_period: 60
+    gracePeriod: 60
 
   # Goodput measurement at medium load
   medium_load:
@@ -63,7 +63,7 @@ phases:
     rate: 30.0
     concurrency: 100
     seamless: true
-    grace_period: 60
+    gracePeriod: 60
 
   # Goodput measurement at high load
   high_load:
@@ -72,7 +72,7 @@ phases:
     rate: 50.0
     concurrency: 150
     seamless: true
-    grace_period: 60
+    gracePeriod: 60
 
 # SLO definitions - request is "good" if ALL thresholds are met
 slos:
@@ -85,4 +85,4 @@ artifacts:
   dir: ./artifacts/goodput_slo
   summary: [json]
   records: [jsonl, csv]
-  slice_duration: 30
+  sliceDuration: 30

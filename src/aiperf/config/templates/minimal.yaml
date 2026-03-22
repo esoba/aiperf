@@ -11,15 +11,23 @@
 #
 # Minimal Configuration
 # =====================
-# Absolute bare minimum using all shorthand forms.
+# The fastest way to benchmark a model. Uses shorthand forms that AIPerf
+# auto-expands:
+#   model:   -> models.items[0].name  (single string becomes a model list)
+#   dataset: -> datasets.default       (singular becomes named "default")
+#   phases:  -> phases.default          (flat config becomes named "default")
+#
+# Both snake_case and camelCase keys are accepted in all config files.
 #
 # Run: aiperf profile --config minimal.yaml
 
+# "model:" is shorthand for models: { items: [{ name: ... }] }
 model: meta-llama/Llama-3.1-8B-Instruct
 
 endpoint:
-  url: http://localhost:8000
+  url: http://localhost:8000  # Path auto-detected from endpoint type (chat -> /v1/chat/completions)
 
+# "dataset:" (singular) is shorthand for datasets: { default: { ... } }
 dataset:
   type: synthetic
   entries: 100
@@ -27,6 +35,7 @@ dataset:
     isl: 512
     osl: 128
 
+# Flat "phases:" with a "type:" key is shorthand for phases: { default: { ... } }
 phases:
   type: concurrency
   concurrency: 8

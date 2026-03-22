@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
+from aiperf.config._base import BaseConfig
 from aiperf.config.distributions import (
     Distribution,
     EmpiricalDistribution,
@@ -42,7 +43,7 @@ __all__ = [
 ]
 
 
-class SequenceDistributionEntry(BaseModel):
+class SequenceDistributionEntry(BaseConfig):
     """Defines a single entry in an ISL/OSL probability distribution.
 
     AIPerf supports multi-modal token length distributions, allowing

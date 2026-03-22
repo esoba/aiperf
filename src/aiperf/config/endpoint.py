@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from pydantic import (
-    BaseModel,
     ConfigDict,
     Field,
     model_validator,
@@ -22,6 +21,7 @@ from typing_extensions import Self
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
 )
+from aiperf.config._base import BaseConfig
 from aiperf.plugin.enums import (
     EndpointType,
     TransportType,
@@ -34,7 +34,7 @@ __all__ = [
 ]
 
 
-class TemplateConfig(BaseModel):
+class TemplateConfig(BaseConfig):
     """
     Configuration for custom template-based endpoints.
 
@@ -62,7 +62,7 @@ class TemplateConfig(BaseModel):
     ]
 
 
-class EndpointConfig(BaseModel):
+class EndpointConfig(BaseConfig):
     """
     Endpoint configuration for connecting to inference servers.
 

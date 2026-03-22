@@ -11,16 +11,16 @@
 #
 # Public Dataset Benchmark
 # ========================
-# Uses the ShareGPT public dataset for realistic conversation testing.
-# ShareGPT contains real multi-turn conversations from ChatGPT users.
+# Benchmarks with real conversation data instead of synthetic prompts.
+# ShareGPT contains ~90K multi-turn conversations from ChatGPT users,
+# giving realistic ISL/OSL distributions and conversation patterns.
 #
-# Use case: Benchmark with realistic, diverse conversation data
+# The dataset is downloaded from HuggingFace on first use (~200MB).
+# Use entries: to limit how many conversations to sample.
 #
 # Run: aiperf profile --config public_dataset.yaml
-#
-# Note: ShareGPT dataset is automatically downloaded from HuggingFace
 
-random_seed: 42
+randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
@@ -33,23 +33,21 @@ endpoint:
 dataset:
   type: public
   name: sharegpt
-  entries: 1000  # Use 1000 conversations from the dataset
+  entries: 1000     # Sample 1000 conversations (full dataset is ~90K)
+  sampling: shuffle  # Randomize order for diverse workload per run
 
+warmup:
+  type: concurrency
+  requests: 50
+  concurrency: 8
 
-phases:
-  warmup:
-    type: concurrency
-    exclude_from_results: true
-    requests: 50
-    concurrency: 8
-
-  profiling:
-    type: concurrency
-    requests: 1000
-    concurrency: 32
-    seamless: true
-    duration: 300
-    grace_period: 120  # Long grace for multi-turn
+profiling:
+  type: concurrency
+  requests: 1000
+  concurrency: 32
+  seamless: true
+  duration: 300
+  gracePeriod: 120  # Multi-turn conversations need time to finish all turns
 
 artifacts:
   dir: ./artifacts/public_dataset

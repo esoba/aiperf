@@ -10,15 +10,18 @@
 # features: image config, resolution distributions
 #
 # Multimodal Vision Benchmark
-# ===========================
-# Benchmarks vision-language models with synthetic images.
-# Tests image understanding capabilities with varying image sizes.
+# ============================
+# Generates synthetic images (random pixels) and sends them alongside text
+# prompts via the OpenAI vision API format. Tests how image count and
+# resolution affect throughput and latency.
 #
-# Use case: Benchmark VLMs like LLaVA, Qwen-VL, or GPT-4V compatible endpoints
+# Two datasets:
+#   vision_test      - 1 image per request (standard VQA)
+#   multi_image_test - 4 images per request (comparison, multi-frame analysis)
 #
 # Run: aiperf profile --config multimodal_vision.yaml
 
-random_seed: 42
+randomSeed: 42
 
 model: llava-hf/llava-1.5-7b-hf
 
@@ -33,13 +36,13 @@ datasets:
     type: synthetic
     entries: 500
     prompts:
-      isl: {mean: 100, stddev: 20}  # Text prompt length
-      osl: {mean: 256, stddev: 50}  # Response length
+      isl: {mean: 100, stddev: 20}
+      osl: {mean: 256, stddev: 50}
     images:
-      batch_size: 1  # 1 image per request
-      width: {mean: 512, stddev: 0}
-      height: {mean: 512, stddev: 0}
-      format: jpeg
+      batchSize: 1              # Single image per request
+      width: 512
+      height: 512
+      format: jpeg              # JPEG is smaller on the wire than PNG
 
   multi_image_test:
     type: synthetic
@@ -48,11 +51,10 @@ datasets:
       isl: {mean: 150, stddev: 30}
       osl: {mean: 200, stddev: 40}
     images:
-      batch_size: 4  # 4 images per request
+      batchSize: 4              # 4 images — tests multi-image understanding
       width: {mean: 256, stddev: 50}
       height: {mean: 256, stddev: 50}
       format: jpeg
-
 
 phases:
   single_image:
@@ -66,7 +68,7 @@ phases:
     type: poisson
     dataset: multi_image_test
     requests: 200
-    concurrency: 8
+    concurrency: 8     # Fewer concurrent — 4x more image data per request
     rate: 5.0
     seamless: true
 

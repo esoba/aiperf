@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import (
-    BaseModel,
     ConfigDict,
     Discriminator,
     Field,
@@ -33,6 +32,7 @@ from aiperf.common.enums import (
     VideoFormat,
     VideoSynthType,
 )
+from aiperf.config._base import BaseConfig
 from aiperf.config.types import (
     FixedDistribution,
     SamplingDistribution,
@@ -42,7 +42,7 @@ from aiperf.config.types import (
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 
-class PromptConfig(BaseModel):
+class PromptConfig(BaseConfig):
     """
     Configuration for prompt/token specifications in synthetic datasets.
 
@@ -121,7 +121,7 @@ class PromptConfig(BaseModel):
         return v
 
 
-class PrefixPromptConfig(BaseModel):
+class PrefixPromptConfig(BaseConfig):
     """
     Configuration for prefix prompts (KV cache testing).
 
@@ -198,7 +198,7 @@ class PrefixPromptConfig(BaseModel):
         return self
 
 
-class ImageConfig(BaseModel):
+class ImageConfig(BaseConfig):
     """
     Configuration for synthetic image generation in multimodal datasets.
 
@@ -255,7 +255,7 @@ class ImageConfig(BaseModel):
     ]
 
 
-class AudioConfig(BaseModel):
+class AudioConfig(BaseConfig):
     """
     Configuration for synthetic audio generation in multimodal datasets.
 
@@ -338,7 +338,7 @@ VIDEO_AUDIO_CODEC_MAP: dict[VideoFormat, VideoAudioCodec] = {
 }
 
 
-class VideoAudioConfig(BaseModel):
+class VideoAudioConfig(BaseConfig):
     """Configuration for embedding an audio track in synthetic video files."""
 
     model_config = ConfigDict(extra="forbid")
@@ -399,7 +399,7 @@ class VideoAudioConfig(BaseModel):
     ]
 
 
-class VideoConfig(BaseModel):
+class VideoConfig(BaseConfig):
     """
     Configuration for synthetic video generation in multimodal datasets.
 
@@ -515,7 +515,7 @@ class VideoConfig(BaseModel):
     ]
 
 
-class RankingsConfig(BaseModel):
+class RankingsConfig(BaseConfig):
     """
     Configuration for rankings/reranking endpoint datasets.
 
@@ -559,7 +559,7 @@ class RankingsConfig(BaseModel):
     ]
 
 
-class SynthesisConfig(BaseModel):
+class SynthesisConfig(BaseConfig):
     """
     Configuration for trace synthesis/transformation.
 
@@ -631,7 +631,7 @@ class SynthesisConfig(BaseModel):
     ]
 
 
-class AugmentConfig(BaseModel):
+class AugmentConfig(BaseConfig):
     """
     Configuration for augmenting file datasets with output length specifications.
 
@@ -682,7 +682,7 @@ class AugmentConfig(BaseModel):
 
 
 # Dataset type variants using discriminated unions
-class SyntheticDataset(BaseModel):
+class SyntheticDataset(BaseConfig):
     """
     Synthetic dataset configuration.
 
@@ -821,7 +821,7 @@ class SyntheticDataset(BaseModel):
     ]
 
 
-class FileDataset(BaseModel):
+class FileDataset(BaseConfig):
     """
     File-based dataset configuration.
 
@@ -900,7 +900,7 @@ class FileDataset(BaseModel):
     ]
 
 
-class PublicDataset(BaseModel):
+class PublicDataset(BaseConfig):
     """
     Public dataset configuration.
 
@@ -954,7 +954,7 @@ class PublicDataset(BaseModel):
     ]
 
 
-class FileSourceConfig(BaseModel):
+class FileSourceConfig(BaseConfig):
     """
     File source configuration for composed datasets.
 
@@ -997,7 +997,7 @@ class FileSourceConfig(BaseModel):
     ]
 
 
-class ComposedDataset(BaseModel):
+class ComposedDataset(BaseConfig):
     """
     Composed dataset configuration (unique to AIPerf).
 

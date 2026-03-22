@@ -17,7 +17,7 @@
 #
 # Run: aiperf profile --config scenario_workload_profiles.yaml
 
-random_seed: 42
+randomSeed: 42
 
 model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
 
@@ -40,7 +40,7 @@ phases:
     type: concurrency
     requests: 50
     concurrency: 8
-    exclude_from_results: true
+    excludeFromResults: true
 
   test:
     type: poisson
@@ -48,7 +48,7 @@ phases:
     duration: 180
     concurrency: 64
     seamless: true
-    grace_period: 60
+    gracePeriod: 60
 
 sweep:
   type: scenarios
@@ -123,11 +123,11 @@ slos:
   request_latency: 10000
   time_to_first_token: 1000
 
-multi_run:
-  num_runs: 3
-  cooldown_seconds: 30.0
-  confidence_level: 0.95
-  set_consistent_seed: true
+multiRun:
+  numRuns: 3
+  cooldownSeconds: 30.0
+  confidenceLevel: 0.95
+  setConsistentSeed: true
 
 artifacts:
   dir: ./artifacts/workload_profiles

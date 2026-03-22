@@ -13,7 +13,9 @@ import copy
 import itertools
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field
+from pydantic import ConfigDict, Discriminator, Field
+
+from aiperf.config._base import BaseConfig
 
 __all__ = [
     "GridSweep",
@@ -24,7 +26,7 @@ __all__ = [
 ]
 
 
-class GridSweep(BaseModel):
+class GridSweep(BaseConfig):
     """Grid sweep - all combinations of parameters (Cartesian product)."""
 
     model_config = ConfigDict(extra="forbid", validate_default=True)
@@ -39,7 +41,7 @@ class GridSweep(BaseModel):
     )
 
 
-class ScenarioSweep(BaseModel):
+class ScenarioSweep(BaseConfig):
     """Scenario sweep - hand-picked configurations deep-merged with base."""
 
     model_config = ConfigDict(extra="forbid", validate_default=True)
@@ -57,7 +59,7 @@ class ScenarioSweep(BaseModel):
 SweepConfig = Annotated[GridSweep | ScenarioSweep, Discriminator("type")]
 
 
-class SweepVariation(BaseModel):
+class SweepVariation(BaseConfig):
     """Metadata for a single sweep variation."""
 
     model_config = ConfigDict(extra="forbid")

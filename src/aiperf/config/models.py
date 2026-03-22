@@ -21,7 +21,6 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 from pydantic import (
-    BaseModel,
     ConfigDict,
     Field,
     model_validator,
@@ -33,6 +32,7 @@ from aiperf.common.enums import (
     CommunicationType,
     ModelSelectionStrategy,
 )
+from aiperf.config._base import BaseConfig
 from aiperf.plugin.enums import (
     AccuracyBenchmarkType,
     AccuracyGraderType,
@@ -67,7 +67,7 @@ __all__ = [
 # =============================================================================
 
 
-class TokenizerOverride(BaseModel):
+class TokenizerOverride(BaseConfig):
     """
     Per-model tokenizer override configuration.
 
@@ -83,7 +83,7 @@ class TokenizerOverride(BaseModel):
     ]
 
 
-class ModelItem(BaseModel):
+class ModelItem(BaseConfig):
     """
     Configuration for a single model in advanced models configuration.
 
@@ -139,7 +139,7 @@ class ModelItem(BaseModel):
     ]
 
 
-class ModelsAdvanced(BaseModel):
+class ModelsAdvanced(BaseConfig):
     """
     Advanced models configuration with selection strategy and item details.
 
@@ -210,7 +210,7 @@ Example:
 # =============================================================================
 
 
-class TokenizerConfig(BaseModel):
+class TokenizerConfig(BaseConfig):
     """
     Tokenizer configuration for token counting and prompt generation.
 
@@ -266,7 +266,7 @@ class TokenizerConfig(BaseModel):
 # =============================================================================
 
 
-class TcpProxyConfig(BaseModel):
+class TcpProxyConfig(BaseConfig):
     """TCP proxy port configuration for a single ZMQ proxy."""
 
     model_config = ConfigDict(extra="forbid")
@@ -282,7 +282,7 @@ class TcpProxyConfig(BaseModel):
     ]
 
 
-class IpcCommunicationConfig(BaseModel):
+class IpcCommunicationConfig(BaseConfig):
     """
     IPC (Unix socket) communication configuration.
 
@@ -307,7 +307,7 @@ class IpcCommunicationConfig(BaseModel):
     ]
 
 
-class TcpCommunicationConfig(BaseModel):
+class TcpCommunicationConfig(BaseConfig):
     """
     TCP socket communication configuration.
 
@@ -394,7 +394,7 @@ class TcpCommunicationConfig(BaseModel):
     ]
 
 
-class DualBindCommunicationConfig(BaseModel):
+class DualBindCommunicationConfig(BaseConfig):
     """
     Dual-bind (IPC + TCP) communication configuration.
 
@@ -509,7 +509,7 @@ CommunicationConfig = Annotated[
 ]
 
 
-class RuntimeConfig(BaseModel):
+class RuntimeConfig(BaseConfig):
     """Runtime configuration for benchmark execution."""
 
     model_config = ConfigDict(extra="forbid", validate_default=True)
@@ -635,7 +635,7 @@ class RuntimeConfig(BaseModel):
 # =============================================================================
 
 
-class LoggingConfig(BaseModel):
+class LoggingConfig(BaseConfig):
     """Logging configuration for verbosity and debug settings."""
 
     model_config = ConfigDict(extra="forbid", validate_default=True)
@@ -650,7 +650,7 @@ class LoggingConfig(BaseModel):
     ]
 
 
-class MultiRunConfig(BaseModel):
+class MultiRunConfig(BaseConfig):
     """Configuration for multi-run benchmarking with statistical reporting.
 
     When num_runs > 1, AIPerf executes multiple benchmark runs and computes
@@ -716,7 +716,7 @@ class MultiRunConfig(BaseModel):
     ]
 
 
-class AccuracyConfig(BaseModel):
+class AccuracyConfig(BaseConfig):
     """Configuration for accuracy benchmarking mode.
 
     When benchmark is set, enables accuracy evaluation alongside

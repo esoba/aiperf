@@ -9,20 +9,16 @@ CRD round-tripping.
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-from pydantic.alias_generators import to_camel
+from pydantic import ConfigDict, Field
 
+from aiperf.config._base import BaseConfig
 from aiperf.kubernetes.enums import ImagePullPolicy
 
 
-class SchedulingConfig(BaseModel):
+class SchedulingConfig(BaseConfig):
     """Kueue gang-scheduling configuration."""
 
-    model_config = ConfigDict(
-        extra="forbid",
-        alias_generator=to_camel,
-        populate_by_name=True,
-    )
+    model_config = ConfigDict(extra="forbid")
 
     queue_name: str | None = Field(
         default=None,
@@ -34,14 +30,10 @@ class SchedulingConfig(BaseModel):
     )
 
 
-class PodTemplateConfig(BaseModel):
+class PodTemplateConfig(BaseConfig):
     """Kubernetes pod template configuration in K8s-native formats."""
 
-    model_config = ConfigDict(
-        extra="forbid",
-        alias_generator=to_camel,
-        populate_by_name=True,
-    )
+    model_config = ConfigDict(extra="forbid")
 
     env: list[dict[str, Any]] = Field(
         default_factory=list,
@@ -81,17 +73,13 @@ class PodTemplateConfig(BaseModel):
     )
 
 
-class DeploymentConfig(BaseModel):
+class DeploymentConfig(BaseConfig):
     """Complete Kubernetes deployment configuration.
 
     Unifies image settings, pod template, and scheduling into a single model.
     """
 
-    model_config = ConfigDict(
-        extra="forbid",
-        alias_generator=to_camel,
-        populate_by_name=True,
-    )
+    model_config = ConfigDict(extra="forbid")
 
     image: str = Field(
         default="nvcr.io/nvidia/aiperf:latest",

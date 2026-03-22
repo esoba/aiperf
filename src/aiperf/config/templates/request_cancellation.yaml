@@ -11,14 +11,21 @@
 #
 # Request Cancellation Test
 # =========================
-# Tests server behavior when clients cancel requests mid-flight.
-# Useful for understanding resource cleanup and scheduling behavior.
+# Measures how the server handles mid-flight cancellations. This matters
+# for production deployments where users navigate away, close tabs, or
+# hit timeout limits — the server should free GPU resources promptly.
 #
-# Use case: Validate server handles cancellations gracefully
+# The three phases compare:
+#   baseline    - No cancellation (reference throughput and latency)
+#   cancel_10%  - 10% cancelled after 0.5s (simulates user impatience)
+#   cancel_25%  - 25% cancelled immediately (simulates load balancer timeouts)
+#
+# Look for: Does QPS drop under cancellation? Do P99 latencies spike?
+# Does the server leak memory or accumulate zombie batches?
 #
 # Run: aiperf profile --config request_cancellation.yaml
 
-random_seed: 42
+randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
@@ -33,33 +40,31 @@ dataset:
   entries: 1000
   prompts:
     isl: {mean: 512, stddev: 100}
-    osl: {mean: 512, stddev: 100}  # Long output for cancellation window
-
+    osl: {mean: 512, stddev: 100}  # Long output gives cancellation time to trigger
 
 phases:
-  # Baseline without cancellation
   baseline:
     type: poisson
     requests: 500
     concurrency: 32
     rate: 20.0
     duration: 120
-    grace_period: 60
+    gracePeriod: 60
 
-  # 10% cancellation after 0.5 seconds
+  # Simulates users abandoning slow requests
   cancel_10_percent:
     type: poisson
     requests: 500
     concurrency: 32
     rate: 20.0
     cancellation:
-      rate: 10.0  # Cancel 10% of requests
-      delay: 0.5  # Wait 0.5 seconds before cancelling
+      rate: 10.0   # 10% of requests cancelled
+      delay: 0.5   # After 0.5s — enough for prefill, cancels during decode
     seamless: true
     duration: 120
-    grace_period: 60
+    gracePeriod: 60
 
-  # 25% cancellation (immediate)
+  # Simulates aggressive load balancer or client timeout
   cancel_25_percent_immediate:
     type: poisson
     requests: 500
@@ -67,17 +72,18 @@ phases:
     rate: 20.0
     cancellation:
       rate: 25.0
-      delay: 0.0  # Cancel immediately
+      delay: 0.0   # Immediate — server must abort before any work completes
     seamless: true
     duration: 120
-    grace_period: 60
+    gracePeriod: 60
 
 artifacts:
   dir: ./artifacts/request_cancellation
   summary: [json]
   records: [jsonl, csv]
 
-server_metrics:
+# Compare server-side metrics across phases to spot resource leaks
+serverMetrics:
   enabled: true
   urls:
     - http://localhost:8000/metrics

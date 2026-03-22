@@ -18,7 +18,7 @@
 #
 # Run: aiperf profile --config long_context.yaml
 
-random_seed: 42
+randomSeed: 42
 
 model: meta-llama/Llama-3.1-70B-Instruct
 
@@ -50,7 +50,7 @@ datasets:
     type: synthetic
     entries: 500
     prompts:
-      sequence_distribution:
+      sequenceDistribution:
         - {isl: 2048, osl: 256, probability: 30}   # Short queries
         - {isl: 8192, osl: 512, probability: 35}   # Medium documents
         - {isl: 32000, osl: 512, probability: 25}  # Long documents
@@ -62,10 +62,10 @@ phases:
   warmup:
     type: concurrency
     dataset: mixed_context
-    exclude_from_results: true
+    excludeFromResults: true
     requests: 20
     concurrency: 4
-    prefill_concurrency: 2
+    prefillConcurrency: 2
 
   # Mixed context test
   mixed_context_test:
@@ -73,11 +73,11 @@ phases:
     dataset: mixed_context
     requests: 500
     concurrency: 20
-    prefill_concurrency: 5  # Limit concurrent prefills to prevent OOM
-    prefill_ramp: 30  # Ramp prefill concurrency over 30s
+    prefillConcurrency: 5  # Limit concurrent prefills to prevent OOM
+    prefillRamp: 30  # Ramp prefill concurrency over 30s
     rate: 5.0
     duration: 600
-    grace_period: 300
+    gracePeriod: 300
 
   # 32K dedicated test
   long_32k_test:
@@ -85,25 +85,25 @@ phases:
     dataset: long_32k
     requests: 100
     concurrency: 10
-    prefill_concurrency: 3
+    prefillConcurrency: 3
     rate: 1.0  # Low rate for long contexts
     seamless: true
     duration: 600
-    grace_period: 300
+    gracePeriod: 300
 
 artifacts:
   dir: ./artifacts/long_context
   summary: [json]
   records: [jsonl, csv]
-  slice_duration: 60
+  sliceDuration: 60
 
 # Monitor GPU memory usage
-gpu_telemetry:
+gpuTelemetry:
   enabled: true
   urls:
     - http://localhost:9400/metrics
 
-server_metrics:
+serverMetrics:
   enabled: true
   urls:
     - http://localhost:8000/metrics

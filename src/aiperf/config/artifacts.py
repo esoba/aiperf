@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import (
-    BaseModel,
     BeforeValidator,
     ConfigDict,
     Field,
@@ -27,6 +26,7 @@ from aiperf.common.enums import (
     ServerMetricsDiscoveryMode,
     ServerMetricsFormat,
 )
+from aiperf.config._base import BaseConfig
 from aiperf.config.phases import _normalize_duration
 
 __all__ = [
@@ -41,7 +41,7 @@ SummaryExportFormat = Literal["json", "yaml"]
 RecordsExportFormat = Literal["jsonl", "csv"]
 
 
-class ArtifactsConfig(BaseModel):
+class ArtifactsConfig(BaseConfig):
     """
     Artifacts configuration for benchmark output.
 
@@ -260,7 +260,7 @@ class ArtifactsConfig(BaseModel):
         return self.dir
 
 
-class ServerMetricsDiscoveryConfig(BaseModel):
+class ServerMetricsDiscoveryConfig(BaseConfig):
     """Kubernetes-based auto-discovery of Prometheus /metrics endpoints.
 
     When mode is 'auto' or 'kubernetes', queries the K8s API for pods with:
@@ -321,7 +321,7 @@ class ServerMetricsDiscoveryConfig(BaseModel):
         return self
 
 
-class ServerMetricsConfig(BaseModel):
+class ServerMetricsConfig(BaseConfig):
     """
     Server metrics configuration for Prometheus scraping.
 
@@ -402,7 +402,7 @@ class ServerMetricsConfig(BaseModel):
         return data
 
 
-class GpuTelemetryConfig(BaseModel):
+class GpuTelemetryConfig(BaseConfig):
     """
     GPU telemetry configuration for DCGM metrics collection.
 

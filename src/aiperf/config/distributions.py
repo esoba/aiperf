@@ -27,8 +27,10 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, model_validator
+from pydantic import ConfigDict, Discriminator, Field, Tag, model_validator
 from typing_extensions import Self
+
+from aiperf.config._base import BaseConfig
 
 if TYPE_CHECKING:
     from aiperf.common.random_generator import RandomGenerator
@@ -39,7 +41,7 @@ if TYPE_CHECKING:
 # ==============================================================================
 
 
-class Distribution(BaseModel):
+class Distribution(BaseConfig):
     """Base class for sampling distributions."""
 
     model_config = ConfigDict(extra="forbid")
@@ -179,7 +181,7 @@ class LogNormalDistribution(Distribution):
         return f"lognormal(mean={self.mean:g}, median={self.median:g})"
 
 
-class PeakEntry(BaseModel):
+class PeakEntry(BaseConfig):
     """A weighted component in a multimodal distribution.
 
     The weight and distribution fields are written inline in YAML:
@@ -267,7 +269,7 @@ class MultimodalDistribution(Distribution):
         return f"multimodal({', '.join(parts)})"
 
 
-class EmpiricalPoint(BaseModel):
+class EmpiricalPoint(BaseConfig):
     """A weighted value in an empirical distribution."""
 
     model_config = ConfigDict(extra="forbid")

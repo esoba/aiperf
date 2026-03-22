@@ -64,17 +64,17 @@
           "description": "Specific tasks or subtasks within the benchmark to evaluate (e.g., specific MMLU subjects). If not set, all tasks are included.",
           "title": "Tasks"
         },
-        "n_shots": {
+        "nShots": {
           "default": 0,
           "description": "Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation. Maximum 8.",
-          "title": "N Shots",
+          "title": "Nshots",
           "oneOf": [
             {
               "default": 0,
               "description": "Number of few-shot examples to include in the prompt. 0 means zero-shot evaluation. Maximum 8.",
               "maximum": 8,
               "minimum": 0,
-              "title": "N Shots",
+              "title": "Nshots",
               "type": "integer"
             },
             {
@@ -90,10 +90,10 @@
           ],
           "x-jinja2-supported": true
         },
-        "enable_cot": {
+        "enableCot": {
           "default": false,
           "description": "Enable chain-of-thought prompting for accuracy evaluation. Adds reasoning instructions to the prompt.",
-          "title": "Enable Cot",
+          "title": "Enablecot",
           "type": "boolean"
         },
         "grader": {
@@ -108,7 +108,7 @@
           "default": null,
           "description": "Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice, code_execution). If not set, uses the benchmark's default grader."
         },
-        "system_prompt": {
+        "systemPrompt": {
           "anyOf": [
             {
               "type": "string"
@@ -119,7 +119,7 @@
           ],
           "default": null,
           "description": "Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific system prompt.",
-          "title": "System Prompt"
+          "title": "Systemprompt"
         },
         "verbose": {
           "default": false,
@@ -211,19 +211,14 @@
           "title": "Trace",
           "type": "boolean"
         },
-        "per_chunk_data": {
+        "perChunkData": {
           "default": false,
           "description": "Include per-chunk list data (e.g., inter_chunk_latency arrays) in per-record exports. These arrays contain one timing value per SSE chunk and can be very large for long responses.",
-          "title": "Per Chunk Data",
+          "title": "Perchunkdata",
           "type": "boolean"
         },
-        "slice_duration": {
+        "sliceDuration": {
           "anyOf": [
-            {
-              "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
-            },
             {
               "type": "number"
             },
@@ -242,17 +237,17 @@
             }
           ],
           "default": null,
-          "description": "Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
-          "title": "Slice Duration",
+          "description": "Time slice duration in seconds for trend analysis (must be > 0). Divides benchmark into windows for per-window statistics. Supports: 30, '30s', '5m', '2h'.",
+          "title": "Sliceduration",
           "x-jinja2-supported": true
         },
-        "show_trace_timing": {
+        "showTraceTiming": {
           "default": false,
           "description": "Display HTTP trace timing metrics in console output. Shows detailed timing breakdown: blocked, DNS, connecting, sending, waiting (TTFB), receiving, and total duration.",
-          "title": "Show Trace Timing",
+          "title": "Showtracetiming",
           "type": "boolean"
         },
-        "cli_command": {
+        "cliCommand": {
           "anyOf": [
             {
               "type": "string"
@@ -263,11 +258,11 @@
           ],
           "default": null,
           "description": "CLI command used to run the benchmark. Populated automatically when running via CLI.",
-          "title": "Cli Command"
+          "title": "Clicommand"
         },
-        "benchmark_id": {
+        "benchmarkId": {
           "description": "Unique identifier for this benchmark run. Used to correlate artifacts across export formats. Auto-generated if not provided.",
-          "title": "Benchmark Id",
+          "title": "Benchmarkid",
           "type": "string"
         }
       },
@@ -278,16 +273,16 @@
       "additionalProperties": false,
       "description": "Configuration for synthetic audio generation in multimodal datasets.\n\nControls the generation of synthetic audio for speech-to-text\nand audio-language model benchmarking. Generated audio is random\nnoise with specified sample rate, bit depth, and format.",
       "properties": {
-        "batch_size": {
+        "batchSize": {
           "default": 0,
           "description": "Number of audio inputs to include in each multimodal request. Supported with chat endpoint type for multimodal models. Set to 0 to disable audio inputs.",
-          "title": "Batch Size",
+          "title": "Batchsize",
           "oneOf": [
             {
               "default": 0,
               "description": "Number of audio inputs to include in each multimodal request. Supported with chat endpoint type for multimodal models. Set to 0 to disable audio inputs.",
               "minimum": 0,
-              "title": "Batch Size",
+              "title": "Batchsize",
               "type": "integer"
             },
             {
@@ -340,12 +335,12 @@
           "default": "wav",
           "description": "File format for generated audio files. wav: uncompressed PCM (larger files). mp3: compressed (smaller files). Format affects file size in multimodal requests but not audio characteristics."
         },
-        "sample_rates": {
+        "sampleRates": {
           "description": "List of audio sample rates in kHz to randomly select from. Common values: 8.0 (telephony), 16.0 (speech), 44.1 (CD quality), 48.0 (professional). Specify multiple values for mixed-quality testing.",
           "items": {
             "type": "number"
           },
-          "title": "Sample Rates",
+          "title": "Samplerates",
           "type": "array"
         },
         "depths": {
@@ -428,12 +423,12 @@
           "description": "Output sequence length to apply to augmented records. Can be a fixed integer or {mean, stddev} distribution. Behavior depends on osl_mode setting.",
           "title": "Osl"
         },
-        "osl_mode": {
+        "oslMode": {
           "$ref": "#/$defs/OslMode",
           "default": "fill",
           "description": "How to apply OSL to records. fill: only apply if the record lacks an existing OSL value. override: always replace existing OSL."
         },
-        "output_distribution": {
+        "outputDistribution": {
           "anyOf": [
             {
               "items": {
@@ -447,7 +442,7 @@
           ],
           "default": null,
           "description": "Output length probability distribution. When specified, overrides the osl field. Each entry specifies {isl (ignored), osl, probability}. Probabilities must sum to 100.",
-          "title": "Output Distribution"
+          "title": "Outputdistribution"
         }
       },
       "title": "AugmentConfig",
@@ -566,7 +561,7 @@
           "title": "Entries",
           "x-jinja2-supported": true
         },
-        "random_seed": {
+        "randomSeed": {
           "anyOf": [
             {
               "type": "integer"
@@ -587,7 +582,7 @@
           ],
           "default": null,
           "description": "Random seed for deterministic augmentation. Overrides global random_seed for this dataset.",
-          "title": "Random Seed",
+          "title": "Randomseed",
           "x-jinja2-supported": true
         }
       },
@@ -621,10 +616,10 @@
           "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
           "title": "Dataset"
         },
-        "exclude_from_results": {
+        "excludeFromResults": {
           "default": false,
           "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
-          "title": "Exclude From Results",
+          "title": "Excludefromresults",
           "type": "boolean"
         },
         "requests": {
@@ -750,7 +745,7 @@
           "x-jinja2-supported": true,
           "x-sweep-field": true
         },
-        "concurrency_ramp": {
+        "concurrencyRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -773,7 +768,7 @@
           "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "prefill_concurrency": {
+        "prefillConcurrency": {
           "anyOf": [
             {
               "minimum": 1,
@@ -795,10 +790,10 @@
           ],
           "default": null,
           "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
-          "title": "Prefill Concurrency",
+          "title": "Prefillconcurrency",
           "x-jinja2-supported": true
         },
-        "prefill_ramp": {
+        "prefillRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -821,13 +816,8 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "grace_period": {
+        "gracePeriod": {
           "anyOf": [
-            {
-              "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
-            },
             {
               "type": "number"
             },
@@ -846,9 +836,9 @@
             }
           ],
           "default": null,
-          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
           "ge": 0,
-          "title": "Grace Period",
+          "title": "Graceperiod",
           "x-jinja2-supported": true
         },
         "cancellation": {
@@ -909,10 +899,10 @@
           "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
           "title": "Dataset"
         },
-        "exclude_from_results": {
+        "excludeFromResults": {
           "default": false,
           "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
-          "title": "Exclude From Results",
+          "title": "Excludefromresults",
           "type": "boolean"
         },
         "requests": {
@@ -1038,7 +1028,7 @@
           "x-jinja2-supported": true,
           "x-sweep-field": true
         },
-        "concurrency_ramp": {
+        "concurrencyRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -1061,7 +1051,7 @@
           "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "prefill_concurrency": {
+        "prefillConcurrency": {
           "anyOf": [
             {
               "minimum": 1,
@@ -1083,10 +1073,10 @@
           ],
           "default": null,
           "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
-          "title": "Prefill Concurrency",
+          "title": "Prefillconcurrency",
           "x-jinja2-supported": true
         },
-        "prefill_ramp": {
+        "prefillRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -1109,13 +1099,8 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "grace_period": {
+        "gracePeriod": {
           "anyOf": [
-            {
-              "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
-            },
             {
               "type": "number"
             },
@@ -1134,9 +1119,9 @@
             }
           ],
           "default": null,
-          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
           "ge": 0,
-          "title": "Grace Period",
+          "title": "Graceperiod",
           "x-jinja2-supported": true
         },
         "cancellation": {
@@ -1189,7 +1174,7 @@
           "x-jinja2-supported": true,
           "x-sweep-field": true
         },
-        "rate_ramp": {
+        "rateRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -1250,19 +1235,19 @@
           "title": "Type",
           "type": "string"
         },
-        "ipc_path": {
+        "ipcPath": {
           "default": "/tmp/aiperf",
           "description": "Directory for IPC socket files (local services).",
-          "title": "Ipc Path",
+          "title": "Ipcpath",
           "type": "string"
         },
-        "tcp_host": {
+        "tcpHost": {
           "default": "0.0.0.0",
           "description": "TCP bind host for proxies. Use 0.0.0.0 to listen on all interfaces.",
-          "title": "Tcp Host",
+          "title": "Tcphost",
           "type": "string"
         },
-        "controller_host": {
+        "controllerHost": {
           "anyOf": [
             {
               "type": "string"
@@ -1273,19 +1258,19 @@
           ],
           "default": null,
           "description": "Controller host for remote TCP connections. When set, services connect via TCP to this host instead of IPC. In Kubernetes, set via JobSet DNS (e.g., controller.namespace.svc).",
-          "title": "Controller Host"
+          "title": "Controllerhost"
         },
-        "records_port": {
+        "recordsPort": {
           "default": 5557,
           "description": "Port for records push/pull communication.",
-          "title": "Records Port",
+          "title": "Recordsport",
           "oneOf": [
             {
               "default": 5557,
               "description": "Port for records push/pull communication.",
               "maximum": 65535,
               "minimum": 1,
-              "title": "Records Port",
+              "title": "Recordsport",
               "type": "integer"
             },
             {
@@ -1301,17 +1286,17 @@
           ],
           "x-jinja2-supported": true
         },
-        "credit_router_port": {
+        "creditRouterPort": {
           "default": 5564,
           "description": "Port for credit router (ROUTER-DEALER).",
-          "title": "Credit Router Port",
+          "title": "Creditrouterport",
           "oneOf": [
             {
               "default": 5564,
               "description": "Port for credit router (ROUTER-DEALER).",
               "maximum": 65535,
               "minimum": 1,
-              "title": "Credit Router Port",
+              "title": "Creditrouterport",
               "type": "integer"
             },
             {
@@ -1327,17 +1312,17 @@
           ],
           "x-jinja2-supported": true
         },
-        "control_port": {
+        "controlPort": {
           "default": 5667,
           "description": "Port for control channel (ROUTER-DEALER).",
-          "title": "Control Port",
+          "title": "Controlport",
           "oneOf": [
             {
               "default": 5667,
               "description": "Port for control channel (ROUTER-DEALER).",
               "maximum": 65535,
               "minimum": 1,
-              "title": "Control Port",
+              "title": "Controlport",
               "type": "integer"
             },
             {
@@ -1353,15 +1338,15 @@
           ],
           "x-jinja2-supported": true
         },
-        "event_bus_proxy": {
+        "eventBusProxy": {
           "$ref": "#/$defs/TcpProxyConfig",
           "description": "Event bus proxy ports (XPUB/XSUB)."
         },
-        "dataset_manager_proxy": {
+        "datasetManagerProxy": {
           "$ref": "#/$defs/TcpProxyConfig",
           "description": "Dataset manager proxy ports (DEALER/ROUTER)."
         },
-        "raw_inference_proxy": {
+        "rawInferenceProxy": {
           "$ref": "#/$defs/TcpProxyConfig",
           "description": "Raw inference proxy ports (PUSH/PULL)."
         }
@@ -1462,7 +1447,7 @@
           "title": "Urls",
           "type": "array"
         },
-        "url_strategy": {
+        "urlStrategy": {
           "$ref": "#/$defs/URLSelectionStrategy",
           "default": "round_robin",
           "description": "Strategy for distributing requests across multiple URLs. round_robin cycles through URLs in order."
@@ -1485,7 +1470,7 @@
           "description": "Override default endpoint path. Use for servers with non-standard API paths. Example: '/custom/v2/generate'",
           "title": "Path"
         },
-        "api_key": {
+        "apiKey": {
           "anyOf": [
             {
               "type": "string"
@@ -1496,7 +1481,7 @@
           ],
           "default": null,
           "description": "API authentication key. Supports environment variable substitution: ${OPENAI_API_KEY}. Can also use ${VAR:default} syntax for defaults.",
-          "title": "Api Key"
+          "title": "Apikey"
         },
         "timeout": {
           "default": 600.0,
@@ -1523,16 +1508,16 @@
           ],
           "x-jinja2-supported": true
         },
-        "ready_check_timeout": {
+        "readyCheckTimeout": {
           "default": 0.0,
           "description": "Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a real inference request to verify the model is loaded and can generate output, not just a /health check.",
-          "title": "Ready Check Timeout",
+          "title": "Readychecktimeout",
           "oneOf": [
             {
               "default": 0.0,
               "description": "Seconds to wait for endpoint readiness before benchmarking (0 = skip). Sends a real inference request to verify the model is loaded and can generate output, not just a /health check.",
               "minimum": 0.0,
-              "title": "Ready Check Timeout",
+              "title": "Readychecktimeout",
               "type": "number"
             },
             {
@@ -1566,21 +1551,21 @@
           "default": null,
           "description": "HTTP transport protocol (http/https). Auto-detected from URL scheme if not specified. Explicit setting overrides auto-detection."
         },
-        "connection_reuse": {
+        "connectionReuse": {
           "$ref": "#/$defs/ConnectionReuseStrategy",
           "default": "pooled",
           "description": "HTTP connection management strategy. pooled: shared connection pool (fastest), never: new connection per request (includes TCP overhead), sticky_sessions: dedicated connection per session."
         },
-        "use_legacy_max_tokens": {
+        "useLegacyMaxTokens": {
           "default": false,
           "description": "Use 'max_tokens' field instead of 'max_completion_tokens'. Enable for compatibility with older OpenAI API versions.",
-          "title": "Use Legacy Max Tokens",
+          "title": "Uselegacymaxtokens",
           "type": "boolean"
         },
-        "use_server_token_count": {
+        "useServerTokenCount": {
           "default": false,
           "description": "Use server-reported token counts from response usage field. When true, trusts usage.prompt_tokens and usage.completion_tokens. When false, counts tokens locally using configured tokenizer.",
-          "title": "Use Server Token Count",
+          "title": "Useservertokencount",
           "type": "boolean"
         },
         "template": {
@@ -1609,10 +1594,10 @@
           "title": "Extra",
           "type": "object"
         },
-        "download_video_content": {
+        "downloadVideoContent": {
           "default": false,
           "description": "For video generation endpoints, download the video content after generation completes. Adds a content download step to the async polling flow.",
-          "title": "Download Video Content",
+          "title": "Downloadvideocontent",
           "type": "boolean"
         },
         "url": {
@@ -1733,7 +1718,7 @@
           "title": "Entries",
           "x-jinja2-supported": true
         },
-        "random_seed": {
+        "randomSeed": {
           "anyOf": [
             {
               "type": "integer"
@@ -1754,7 +1739,7 @@
           ],
           "default": null,
           "description": "Random seed for deterministic sampling. When set, makes random/shuffle sampling reproducible across runs. Overrides global random_seed for this dataset.",
-          "title": "Random Seed",
+          "title": "Randomseed",
           "x-jinja2-supported": true
         }
       },
@@ -1850,10 +1835,10 @@
           "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
           "title": "Dataset"
         },
-        "exclude_from_results": {
+        "excludeFromResults": {
           "default": false,
           "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
-          "title": "Exclude From Results",
+          "title": "Excludefromresults",
           "type": "boolean"
         },
         "requests": {
@@ -1979,7 +1964,7 @@
           "x-jinja2-supported": true,
           "x-sweep-field": true
         },
-        "concurrency_ramp": {
+        "concurrencyRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -2002,7 +1987,7 @@
           "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "prefill_concurrency": {
+        "prefillConcurrency": {
           "anyOf": [
             {
               "minimum": 1,
@@ -2024,10 +2009,10 @@
           ],
           "default": null,
           "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
-          "title": "Prefill Concurrency",
+          "title": "Prefillconcurrency",
           "x-jinja2-supported": true
         },
-        "prefill_ramp": {
+        "prefillRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -2050,13 +2035,8 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "grace_period": {
+        "gracePeriod": {
           "anyOf": [
-            {
-              "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
-            },
             {
               "type": "number"
             },
@@ -2075,9 +2055,9 @@
             }
           ],
           "default": null,
-          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
           "ge": 0,
-          "title": "Grace Period",
+          "title": "Graceperiod",
           "x-jinja2-supported": true
         },
         "cancellation": {
@@ -2098,13 +2078,13 @@
           "title": "Seamless",
           "type": "boolean"
         },
-        "auto_offset": {
+        "autoOffset": {
           "default": true,
           "description": "Normalize trace timestamps to start at 0. Subtracts minimum timestamp from all entries.",
-          "title": "Auto Offset",
+          "title": "Autooffset",
           "type": "boolean"
         },
-        "start_offset": {
+        "startOffset": {
           "anyOf": [
             {
               "minimum": 0,
@@ -2126,10 +2106,10 @@
           ],
           "default": null,
           "description": "Filter out trace requests before this timestamp in ms (must be >= 0).",
-          "title": "Start Offset",
+          "title": "Startoffset",
           "x-jinja2-supported": true
         },
-        "end_offset": {
+        "endOffset": {
           "anyOf": [
             {
               "minimum": 0,
@@ -2151,7 +2131,7 @@
           ],
           "default": null,
           "description": "Filter out trace requests after this timestamp in ms (must be >= 0).",
-          "title": "End Offset",
+          "title": "Endoffset",
           "x-jinja2-supported": true
         }
       },
@@ -2184,10 +2164,10 @@
           "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
           "title": "Dataset"
         },
-        "exclude_from_results": {
+        "excludeFromResults": {
           "default": false,
           "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
-          "title": "Exclude From Results",
+          "title": "Excludefromresults",
           "type": "boolean"
         },
         "requests": {
@@ -2313,7 +2293,7 @@
           "x-jinja2-supported": true,
           "x-sweep-field": true
         },
-        "concurrency_ramp": {
+        "concurrencyRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -2336,7 +2316,7 @@
           "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "prefill_concurrency": {
+        "prefillConcurrency": {
           "anyOf": [
             {
               "minimum": 1,
@@ -2358,10 +2338,10 @@
           ],
           "default": null,
           "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
-          "title": "Prefill Concurrency",
+          "title": "Prefillconcurrency",
           "x-jinja2-supported": true
         },
-        "prefill_ramp": {
+        "prefillRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -2384,13 +2364,8 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "grace_period": {
+        "gracePeriod": {
           "anyOf": [
-            {
-              "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
-            },
             {
               "type": "number"
             },
@@ -2409,9 +2384,9 @@
             }
           ],
           "default": null,
-          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
           "ge": 0,
-          "title": "Grace Period",
+          "title": "Graceperiod",
           "x-jinja2-supported": true
         },
         "cancellation": {
@@ -2464,7 +2439,7 @@
           "x-jinja2-supported": true,
           "x-sweep-field": true
         },
-        "rate_ramp": {
+        "rateRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -2542,7 +2517,7 @@
               "title": "Urls",
               "type": "array"
             },
-            "metrics_file": {
+            "metricsFile": {
               "anyOf": [
                 {
                   "format": "path",
@@ -2554,7 +2529,7 @@
               ],
               "default": null,
               "description": "Path to CSV file with pre-recorded GPU metrics. Alternative to live DCGM collection.",
-              "title": "Metrics File"
+              "title": "Metricsfile"
             },
             "url": {
               "description": "Shorthand for 'urls'. Accepts a single value which will be converted to a list/dict. DCGM exporter endpoint URLs. Example: http://localhost:9400/metrics",
@@ -2614,16 +2589,16 @@
       "additionalProperties": false,
       "description": "Configuration for synthetic image generation in multimodal datasets.\n\nControls the generation of synthetic images for vision-language\nmodel benchmarking. Images are generated by randomly sampling and\nresizing source images to specified dimensions.",
       "properties": {
-        "batch_size": {
+        "batchSize": {
           "default": 0,
           "description": "Number of images to include in each multimodal request. Supported with chat endpoint type for vision-language models. Set to 0 to disable image inputs. Higher batch sizes test multi-image understanding and increase request payload size.",
-          "title": "Batch Size",
+          "title": "Batchsize",
           "oneOf": [
             {
               "default": 0,
               "description": "Number of images to include in each multimodal request. Supported with chat endpoint type for vision-language models. Set to 0 to disable image inputs. Higher batch sizes test multi-image understanding and increase request payload size.",
               "minimum": 0,
-              "title": "Batch Size",
+              "title": "Batchsize",
               "type": "integer"
             },
             {
@@ -2947,17 +2922,17 @@
       "additionalProperties": false,
       "description": "Configuration for multi-run benchmarking with statistical reporting.\n\nWhen num_runs > 1, AIPerf executes multiple benchmark runs and computes\naggregate statistics (mean, std, confidence intervals) across runs.",
       "properties": {
-        "num_runs": {
+        "numRuns": {
           "default": 1,
           "description": "Number of profile runs to execute for confidence reporting. When 1, runs a single benchmark. When >1, computes aggregate statistics across runs.",
-          "title": "Num Runs",
+          "title": "Numruns",
           "oneOf": [
             {
               "default": 1,
               "description": "Number of profile runs to execute for confidence reporting. When 1, runs a single benchmark. When >1, computes aggregate statistics across runs.",
               "maximum": 10,
               "minimum": 1,
-              "title": "Num Runs",
+              "title": "Numruns",
               "type": "integer"
             },
             {
@@ -2973,16 +2948,16 @@
           ],
           "x-jinja2-supported": true
         },
-        "cooldown_seconds": {
+        "cooldownSeconds": {
           "default": 0.0,
           "description": "Cooldown duration in seconds between profile runs. Allows the system to stabilize between runs.",
-          "title": "Cooldown Seconds",
+          "title": "Cooldownseconds",
           "oneOf": [
             {
               "default": 0.0,
               "description": "Cooldown duration in seconds between profile runs. Allows the system to stabilize between runs.",
               "minimum": 0,
-              "title": "Cooldown Seconds",
+              "title": "Cooldownseconds",
               "type": "number"
             },
             {
@@ -2998,17 +2973,17 @@
           ],
           "x-jinja2-supported": true
         },
-        "confidence_level": {
+        "confidenceLevel": {
           "default": 0.95,
           "description": "Confidence level for computing confidence intervals (0-1). Common values: 0.90 (90%%), 0.95 (95%%), 0.99 (99%%).",
-          "title": "Confidence Level",
+          "title": "Confidencelevel",
           "oneOf": [
             {
               "default": 0.95,
               "description": "Confidence level for computing confidence intervals (0-1). Common values: 0.90 (90%%), 0.95 (95%%), 0.99 (99%%).",
               "exclusiveMaximum": 1,
               "exclusiveMinimum": 0,
-              "title": "Confidence Level",
+              "title": "Confidencelevel",
               "type": "number"
             },
             {
@@ -3024,16 +2999,16 @@
           ],
           "x-jinja2-supported": true
         },
-        "set_consistent_seed": {
+        "setConsistentSeed": {
           "default": true,
           "description": "Auto-set random seed if not specified for workload consistency.",
-          "title": "Set Consistent Seed",
+          "title": "Setconsistentseed",
           "type": "boolean"
         },
-        "disable_warmup_after_first": {
+        "disableWarmupAfterFirst": {
           "default": true,
           "description": "Disable warmup for runs after the first. When true, only the first run includes warmup for steady-state measurement.",
-          "title": "Disable Warmup After First",
+          "title": "Disablewarmupafterfirst",
           "type": "boolean"
         }
       },
@@ -3227,10 +3202,10 @@
           "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
           "title": "Dataset"
         },
-        "exclude_from_results": {
+        "excludeFromResults": {
           "default": false,
           "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
-          "title": "Exclude From Results",
+          "title": "Excludefromresults",
           "type": "boolean"
         },
         "requests": {
@@ -3356,7 +3331,7 @@
           "x-jinja2-supported": true,
           "x-sweep-field": true
         },
-        "concurrency_ramp": {
+        "concurrencyRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -3379,7 +3354,7 @@
           "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "prefill_concurrency": {
+        "prefillConcurrency": {
           "anyOf": [
             {
               "minimum": 1,
@@ -3401,10 +3376,10 @@
           ],
           "default": null,
           "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
-          "title": "Prefill Concurrency",
+          "title": "Prefillconcurrency",
           "x-jinja2-supported": true
         },
-        "prefill_ramp": {
+        "prefillRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -3427,13 +3402,8 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "grace_period": {
+        "gracePeriod": {
           "anyOf": [
-            {
-              "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
-            },
             {
               "type": "number"
             },
@@ -3452,9 +3422,9 @@
             }
           ],
           "default": null,
-          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
           "ge": 0,
-          "title": "Grace Period",
+          "title": "Graceperiod",
           "x-jinja2-supported": true
         },
         "cancellation": {
@@ -3507,7 +3477,7 @@
           "x-jinja2-supported": true,
           "x-sweep-field": true
         },
-        "rate_ramp": {
+        "rateRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -3542,7 +3512,7 @@
       "additionalProperties": false,
       "description": "Configuration for prefix prompts (KV cache testing).\n\nPrefix prompts allow testing KV cache efficiency by generating\nrequests that share common prefixes. This simulates scenarios\nlike system prompts or shared context that can be cached.\n\nNote: pool_size/length are mutually exclusive with shared_system_length\nand user_context_length.",
       "properties": {
-        "pool_size": {
+        "poolSize": {
           "anyOf": [
             {
               "minimum": 1,
@@ -3564,7 +3534,7 @@
           ],
           "default": null,
           "description": "Number of distinct prefix prompts to generate for KV cache testing. Each prefix is prepended to user prompts, simulating cached context scenarios. Prefixes are randomly selected from pool per request. Mutually exclusive with shared_system_length/user_context_length.",
-          "title": "Pool Size",
+          "title": "Poolsize",
           "x-jinja2-supported": true
         },
         "length": {
@@ -3592,7 +3562,7 @@
           "title": "Length",
           "x-jinja2-supported": true
         },
-        "shared_system_length": {
+        "sharedSystemLength": {
           "anyOf": [
             {
               "minimum": 1,
@@ -3614,10 +3584,10 @@
           ],
           "default": null,
           "description": "Length of shared system prompt in tokens. This prompt is identical across all sessions and appears as a system message. First part of a two-part prefix structure with high cache hit rate expected. Mutually exclusive with pool_size/length.",
-          "title": "Shared System Length",
+          "title": "Sharedsystemlength",
           "x-jinja2-supported": true
         },
-        "user_context_length": {
+        "userContextLength": {
           "anyOf": [
             {
               "minimum": 1,
@@ -3639,7 +3609,7 @@
           ],
           "default": null,
           "description": "Length of per-session user context prompt in tokens. Each dataset entry gets a unique user context prompt. Second part of two-part prefix structure with lower cache hit rate expected. Mutually exclusive with pool_size/length.",
-          "title": "User Context Length",
+          "title": "Usercontextlength",
           "x-jinja2-supported": true
         }
       },
@@ -3708,7 +3678,7 @@
           "description": "Output sequence length (max tokens to request via max_completion_tokens). Can be a fixed integer or distribution {mean, stddev}. Controls response length for synthetic datasets. When not set, the model determines output length. Ignored when sequence_distribution is specified.",
           "title": "Osl"
         },
-        "block_size": {
+        "blockSize": {
           "anyOf": [
             {
               "exclusiveMinimum": 0,
@@ -3730,19 +3700,19 @@
           ],
           "default": null,
           "description": "Token block size for hash-based prompt caching in mooncake_trace datasets. When hash_ids are provided in trace entries, prompts are divided into blocks of this size. Each hash_id maps to a cached block, enabling simulation of KV-cache sharing patterns from production workloads. Total prompt length = (num_hash_ids - 1) * block_size + final_block_size.",
-          "title": "Block Size",
+          "title": "Blocksize",
           "x-jinja2-supported": true
         },
-        "batch_size": {
+        "batchSize": {
           "default": 1,
           "description": "Number of text inputs to include in each request for batch processing endpoints. Supported by embeddings and rankings endpoint types where models can process multiple inputs simultaneously. Set to 1 for single-input requests. Not applicable to chat or completions endpoints.",
-          "title": "Batch Size",
+          "title": "Batchsize",
           "oneOf": [
             {
               "default": 1,
               "description": "Number of text inputs to include in each request for batch processing endpoints. Supported by embeddings and rankings endpoint types where models can process multiple inputs simultaneously. Set to 1 for single-input requests. Not applicable to chat or completions endpoints.",
               "minimum": 1,
-              "title": "Batch Size",
+              "title": "Batchsize",
               "type": "integer"
             },
             {
@@ -3758,7 +3728,7 @@
           ],
           "x-jinja2-supported": true
         },
-        "sequence_distribution": {
+        "sequenceDistribution": {
           "anyOf": [
             {
               "items": {
@@ -3772,7 +3742,7 @@
           ],
           "default": null,
           "description": "Distribution of (ISL, OSL) pairs with probabilities for mixed workload simulation. Each entry specifies {isl, osl, probability}. Probabilities are percentages (0-100) and must sum to 100. When specified, requests are sampled from this distribution instead of using isl/osl fields.",
-          "title": "Sequence Distribution"
+          "title": "Sequencedistribution"
         }
       },
       "title": "PromptConfig",
@@ -3817,7 +3787,7 @@
           "title": "Entries",
           "x-jinja2-supported": true
         },
-        "random_seed": {
+        "randomSeed": {
           "anyOf": [
             {
               "type": "integer"
@@ -3838,7 +3808,7 @@
           ],
           "default": null,
           "description": "Random seed for deterministic sampling from the dataset. Overrides global random_seed for this dataset.",
-          "title": "Random Seed",
+          "title": "Randomseed",
           "x-jinja2-supported": true
         },
         "sampling": {
@@ -3944,7 +3914,7 @@
           "title": "Passages",
           "x-jinja2-supported": true
         },
-        "passage_tokens": {
+        "passageTokens": {
           "description": "Token length for each passage in ranking requests. Can be a fixed integer or {mean, stddev} distribution. Passages are synthetically generated text. Longer passages increase input processing demands and request size.",
           "oneOf": [
             {
@@ -3973,10 +3943,10 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
-          "title": "Passage Tokens",
+          "title": "Passagetokens",
           "x-jinja2-supported": true
         },
-        "query_tokens": {
+        "queryTokens": {
           "description": "Token length for the query text in ranking requests. Can be a fixed integer or {mean, stddev} distribution. Each ranking request contains one query and multiple passages.",
           "oneOf": [
             {
@@ -4005,7 +3975,7 @@
               "description": "Environment variable (e.g., '${VAR}' or '${VAR:default}')."
             }
           ],
-          "title": "Query Tokens",
+          "title": "Querytokens",
           "x-jinja2-supported": true
         }
       },
@@ -4046,7 +4016,7 @@
           "title": "Workers",
           "x-jinja2-supported": true
         },
-        "record_processors": {
+        "recordProcessors": {
           "anyOf": [
             {
               "minimum": 1,
@@ -4068,10 +4038,10 @@
           ],
           "default": null,
           "description": "Number of parallel record processors. null = auto-detect based on CPU cores.",
-          "title": "Record Processors",
+          "title": "Recordprocessors",
           "x-jinja2-supported": true
         },
-        "service_run_type": {
+        "serviceRunType": {
           "$ref": "#/$defs/ServiceRunType",
           "default": "multiprocessing",
           "description": "Type of service run. multiprocessing: local multi-process (default), kubernetes: distributed across pods."
@@ -4107,7 +4077,7 @@
           "description": "Inter-process communication configuration. Defaults to IPC for single-machine operation.",
           "title": "Communication"
         },
-        "api_port": {
+        "apiPort": {
           "anyOf": [
             {
               "maximum": 65535,
@@ -4130,10 +4100,10 @@
           ],
           "default": null,
           "description": "AIPerf API server port. Enables HTTP and WebSocket endpoints for real-time metrics and control.",
-          "title": "Api Port",
+          "title": "Apiport",
           "x-jinja2-supported": true
         },
-        "api_host": {
+        "apiHost": {
           "anyOf": [
             {
               "type": "string"
@@ -4144,9 +4114,9 @@
           ],
           "default": null,
           "description": "AIPerf API server host. Requires api_port to be set.",
-          "title": "Api Host"
+          "title": "Apihost"
         },
-        "dataset_api_base_url": {
+        "datasetApiBaseUrl": {
           "anyOf": [
             {
               "type": "string"
@@ -4157,9 +4127,9 @@
           ],
           "default": null,
           "description": "Base URL for dataset API endpoints in Kubernetes mode. Set by the runner to allow worker pods to download datasets.",
-          "title": "Dataset Api Base Url"
+          "title": "Datasetapibaseurl"
         },
-        "workers_per_pod": {
+        "workersPerPod": {
           "anyOf": [
             {
               "maximum": 100,
@@ -4182,10 +4152,10 @@
           ],
           "default": null,
           "description": "Number of worker subprocesses per Kubernetes worker pod.",
-          "title": "Workers Per Pod",
+          "title": "Workersperpod",
           "x-jinja2-supported": true
         },
-        "record_processors_per_pod": {
+        "recordProcessorsPerPod": {
           "anyOf": [
             {
               "maximum": 100,
@@ -4208,10 +4178,10 @@
           ],
           "default": null,
           "description": "Number of record processor subprocesses per Kubernetes worker pod.",
-          "title": "Record Processors Per Pod",
+          "title": "Recordprocessorsperpod",
           "x-jinja2-supported": true
         },
-        "workers_min": {
+        "workersMin": {
           "anyOf": [
             {
               "minimum": 1,
@@ -4233,7 +4203,7 @@
           ],
           "default": null,
           "description": "Minimum number of worker processes.",
-          "title": "Workers Min",
+          "title": "Workersmin",
           "x-jinja2-supported": true
         }
       },
@@ -4318,7 +4288,7 @@
           "title": "Isl",
           "x-jinja2-supported": true
         },
-        "isl_stddev": {
+        "islStddev": {
           "anyOf": [
             {
               "minimum": 0.0,
@@ -4340,7 +4310,7 @@
           ],
           "default": null,
           "description": "Shorthand for ISL standard deviation. If provided when isl is an integer, creates a normal distribution. Cannot be used when isl is already a distribution dict.",
-          "title": "Isl Stddev",
+          "title": "Islstddev",
           "x-jinja2-supported": true
         },
         "osl": {
@@ -4375,7 +4345,7 @@
           "title": "Osl",
           "x-jinja2-supported": true
         },
-        "osl_stddev": {
+        "oslStddev": {
           "anyOf": [
             {
               "minimum": 0.0,
@@ -4397,7 +4367,7 @@
           ],
           "default": null,
           "description": "Shorthand for OSL standard deviation. If provided when osl is an integer, creates a normal distribution. Cannot be used when osl is already a distribution dict.",
-          "title": "Osl Stddev",
+          "title": "Oslstddev",
           "x-jinja2-supported": true
         },
         "probability": {
@@ -4502,7 +4472,7 @@
           "default": "auto",
           "description": "Discovery mode: 'auto' detects environment and tries K8s if in-cluster, 'kubernetes' forces K8s API discovery, 'disabled' uses only explicit URLs."
         },
-        "label_selector": {
+        "labelSelector": {
           "anyOf": [
             {
               "type": "string"
@@ -4513,7 +4483,7 @@
           ],
           "default": null,
           "description": "Kubernetes label selector for discovery. Example: 'app=vllm,env=prod'. Applied in addition to built-in Dynamo and Prometheus discovery.",
-          "title": "Label Selector"
+          "title": "Labelselector"
         },
         "namespace": {
           "anyOf": [
@@ -4565,16 +4535,16 @@
       "additionalProperties": false,
       "description": "Configuration for trace synthesis/transformation.\n\nUsed with mooncake_trace format to transform production trace\ndata before replay. Allows scaling timestamps, token lengths,\nand radix tree structure.",
       "properties": {
-        "speedup_ratio": {
+        "speedupRatio": {
           "default": 1.0,
           "description": "Multiplier for timestamp scaling in synthesized traces. 1.0 = real-time, 2.0 = 2x faster, 0.5 = 2x slower.",
-          "title": "Speedup Ratio",
+          "title": "Speedupratio",
           "oneOf": [
             {
               "default": 1.0,
               "description": "Multiplier for timestamp scaling in synthesized traces. 1.0 = real-time, 2.0 = 2x faster, 0.5 = 2x slower.",
               "exclusiveMinimum": 0.0,
-              "title": "Speedup Ratio",
+              "title": "Speedupratio",
               "type": "number"
             },
             {
@@ -4590,16 +4560,16 @@
           ],
           "x-jinja2-supported": true
         },
-        "prefix_len_multiplier": {
+        "prefixLenMultiplier": {
           "default": 1.0,
           "description": "Multiplier for core prefix branch lengths in the radix tree. 1.5 means prefix branches are 50%% longer.",
-          "title": "Prefix Len Multiplier",
+          "title": "Prefixlenmultiplier",
           "oneOf": [
             {
               "default": 1.0,
               "description": "Multiplier for core prefix branch lengths in the radix tree. 1.5 means prefix branches are 50%% longer.",
               "exclusiveMinimum": 0.0,
-              "title": "Prefix Len Multiplier",
+              "title": "Prefixlenmultiplier",
               "type": "number"
             },
             {
@@ -4615,16 +4585,16 @@
           ],
           "x-jinja2-supported": true
         },
-        "prefix_root_multiplier": {
+        "prefixRootMultiplier": {
           "default": 1,
           "description": "Number of independent radix trees to distribute traces across. Higher values increase prefix diversity.",
-          "title": "Prefix Root Multiplier",
+          "title": "Prefixrootmultiplier",
           "oneOf": [
             {
               "default": 1,
               "description": "Number of independent radix trees to distribute traces across. Higher values increase prefix diversity.",
               "minimum": 1,
-              "title": "Prefix Root Multiplier",
+              "title": "Prefixrootmultiplier",
               "type": "integer"
             },
             {
@@ -4640,16 +4610,16 @@
           ],
           "x-jinja2-supported": true
         },
-        "prompt_len_multiplier": {
+        "promptLenMultiplier": {
           "default": 1.0,
           "description": "Multiplier for leaf path (unique prompt) lengths. 2.0 means prompts are 2x longer.",
-          "title": "Prompt Len Multiplier",
+          "title": "Promptlenmultiplier",
           "oneOf": [
             {
               "default": 1.0,
               "description": "Multiplier for leaf path (unique prompt) lengths. 2.0 means prompts are 2x longer.",
               "exclusiveMinimum": 0.0,
-              "title": "Prompt Len Multiplier",
+              "title": "Promptlenmultiplier",
               "type": "number"
             },
             {
@@ -4665,7 +4635,7 @@
           ],
           "x-jinja2-supported": true
         },
-        "max_isl": {
+        "maxIsl": {
           "anyOf": [
             {
               "minimum": 1,
@@ -4687,10 +4657,10 @@
           ],
           "default": null,
           "description": "Maximum input sequence length filter. Traces with input_length > max_isl are skipped entirely.",
-          "title": "Max Isl",
+          "title": "Maxisl",
           "x-jinja2-supported": true
         },
-        "max_osl": {
+        "maxOsl": {
           "anyOf": [
             {
               "minimum": 1,
@@ -4712,7 +4682,7 @@
           ],
           "default": null,
           "description": "Maximum output sequence length cap. Traces with output_length > max_osl are capped to this value (not filtered).",
-          "title": "Max Osl",
+          "title": "Maxosl",
           "x-jinja2-supported": true
         }
       },
@@ -4754,7 +4724,7 @@
           ],
           "x-jinja2-supported": true
         },
-        "random_seed": {
+        "randomSeed": {
           "anyOf": [
             {
               "type": "integer"
@@ -4775,7 +4745,7 @@
           ],
           "default": null,
           "description": "Random seed for deterministic dataset generation. When set, makes synthetic prompts, sampling, and other random operations reproducible across runs. Essential for A/B testing and debugging. Overrides global random_seed for this dataset.",
-          "title": "Random Seed",
+          "title": "Randomseed",
           "x-jinja2-supported": true
         },
         "sampling": {
@@ -4795,7 +4765,7 @@
           "default": null,
           "description": "Prompt/token length configuration specifying ISL, OSL, sequence distributions, and batch processing settings."
         },
-        "prefix_prompts": {
+        "prefixPrompts": {
           "anyOf": [
             {
               "$ref": "#/$defs/PrefixPromptConfig"
@@ -4836,7 +4806,7 @@
           "description": "Number of request-response turns per conversation. Can be a fixed integer or {mean, stddev} distribution. Each turn consists of a user message and model response. Set to 1 for single-turn interactions. Multi-turn conversations enable testing of context retention and conversation history handling.",
           "title": "Turns"
         },
-        "turn_delay": {
+        "turnDelay": {
           "anyOf": [
             {
               "oneOf": [
@@ -4863,18 +4833,18 @@
           ],
           "default": null,
           "description": "Delay in milliseconds between consecutive turns within a multi-turn conversation. Can be a fixed value or {mean, stddev} distribution. Simulates user think time between receiving a response and sending the next message. Only applies when turns > 1. Set to 0 for back-to-back turns.",
-          "title": "Turn Delay"
+          "title": "Turndelay"
         },
-        "turn_delay_ratio": {
+        "turnDelayRatio": {
           "default": 1.0,
           "description": "Multiplier for scaling all turn delays. Applied after mean/stddev calculation: actual_delay = calculated_delay * ratio. Values < 1 speed up conversations, > 1 slow them down. Set to 0 to eliminate delays entirely.",
-          "title": "Turn Delay Ratio",
+          "title": "Turndelayratio",
           "oneOf": [
             {
               "default": 1.0,
               "description": "Multiplier for scaling all turn delays. Applied after mean/stddev calculation: actual_delay = calculated_delay * ratio. Values < 1 speed up conversations, > 1 slow them down. Set to 0 to eliminate delays entirely.",
               "exclusiveMinimum": 0.0,
-              "title": "Turn Delay Ratio",
+              "title": "Turndelayratio",
               "type": "number"
             },
             {
@@ -4961,17 +4931,17 @@
           "title": "Host",
           "type": "string"
         },
-        "records_port": {
+        "recordsPort": {
           "default": 5557,
           "description": "Port for records push/pull communication.",
-          "title": "Records Port",
+          "title": "Recordsport",
           "oneOf": [
             {
               "default": 5557,
               "description": "Port for records push/pull communication.",
               "maximum": 65535,
               "minimum": 1,
-              "title": "Records Port",
+              "title": "Recordsport",
               "type": "integer"
             },
             {
@@ -4987,17 +4957,17 @@
           ],
           "x-jinja2-supported": true
         },
-        "credit_router_port": {
+        "creditRouterPort": {
           "default": 5564,
           "description": "Port for credit router (ROUTER-DEALER).",
-          "title": "Credit Router Port",
+          "title": "Creditrouterport",
           "oneOf": [
             {
               "default": 5564,
               "description": "Port for credit router (ROUTER-DEALER).",
               "maximum": 65535,
               "minimum": 1,
-              "title": "Credit Router Port",
+              "title": "Creditrouterport",
               "type": "integer"
             },
             {
@@ -5013,17 +4983,17 @@
           ],
           "x-jinja2-supported": true
         },
-        "control_port": {
+        "controlPort": {
           "default": 5667,
           "description": "Port for control channel (ROUTER-DEALER).",
-          "title": "Control Port",
+          "title": "Controlport",
           "oneOf": [
             {
               "default": 5667,
               "description": "Port for control channel (ROUTER-DEALER).",
               "maximum": 65535,
               "minimum": 1,
-              "title": "Control Port",
+              "title": "Controlport",
               "type": "integer"
             },
             {
@@ -5039,15 +5009,15 @@
           ],
           "x-jinja2-supported": true
         },
-        "event_bus_proxy": {
+        "eventBusProxy": {
           "$ref": "#/$defs/TcpProxyConfig",
           "description": "Event bus proxy ports (XPUB/XSUB)."
         },
-        "dataset_manager_proxy": {
+        "datasetManagerProxy": {
           "$ref": "#/$defs/TcpProxyConfig",
           "description": "Dataset manager proxy ports (DEALER/ROUTER)."
         },
-        "raw_inference_proxy": {
+        "rawInferenceProxy": {
           "$ref": "#/$defs/TcpProxyConfig",
           "description": "Raw inference proxy ports (PUSH/PULL)."
         }
@@ -5062,15 +5032,15 @@
       "additionalProperties": false,
       "description": "TCP proxy port configuration for a single ZMQ proxy.",
       "properties": {
-        "frontend_port": {
+        "frontendPort": {
           "description": "TCP port for proxy frontend.",
-          "title": "Frontend Port",
+          "title": "Frontendport",
           "oneOf": [
             {
               "description": "TCP port for proxy frontend.",
               "maximum": 65535,
               "minimum": 1,
-              "title": "Frontend Port",
+              "title": "Frontendport",
               "type": "integer"
             },
             {
@@ -5086,15 +5056,15 @@
           ],
           "x-jinja2-supported": true
         },
-        "backend_port": {
+        "backendPort": {
           "description": "TCP port for proxy backend.",
-          "title": "Backend Port",
+          "title": "Backendport",
           "oneOf": [
             {
               "description": "TCP port for proxy backend.",
               "maximum": 65535,
               "minimum": 1,
-              "title": "Backend Port",
+              "title": "Backendport",
               "type": "integer"
             },
             {
@@ -5112,8 +5082,8 @@
         }
       },
       "required": [
-        "frontend_port",
-        "backend_port"
+        "frontendPort",
+        "backendPort"
       ],
       "title": "TcpProxyConfig",
       "type": "object"
@@ -5127,10 +5097,10 @@
           "title": "Body",
           "type": "string"
         },
-        "response_field": {
+        "responseField": {
           "default": "text",
           "description": "JSON path to extract response text from API response. Use dot notation for nested fields: 'choices.0.message.content'.",
-          "title": "Response Field",
+          "title": "Responsefield",
           "type": "string"
         }
       },
@@ -5163,10 +5133,10 @@
           "title": "Revision",
           "type": "string"
         },
-        "trust_remote_code": {
+        "trustRemoteCode": {
           "default": false,
           "description": "Allow execution of custom tokenizer code from the repository. Required for some models but poses security risk. Only enable for trusted sources.",
-          "title": "Trust Remote Code",
+          "title": "Trustremotecode",
           "type": "boolean"
         }
       },
@@ -5236,10 +5206,10 @@
           "description": "Name of dataset to use (from datasets section). If not specified, uses first defined dataset.",
           "title": "Dataset"
         },
-        "exclude_from_results": {
+        "excludeFromResults": {
           "default": false,
           "description": "Exclude this phase's metrics from final results. Set to true for warmup or cooldown phases.",
-          "title": "Exclude From Results",
+          "title": "Excludefromresults",
           "type": "boolean"
         },
         "requests": {
@@ -5365,7 +5335,7 @@
           "x-jinja2-supported": true,
           "x-sweep-field": true
         },
-        "concurrency_ramp": {
+        "concurrencyRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -5388,7 +5358,7 @@
           "description": "Ramp concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "prefill_concurrency": {
+        "prefillConcurrency": {
           "anyOf": [
             {
               "minimum": 1,
@@ -5410,10 +5380,10 @@
           ],
           "default": null,
           "description": "Max concurrent requests in prefill stage (must be >= 1). Limits requests before first token received.",
-          "title": "Prefill Concurrency",
+          "title": "Prefillconcurrency",
           "x-jinja2-supported": true
         },
-        "prefill_ramp": {
+        "prefillRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -5436,13 +5406,8 @@
           "description": "Ramp prefill_concurrency from lower value. Can be number (seconds) or {duration, strategy}.",
           "x-jinja2-supported": true
         },
-        "grace_period": {
+        "gracePeriod": {
           "anyOf": [
-            {
-              "type": "string",
-              "pattern": "^\\d+(?:\\.\\d+)?\\s*(?:s|sec|m|min|h|hr|hour)?$",
-              "description": "Duration string (e.g., '30s', '5m', '2h')."
-            },
             {
               "type": "number"
             },
@@ -5461,9 +5426,9 @@
             }
           ],
           "default": null,
-          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'. Accepts number (seconds) or string like '30s', '5m', '2h'.",
+          "description": "Seconds to wait for in-flight requests after duration expires (must be >= 0). Requires 'duration' to be set. Supports: 30, '30s', '2m'.",
           "ge": 0,
-          "title": "Grace Period",
+          "title": "Graceperiod",
           "x-jinja2-supported": true
         },
         "cancellation": {
@@ -5516,7 +5481,7 @@
           "x-jinja2-supported": true,
           "x-sweep-field": true
         },
-        "rate_ramp": {
+        "rateRamp": {
           "anyOf": [
             {
               "$ref": "#/$defs/RampConfig"
@@ -5585,17 +5550,17 @@
       "additionalProperties": false,
       "description": "Configuration for embedding an audio track in synthetic video files.",
       "properties": {
-        "sample_rate": {
+        "sampleRate": {
           "default": 44100,
           "description": "Audio sample rate in Hz for the embedded audio track. Common values: 8000 (telephony), 16000 (speech), 44100 (CD quality), 48000 (professional). Higher sample rates increase audio fidelity and file size.",
-          "title": "Sample Rate",
+          "title": "Samplerate",
           "oneOf": [
             {
               "default": 44100,
               "description": "Audio sample rate in Hz for the embedded audio track. Common values: 8000 (telephony), 16000 (speech), 44100 (CD quality), 48000 (professional). Higher sample rates increase audio fidelity and file size.",
               "maximum": 96000,
               "minimum": 8000,
-              "title": "Sample Rate",
+              "title": "Samplerate",
               "type": "integer"
             },
             {
@@ -5687,16 +5652,16 @@
       "additionalProperties": false,
       "description": "Configuration for synthetic video generation in multimodal datasets.\n\nControls the generation of synthetic videos for video understanding\nmodel benchmarking. Requires FFmpeg for video generation.",
       "properties": {
-        "batch_size": {
+        "batchSize": {
           "default": 0,
           "description": "Number of video files to include in each multimodal request. Supported with chat endpoint type for video understanding models. Set to 0 to disable video inputs. Higher batch sizes significantly increase request payload size.",
-          "title": "Batch Size",
+          "title": "Batchsize",
           "oneOf": [
             {
               "default": 0,
               "description": "Number of video files to include in each multimodal request. Supported with chat endpoint type for video understanding models. Set to 0 to disable video inputs. Higher batch sizes significantly increase request payload size.",
               "minimum": 0,
-              "title": "Batch Size",
+              "title": "Batchsize",
               "type": "integer"
             },
             {
@@ -5823,7 +5788,7 @@
           "title": "Codec",
           "type": "string"
         },
-        "synth_type": {
+        "synthType": {
           "$ref": "#/$defs/VideoSynthType",
           "default": "moving_shapes",
           "description": "Algorithm for generating synthetic video content. Different types produce different visual patterns for testing. Content doesn't affect semantic meaning but may impact encoding efficiency and file size."
@@ -5999,11 +5964,11 @@
       "default": null,
       "description": "Tokenizer configuration for token counting. Used for ISL/OSL enforcement and accurate metrics. If not specified, uses the first model name."
     },
-    "gpu_telemetry": {
+    "gpuTelemetry": {
       "$ref": "#/$defs/GpuTelemetryConfig",
       "description": "GPU telemetry configuration for DCGM metrics collection. Collects GPU metrics (power, utilization, temperature) from DCGM endpoints. Enabled by default. Set enabled: false to disable."
     },
-    "server_metrics": {
+    "serverMetrics": {
       "$ref": "#/$defs/ServerMetricsConfig",
       "description": "Server metrics configuration for Prometheus scraping. Collects operational metrics (queue depth, KV cache, batch sizes) from inference server Prometheus endpoints. Enabled by default. Set enabled: false to disable."
     },
@@ -6026,7 +5991,7 @@
       "default": null,
       "description": "Accuracy benchmarking configuration. When set, enables accuracy evaluation alongside performance profiling."
     },
-    "random_seed": {
+    "randomSeed": {
       "anyOf": [
         {
           "type": "integer"
@@ -6047,7 +6012,7 @@
       ],
       "default": null,
       "description": "Global random seed for reproducibility. Can be overridden per-dataset. If not set, uses system entropy.",
-      "title": "Random Seed",
+      "title": "Randomseed",
       "x-jinja2-supported": true
     },
     "sweep": {
@@ -6077,7 +6042,7 @@
       "description": "Sweep configuration for parameter exploration. Supports grid (Cartesian product), scenarios (hand-picked), and sequential (ordered) sweep strategies.",
       "title": "Sweep"
     },
-    "multi_run": {
+    "multiRun": {
       "$ref": "#/$defs/MultiRunConfig",
       "description": "Multi-run benchmarking configuration for statistical reporting. When num_runs > 1, executes multiple runs and computes aggregate statistics."
     },

@@ -234,8 +234,8 @@ class KubeOptions(KubeManageOptions):
             Nested CRD spec dict: {benchmark: {...}, image: ..., ...}
         """
 
-        # AIPerfConfig fields go under benchmark key
-        benchmark = config.model_dump(mode="json", exclude_defaults=True)
+        # AIPerfConfig fields go under benchmark key (camelCase for CRD)
+        benchmark = config.model_dump(mode="json", by_alias=True, exclude_defaults=True)
 
         # Deployment fields at spec level in camelCase via DeploymentConfig serialization
         dc = self.to_deployment_config()

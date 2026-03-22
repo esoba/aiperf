@@ -27,8 +27,8 @@ spec:
     slos:
       time_to_first_token: 20000
       inter_token_latency: 50
-    random_seed: 42
-    server_metrics:
+    randomSeed: 42
+    serverMetrics:
       urls:
       - http://agg-round-robin-dsv32-nvfp4-dec-0-dec-wkr:9090/metrics
       - http://agg-round-robin-dsv32-nvfp4-prefill-0:9090/metrics

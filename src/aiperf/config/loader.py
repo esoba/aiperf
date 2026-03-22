@@ -548,6 +548,7 @@ def dump_config(
     data = config.model_dump(
         exclude_defaults=exclude_defaults,
         exclude_none=exclude_none,
+        by_alias=True,
         mode="json",  # Use JSON-compatible types
     )
     return yaml.dump(

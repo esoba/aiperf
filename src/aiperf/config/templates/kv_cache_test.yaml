@@ -10,15 +10,29 @@
 # features: user_centric mode, shared prefix, per-user rate
 #
 # KV Cache / Prefix Caching Benchmark
-# ===================================
-# Tests KV cache efficiency with shared system prompts and user contexts.
-# Uses user_centric mode to simulate N users sharing a global request rate.
+# ====================================
+# Measures how well the server reuses cached KV states for shared prefixes.
+# Servers like vLLM and TRT-LLM can cache the KV computation for system
+# prompts and shared context, serving subsequent requests faster.
 #
-# Use case: Measure KV cache hit rates and prefix caching performance
+# Two approaches to prefix caching:
+#
+#   Prefix Pool (poolSize + length)
+#     N distinct prefixes randomly assigned to requests. High cache hit
+#     rate when poolSize is small relative to entries. Good for testing
+#     system prompt caching in multi-tenant deployments.
+#
+#   Two-Part Prefix (sharedSystemLength + userContextLength)
+#     A single system prompt shared by ALL requests (high cache hit) plus
+#     a per-session user context (low cache hit). Models RAG pipelines
+#     where the system prompt is fixed but retrieved context varies.
+#
+# Check server metrics for cache hit rates (vLLM: vllm:prefix_cache_hit_rate,
+# TRT-LLM: kv_cache_reuse_rate) to validate caching is working.
 #
 # Run: aiperf profile --config kv_cache_test.yaml
 
-random_seed: 42
+randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
@@ -29,40 +43,37 @@ endpoint:
   timeout: 120.0
 
 datasets:
-  # Shared prefix pool approach
+  # Approach 1: Random selection from a small prefix pool
   prefix_pool:
     type: synthetic
     entries: 1000
     prompts:
       isl: {mean: 256, stddev: 30}
       osl: {mean: 128, stddev: 20}
-    prefix_prompts:
-      pool_size: 10  # 10 distinct prefixes
-      length: 512  # Each prefix is 512 tokens
+    prefixPrompts:
+      poolSize: 10   # 10 distinct prefixes — expect ~10% unique, ~90% cache hits
+      length: 512    # Each prefix is 512 tokens
 
-  # Two-part prefix structure
+  # Approach 2: Shared system prompt + per-user context
   system_context:
     type: synthetic
     entries: 1000
     prompts:
       isl: {mean: 200, stddev: 25}
       osl: {mean: 150, stddev: 30}
-    prefix_prompts:
-      shared_system_length: 1000  # System prompt shared by all users
-      user_context_length: 256  # Per-user context
-
+    prefixPrompts:
+      sharedSystemLength: 1000  # Same 1000-token system prompt for everyone
+      userContextLength: 256    # Unique 256-token context per session
 
 phases:
-  # Test with prefix pool
   prefix_pool_test:
     type: user_centric
     dataset: prefix_pool
     duration: 120
-    users: 30  # 30 simulated users
-    rate: 2.0  # 2 QPS across all users
-    grace_period: 60
+    users: 30         # 30 simulated users sharing the global rate
+    rate: 2.0         # 2 QPS total (each user sends ~0.067 QPS)
+    gracePeriod: 60
 
-  # Test with shared system + user context
   system_context_test:
     type: user_centric
     dataset: system_context
@@ -70,16 +81,15 @@ phases:
     users: 30
     rate: 2.0
     seamless: true
-    grace_period: 60
+    gracePeriod: 60
 
 artifacts:
   dir: ./artifacts/kv_cache_test
   summary: [json]
   records: [jsonl, csv]
-  slice_duration: 30
+  sliceDuration: 30  # Watch for cache warm-up — early slices should be slower
 
-# Enable server metrics to see cache hit rates
-server_metrics:
+serverMetrics:
   enabled: true
   urls:
     - http://localhost:8000/metrics

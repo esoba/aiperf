@@ -20,7 +20,7 @@
 #
 # Run: aiperf profile --config warmup_profiling.yaml
 
-random_seed: 42
+randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
@@ -57,12 +57,12 @@ profiling:
   rate: 50.0
   concurrency: 64
   smoothness: 1.5
-  rate_ramp: 30s  # Ramp rate over 30 seconds
+  rateRamp: 30s  # Ramp rate over 30 seconds
   seamless: true  # Start immediately after warmup
-  grace_period: 60s
+  gracePeriod: 60s
 
 artifacts:
   dir: ./artifacts/warmup_profiling
   summary: [json]
   records: [jsonl, csv]
-  slice_duration: 60s
+  sliceDuration: 60s

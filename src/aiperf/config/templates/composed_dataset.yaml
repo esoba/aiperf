@@ -11,19 +11,22 @@
 #
 # Composed Dataset Benchmark
 # ==========================
-# Demonstrates AIPerf's composed dataset feature.
-# Combines file-based prompts with output length control.
+# Use your own prompts from a file but let AIPerf control the output length.
+# This is useful when you have real queries but need consistent OSL for
+# apples-to-apples comparison, or when your file has no max_tokens field.
 #
-# Use case: Apply consistent output length distribution to file-based prompts
+# The augment section adds an OSL distribution to file records:
+#   fill     - Only set OSL if the record doesn't already have one
+#   override - Always replace existing OSL
+#
+# Prepare a prompts.jsonl file (one JSON object per line):
+#   {"prompt": "What is machine learning?"}
+#   {"prompt": "Explain neural networks in simple terms"}
+#   {"prompt": "How does gradient descent find the minimum?"}
 #
 # Run: aiperf profile --config composed_dataset.yaml
-#
-# Note: Create a simple prompts.jsonl file first:
-# {"prompt": "What is machine learning?"}
-# {"prompt": "Explain neural networks"}
-# {"prompt": "How does backpropagation work?"}
 
-random_seed: 42
+randomSeed: 42
 
 model: meta-llama/Llama-3.1-8B-Instruct
 
@@ -37,28 +40,22 @@ dataset:
   type: composed
   source:
     type: file
-    path: ./data/prompts.jsonl  # Replace with your prompts file
+    path: ./data/prompts.jsonl
     format: single_turn
-    sampling: shuffle
+    sampling: shuffle  # Randomize prompt order each run
   augment:
     osl: {mean: 256, stddev: 50}
-    osl_mode: fill  # Only apply if record doesn't have OSL
-  entries: 1000
+    oslMode: fill  # Respect existing OSL if present, fill missing ones
+  entries: 1000    # Recycle prompts if file has fewer than 1000 lines
 
 phases:
   type: concurrency
   requests: 1000
   concurrency: 32
   duration: 120
-  grace_period: 60
+  gracePeriod: 60
 
 artifacts:
   dir: ./artifacts/composed_dataset
   summary: [json]
   records: [jsonl, csv]
-
-server_metrics:
-  enabled: true
-  urls:
-    - http://localhost:8000/metrics
-  formats: [json, csv]

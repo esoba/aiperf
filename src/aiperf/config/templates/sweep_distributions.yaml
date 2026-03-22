@@ -21,7 +21,7 @@
 #
 # Run: aiperf profile --config sweep_distributions.yaml
 
-random_seed: 42
+randomSeed: 42
 
 model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
 
@@ -49,7 +49,7 @@ phases:
     type: concurrency
     requests: 50
     concurrency: 8
-    exclude_from_results: true
+    excludeFromResults: true
 
   profiling:
     type: poisson
@@ -57,7 +57,7 @@ phases:
     duration: 120
     concurrency: 64
     seamless: true
-    grace_period: 60
+    gracePeriod: 60
 
 sweep:
   type: grid
@@ -65,12 +65,12 @@ sweep:
     datasets.profiling.prompts.isl: [128, 512, 2048]
     phases.profiling.rate: [10.0, 30.0, 50.0]
 
-multi_run:
-  num_runs: 3
-  cooldown_seconds: 15.0
-  confidence_level: 0.95
-  set_consistent_seed: true
-  disable_warmup_after_first: true
+multiRun:
+  numRuns: 3
+  cooldownSeconds: 15.0
+  confidenceLevel: 0.95
+  setConsistentSeed: true
+  disableWarmupAfterFirst: true
 
 artifacts:
   dir: ./artifacts/sweep_distributions

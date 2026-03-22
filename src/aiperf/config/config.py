@@ -31,7 +31,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
+
+from aiperf.config._base import BaseConfig
 
 if TYPE_CHECKING:
     from aiperf.common.enums import AIPerfLogLevel, GPUTelemetryMode
@@ -162,7 +164,7 @@ def build_comm_config(config: BenchmarkConfig) -> BaseZMQCommunicationConfig:
     return ZMQIPCConfig()
 
 
-class BenchmarkConfig(BaseModel):
+class BenchmarkConfig(BaseConfig):
     """Pure runtime configuration - what SystemController and services need.
 
     Contains all fields required to execute a single benchmark run.

@@ -15,7 +15,6 @@ import re
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
-    BaseModel,
     BeforeValidator,
     ConfigDict,
     Discriminator,
@@ -25,6 +24,7 @@ from pydantic import (
 )
 from typing_extensions import Self
 
+from aiperf.config._base import BaseConfig
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType
 
 __all__ = [
@@ -101,7 +101,7 @@ DurationSpec = Annotated[float | None, BeforeValidator(_normalize_duration)]
 # =============================================================================
 
 
-class RampConfig(BaseModel):
+class RampConfig(BaseConfig):
     """
     Configuration for gradual value ramping.
 
@@ -152,7 +152,7 @@ RampSpec = Annotated[RampConfig | None, BeforeValidator(_normalize_ramp)]
 # =============================================================================
 
 
-class CancellationConfig(BaseModel):
+class CancellationConfig(BaseConfig):
     """
     Configuration for request cancellation testing.
 
@@ -189,7 +189,7 @@ class CancellationConfig(BaseModel):
 # =============================================================================
 
 
-class BasePhaseConfig(BaseModel):
+class BasePhaseConfig(BaseConfig):
     """Base configuration shared by all phase types.
 
     Not instantiated directly -- use a concrete type via the

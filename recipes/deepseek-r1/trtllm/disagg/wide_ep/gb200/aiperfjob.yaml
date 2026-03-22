@@ -43,7 +43,7 @@ spec:
       type: concurrency
       concurrency: 1080
       requests: 10800
-    random_seed: 100
+    randomSeed: 100
   podTemplate:
     imagePullSecrets:
     - nvcrimagepullsecret
