@@ -2,7 +2,7 @@ import { html } from 'htm/preact';
 import { useState, useEffect } from 'preact/hooks';
 import { api, poll } from '../lib/api.js';
 import { jobs, clusterInfo } from '../lib/state.js';
-import { phaseColor, colors, palette } from '../lib/theme.js';
+import { phaseColor, modelColor, palette, colors } from '../lib/theme.js';
 import { navigate } from '../lib/router.js';
 import { KpiCard } from '../components/kpi-card.js';
 import { ChartWrapper } from '../components/chart-wrapper.js';
@@ -17,13 +17,13 @@ function formatElapsed(ms) {
   return `${s}s`;
 }
 
-function bestThroughput(jobList) {
+function findBest(jobList, field) {
   let best = null;
   let bestName = null;
   for (const job of jobList) {
     const phase = (job.phase ?? '').toLowerCase();
     if (phase !== 'completed' && phase !== 'succeeded') continue;
-    const val = job.throughputRps ?? null;
+    const val = job[field] ?? null;
     if (val != null && (best === null || val > best)) {
       best = val;
       bestName = job.name;
@@ -32,138 +32,24 @@ function bestThroughput(jobList) {
   return { value: best, name: bestName };
 }
 
-function gpuCount(cluster) {
-  return cluster?.gpus ?? cluster?.gpuCount ?? cluster?.gpu_count ?? null;
+function findMin(jobList, field) {
+  let best = null;
+  let bestName = null;
+  for (const job of jobList) {
+    const phase = (job.phase ?? '').toLowerCase();
+    if (phase !== 'completed' && phase !== 'succeeded') continue;
+    const val = job[field] ?? null;
+    if (val != null && (best === null || val < best)) {
+      best = val;
+      bestName = job.name;
+    }
+  }
+  return { value: best, name: bestName };
 }
 
-// Assign a stable color to a model name via simple hash
-const MODEL_COLORS = [
-  palette.blue, palette.mauve, palette.green, palette.peach,
-  palette.pink, palette.teal, palette.sapphire, palette.yellow,
-  palette.flamingo, palette.lavender, palette.red, palette.sky,
-];
+// --- Section 1: StatusBar ---
 
-function modelColor(model) {
-  if (!model) return palette.overlay0;
-  let hash = 0;
-  for (let i = 0; i < model.length; i++) {
-    hash = ((hash << 5) - hash + model.charCodeAt(i)) | 0;
-  }
-  return MODEL_COLORS[Math.abs(hash) % MODEL_COLORS.length];
-}
-
-// Feature 1+2: Throughput vs Latency scatter plot with quadrant labels
-function ThroughputLatencyScatter({ completedJobs }) {
-  if (!completedJobs || completedJobs.length === 0) return null;
-
-  const points = completedJobs.filter(
-    j => j.throughputRps != null && j.latencyP99Ms != null,
-  );
-  if (points.length === 0) return null;
-
-  // Group by model for coloring
-  const modelGroups = {};
-  for (const job of points) {
-    const m = job.model ?? 'unknown';
-    if (!modelGroups[m]) modelGroups[m] = [];
-    modelGroups[m].push(job);
-  }
-
-  const datasets = Object.entries(modelGroups).map(([model, jobs]) => ({
-    label: model,
-    data: jobs.map(j => ({
-      x: j.throughputRps,
-      y: j.latencyP99Ms,
-      jobName: j.name,
-    })),
-    backgroundColor: modelColor(model) + 'cc',
-    borderColor: modelColor(model),
-    borderWidth: 1,
-    pointRadius: 6,
-    pointHoverRadius: 9,
-  }));
-
-  const chartData = { datasets };
-
-  const chartOptions = {
-    plugins: {
-      legend: {
-        display: Object.keys(modelGroups).length > 1,
-        labels: { color: palette.overlay0, font: { size: 11 } },
-      },
-      tooltip: {
-        callbacks: {
-          label: ctx => {
-            const pt = ctx.raw;
-            return ` ${pt.jobName}: ${fmtThroughput(pt.x)} req/s, ${fmtNumber(pt.y, 0)} ms p99`;
-          },
-        },
-      },
-      // Quadrant labels plugin
-      quadrantLabels: {
-        enabled: true,
-      },
-    },
-    scales: {
-      x: {
-        type: 'linear',
-        title: { display: true, text: 'Throughput (req/s)', color: palette.overlay1, font: { size: 11 } },
-        ticks: { color: palette.overlay0, font: { size: 10 } },
-        grid: { color: palette.surface0 + '60' },
-      },
-      y: {
-        type: 'linear',
-        title: { display: true, text: 'Latency P99 (ms)', color: palette.overlay1, font: { size: 11 } },
-        ticks: { color: palette.overlay0, font: { size: 10 } },
-        grid: { color: palette.surface0 + '60' },
-      },
-    },
-  };
-
-  // Register a custom Chart.js plugin for quadrant labels (inline)
-  const quadrantPlugin = {
-    id: 'quadrantLabels',
-    afterDraw(chart) {
-      const { ctx, chartArea: { left, right, top, bottom } } = chart;
-      const midX = (left + right) / 2;
-      const midY = (top + bottom) / 2;
-
-      ctx.save();
-      ctx.font = '11px Inter, system-ui, sans-serif';
-      ctx.fillStyle = palette.overlay0 + '60';
-      ctx.textAlign = 'center';
-
-      // Top-right: best
-      ctx.fillText('High Throughput, Low Latency', (midX + right) / 2, top + 16);
-      // Bottom-left: worst
-      ctx.fillText('Low Throughput, High Latency', (left + midX) / 2, bottom - 8);
-
-      ctx.restore();
-    },
-  };
-
-  // We need to register the plugin before the chart is created.
-  // ChartWrapper creates the chart on mount, so we register it globally once.
-  if (window.Chart && !window._quadrantPluginRegistered) {
-    window.Chart.register(quadrantPlugin);
-    window._quadrantPluginRegistered = true;
-  }
-
-  return html`
-    <div class="card" style="margin-bottom: var(--space-6)">
-      <div class="card-title">Throughput vs Latency (Completed Jobs)</div>
-      <${ChartWrapper}
-        type="scatter"
-        data=${chartData}
-        options=${chartOptions}
-        height=${280}
-      />
-    </div>
-  `;
-}
-
-// Feature 10: Status summary bar
-function StatusSummaryBar({ allJobs, cluster, best }) {
+function StatusBar({ allJobs, cluster, best }) {
   const running = allJobs.filter(j => {
     const p = (j.phase ?? '').toLowerCase();
     return p === 'running' || p === 'initializing' || p === 'pending';
@@ -176,312 +62,363 @@ function StatusSummaryBar({ allJobs, cluster, best }) {
     const p = (j.phase ?? '').toLowerCase();
     return p === 'failed' || p === 'error';
   }).length;
-
-  const nodes = cluster?.nodes ?? cluster?.nodeCount ?? cluster?.node_count ?? '?';
   const gpus = cluster?.gpus ?? cluster?.gpuCount ?? cluster?.gpu_count ?? '?';
-
-  const parts = [];
-  parts.push(`Cluster: ${nodes} node${nodes !== 1 ? 's' : ''}, ${gpus} GPU${gpus !== 1 ? 's' : ''}`);
-  parts.push(`${fmtInt(completed)} completed, ${fmtInt(running)} running, ${fmtInt(failed)} failed`);
-  if (best.value != null && best.name) {
-    parts.push(`Best: ${fmtThroughput(best.value)} req/s (${best.name})`);
-  }
+  const nodes = cluster?.nodes ?? cluster?.nodeCount ?? cluster?.node_count ?? '?';
 
   return html`
-    <div
-      style=${'display: flex; align-items: center; gap: var(--space-4); padding: var(--space-2) var(--space-4); margin-bottom: var(--space-4); background: ' + palette.surface0 + '40; border-radius: var(--radius-md); font-size: var(--font-size-sm); color: ' + palette.subtext0 + '; flex-wrap: wrap; border: 1px solid ' + palette.surface0}
-    >
-      ${parts.map((part, i) => html`
-        <span key=${i}>
-          ${i > 0 && html`<span style=${'color: ' + palette.overlay0 + '; margin-right: var(--space-4)'}>|</span>`}
-          ${part}
-        </span>
-      `)}
+    <div class="status-bar">
+      <div class="status-item"><div class="status-dot${running > 0 ? ' live' : ''}"></div> <span class="status-val">${fmtInt(running)}</span> running</div>
+      <span class="status-sep">\u00b7</span>
+      <div class="status-item"><span class="status-val">${fmtInt(completed)}</span> completed</div>
+      ${failed > 0 ? html`<span class="status-sep">\u00b7</span><div class="status-item"><span class="status-val" style="color:var(--red)">${fmtInt(failed)}</span> failed</div>` : null}
+      <span class="status-sep">\u00b7</span>
+      <div class="status-item"><span class="status-val">${gpus}</span> GPUs</div>
+      <span class="status-sep">\u00b7</span>
+      <div class="status-item"><span class="status-val">${nodes}</span> nodes</div>
+      ${best.value != null ? html`
+        <span class="status-sep">\u00b7</span>
+        <div class="status-item">Best: <span class="status-val">${fmtThroughput(best.value)}</span> req/s ${best.name ? html`<span style="color:var(--muted)">(${best.name})</span>` : null}</div>
+      ` : null}
     </div>
   `;
 }
+
+// --- Section 2: ThroughputLatencyScatter ---
+
+const AXIS_MODES = {
+  tps_p99: { xField: 'throughputRps', yField: 'latencyP99Ms', xLabel: 'Throughput (req/s)', yLabel: 'Latency P99 (ms)' },
+  tps_ttft: { xField: 'throughputRps', yField: 'ttftMs', xLabel: 'Throughput (req/s)', yLabel: 'TTFT (ms)' },
+  tokps_p99: { xField: 'tokenThroughput', yField: 'latencyP99Ms', xLabel: 'Token Throughput (tok/s)', yLabel: 'Latency P99 (ms)' },
+};
+
+const quadrantPlugin = {
+  id: 'quadrantLabels',
+  afterDraw(chart) {
+    const { ctx, chartArea: { left, right, top, bottom } } = chart;
+    const midX = (left + right) / 2;
+
+    ctx.save();
+    ctx.font = '11px Inter, system-ui, sans-serif';
+    ctx.fillStyle = palette.overlay0 + '60';
+    ctx.textAlign = 'center';
+
+    ctx.fillText('High Throughput, Low Latency', (midX + right) / 2, top + 16);
+    ctx.fillText('Low Throughput, High Latency', (left + midX) / 2, bottom - 8);
+
+    ctx.restore();
+  },
+};
+
+if (window.Chart && !window._quadrantPluginRegistered) {
+  window.Chart.register(quadrantPlugin);
+  window._quadrantPluginRegistered = true;
+}
+
+function ThroughputLatencyScatter({ completedJobs }) {
+  const [axisMode, setAxisMode] = useState('tps_p99');
+  const [logScale, setLogScale] = useState(false);
+
+  if (!completedJobs || completedJobs.length === 0) return null;
+
+  const mode = AXIS_MODES[axisMode];
+  const points = completedJobs.filter(
+    j => j[mode.xField] != null && j[mode.yField] != null,
+  );
+  if (points.length === 0) return null;
+
+  const modelGroups = {};
+  for (const job of points) {
+    const m = job.model ?? 'unknown';
+    if (!modelGroups[m]) modelGroups[m] = [];
+    modelGroups[m].push(job);
+  }
+
+  const datasets = Object.entries(modelGroups).map(([model, mjobs]) => ({
+    label: model,
+    data: mjobs.map(j => ({
+      x: j[mode.xField],
+      y: j[mode.yField],
+      jobName: j.name,
+      backend: j.backend ?? '',
+    })),
+    backgroundColor: modelColor(model) + 'cc',
+    borderColor: modelColor(model),
+    borderWidth: 1.5,
+    pointRadius: 7,
+    pointHoverRadius: 10,
+  }));
+
+  const scaleType = logScale ? 'logarithmic' : 'linear';
+  const chartOptions = {
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: ctx => {
+            const pt = ctx.raw;
+            const xUnit = mode.xLabel.includes('tok/s') ? 'tok/s' : 'req/s';
+            const yUnit = 'ms';
+            return `${ctx.dataset.label} @ ${pt.backend}\n${fmtNumber(pt.x, 1)} ${xUnit}, ${fmtNumber(pt.y, 0)} ${yUnit}`;
+          },
+        },
+      },
+      quadrantLabels: { enabled: true },
+    },
+    scales: {
+      x: {
+        type: scaleType,
+        title: { display: true, text: mode.xLabel, color: palette.overlay1, font: { size: 11 } },
+        ticks: { color: palette.muted, font: { size: 10 } },
+        grid: { color: palette.border + '60' },
+      },
+      y: {
+        type: scaleType,
+        title: { display: true, text: mode.yLabel, color: palette.overlay1, font: { size: 11 } },
+        ticks: { color: palette.muted, font: { size: 10 } },
+        grid: { color: palette.border + '60' },
+      },
+    },
+  };
+
+  const models = Object.keys(modelGroups);
+
+  return html`
+    <div class="card" style="margin-bottom: var(--space-6)">
+      <div class="scatter-header">
+        <div class="card-title" style="margin:0">Throughput vs Latency</div>
+        <div class="axis-toggles">
+          <button class="nav-tab${axisMode === 'tps_p99' ? ' active' : ''}" onclick=${() => setAxisMode('tps_p99')}>TPS / P99</button>
+          <button class="nav-tab${axisMode === 'tps_ttft' ? ' active' : ''}" onclick=${() => setAxisMode('tps_ttft')}>TPS / TTFT</button>
+          <button class="nav-tab${axisMode === 'tokps_p99' ? ' active' : ''}" onclick=${() => setAxisMode('tokps_p99')}>Tok/s / P99</button>
+          <button class="nav-tab${logScale ? ' active' : ''}" onclick=${() => setLogScale(!logScale)}>Log</button>
+        </div>
+      </div>
+      <${ChartWrapper}
+        type="scatter"
+        data=${{ datasets }}
+        options=${chartOptions}
+        height=${280}
+      />
+      ${models.length > 1 ? html`
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;padding:0 4px">
+          ${models.map(m => html`
+            <div key=${m} style="display:flex;align-items:center;gap:4px;font-size:11px;color:${palette.sub}">
+              <span style="width:8px;height:8px;border-radius:50%;background:${modelColor(m)};display:inline-block"></span>
+              ${m}
+            </div>
+          `)}
+        </div>
+      ` : null}
+    </div>
+  `;
+}
+
+// --- Main Dashboard ---
 
 export function Dashboard() {
   const [localJobs, setLocalJobs] = useState(jobs.value);
   const [cluster, setCluster] = useState(clusterInfo.value);
   const [clusterError, setClusterError] = useState(false);
-  const [historyData, setHistoryData] = useState(null);
 
   useEffect(() => {
     const ac = new AbortController();
-
-    poll(
-      async () => {
-        const data = await api.listJobs();
-        const list = data?.jobs ?? [];
-        jobs.value = list;
-        setLocalJobs(list);
-      },
-      5000,
-      ac.signal,
-    );
-
-    poll(
-      async () => {
-        try {
-          const data = await api.getCluster();
-          clusterInfo.value = data;
-          setCluster(data);
-          setClusterError(false);
-        } catch (_e) {
-          setClusterError(true);
-        }
-      },
-      5000,
-      ac.signal,
-    );
-
-    // Fetch history sparkline once on mount
-    api
-      .getHistory('request_throughput', 'avg')
-      .then((data) => setHistoryData(data))
-      .catch(() => {});
-
+    poll(async () => {
+      const data = await api.listJobs();
+      const list = data?.jobs ?? [];
+      jobs.value = list;
+      setLocalJobs(list);
+    }, 5000, ac.signal);
+    poll(async () => {
+      try {
+        const data = await api.getCluster();
+        clusterInfo.value = data;
+        setCluster(data);
+        setClusterError(false);
+      } catch (_e) { setClusterError(true); }
+    }, 5000, ac.signal);
     return () => ac.abort();
   }, []);
 
   const allJobs = localJobs;
-  const running = allJobs.filter((j) => {
-    const p = (j.phase ?? '').toLowerCase();
-    return p === 'running' || p === 'initializing' || p === 'pending';
-  });
-  const completed = allJobs.filter((j) => {
-    const p = (j.phase ?? '').toLowerCase();
-    return p === 'completed' || p === 'succeeded';
-  });
-  const failed = allJobs.filter((j) => {
-    const p = (j.phase ?? '').toLowerCase();
-    return p === 'failed' || p === 'error';
-  });
+  const running = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'running' || p === 'initializing' || p === 'pending'; });
+  const completed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'completed' || p === 'succeeded'; });
+  const failed = allJobs.filter(j => { const p = (j.phase ?? '').toLowerCase(); return p === 'failed' || p === 'error'; });
 
-  const activeJobs = allJobs.filter((j) => {
-    const p = (j.phase ?? '').toLowerCase();
-    return p === 'running' || p === 'pending' || p === 'initializing';
-  });
+  const best = findBest(allJobs, 'throughputRps');
+  const bestTtft = findMin(allJobs, 'ttftMs');
+  const bestTokenTps = findBest(allJobs, 'tokenThroughput');
 
-  const gpus = gpuCount(cluster);
-  const best = bestThroughput(allJobs);
-
-  // Build sparkline chart data from history response
-  const sparklineData = (() => {
-    const points = historyData?.points ?? historyData?.data ?? historyData ?? [];
-    if (!Array.isArray(points) || points.length === 0) return null;
-    const labels = points.map((p) => p.label ?? p.time ?? '');
-    const values = points.map((p) => p.value ?? p.avg ?? 0);
-    return {
-      labels,
-      datasets: [
-        {
-          data: values,
-          borderColor: palette.blue,
-          backgroundColor: palette.blue + '22',
-          fill: true,
-          tension: 0.4,
-          pointRadius: 0,
-          borderWidth: 2,
-        },
-      ],
-    };
-  })();
-
-  const sparklineOptions = {
-    plugins: { legend: { display: false } },
-    scales: {
-      x: { display: false },
-      y: { display: false },
-    },
-    elements: { point: { radius: 0 } },
-  };
+  const top5 = [...completed].sort((a, b) => (b.throughputRps ?? 0) - (a.throughputRps ?? 0)).slice(0, 5);
+  const maxThroughput = top5.reduce((mx, j) => Math.max(mx, j.throughputRps ?? 0), 0) || 1;
+  const maxLatency = top5.reduce((mx, j) => Math.max(mx, j.latencyP99Ms ?? 0), 0) || 1;
 
   return html`
     <div class="dashboard">
-      ${clusterError && html`
-        <div class="cluster-warning-banner">
-          Cluster endpoint unavailable — data may be stale.
-        </div>
-      `}
+      ${clusterError && html`<div class="cluster-warning-banner">Cluster endpoint unavailable — data may be stale.</div>`}
 
-      <!-- Feature 10: Status Summary Bar -->
-      <${StatusSummaryBar} allJobs=${allJobs} cluster=${cluster} best=${best} />
+      <${StatusBar} allJobs=${allJobs} cluster=${cluster} best=${best} />
 
-      <div class="kpi-row">
-        <${KpiCard}
-          label="Running"
-          value=${running.length}
-          color=${colors.phaseRunning}
-        />
-        <${KpiCard}
-          label="Completed"
-          value=${completed.length}
-          color=${colors.phaseCompleted}
-        />
-        <${KpiCard}
-          label="GPUs"
-          value=${gpus ?? '---'}
-          color=${palette.mauve}
-        />
-        <${KpiCard}
-          label="Best Throughput"
-          value=${best.value != null ? fmtThroughput(best.value) : '---'}
-          unit=${best.value != null ? 'req/s' : ''}
-          color=${palette.yellow}
-        />
-      </div>
-
-      ${sparklineData && html`
-        <div class="card" style="margin-bottom: var(--space-6)">
-          <div class="card-title">Throughput History</div>
-          <${ChartWrapper}
-            type="line"
-            data=${sparklineData}
-            options=${sparklineOptions}
-            height=${120}
-          />
-        </div>
-      `}
-
-      <!-- Feature 1+2: Throughput vs Latency Scatter -->
       <${ThroughputLatencyScatter} completedJobs=${completed} />
 
+      <!-- Section 3: Metric cards -->
+      <div class="metrics-row">
+        <${KpiCard} label="Running" value=${running.length} color=${palette.blue} />
+        <${KpiCard} label="Completed" value=${completed.length} color=${palette.green} />
+        <${KpiCard} label="Peak Throughput" value=${best.value != null ? fmtThroughput(best.value) : '---'} unit=${best.value != null ? 'req/s' : ''} color=${palette.accent} sub=${best.name ?? ''} />
+        <${KpiCard} label="Best TTFT" value=${bestTtft.value != null ? fmtNumber(bestTtft.value, 0) : '---'} unit=${bestTtft.value != null ? 'ms' : ''} color=${palette.cyan} sub=${bestTtft.name ?? ''} />
+        <${KpiCard} label="Token Throughput" value=${bestTokenTps.value != null ? fmtInt(bestTokenTps.value) : '---'} unit=${bestTokenTps.value != null ? 'tok/s' : ''} color=${palette.amber} sub=${bestTokenTps.name ?? ''} />
+      </div>
+
+      <!-- Section 4: Active Jobs -->
       <div class="section-header">
         <span class="section-title">Active Jobs</span>
         <span class="text-dim" style="font-size: var(--font-size-sm)">
-          ${activeJobs.length} job${activeJobs.length !== 1 ? 's' : ''}
+          ${running.length} job${running.length !== 1 ? 's' : ''}
         </span>
       </div>
 
-      ${activeJobs.length === 0
+      ${running.length === 0
         ? html`
           <div class="empty-state card">
             <p class="text-dim">No active jobs. Start a benchmark with <code>aiperf kube run</code>.</p>
           </div>
         `
-        : html`
-          <div class="active-jobs-list">
-            ${activeJobs.map((job) => {
-              const phase = job.phase ?? 'Unknown';
-              const pct = Math.round(job.progressPercent ?? 0);
-              const color = phaseColor(phase);
-              const startTime = job.startTime;
-              const elapsed = startTime
-                ? formatElapsed(Date.now() - new Date(startTime).getTime())
-                : null;
+        : running.map(job => {
+            const phase = job.phase ?? 'Unknown';
+            const pct = Math.round(job.progressPercent ?? 0);
+            const color = phaseColor(phase);
+            const startTime = job.startTime;
+            const elapsed = startTime ? formatElapsed(Date.now() - new Date(startTime).getTime()) : null;
 
-              return html`
-                <div
-                  key=${job.namespace + '/' + job.name}
-                  class="active-job-row card"
-                  onclick=${() => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name))}
-                  style="cursor: pointer; margin-bottom: var(--space-3)"
-                >
-                  <div class="active-job-header">
-                    <span class="active-job-name">${job.name}</span>
-                    <span class="phase-badge" style=${'background: ' + color + '22; color: ' + color + '; border-color: ' + color + '44'}>
-                      ${phase}
-                    </span>
-                  </div>
-                  <div class="active-job-meta text-dim" style="font-size: var(--font-size-sm); margin: var(--space-1) 0">
-                    ${job.model ?? '---'}
-                    ${elapsed && html` · ${elapsed}`}
-                    ${job.throughputRps != null && html` · ${fmtThroughput(job.throughputRps)} req/s`}
-                  </div>
-                  ${pct > 0 && html`
-                    <div class="progress-track" style="margin-top: var(--space-2)">
-                      <div class="progress-fill" style=${'width: ' + pct + '%; background: ' + color} />
-                    </div>
-                  `}
-                </div>
-              `;
-            })}
-          </div>
-        `
-      }
-
-      ${failed.length > 0 && html`
-        <div class="section-header" style="margin-top: var(--space-6)">
-          <span class="section-title" style="color: ${colors.phaseFailed}">Failed Jobs</span>
-          <span class="text-dim" style="font-size: var(--font-size-sm)">${failed.length}</span>
-        </div>
-        <div class="active-jobs-list">
-          ${failed.map((job) => {
-            const color = phaseColor(job.phase ?? 'Failed');
             return html`
               <div
                 key=${job.namespace + '/' + job.name}
-                class="active-job-row card"
+                class="job-card"
                 onclick=${() => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name))}
-                style="cursor: pointer; margin-bottom: var(--space-3); border-color: ${color}44"
+                style="cursor:pointer;margin-bottom:var(--space-3)"
               >
-                <div class="active-job-header">
-                  <span class="active-job-name">${job.name}</span>
-                  <span class="phase-badge" style=${'background: ' + color + '22; color: ' + color + '; border-color: ' + color + '44'}>
-                    ${job.phase ?? 'Failed'}
-                  </span>
-                </div>
-                ${job.error && html`
-                  <div style="font-size: var(--font-size-sm); color: ${colors.error}; margin-top: var(--space-1)">
-                    ${job.error}
+                <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start">
+                  <div>
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <div class="job-indicator running"></div>
+                      <span class="job-name">${job.name}</span>
+                      <span class="job-badge running">${phase}</span>
+                    </div>
+                    <div class="text-dim" style="font-size:var(--font-size-sm);margin-top:4px;display:flex;gap:8px;flex-wrap:wrap">
+                      ${job.model ? html`<span>${job.model}</span>` : null}
+                      ${job.backend ? html`<span>\u00b7 ${job.backend}</span>` : null}
+                      ${elapsed ? html`<span>\u00b7 ${elapsed}</span>` : null}
+                      ${job.gpuConfig ? html`<span>\u00b7 ${job.gpuConfig}</span>` : null}
+                    </div>
                   </div>
-                `}
+                  <div style="text-align:right">
+                    ${job.throughputRps != null ? html`
+                      <div style="font-size:24px;font-weight:700;color:${palette.text};line-height:1">${fmtThroughput(job.throughputRps)}</div>
+                      <div style="font-size:11px;color:${palette.muted}">req/s</div>
+                    ` : null}
+                  </div>
+                </div>
+                ${pct > 0 ? html`
+                  <div class="progress-track" style="margin-top:8px">
+                    <div class="progress-fill" style=${'width:' + pct + '%;background:' + color} />
+                  </div>
+                ` : null}
               </div>
             `;
-          })}
-        </div>
-      `}
+          })
+      }
 
-      <!-- Job History (completed jobs) -->
-      ${completed.length > 0 && html`
-        <div class="section-header" style="margin-top: var(--space-6)">
-          <span class="section-title">Job History</span>
-          <span class="text-dim" style="font-size: var(--font-size-sm)">${completed.length} completed</span>
+      <!-- Section 5: Failed Jobs -->
+      ${failed.length > 0 ? html`
+        <div class="section-header" style="margin-top:var(--space-6)">
+          <span class="section-title" style="color:${palette.red}">Failed Jobs</span>
+          <span class="text-dim" style="font-size:var(--font-size-sm)">${failed.length}</span>
         </div>
-        <div class="job-table-wrapper">
-          <table class="job-table">
-            <thead>
-              <tr>
-                <th class="job-table-th">Name</th>
-                <th class="job-table-th">Model</th>
-                <th class="job-table-th">Throughput</th>
-                <th class="job-table-th">Latency P99</th>
-                <th class="job-table-th">Age</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${completed.map((job) => {
-                const age = job.created ? (() => {
-                  const ms = Date.now() - new Date(job.created).getTime();
-                  const s = Math.floor(ms / 1000);
-                  if (s < 60) return s + 's';
-                  const m = Math.floor(s / 60);
-                  if (m < 60) return m + 'm';
-                  const h = Math.floor(m / 60);
-                  if (h < 24) return h + 'h';
-                  return Math.floor(h / 24) + 'd';
-                })() : '---';
-                return html`
-                  <tr
-                    key=${job.namespace + '/' + job.name}
-                    class="job-table-row"
-                    onclick=${() => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name))}
-                    style="cursor: pointer"
-                  >
-                    <td class="job-table-td job-table-name">${job.name}</td>
-                    <td class="job-table-td text-dim">${job.model ?? '---'}</td>
-                    <td class="job-table-td">${job.throughputRps != null ? fmtThroughput(job.throughputRps) + ' req/s' : '---'}</td>
-                    <td class="job-table-td">${job.latencyP99Ms != null ? fmtLatencyStr(job.latencyP99Ms) : '---'}</td>
-                    <td class="job-table-td text-dim">${age}</td>
-                  </tr>
-                `;
-              })}
-            </tbody>
-          </table>
+        ${failed.map(job => {
+          return html`
+            <div
+              key=${job.namespace + '/' + job.name}
+              class="job-card"
+              onclick=${() => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name))}
+              style="cursor:pointer;margin-bottom:var(--space-3);border-color:${palette.red}44"
+            >
+              <div style="display:flex;align-items:center;gap:8px">
+                <div class="job-indicator failed"></div>
+                <span class="job-name">${job.name}</span>
+                <span class="job-badge failed">${job.phase ?? 'Failed'}</span>
+              </div>
+              ${job.error ? html`
+                <div style="font-size:var(--font-size-sm);color:${palette.red};margin-top:4px">${job.error}</div>
+              ` : null}
+            </div>
+          `;
+        })}
+      ` : null}
+
+      <!-- Section 6: Leaderboard Preview -->
+      ${top5.length > 0 ? html`
+        <div class="section-header" style="margin-top:24px">
+          <div class="section-title">Leaderboard</div>
+          <button class="nav-tab" onclick=${() => navigate('/leaderboard')} style="font-size:12px;padding:4px 10px;">View All \u2192</button>
         </div>
-      `}
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th>Configuration</th>
+              <th>Backend</th>
+              <th style="width:200px">Throughput</th>
+              <th style="width:200px">Latency P99</th>
+              <th>TTFT</th>
+              <th>GPUs</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${top5.map((job, i) => {
+              const tpsVal = job.throughputRps ?? 0;
+              const latVal = job.latencyP99Ms ?? 0;
+              const tpsPct = maxThroughput > 0 ? (tpsVal / maxThroughput) * 100 : 0;
+              const latPct = maxLatency > 0 ? (latVal / maxLatency) * 100 : 0;
+              const mColor = modelColor(job.model);
+
+              return html`
+                <tr
+                  key=${job.namespace + '/' + job.name}
+                  onclick=${() => navigate('/jobs/' + encodeURIComponent(job.namespace) + '/' + encodeURIComponent(job.name))}
+                  style="cursor:pointer"
+                >
+                  <td><span class="rank${i === 0 ? ' gold' : ''}">${i + 1}</span></td>
+                  <td>
+                    <div class="model-cell">
+                      <span class="model-color" style="background:${mColor}"></span>
+                      <span class="model-name">${job.model ?? job.name}</span>
+                    </div>
+                  </td>
+                  <td>${job.backend ?? '---'}</td>
+                  <td>
+                    <div class="bar-cell">
+                      <div class="inline-bar">
+                        <div class="inline-bar-fill" style="width:${tpsPct}%;background:${palette.accent}"></div>
+                      </div>
+                      <span class="bar-val">${fmtThroughput(tpsVal)} req/s</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="bar-cell">
+                      <div class="inline-bar">
+                        <div class="inline-bar-fill" style="width:${latPct}%;background:${palette.cyan}"></div>
+                      </div>
+                      <span class="bar-val">${fmtNumber(latVal, 0)} ms</span>
+                    </div>
+                  </td>
+                  <td>${job.ttftMs != null ? fmtNumber(job.ttftMs, 0) + ' ms' : '---'}</td>
+                  <td>${job.gpuConfig ?? '---'}</td>
+                </tr>
+              `;
+            })}
+          </tbody>
+        </table>
+      ` : null}
     </div>
   `;
 }
