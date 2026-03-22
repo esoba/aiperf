@@ -46,11 +46,11 @@ class PublicDatasetComposer(BaseDatasetComposer):
         data = await loader.load_dataset()
         conversations = await loader.convert_to_conversations(data)
 
-        for conversation in conversations:
+        for session_index, conversation in enumerate(conversations):
             for turn in conversation.turns:
                 self._finalize_turn(turn)
+            self._finalize_conversation(conversation, session_index)
 
-        self._finalize_conversations(conversations)
         return conversations
 
     def _set_sampling_strategy(

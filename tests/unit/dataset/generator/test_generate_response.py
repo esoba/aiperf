@@ -23,9 +23,22 @@ _EXPECTED_TOOL_NAMES = {
     "Grep",
     "Glob",
     "Write",
-    "Task",
-    "TodoWrite",
+    "TaskUpdate",
+    "TaskCreate",
+    "Agent",
 }
+
+
+class _RoundTripTokenizer:
+    """Minimal reversible tokenizer for realism tests."""
+
+    block_separation_token_id = 0
+
+    def encode(self, text: str, **kwargs) -> list[int]:
+        return [ord(ch) for ch in text]
+
+    def decode(self, token_ids: list[int], **kwargs) -> str:
+        return "".join(chr(token_id) for token_id in token_ids)
 
 
 def _default_config() -> PromptConfig:
@@ -35,6 +48,33 @@ def _default_config() -> PromptConfig:
         block_size=512,
         prefix_prompt=PrefixPromptConfig(pool_size=0, length=0),
     )
+
+
+def _response_budget_tokens(
+    generator: CodingContentGenerator, messages: list[dict]
+) -> int:
+    total = 0
+    for msg in messages:
+        if msg["role"] == "assistant":
+            content = msg.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if block.get("type") == "text":
+                        total += len(generator.tokenizer.encode(block["text"]))
+            elif "tool_calls" in msg:
+                content = msg.get("content")
+                if isinstance(content, str) and content:
+                    total += len(generator.tokenizer.encode(content))
+            else:
+                if isinstance(content, str):
+                    total += len(generator.tokenizer.encode(content))
+        elif msg["role"] == "tool":
+            total += len(generator.tokenizer.encode(msg["content"]))
+        elif msg["role"] == "user":
+            for block in msg.get("content", []):
+                if block.get("type") == "tool_result":
+                    total += len(generator.tokenizer.encode(block["content"]))
+    return total
 
 
 # ============================================================
@@ -183,12 +223,14 @@ class TestGenerateResponseEdgeCases:
         assert generator.generate_response(num_tokens) == []
         assert generator.generate_response(num_tokens, use_content_blocks=True) == []
 
-    def test_small_budget_single_message(
+    def test_small_budget_has_tool_calls(
         self, generator: CodingContentGenerator
     ) -> None:
         result = generator.generate_response(20)
-        assert len(result) == 1
-        assert result[0]["role"] == "assistant"
+        assert len(result) >= 3
+        assert any(m.get("tool_calls") for m in result)
+        assert any(m.get("role") == "tool" for m in result)
+        assert result[-1]["role"] == "assistant"
 
     def test_large_budget_multiple_iterations(
         self, generator: CodingContentGenerator
@@ -199,7 +241,41 @@ class TestGenerateResponseEdgeCases:
 
     def test_budget_one(self, generator: CodingContentGenerator) -> None:
         result = generator.generate_response(1)
-        assert len(result) == 1
+        assert len(result) >= 3
+        assert any(m.get("tool_calls") for m in result)
+
+
+class TestExactTokenBudgets:
+    @pytest.fixture
+    def generator(self, mock_tokenizer_cls) -> CodingContentGenerator:
+        tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
+        return CodingContentGenerator(_default_config(), tokenizer)
+
+    @pytest.mark.parametrize("budget", [1, 25, 100, 300])
+    def test_response_budget_exact_openai(
+        self, generator: CodingContentGenerator, budget: int
+    ) -> None:
+        result = generator.generate_response(budget)
+        assert _response_budget_tokens(generator, result) == budget
+
+    @pytest.mark.parametrize("budget", [1, 25, 100, 300])
+    def test_response_budget_exact_content_blocks(
+        self, generator: CodingContentGenerator, budget: int
+    ) -> None:
+        result = generator.generate_response(budget, use_content_blocks=True)
+        assert _response_budget_tokens(generator, result) == budget
+
+    def test_assistant_text_tokens_exact_when_explicit(
+        self, generator: CodingContentGenerator
+    ) -> None:
+        result = generator.generate_response(120, assistant_text_tokens=80)
+        final_message = result[-1]
+        assert final_message["role"] == "assistant"
+        assert "tool_calls" not in final_message
+        assert len(generator.tokenizer.encode(final_message["content"])) == 80
+
+        tool_round_only = result[:-1]
+        assert _response_budget_tokens(generator, tool_round_only) == 120
 
 
 # ============================================================
@@ -276,6 +352,82 @@ class TestDeterminism:
 
         assert r1 != r2
 
+    def test_same_seed_different_budgets_change_first_tool_round(
+        self, mock_tokenizer_cls
+    ) -> None:
+        tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
+        config = _default_config()
+
+        rng.reset()
+        rng.init(42)
+        r1 = CodingContentGenerator(config, tokenizer).generate_response(300)
+
+        rng.reset()
+        rng.init(42)
+        r2 = CodingContentGenerator(config, tokenizer).generate_response(600)
+
+        first_tool_round_300 = next(msg for msg in r1 if msg.get("tool_calls"))
+        first_tool_round_600 = next(msg for msg in r2 if msg.get("tool_calls"))
+
+        assert first_tool_round_300 != first_tool_round_600
+
+
+class TestResponseRealism:
+    _FORBIDDEN_TRANSCRIPT_MARKERS = (
+        "<tool_name>",
+        "</result>",
+        "[Assistant]",
+        "[User]",
+    )
+    _REPEATED_PREAMBLE = "I need to see the config first."
+
+    @pytest.fixture
+    def generator(self) -> CodingContentGenerator:
+        rng.reset()
+        rng.init(1)
+        return CodingContentGenerator(_default_config(), _RoundTripTokenizer())
+
+    def test_tool_results_do_not_include_transcript_markers(
+        self, generator: CodingContentGenerator
+    ) -> None:
+        result = generator.generate_response(1000)
+
+        tool_messages = [msg for msg in result if msg["role"] == "tool"]
+        assert tool_messages
+        for msg in tool_messages:
+            content = msg["content"]
+            assert content
+            assert not any(
+                marker in content for marker in self._FORBIDDEN_TRANSCRIPT_MARKERS
+            )
+
+    def test_final_summary_does_not_include_tool_transcript_markers(
+        self, generator: CodingContentGenerator
+    ) -> None:
+        result = generator.generate_response(1000)
+
+        final_message = result[-1]
+        assert final_message["role"] == "assistant"
+        assert "tool_calls" not in final_message
+        content = final_message["content"]
+        assert isinstance(content, str)
+        assert content
+        assert not any(
+            marker in content for marker in self._FORBIDDEN_TRANSCRIPT_MARKERS
+        )
+
+    def test_padded_assistant_preamble_does_not_self_repeat(
+        self, generator: CodingContentGenerator
+    ) -> None:
+        result = generator.generate_response(300)
+
+        first_tool_round = next(msg for msg in result if msg.get("tool_calls"))
+        content = first_tool_round["content"]
+        assert isinstance(content, str)
+        assert content
+        assert self._REPEATED_PREAMBLE in content
+        assert content.count(self._REPEATED_PREAMBLE) == 1
+
 
 # ============================================================
 # _make_tool_call
@@ -306,8 +458,10 @@ class TestMakeToolCall:
             ("Write", "file_path"),
             ("Grep", "pattern"),
             ("Glob", "pattern"),
-            ("Task", "prompt"),
-            ("TodoWrite", "todos"),
+            ("Edit", "old_string"),
+            ("TaskUpdate", "taskId"),
+            ("TaskCreate", "subject"),
+            ("Agent", "prompt"),
         ],
     )
     def test_tool_input_keys(
@@ -329,13 +483,12 @@ class TestMakeToolCall:
                 break
         assert found
 
-    def test_bash_has_description(self, generator: CodingContentGenerator) -> None:
+    def test_bash_always_has_command(self, generator: CodingContentGenerator) -> None:
         found = False
         for _ in range(50):
             name, inp = generator._make_tool_call()
             if name == "Bash":
                 assert "command" in inp
-                assert "description" in inp
                 found = True
                 break
         assert found
@@ -381,16 +534,3 @@ class TestPromptGeneratorGenerateResponse:
 
     def test_no_tool_calls(self, generator: PromptGenerator) -> None:
         assert "tool_calls" not in generator.generate_response(50)[0]
-
-
-# ============================================================
-# PromptConfig.pre_generate_responses
-# ============================================================
-
-
-class TestPromptConfigPreGenerateResponses:
-    def test_defaults_to_false(self) -> None:
-        assert PromptConfig().pre_generate_responses is False
-
-    def test_can_be_set_true(self) -> None:
-        assert PromptConfig(pre_generate_responses=True).pre_generate_responses is True

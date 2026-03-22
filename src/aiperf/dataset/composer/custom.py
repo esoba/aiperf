@@ -221,8 +221,8 @@ class CustomDatasetComposer(BaseDatasetComposer):
                     tokenizer=self.prompt_generator.tokenizer,
                 )
                 kwargs["prompt_generator"] = coding_gen
-                # Also update the composer's generator so _apply_pregenerated_responses
-                # uses the coding corpus for response generation.
+                # Also update the composer's generator so _inject_coding_tool_history
+                # uses the coding corpus for tool-use ISL generation.
                 self.prompt_generator = coding_gen
             else:
                 kwargs["prompt_generator"] = self.prompt_generator

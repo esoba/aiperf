@@ -436,7 +436,7 @@ Number of text inputs to include in each request for batch processing endpoints.
 
 #### `--pre-generate-responses`
 
-Pre-generate assistant responses for multi-turn conversations. When enabled, each turn's raw_messages will include a pre-generated assistant response from the previous turn, built at exactly max_tokens length. With '--prompt-corpus coding', responses contain realistic tool-use conversations (Read, Edit, Bash tool calls with results). With 'sonnet', responses are plain text.
+Include assistant text responses in coding tool-use history. When --prompt-corpus coding is used with multi-turn traces, tool-use conversation history is always injected into the ISL. This flag controls whether assistant summary/preamble text is also included between tool rounds, increasing the realism of the conversation history.
 <br/>_Flag (no value required)_
 
 #### `--prompt-corpus` `<str>`

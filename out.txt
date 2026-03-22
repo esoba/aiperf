@@ -1,0 +1,86 @@
+
+================================================================================
+
+TOKEN BUDGET: 300
+
+================================================================================
+
+
+  Seed 0: 5 messages, ~1 assistant tokens, ~299 tool_result tokens, ordering=OK
+  Flow: user -> silent+2tools -> tool_result -> tool_result -> text_only
+  [0] user: 'Add Prometheus metrics for NotFoundError.dispatch() — we need p50/p95/p99 latency and error rate by status code'
+  [1] assistant (silent+2tools)
+       text: ''
+       call: Edit({"file_path":"src/config.py","old_string":"    def prefetch(self, correlation_id):","new_string":"    async def prefetch(self, correlation_id: str) -> dict:"})  id=toolu_01A2SAMaDSWPwfaLOZbRGz
+       call: Edit({"file_path":"kubernetes/deployment.yaml","old_string":"    def backfill(self, tenant_id):","new_string":"    async def backfill(self, tenant_id: str) -> dict:"})  id=toolu_01OHQTZDoOqx1KACXTakfI
+  [2] tool_result -> toolu_01A2SAMaDSWPwfaLOZbRGz  (201 tokens)
+       'The file src/core/events.py has been updated successfully.  has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully'
+  [3] tool_result -> toolu_01OHQTZDoOqx1KACXTakfI  (98 tokens)
+       'The file src/error.rs has been updated successfully.  src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src'
+  [4] assistant (text_only, 1 tokens)
+       'Updated'
+------------------------------------------------------------
+  Raw messages:
+
+[
+  {
+    "role": "user",
+    "content": "Add Prometheus metrics for NotFoundError.dispatch() — we need p50/p95/p99 latency and error rate by status code"
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "toolu_01A2SAMaDSWPwfaLOZbRGz",
+        "type": "function",
+        "function": {
+          "name": "Edit",
+          "arguments": "{\"file_path\":\"src/config.py\",\"old_string\":\"    def prefetch(self, correlation_id):\",\"new_string\":\"    async def prefetch(self, correlation_id: str) -> dict:\"}"
+        }
+      },
+      {
+        "id": "toolu_01OHQTZDoOqx1KACXTakfI",
+        "type": "function",
+        "function": {
+          "name": "Edit",
+          "arguments": "{\"file_path\":\"kubernetes/deployment.yaml\",\"old_string\":\"    def backfill(self, tenant_id):\",\"new_string\":\"    async def backfill(self, tenant_id: str) -> dict:\"}"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "toolu_01A2SAMaDSWPwfaLOZbRGz",
+    "content": "The file src/core/events.py has been updated successfully.  has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully.The file src/core/events.py has been updated successfully"
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "toolu_01OHQTZDoOqx1KACXTakfI",
+    "content": "The file src/error.rs has been updated successfully.  src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src/error.rs has been updated successfully.The file src"
+  },
+  {
+    "role": "assistant",
+    "content": "Updated"
+  }
+]
+
+================================================================================
+
+AGGREGATE ANALYSIS
+
+================================================================================
+
+Conversations generated: 1
+Parallel tool calls:     1
+
+Message style distribution:
+  tool_result             2  (40.0%)
+  user                    1  (20.0%)
+  silent+2tools           1  (20.0%)
+  text_only               1  (20.0%)
+
+Tool name distribution:
+  Edit                    2  (100.0%)
+
+Tool argument validation: ALL VALID

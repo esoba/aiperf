@@ -71,22 +71,16 @@ _CLASSES = (
     "TemplateEngine", "SignalHandler", "ProtocolAdapter", "BufferManager",
     "ThrottleController", "RegistryClient", "LockManager", "SnapshotStore",
     "AuditLogger", "FeatureToggle", "MigrationRunner", "DeploymentManager",
-    # HTTP layer
     "HttpClient", "RouteResolver", "CorsMiddleware", "AuthMiddleware",
     "ResponseSerializer", "RequestParser", "WebSocketManager", "ApiGateway",
-    # data layer
     "QueryExecutor", "TransactionManager", "MigrationEngine", "PoolManager",
     "ReplicaSelector", "ShardRouter", "CursorIterator", "ChangeStream",
-    # error types
     "RetryableError", "ValidationError", "TimeoutError", "QuotaExceeded",
     "ConflictError", "NotFoundError", "AuthorizationError", "RateLimitError",
-    # ML / inference
     "ModelLoader", "TokenEncoder", "EmbeddingStore", "FeatureExtractor",
     "InferenceEngine", "BatchScheduler", "GradientAccumulator", "Checkpoint",
-    # infra / orchestration
     "ServiceMesh", "HealthProbe", "AutoScaler", "SecretProvider",
     "CertRotator", "DnsCache", "TelemetryExporter", "AlertDispatcher",
-    # real framework classes
     "Tensor", "DataFrame", "Series", "Session", "Engine", "Router",
     "Pipeline", "Trainer", "Dataset", "DataLoader", "Optimizer",
     "Tokenizer",
@@ -106,7 +100,6 @@ _METHODS = (
     "finalize", "abort", "resume", "suspend", "escalate", "demote",
     "promote", "quarantine", "scrub", "warm_up", "cool_down", "heal",
     "reclaim", "tombstone", "seal", "unseal", "bootstrap", "teardown",
-    # real library methods
     "forward", "backward", "train", "evaluate", "predict", "fit",
     "load_state_dict", "save_pretrained", "from_pretrained", "to_dict",
 )
@@ -245,23 +238,18 @@ _CLI_COMMANDS = (
     "make build", "make test", "make lint",
     "curl -s http://localhost:8080/health",
     "ps aux | grep python", "top -bn1 | head -20",
-    # k8s / infra
     "kubectl describe pod app-7d4b8f-xz9k", "kubectl logs -f deploy/api --tail=100",
     "kubectl rollout status deploy/worker", "kubectl top nodes",
     "helm upgrade --install app ./chart -f values.yaml",
     "terraform plan -out=tfplan", "terraform apply tfplan",
-    # redis / data stores
     "redis-cli INFO memory", "redis-cli --latency-history -i 1",
     "pg_dump -Fc mydb > backup.dump", "mongosh --eval 'db.stats()'",
-    # perf / profiling
     "perf stat -e cache-misses,cache-references ./bin/server",
     "strace -c -p $(pgrep server)", "valgrind --tool=memcheck ./bin/app",
     "pprof -http=:6060 http://localhost:6060/debug/pprof/heap",
-    # load testing
     "wrk -t12 -c400 -d30s http://localhost:8080/api/v1/items",
     "hey -n 10000 -c 100 http://localhost:8080/health",
     "ab -n 5000 -c 50 http://localhost:8080/",
-    # misc dev
     "find . -name '*.py' | xargs wc -l | tail -1",
     "du -sh node_modules/ target/ dist/",
     "lsof -i :8080", "ss -tlnp | grep 8080",
@@ -272,7 +260,6 @@ _GO_PACKAGES = (
     "fmt", "os", "io", "net", "http", "context", "sync", "time",
     "strings", "strconv", "encoding/json", "log", "errors", "math",
     "sort", "bytes", "crypto", "regexp", "path/filepath", "database/sql",
-    # popular third-party packages
     "github.com/gin-gonic/gin", "go.uber.org/zap",
     "github.com/spf13/viper", "github.com/spf13/cobra",
     "gorm.io/gorm", "google.golang.org/grpc",
@@ -285,7 +272,6 @@ _RUST_CRATES = (
     "std::io", "std::fs", "std::collections", "std::sync", "std::fmt",
     "serde", "serde_json", "tokio", "anyhow", "thiserror", "tracing",
     "clap", "reqwest", "axum", "sqlx", "uuid", "chrono", "regex",
-    # additional popular crates
     "tower", "hyper", "diesel", "sea_orm", "tonic", "prost",
     "async_trait", "futures",
 )
@@ -294,7 +280,6 @@ _TS_IMPORTS = (
     "express", "axios", "lodash", "zod", "prisma", "next",
     "react", "react-dom", "typescript", "jest", "vitest",
     "node:fs", "node:path", "node:http", "node:crypto",
-    # additional popular packages
     "@nestjs/common", "typeorm", "drizzle-orm", "bullmq",
     "@trpc/server", "ioredis", "pg", "knex",
 )
@@ -304,7 +289,6 @@ _DECORATORS = (
     "@override", "@cached_property", "@dataclass", "@lru_cache",
     "@pytest.mark.asyncio", "@pytest.mark.parametrize",
     "@app.route", "@app.get", "@app.post", "@router.get",
-    # ML framework decorators
     "@torch.no_grad()", "@torch.inference_mode()", "@torch.compile",
     "@torch.jit.script", "@torch.cuda.amp.autocast",
 )
@@ -362,7 +346,6 @@ _CUDA_ERRORS = (
 )
 
 _USER_REQUESTS = (
-    # simple one-liners (original)
     "Fix the failing test in {module} — it returns {error}",
     "Add retry logic to {cls}.{method}() with exponential backoff",
     "Refactor the {method} function to use async/await instead of callbacks",
@@ -393,43 +376,35 @@ _USER_REQUESTS = (
     "The {cls}.{method}() docstring is wrong — update it to match the code",
     "Implement batch processing for {method}() to handle bulk {var} updates",
     "Add WebSocket support to {cls} for real-time {var} updates",
-    # multi-step tasks
     "Migrate {cls}.{method}() from sync to async — it's called in 3 places across {module} and needs backward compat",
     "Split the {cls} class into two: one for {method} and one for the {var} lifecycle management",
     "We need to add {method}() to {cls}, then wire it into the {module} pipeline and add an integration test",
     "Extract the {method} logic from {cls} into a standalone service, update all callers, and add a deprecation warning to the old path",
     "Rewrite the {module} retry logic: replace the sleep loop with a proper backoff strategy using {cls}",
-    # error context prompts
     "Getting {error} after upgrading {module} to the latest version — only happens under load",
     "The {cls}.{method}() call started returning {error} after we merged the {var} migration PR",
     "Users are reporting {error} intermittently — the {module} logs show {var} is sometimes null",
     "After deploying the {method} change, we see {error} on about 5%% of requests to {cls}",
     "The staging environment throws {error} but prod is fine — suspect it's the {var} config difference",
-    # file path references
     "Look at {module}/{cls}.{method}() — the {var} parameter is never validated before being passed to the database layer",
     "In the {module} service, the {method}() function at line ~200 has a subtle bug with {var} boundary handling",
     "The {cls} constructor in {module} initializes {var} too early — move it to the {method}() call site",
-    # constraint-carrying
     "Add {method}() to {cls} without breaking the existing API contract — we have downstream consumers",
     "Optimize {cls}.{method}() for the case where {var} has over 10K entries, but keep the simple path fast too",
     "Fix the {error} in {module} — but don't change the public interface, we're in a code freeze for other modules",
     "Add telemetry to {cls}.{method}() without adding any new dependencies to the {module} package",
-    # multi-sentence with background
     "We profiled the {method} endpoint and {var} is growing unbounded in {cls}. We need to add eviction or cap the size. The 99th percentile latency spiked 3x last week.",
     "The {cls} pool keeps hitting {error} during peak hours. We scaled horizontally but the issue persists. I think {method}() is holding a lock too long.",
     "After the last {module} refactor, {cls}.{method}() no longer returns deterministic results. The old tests still pass but the integration tests are flaky. Might be a race condition on {var}.",
     "We're moving from REST to gRPC for the {module} service. Start by converting {cls}.{method}() — it's the most latency-sensitive endpoint. Keep the REST handler as a thin adapter for backward compat.",
-    # review / debugging style
     "Can you review the {cls}.{method}() implementation? I think the error handling around {var} is wrong",
     "Why does {cls} create a new {var} on every call to {method}()? Seems wasteful",
     "Walk me through the {method}() flow in {module} — I need to understand where {var} gets validated",
     "Is there a reason {cls}.{method}() catches Exception instead of the specific {error}?",
-    # infra / DevOps
     "Add a Dockerfile for the {module} service that runs {cls} on port 8080 with health checks",
     "The k8s deployment for {module} keeps OOMKilling — add memory limits and check if {cls} leaks during {method}()",
     "Set up a GitHub Action that runs the {module} tests, lints with ruff, and blocks merge on failure",
     "Add Prometheus metrics for {cls}.{method}() — we need p50/p95/p99 latency and error rate by status code",
-    # data / schema
     "Add a new {var} column to the {module} table with a default value and backfill script",
     "The {cls} serializer is dropping {var} fields when they're empty lists — should preserve them as []",
     "Normalize the {var} schema in {module}: split the nested object into its own table with a foreign key",
@@ -790,23 +765,46 @@ class CodingContentGenerator(BaseGenerator):
         tokens = self._sample_tokens(num_tokens, self._tool_pool)
         return self.tokenizer.decode(tokens)
 
-    # -- Weights derived from real Claude Code MITM capture (1482 calls) --
-    # Style: 85.5% silent, 8.7% text+tool, 5.8% parallel
-    _STYLE_WEIGHTS = (85, 10, 5)  # silent, text+tool, parallel
-    # Tools: Bash 85%, Read 5%, Task 3%, Write 2%, Edit 2%, Grep 1%, Glob 1%, TodoWrite 1%
+    # -- Weights from 104 real Claude Code MITM sessions (19,984 tool calls) --
+    # Style: 31% silent single, 42% text+tool single, 13% text+tool parallel,
+    #        5% silent parallel, 9% text only
+    _STYLE_WEIGHTS = (31, 42, 18, 9)  # silent, text+tool, parallel, text_only
+
+    # Tools: Bash 32%, Read 32%, Grep 15%, Edit 12%, Glob 2%, Write 2%,
+    #        TaskUpdate 2%, Agent 2%, TaskCreate 1%
     _TOOL_WEIGHTS = (
-        ("Bash", 85),
-        ("Read", 5),
-        ("Task", 3),
+        ("Bash", 32),
+        ("Read", 32),
+        ("Grep", 15),
+        ("Edit", 12),
+        ("Glob", 2),
         ("Write", 2),
-        ("Edit", 2),
-        ("Grep", 1),
-        ("Glob", 1),
-        ("TodoWrite", 1),
+        ("TaskUpdate", 2),
+        ("Agent", 2),
+        ("TaskCreate", 1),
     )
 
+    # Per-tool result size ranges (tokens) from real data percentiles.
+    # Format: (min, p25, p50, p75, max) — sampled with triangular distribution.
+    _TOOL_RESULT_SIZES = {
+        "Bash": (5, 50, 140, 400, 1400),
+        "Read": (20, 240, 440, 950, 4400),
+        "Grep": (4, 4, 30, 140, 540),
+        "Edit": (20, 25, 30, 35, 160),
+        "Glob": (3, 4, 37, 190, 950),
+        "Write": (10, 14, 32, 38, 170),
+        "TaskUpdate": (3, 3, 5, 10, 30),
+        "Agent": (200, 212, 1544, 2543, 3870),
+        "TaskCreate": (3, 3, 5, 10, 30),
+    }
+
     def generate_response(
-        self, num_tokens: int, *, use_content_blocks: bool = False
+        self,
+        num_tokens: int,
+        *,
+        use_content_blocks: bool = False,
+        include_assistant_text: bool = True,
+        assistant_text_tokens: int | None = None,
     ) -> list[dict[str, Any]]:
         """Generate a pre-canned coding assistant tool-use conversation.
 
@@ -816,10 +814,18 @@ class CodingContentGenerator(BaseGenerator):
         text+tool, ~5% parallel.  Tool distribution: ~85% Bash, ~5% Read.
 
         Args:
-            num_tokens: Target number of assistant output tokens.
-            use_content_blocks: When True (default), emit Anthropic
-                content-block format.  When False, emit OpenAI
-                chat-completions format.
+            num_tokens: Token budget for tool-use rounds (tool_calls + tool
+                results).  Controls the number of tool rounds emitted.
+            use_content_blocks: When True, emit Anthropic content-block format.
+                When False, emit OpenAI chat-completions format.
+            include_assistant_text: When True (default), include assistant
+                summary/preamble text between tool rounds.  When False, only
+                emit tool_calls + tool results (no plain-text assistant
+                messages).
+            assistant_text_tokens: When set, the assistant text response is
+                sized to exactly this many tokens (mocking what the real LLM
+                would output, matching max_tokens).  When None, uses the
+                remaining ``num_tokens`` budget.
 
         Returns:
             List of message dicts.
@@ -827,26 +833,158 @@ class CodingContentGenerator(BaseGenerator):
         if num_tokens <= 0:
             return []
 
-        r = self._template_rng
-        messages: list[dict[str, Any]] = []
-        remaining = num_tokens
+        response_key = (
+            "dataset.coding_content.generate_response."
+            f"{num_tokens}.{int(use_content_blocks)}.{int(include_assistant_text)}."
+            f"{assistant_text_tokens if assistant_text_tokens is not None else 'none'}"
+        )
+        original_template_rng = self._template_rng
+        original_corpus_rng = self._corpus_rng
+        self._template_rng = rng.derive(f"{response_key}.template")
+        self._corpus_rng = rng.derive(f"{response_key}.corpus")
 
-        max_iter = min(5, max(1, num_tokens // 60))
-        num_iter = r.randint(1, max_iter) if max_iter > 1 else 1
+        try:
+            r = self._template_rng
+            messages: list[dict[str, Any]] = []
+            remaining = num_tokens
+            emitted_tool_round = False
 
-        for i in range(num_iter):
-            is_last = i == num_iter - 1
-            fills = self._template_fills()
+            # Always emit at least one tool-call round so the ISL contains
+            # realistic tool-use structure even at small token budgets.
+            max_iter = min(5, max(2, num_tokens // 60))
+            num_iter = r.randint(2, max_iter) if max_iter > 2 else 2
+            num_round_slots = num_iter - 1 if include_assistant_text else num_iter
 
-            if is_last or remaining <= 40:
-                # Final summary: consume ALL remaining budget
-                summary = r.choice(_ASSISTANT_SUMMARIES).format(**fills)
-                summary_tokens = self.tokenizer.encode(summary)
-                if len(summary_tokens) < remaining:
-                    pad = self._sample_tokens(
-                        remaining - len(summary_tokens), self._tool_pool
+            for i in range(num_round_slots):
+                if remaining <= 0:
+                    break
+                if (
+                    include_assistant_text
+                    and assistant_text_tokens is None
+                    and emitted_tool_round
+                    and remaining <= 1
+                ):
+                    break
+                fills = self._template_fills()
+                reserve_for_summary = (
+                    1
+                    if include_assistant_text
+                    and assistant_text_tokens is None
+                    and remaining > 1
+                    else 0
+                )
+
+                # Style: 31% silent, 42% text+tool, 18% parallel, 9% text_only
+                s_silent, s_text, s_parallel, _ = self._STYLE_WEIGHTS
+                roll = r.randint(1, 100)
+                if roll <= s_silent:
+                    style = "tool_only"
+                elif roll <= s_silent + s_text:
+                    style = "text_and_tool"
+                elif roll <= s_silent + s_text + s_parallel:
+                    style = "parallel"
+                else:
+                    style = "text_only"
+
+                if style == "text_only" and not emitted_tool_round:
+                    style = "text_and_tool"
+
+                # text_only emits just a short text, no tool call
+                if style == "text_only":
+                    if include_assistant_text:
+                        text = self._fit_text_to_token_budget(
+                            r.choice(_ASSISTANT_PREAMBLES).format(**fills),
+                            max(0, remaining - reserve_for_summary),
+                            pool=self._ensure_text_pool(),
+                        )
+                        if use_content_blocks:
+                            messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": [{"type": "text", "text": text}],
+                                }
+                            )
+                        else:
+                            messages.append({"role": "assistant", "content": text})
+                        remaining -= len(self.tokenizer.encode(text))
+                    continue
+
+                # Parallel: 54% double, 30% triple, 8% quad, 8% 5+
+                if style == "parallel":
+                    p = r.randint(1, 100)
+                    if p <= 54:
+                        num_calls = 2
+                    elif p <= 84:
+                        num_calls = 3
+                    elif p <= 92:
+                        num_calls = 4
+                    else:
+                        num_calls = r.randint(5, 8)
+                else:
+                    num_calls = 1
+
+                available_result_tokens = remaining
+                preamble: str | None = None
+                if include_assistant_text and style == "text_and_tool":
+                    target_preamble = r.choice(_ASSISTANT_PREAMBLES).format(**fills)
+                    max_preamble_tokens = max(0, remaining - reserve_for_summary - 1)
+                    if max_preamble_tokens > 0:
+                        preamble = self._fit_text_to_token_budget(
+                            target_preamble,
+                            max_preamble_tokens,
+                            pool=self._ensure_text_pool(),
+                        )
+                        preamble_tokens = len(self.tokenizer.encode(preamble))
+                        if preamble_tokens >= remaining:
+                            preamble = None
+                            preamble_tokens = 0
+                    else:
+                        preamble_tokens = 0
+                    available_result_tokens = (
+                        remaining - reserve_for_summary - preamble_tokens
                     )
-                    summary += " " + self.tokenizer.decode(pad)
+                else:
+                    preamble_tokens = 0
+                    available_result_tokens = remaining - reserve_for_summary
+
+                if available_result_tokens <= 0:
+                    available_result_tokens = 1
+                    preamble = None
+                    preamble_tokens = 0
+
+                num_calls = min(num_calls, max(1, available_result_tokens))
+                calls: list[tuple[str, str, dict[str, Any]]] = []
+                for _ in range(num_calls):
+                    tool_name, tool_input = self._make_tool_call()
+                    tool_id = self._make_tool_id(r)
+                    calls.append((tool_id, tool_name, tool_input))
+                desired_result_tokens = [
+                    self._tool_result_token_count(name, r) for _, name, _ in calls
+                ]
+                result_token_budgets = self._allocate_token_budgets(
+                    available_result_tokens, desired_result_tokens
+                )
+
+                if use_content_blocks:
+                    self._emit_content_blocks(
+                        messages, calls, preamble, result_token_budgets
+                    )
+                else:
+                    self._emit_openai(messages, calls, preamble, result_token_budgets)
+                emitted_tool_round = True
+                remaining -= preamble_tokens + sum(result_token_budgets)
+
+            if include_assistant_text:
+                text_budget = (
+                    assistant_text_tokens
+                    if assistant_text_tokens is not None
+                    else remaining
+                )
+                summary = self._fit_text_to_token_budget(
+                    r.choice(_ASSISTANT_SUMMARIES).format(**self._template_fills()),
+                    text_budget,
+                    pool=self._ensure_text_pool(),
+                )
                 if use_content_blocks:
                     messages.append(
                         {
@@ -856,56 +994,11 @@ class CodingContentGenerator(BaseGenerator):
                     )
                 else:
                     messages.append({"role": "assistant", "content": summary})
-                break
 
-            # Style weighted to match real data: 85% silent, 10% text+tool, 5% parallel
-            s_silent, s_text, _ = self._STYLE_WEIGHTS
-            roll = r.randint(1, 100)
-            if roll <= s_silent:
-                style = "tool_only"
-            elif roll <= s_silent + s_text:
-                style = "text_and_tool"
-            else:
-                style = "parallel"
-
-            # Parallel: 94% single, 3.5% double, 1.5% triple, 1% 4+
-            if style == "parallel":
-                p = r.randint(1, 100)
-                if p <= 60:
-                    num_calls = 2
-                elif p <= 85:
-                    num_calls = 3
-                else:
-                    num_calls = r.randint(4, 6)
-            else:
-                num_calls = 1
-
-            calls: list[tuple[str, str, dict[str, Any]]] = []
-            for _ in range(num_calls):
-                tool_name, tool_input = self._make_tool_call()
-                tool_id = self._make_tool_id(r)
-                calls.append((tool_id, tool_name, tool_input))
-
-            preamble: str | None = None
-            if style == "text_and_tool":
-                preamble = r.choice(_ASSISTANT_PREAMBLES).format(**fills)
-
-            if use_content_blocks:
-                self._emit_content_blocks(messages, calls, preamble, r)
-            else:
-                self._emit_openai(messages, calls, preamble, r)
-
-            # Count actual tokens emitted. Preambles are short templates
-            # and tool args are small dicts — encoding is cheap relative to
-            # the corpus tokenization done at init time.
-            iter_tokens = 0
-            if preamble:
-                iter_tokens += len(self.tokenizer.encode(preamble))
-            for _, _, inp in calls:
-                iter_tokens += len(self.tokenizer.encode(orjson.dumps(inp).decode()))
-            remaining -= iter_tokens
-
-        return messages
+            return messages
+        finally:
+            self._template_rng = original_template_rng
+            self._corpus_rng = original_corpus_rng
 
     # -- Format helpers for generate_response --
 
@@ -921,7 +1014,7 @@ class CodingContentGenerator(BaseGenerator):
         messages: list[dict[str, Any]],
         calls: list[tuple[str, str, dict[str, Any]]],
         preamble: str | None,
-        r: rng.RandomGenerator,
+        result_token_budgets: list[int],
     ) -> None:
         """Append OpenAI chat-completions format messages."""
 
@@ -943,11 +1036,10 @@ class CodingContentGenerator(BaseGenerator):
                 "tool_calls": tool_calls,
             }
         )
-        for call_id, _, _ in calls:
-            result_tokens = r.randint(30, 200)
-            result_text = self.tokenizer.decode(
-                self._sample_tokens(result_tokens, self._tool_pool)
-            )
+        for (call_id, name, inp), result_tokens in zip(
+            calls, result_token_budgets, strict=True
+        ):
+            result_text = self._generate_tool_result(name, inp, result_tokens)
             messages.append(
                 {"role": "tool", "tool_call_id": call_id, "content": result_text}
             )
@@ -957,7 +1049,7 @@ class CodingContentGenerator(BaseGenerator):
         messages: list[dict[str, Any]],
         calls: list[tuple[str, str, dict[str, Any]]],
         preamble: str | None,
-        r: rng.RandomGenerator,
+        result_token_budgets: list[int],
     ) -> None:
         """Append Anthropic content-block format messages."""
         assistant_content: list[dict[str, Any]] = []
@@ -966,14 +1058,13 @@ class CodingContentGenerator(BaseGenerator):
         if preamble is not None:
             assistant_content.append({"type": "text", "text": preamble})
 
-        for call_id, name, inp in calls:
+        for (call_id, name, inp), result_tokens in zip(
+            calls, result_token_budgets, strict=True
+        ):
             assistant_content.append(
                 {"type": "tool_use", "id": call_id, "name": name, "input": inp}
             )
-            result_tokens = r.randint(30, 200)
-            result_text = self.tokenizer.decode(
-                self._sample_tokens(result_tokens, self._tool_pool)
-            )
+            result_text = self._generate_tool_result(name, inp, result_tokens)
             tool_result_blocks.append(
                 {"type": "tool_result", "tool_use_id": call_id, "content": result_text}
             )
@@ -991,14 +1082,35 @@ class CodingContentGenerator(BaseGenerator):
             "class_name": r.choice(_CLASSES),
         }
 
+    def _tool_result_token_count(self, tool_name: str, r: rng.RandomGenerator) -> int:
+        """Sample a realistic tool result size (in tokens) based on real data.
+
+        Uses the per-tool (min, p25, p50, p75, max) quintiles to sample
+        with a distribution skewed toward the median.
+        """
+        sizes = self._TOOL_RESULT_SIZES.get(tool_name, (5, 30, 100, 300, 800))
+        lo, p25, p50, p75, hi = sizes
+        # Pick a quartile weighted toward center, then uniform within it
+        q = r.randint(1, 100)
+        if q <= 25:
+            val = r.uniform(lo, p25)
+        elif q <= 50:
+            val = r.uniform(p25, p50)
+        elif q <= 75:
+            val = r.uniform(p50, p75)
+        else:
+            val = r.uniform(p75, hi)
+        return max(1, int(val))
+
     def _make_tool_call(self) -> tuple[str, dict[str, Any]]:
         """Generate a weighted tool name and realistic input dict.
 
-        Weights calibrated from real Claude Code MITM capture data.
+        Weights calibrated from 104 real Claude Code MITM sessions (19,984 calls).
         """
         r = self._template_rng
         file_pool = self._file_pool(None)
         f = r.choice(file_pool)
+        fills = self._template_fills()
 
         # Weighted selection from _TOOL_WEIGHTS
         roll = r.randint(1, 100)
@@ -1013,23 +1125,40 @@ class CodingContentGenerator(BaseGenerator):
         match tool:
             case "Bash":
                 cmd = r.choice(_CLI_COMMANDS)
-                desc = f"Run {cmd.split()[0]} to check the output"
-                return tool, {"command": cmd, "description": desc}
+                inp: dict[str, Any] = {"command": cmd}
+                # 81% have description (median 29 chars)
+                if r.randint(1, 100) <= 81:
+                    inp["description"] = f"Run {cmd.split()[0]} to check the output"
+                # 30% have timeout
+                if r.randint(1, 100) <= 30:
+                    inp["timeout"] = r.choice((30000, 60000, 120000, 300000))
+                return tool, inp
             case "Read":
-                return tool, {"file_path": f}
-            case "Task":
-                prompt = r.choice(_ASSISTANT_PREAMBLES).format(**self._template_fills())
-                return tool, {
-                    "description": f"Investigate {r.choice(_MODULES)} module",
-                    "prompt": prompt,
+                inp = {"file_path": f}
+                # 62% have limit
+                if r.randint(1, 100) <= 62:
+                    inp["limit"] = r.choice((30, 50, 80, 100, 200))
+                # 46% have offset
+                if r.randint(1, 100) <= 46:
+                    inp["offset"] = r.randint(1, 500)
+                return tool, inp
+            case "Grep":
+                inp = {
+                    "pattern": r.choice(_CLASSES),
+                    "path": r.choice(("src/", "tests/", ".", f)),
                 }
-            case "Write":
-                m = r.choice(_METHODS)
-                cls = r.choice(_CLASSES)
-                return tool, {
-                    "file_path": f,
-                    "content": f"class {cls}:\n    def {m}(self):\n        pass\n",
-                }
+                # 94% have output_mode
+                if r.randint(1, 100) <= 94:
+                    inp["output_mode"] = r.choice(
+                        ("content", "files_with_matches", "count")
+                    )
+                # 23% have -n
+                if r.randint(1, 100) <= 23:
+                    inp["-n"] = True
+                # 11% have -A
+                if r.randint(1, 100) <= 11:
+                    inp["-A"] = r.choice((3, 5, 10))
+                return tool, inp
             case "Edit":
                 m = r.choice(_METHODS)
                 v = r.choice(_VARS)
@@ -1038,18 +1167,36 @@ class CodingContentGenerator(BaseGenerator):
                     "old_string": f"    def {m}(self, {v}):",
                     "new_string": f"    async def {m}(self, {v}: str) -> dict:",
                 }
-            case "Grep":
-                return tool, {"pattern": r.choice(_CLASSES), "path": "src/"}
             case "Glob":
-                ext = r.choice(("py", "ts", "go", "rs"))
+                ext = r.choice(("py", "ts", "go", "rs", "tsx", "yaml"))
                 return tool, {"pattern": f"**/*.{ext}"}
-            case "TodoWrite":
+            case "Write":
+                m = r.choice(_METHODS)
+                cls = r.choice(_CLASSES)
                 return tool, {
-                    "todos": [
-                        f"Fix {r.choice(_METHODS)}() in {r.choice(_MODULES)}",
-                        f"Add tests for {r.choice(_CLASSES)}",
-                    ]
+                    "file_path": f,
+                    "content": f"class {cls}:\n    def {m}(self):\n        pass\n",
                 }
+            case "TaskUpdate":
+                return tool, {
+                    "taskId": str(r.randint(1, 20)),
+                    "status": r.choice(("in_progress", "completed")),
+                }
+            case "Agent":
+                return tool, {
+                    "description": f"Explore {r.choice(_MODULES)}",
+                    "prompt": r.choice(_ASSISTANT_PREAMBLES).format(**fills),
+                    "subagent_type": r.choice(
+                        ("Explore", "Explore", "Explore", "general-purpose")
+                    ),
+                }
+            case "TaskCreate":
+                return tool, {
+                    "subject": f"Fix {r.choice(_METHODS)}() in {r.choice(_MODULES)}",
+                    "description": f"Investigate and fix the {r.choice(_VARS)} issue",
+                }
+            case _:
+                return "Bash", {"command": r.choice(_CLI_COMMANDS)}
 
     def calculate_num_tokens(
         self,
@@ -1092,17 +1239,181 @@ class CodingContentGenerator(BaseGenerator):
         )
 
     def _sample_tokens(self, num_tokens: int, pool: list[int]) -> list[int]:
+        return self._sample_tokens_with_rng(num_tokens, pool, self._corpus_rng)
+
+    def _sample_tokens_with_rng(
+        self, num_tokens: int, pool: list[int], sample_rng: rng.RandomGenerator
+    ) -> list[int]:
         if not pool:
             raise NotInitializedError("Token pool is not initialized.")
         pool_size = len(pool)
         if num_tokens <= 0:
             return []
-        start_idx = self._corpus_rng.randrange(pool_size)
-        end_idx = start_idx + num_tokens
-        tokens = pool[start_idx:end_idx]
-        if end_idx > pool_size:
-            tokens += pool[: end_idx - pool_size]
+        start_idx = sample_rng.randrange(pool_size)
+        tokens = pool[start_idx : min(start_idx + num_tokens, pool_size)]
+        while len(tokens) < num_tokens:
+            need = num_tokens - len(tokens)
+            tokens += pool[: min(need, pool_size)]
         return tokens
+
+    def _fit_text_to_token_budget(
+        self, text: str, target_tokens: int, pool: list[int] | None = None
+    ) -> str:
+        if target_tokens <= 0:
+            return ""
+        actual = self.tokenizer.encode(text)
+        if len(actual) >= target_tokens:
+            return self.tokenizer.decode(actual[:target_tokens])
+        effective_pool = pool or actual
+        if effective_pool:
+            pad = self._sample_tokens_with_rng(
+                target_tokens - len(actual), effective_pool, self._corpus_rng
+            )
+            text += " " + self.tokenizer.decode(pad)
+            actual = self.tokenizer.encode(text)
+        if len(actual) != target_tokens:
+            return self.tokenizer.decode(actual[:target_tokens])
+        return text
+
+    @staticmethod
+    def _allocate_token_budgets(total: int, desired: list[int]) -> list[int]:
+        if total <= 0 or not desired:
+            return []
+        if len(desired) == 1:
+            return [total]
+        count = min(len(desired), total)
+        desired = desired[:count]
+        minimums = [1] * count
+        remaining = total - sum(minimums)
+        if remaining <= 0:
+            return minimums
+
+        extra_desired = [max(0, value - 1) for value in desired]
+        extra_total = sum(extra_desired)
+        if extra_total <= 0:
+            budgets = minimums[:]
+            budgets[-1] += remaining
+            return budgets
+
+        budgets = [
+            minimum + int(remaining * extra / extra_total)
+            for minimum, extra in zip(minimums, extra_desired, strict=True)
+        ]
+        assigned = sum(budgets)
+        budgets[-1] += total - assigned
+        return budgets
+
+    def _extract_result_body(self, tool_block: str) -> str:
+        start_marker = "<result>\n"
+        end_marker = "\n</result>"
+        if start_marker not in tool_block or end_marker not in tool_block:
+            return tool_block.strip()
+        start = tool_block.index(start_marker) + len(start_marker)
+        end = tool_block.index(end_marker, start)
+        return tool_block[start:end].strip()
+
+    def _infer_language_from_path(self, file_path: str | None) -> str | None:
+        if not file_path:
+            return None
+        if file_path.endswith(".py"):
+            return "python"
+        if file_path.endswith(".go"):
+            return "go"
+        if file_path.endswith(".rs"):
+            return "rust"
+        if file_path.endswith((".ts", ".tsx")):
+            return "typescript"
+        return None
+
+    def _infer_language_from_command(self, command: str | None) -> str | None:
+        if not command:
+            return None
+        if any(token in command for token in ("pytest", "python", "ruff")):
+            return "python"
+        if any(token in command for token in ("go test", "go build")):
+            return "go"
+        if any(token in command for token in ("cargo test", "cargo build")):
+            return "rust"
+        if any(token in command for token in ("npm", "npx", "vitest", "tsc")):
+            return "typescript"
+        return None
+
+    def _glob_result_text(self, pattern: str) -> str:
+        r = self._template_rng
+        if pattern.startswith("**/*."):
+            ext = pattern.removeprefix("**/*.")
+            matches = [path for path in _FILE_PATHS if path.endswith(f".{ext}")]
+        else:
+            matches = list(_FILE_PATHS)
+        sample_size = min(r.randint(4, 10), len(matches))
+        selected = r.sample(matches, sample_size) if matches else []
+        return "\n".join(selected) if selected else "No files matched."
+
+    def _generate_tool_result(
+        self, tool_name: str, tool_input: dict[str, Any], result_tokens: int
+    ) -> str:
+        language = self._infer_language_from_path(tool_input.get("file_path"))
+        if language is None:
+            language = self._infer_language_from_command(tool_input.get("command"))
+
+        def _read_body() -> str:
+            if result_tokens >= 350:
+                return self._extract_result_body(
+                    self._gen_tool_read_long(language=language)
+                )
+            return self._extract_result_body(self._gen_tool_read(language=language))
+
+        match tool_name:
+            case "Read":
+                body = _read_body()
+            case "Bash":
+                if result_tokens >= 220:
+                    body = self._extract_result_body(
+                        self._gen_tool_bash_verbose(language=language)
+                    )
+                elif result_tokens >= 80:
+                    body = self._extract_result_body(
+                        self._gen_tool_bash(language=language)
+                    )
+                else:
+                    body = self._gen_bash_output(language=language)
+            case "Grep":
+                if result_tokens >= 140:
+                    body = self._extract_result_body(
+                        self._gen_tool_search_verbose(language=language)
+                    )
+                else:
+                    body = self._extract_result_body(
+                        self._gen_tool_search(language=language)
+                    )
+            case "Edit":
+                body = self._extract_result_body(self._gen_tool_edit(language=language))
+            case "Glob":
+                body = self._glob_result_text(str(tool_input.get("pattern", "**/*")))
+            case "Write":
+                file_path = str(tool_input.get("file_path", "src/generated.py"))
+                body = f"Wrote {file_path} successfully."
+            case "TaskUpdate":
+                body = orjson.dumps(
+                    {
+                        "taskId": tool_input.get("taskId"),
+                        "status": tool_input.get("status"),
+                    }
+                ).decode()
+            case "TaskCreate":
+                body = orjson.dumps(
+                    {
+                        "taskId": str(self._template_rng.randint(100, 999)),
+                        "subject": tool_input.get("subject"),
+                        "status": "created",
+                    }
+                ).decode()
+            case "Agent":
+                body = self._gen_markdown_doc()
+            case _:
+                body = self._gen_bash_output(language=language)
+
+        return self._fit_text_to_token_budget(body, result_tokens)
 
     # -- Cache support (same pattern as PromptGenerator) --
 

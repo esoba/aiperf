@@ -10,7 +10,10 @@ Usage:
     uv run python demo_pregenerated_responses.py
     uv run python demo_pregenerated_responses.py --tokens 1000
     uv run python demo_pregenerated_responses.py --seeds 5 --tokens 200 400 800
-    uv run python demo_pregenerated_responses.py --full  # show full message content
+    uv run python demo_pregenerated_responses.py --include-user
+    uv run python demo_pregenerated_responses.py --full  # show full pretty-printed content
+    uv run python demo_pregenerated_responses.py --raw  # dump raw message JSON
+    uv run python demo_pregenerated_responses.py --full --raw --include-user
 """
 
 from __future__ import annotations
@@ -61,6 +64,21 @@ def classify_message(msg: dict) -> str:
 
 def count_tokens(tokenizer: Tokenizer, text: str) -> int:
     return len(tokenizer.encode(text))
+
+
+def print_raw_messages(msgs: list[dict]) -> None:
+    """Print the exact generated message payloads as JSON."""
+    print(orjson.dumps(msgs, option=orjson.OPT_INDENT_2).decode())
+
+
+def build_demo_messages(
+    gen: CodingContentGenerator, budget: int, *, include_user: bool = False
+) -> list[dict]:
+    """Build demo messages, optionally prepending a synthetic user prompt."""
+    messages = gen.generate_response(budget)
+    if not include_user:
+        return messages
+    return [{"role": "user", "content": gen._gen_user_prompt()}, *messages]
 
 
 def analyze_conversation(
@@ -120,41 +138,60 @@ def print_conversation(
 
         if role == "assistant" and "tool_calls" in msg:
             content = msg.get("content") or ""
-            text_preview = (
-                repr(content[:80]) + "..." if len(content) > 80 else repr(content)
-            )
             print(f"  [{i}] {role} ({style})")
-            print(f"       text: {text_preview}")
+            if full:
+                print(f"       text: {repr(content)}")
+            else:
+                text_preview = (
+                    repr(content[:80]) + "..." if len(content) > 80 else repr(content)
+                )
+                print(f"       text: {text_preview}")
             for tc in msg["tool_calls"]:
                 fn = tc["function"]
                 args = orjson.loads(fn["arguments"])
-                args_short = {
-                    k: (v[:40] + "..." if isinstance(v, str) and len(v) > 40 else v)
-                    for k, v in args.items()
-                }
-                print(f"       call: {fn['name']}({args_short})  id={tc['id']}")
+                if full:
+                    print(
+                        f"       call: {fn['name']}({orjson.dumps(args).decode()})  "
+                        f"id={tc['id']}"
+                    )
+                else:
+                    args_short = {
+                        k: (v[:40] + "..." if isinstance(v, str) and len(v) > 40 else v)
+                        for k, v in args.items()
+                    }
+                    print(f"       call: {fn['name']}({args_short})  id={tc['id']}")
 
         elif role == "tool":
             content = msg.get("content", "")
             tokens = count_tokens(tokenizer, content) if content else 0
             print(f"  [{i}] tool_result -> {msg['tool_call_id']}  ({tokens} tokens)")
             if full:
-                preview = (
-                    repr(content[:60]) + "..." if len(content) > 60 else repr(content)
-                )
-                print(f"       {preview}")
+                print(f"       {repr(content)}")
 
         elif role == "assistant":
             content = msg.get("content", "")
             tokens = count_tokens(tokenizer, content) if content else 0
             print(f"  [{i}] {role} ({style}, {tokens} tokens)")
-            print(f"       {repr(content[:80])}...")
+            if full:
+                print(f"       {repr(content)}")
+            else:
+                print(f"       {repr(content[:80])}...")
 
         else:
-            print(f"  [{i}] {role}: {repr(str(msg.get('content', ''))[:60])}...")
+            content = str(msg.get("content", ""))
+            if full:
+                print(f"  [{i}] {role}: {repr(content)}")
+            else:
+                print(f"  [{i}] {role}: {repr(content[:60])}...")
 
 
-def run_demo(token_budgets: list[int], seeds: int, full: bool) -> None:
+def run_demo(
+    token_budgets: list[int],
+    seeds: int,
+    full: bool,
+    raw: bool,
+    include_user: bool,
+) -> None:
     tokenizer = Tokenizer.from_pretrained("gpt2")
 
     # Aggregate stats across all runs
@@ -170,7 +207,7 @@ def run_demo(token_budgets: list[int], seeds: int, full: bool) -> None:
 
         for seed in range(seeds):
             gen = make_generator(seed)
-            msgs = gen.generate_response(budget)
+            msgs = build_demo_messages(gen, budget, include_user=include_user)
             stats = analyze_conversation(msgs, tokenizer, full)
 
             total_convos += 1
@@ -187,6 +224,9 @@ def run_demo(token_budgets: list[int], seeds: int, full: bool) -> None:
             print(f"  Flow: {' -> '.join(stats['styles'])}")
 
             print_conversation(msgs, tokenizer, full)
+            if raw:
+                print(f"{THIN_SEP}\n  Raw messages:\n")
+                print_raw_messages(msgs)
 
     # Summary
     print(SEPARATOR)
@@ -247,11 +287,21 @@ def main() -> None:
     parser.add_argument(
         "--full",
         action="store_true",
-        help="Show full message content (not just previews)",
+        help="Show full pretty-printed message content (not just previews)",
+    )
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Dump the exact generated message payloads as JSON",
+    )
+    parser.add_argument(
+        "--include-user",
+        action="store_true",
+        help="Prepend a synthetic user prompt before each generated assistant response",
     )
     args = parser.parse_args()
 
-    run_demo(args.tokens, args.seeds, args.full)
+    run_demo(args.tokens, args.seeds, args.full, args.raw, args.include_user)
 
 
 if __name__ == "__main__":

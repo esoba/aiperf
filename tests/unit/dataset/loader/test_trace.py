@@ -546,7 +546,7 @@ class TestMooncakeTraceDatasetLoader:
             user_config=default_user_config,
             prompt_generator=mock_prompt_generator,
         )
-        conversations = loader.convert_to_conversations(trace_data)
+        conversations = list(loader.convert_to_conversations(trace_data))
         assert (
             conversations[0].context_mode
             == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES

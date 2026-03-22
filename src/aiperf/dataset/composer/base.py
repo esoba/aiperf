@@ -164,12 +164,12 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
     def _finalize_conversation(
         self, conversation: Conversation, session_index: int
     ) -> None:
-        """Inject context prompts and pre-generated responses into a conversation.
+        """Inject context prompts and coding tool-use history into a conversation.
 
         Sets the system_message and user_context_message fields, which
         endpoint formatters prepend to the first turn when creating payloads.
-        When ``--pre-generate-responses`` is enabled, also builds raw_messages
-        on subsequent turns with pre-generated assistant tool-use conversations.
+        For coding corpus multi-turn sessions, injects tool-use conversation
+        history into subsequent turns' raw_messages.
 
         Args:
             conversation: Conversation to finalize.
@@ -191,8 +191,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 self.prompt_generator.generate_user_context_prompt(session_index)
             )
 
-        if self.config.input.prompt.pre_generate_responses:
-            self._apply_pregenerated_responses(conversation)
+        self._inject_coding_tool_history(conversation)
 
     def _get_shared_system_prompt(self) -> str | None:
         """Return the shared system prompt, computing and caching on first call."""
@@ -202,66 +201,82 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             )
         return self._shared_system_prompt_cache
 
-    # -- Pre-generated response support --
+    # -- Coding tool-use ISL injection --
 
-    def _apply_pregenerated_responses(self, conversation: Conversation) -> None:
-        """Build raw_messages on multi-turn conversation turns with pre-generated responses.
+    def _inject_coding_tool_history(self, conversation: Conversation) -> None:
+        """Pre-generate cumulative tool-use conversation history for coding multi-turn.
 
-        For each turn after the first, generates a coding assistant response
-        (tool-use conversation) for the *previous* turn, then constructs
-        raw_messages containing the full conversation history up to that point.
+        When ``--pre-generate-responses`` is enabled with coding corpus,
+        builds cumulative ``raw_messages`` on each turn.  Each turn's
+        ``input_length`` is delta-compressed (new tokens for that turn only),
+        so the total ISL grows as history accumulates::
 
-        Turns that already have raw_messages are left untouched.
+            Turn 0 ISL = input_length₀
+            Turn 1 ISL = input_length₀ + max_tokens₀ + input_length₁
+            Turn 2 ISL = input_length₀ + max_tokens₀ + input_length₁ + max_tokens₁ + input_length₂
+
+        Assistant responses are generated at exactly ``max_tokens`` of the
+        previous turn, mocking what the real LLM would have output as
+        tool-use conversations (tool_calls + tool results + summary text).
+
+        The conversation context mode is set to ``MESSAGE_ARRAY_WITH_RESPONSES``
+        so the session manager sends each turn's ``raw_messages`` as-is and
+        discards live LLM responses.
+
+        Without ``--pre-generate-responses``, the normal multi-turn flow is
+        used: turns accumulate and real LLM responses fill the assistant role.
         """
+        if not self.config.input.prompt.pre_generate_responses:
+            return
+
+        from aiperf.dataset.generator.coding_content import CodingContentGenerator
+
+        if not isinstance(self.prompt_generator, CodingContentGenerator):
+            return
         if len(conversation.turns) <= 1:
             return
 
-        # Generate assistant responses for each turn except the last
-        responses: list[list[dict[str, Any]] | None] = []
+        gen: CodingContentGenerator = self.prompt_generator
+
+        # Tell the session manager to send each turn's raw_messages as-is
+        # and discard live LLM responses.
+        from aiperf.common.enums import ConversationContextMode
+
+        conversation.context_mode = ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+
+        # Pre-generate an assistant response for each turn (except the last)
+        # sized to that turn's max_tokens — mocking the real LLM output.
+        responses: list[list[dict[str, Any]]] = []
         for turn in conversation.turns[:-1]:
-            if turn.max_tokens:
+            budget = turn.max_tokens or 0
+            if budget > 0:
                 responses.append(
-                    self.prompt_generator.generate_response(turn.max_tokens)
+                    gen.generate_response(
+                        budget,
+                        include_assistant_text=True,
+                        assistant_text_tokens=budget,
+                    )
                 )
             else:
-                responses.append(None)
+                responses.append([])
 
-        # Build raw_messages for turns 1..N (skip if already set)
+        # Build cumulative raw_messages for turns 1..N
         for i in range(1, len(conversation.turns)):
             if conversation.turns[i].raw_messages is not None:
                 continue
 
-            messages: list[dict] = []
+            messages: list[dict[str, Any]] = []
 
-            if conversation.system_message:
-                messages.append(
-                    {"role": "system", "content": conversation.system_message}
-                )
-            if conversation.user_context_message:
-                messages.append(
-                    {"role": "user", "content": conversation.user_context_message}
-                )
-
-            # History: user turn + pre-generated response for turns 0..i-1
+            # Accumulate history: user[j] + assistant_response[j] for j=0..i-1
             for j in range(i):
-                user_content = self._extract_turn_text(conversation.turns[j])
-                messages.append(
-                    {
-                        "role": conversation.turns[j].role or "user",
-                        "content": user_content,
-                    }
-                )
-                if j < len(responses) and responses[j] is not None:
+                user_text = self._extract_turn_text(conversation.turns[j])
+                messages.append({"role": "user", "content": user_text})
+                if j < len(responses) and responses[j]:
                     messages.extend(responses[j])
 
-            # Current user turn
-            user_content = self._extract_turn_text(conversation.turns[i])
-            messages.append(
-                {
-                    "role": conversation.turns[i].role or "user",
-                    "content": user_content,
-                }
-            )
+            # Current turn's user prompt
+            user_text = self._extract_turn_text(conversation.turns[i])
+            messages.append({"role": "user", "content": user_text})
 
             conversation.turns[i].raw_messages = messages
 
