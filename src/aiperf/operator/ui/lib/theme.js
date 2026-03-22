@@ -1,58 +1,58 @@
-// AIPerf dark theme - benchmark-focused color system
+// AIPerf dark theme - NVIDIA design system
 export const palette = {
-  // Base layers (near-black with slight blue tint)
-  bg: '#0a0a10',
-  bgCard: '#0f0f18',
-  bgRaised: '#141420',
+  // Base layers (neutral grays, no blue tint)
+  bg: '#0c0c0c',
+  bgCard: '#161616',
+  bgRaised: '#222222',
 
   // Borders
-  border: '#1c1c2e',
-  borderHover: '#2a2a44',
-  borderSubtle: '#14141e',
+  border: '#313131',
+  borderHover: '#4b4b4b',
+  borderSubtle: '#1a1a1a',
 
-  // Text
-  dim: '#3a3a55',
-  muted: '#6a6a88',
-  sub: '#9090ab',
-  text: '#d8d8e8',
-  white: '#f0f0ff',
+  // Text (neutral gray scale)
+  dim: '#4b4b4b',
+  muted: '#757575',
+  sub: '#a7a7a7',
+  text: '#eeeeee',
+  white: '#ffffff',
 
-  // Accent
-  accent: '#8b5cf6',
-  accentDim: 'rgba(139,92,246,0.10)',
+  // Accent (NVIDIA green)
+  accent: '#76b900',
+  accentDim: 'rgba(118,185,0,0.15)',
 
   // Semantic
   blue: '#3b82f6',
-  cyan: '#06b6d4',
-  green: '#10b981',
-  amber: '#f59e0b',
-  red: '#ef4444',
-  pink: '#ec4899',
-  orange: '#f97316',
-  teal: '#14b8a6',
+  cyan: '#26c6da',
+  green: '#76b900',
+  amber: '#ffc107',
+  red: '#ef5350',
+  pink: '#ab47bc',
+  orange: '#fb923c',
+  teal: '#26c6da',
   indigo: '#6366f1',
-  mauve: '#8b5cf6',
+  mauve: '#ab47bc',
 
   // Compatibility aliases (used by other pages not being rewritten)
-  base: '#0a0a10',
-  mantle: '#0f0f18',
-  crust: '#070710',
-  surface0: '#1c1c2e',
-  surface1: '#2a2a44',
-  surface2: '#3a3a55',
-  overlay0: '#6a6a88',
-  overlay1: '#9090ab',
-  overlay2: '#9090ab',
-  subtext0: '#9090ab',
-  subtext1: '#d8d8e8',
-  yellow: '#f59e0b',
-  peach: '#f97316',
-  maroon: '#ef4444',
-  sapphire: '#06b6d4',
-  sky: '#06b6d4',
-  lavender: '#8b5cf6',
-  flamingo: '#ec4899',
-  rosewater: '#ec4899',
+  base: '#0c0c0c',
+  mantle: '#161616',
+  crust: '#080808',
+  surface0: '#313131',
+  surface1: '#4b4b4b',
+  surface2: '#4b4b4b',
+  overlay0: '#757575',
+  overlay1: '#a7a7a7',
+  overlay2: '#a7a7a7',
+  subtext0: '#a7a7a7',
+  subtext1: '#eeeeee',
+  yellow: '#ffc107',
+  peach: '#fb923c',
+  maroon: '#ef5350',
+  sapphire: '#26c6da',
+  sky: '#26c6da',
+  lavender: '#76b900',
+  flamingo: '#ab47bc',
+  rosewater: '#ab47bc',
 };
 
 // Semantic mappings
@@ -97,9 +97,9 @@ export function phaseColor(phase) {
 
 // Stable model-color assignment via string hash
 const MODEL_COLORS = [
-  palette.blue, palette.green, palette.amber, palette.pink,
+  palette.blue, '#76b900', palette.amber, palette.pink,
   palette.cyan, palette.teal, palette.orange, palette.indigo,
-  palette.red, palette.accent,
+  palette.red,
 ];
 
 /**
