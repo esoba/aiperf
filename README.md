@@ -137,7 +137,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
 - [ShareGPT Dataset](docs/tutorials/sharegpt.md) - Profile with ShareGPT dataset
-- [AIMO Dataset](docs/tutorials/aimo.md) - Profile with AIMO math reasoning dataset
+- [AIMO Dataset](docs/tutorials/aimo.md) - Profile with AIMO math reasoning datasets (NuminaMath-TIR, NuminaMath-CoT, NuminaMath-1.5, AIME)
 - [InstructCoder Dataset](docs/tutorials/instruct-coder.md) - Profile with InstructCoder code generation dataset
 - [SpecBench Dataset](docs/tutorials/spec-bench.md) - Profile with SpecBench speculative decoding dataset
 - [Blazedit Dataset](docs/tutorials/blazedit.md) - Profile with Blazedit code editing dataset
