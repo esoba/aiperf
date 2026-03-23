@@ -162,6 +162,21 @@ class TestZMQStreamingRouterClientSendTo:
             sent_data = mock_socket.send_multipart.call_args[0][0]
             assert sent_data[0] == special_identity.encode()
 
+    @pytest.mark.asyncio
+    async def test_send_to_preserves_non_utf8_identity_bytes(
+        self, streaming_router_test_helper, sample_credit
+    ):
+        """Test that send_to round-trips identities decoded with surrogateescape."""
+        async with streaming_router_test_helper.create_client() as client:
+            mock_socket = client.socket
+            identity_bytes = b"\x00\xe4<\x98l"
+            identity = identity_bytes.decode("utf-8", "surrogateescape")
+
+            await client.send_to(identity, sample_credit)
+
+            sent_data = mock_socket.send_multipart.call_args[0][0]
+            assert sent_data[0] == identity_bytes
+
 
 class TestZMQStreamingRouterClientReceiver:
     """Test ZMQStreamingRouterClient receiver background task."""
@@ -324,6 +339,41 @@ class TestZMQStreamingRouterClientReceiver:
             assert len(received) == 1
             recv_identity, _ = received[0]
             assert recv_identity == ""  # Empty identity
+
+    @pytest.mark.asyncio
+    async def test_receiver_handles_non_utf8_identity(
+        self, streaming_router_test_helper, sample_worker_ready, create_callback_tracker
+    ):
+        """Test receiver preserves arbitrary ROUTER identity bytes."""
+        callback, event, received = create_callback_tracker()
+        identity_bytes = b"\x00\xe4<\x98l"
+        expected_identity = identity_bytes.decode("utf-8", "surrogateescape")
+
+        async def test_handler(identity: str, message: WorkerToRouterMessage) -> None:
+            await callback((identity, message))
+
+        call_count = 0
+
+        async def mock_recv():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return [identity_bytes, msgspec.msgpack.encode(sample_worker_ready)]
+            await asyncio.Future()
+
+        streaming_router_test_helper.setup_mock_socket(
+            recv_multipart_side_effect=mock_recv
+        )
+
+        async with streaming_router_test_helper.create_client() as client:
+            client.register_receiver(test_handler)
+            await client.start()
+
+            await asyncio.wait_for(event.wait(), timeout=1.0)
+            assert len(received) == 1
+            recv_identity, recv_message = received[0]
+            assert recv_identity == expected_identity
+            assert isinstance(recv_message, WorkerReady)
 
 
 class TestZMQStreamingRouterClientLifecycle:

@@ -13,8 +13,8 @@ RUN groupadd -r $USERNAME \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Create virtual environment
-RUN mkdir /opt/$APP_NAME \
-    && uv venv /opt/$APP_NAME/venv --python 3.13 \
+RUN mkdir -p /opt/$APP_NAME \
+    && uv venv /opt/$APP_NAME/venv --python 3.13 --clear \
     && chown -R $USERNAME:$USERNAME /opt/$APP_NAME
 
 # Activate virtual environment

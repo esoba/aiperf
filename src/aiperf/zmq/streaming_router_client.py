@@ -140,7 +140,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
 
         try:
             await self.socket.send_multipart(
-                [identity.encode(), _encoder.encode(struct)]
+                [identity.encode("utf-8", "surrogateescape"), _encoder.encode(struct)]
             )
             if self.is_trace_enabled:
                 self.trace(f"Sent {type(struct).__name__} to {identity}: {struct}")
@@ -215,7 +215,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                     self.trace(f"Received message: {data}")
 
                 # ROUTER envelope: [identity, message_bytes]
-                identity = data[0].decode("utf-8")
+                identity = data[0].decode("utf-8", "surrogateescape")
                 message = self._decoder.decode(data[-1])
 
                 routing_envelope: tuple[bytes, ...] = tuple(data[:-1])
