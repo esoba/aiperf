@@ -178,9 +178,9 @@ class TestWorkerPodManagerInit:
             param(1, 1, id="min_one_rp"),
             param(2, 1, id="two_workers"),
             param(4, 1, id="four_workers"),
-            param(8, 1, id="eight_workers"),
-            param(12, 1, id="twelve_workers"),
-            param(16, 1, id="sixteen_workers"),
+            param(8, 2, id="eight_workers"),
+            param(12, 3, id="twelve_workers"),
+            param(16, 4, id="sixteen_workers"),
         ],
     )  # fmt: skip
     def test_default_record_processors_calculation(

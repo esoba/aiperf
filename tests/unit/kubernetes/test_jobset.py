@@ -415,6 +415,23 @@ class TestJobSetSpecContainerDetails:
                 assert "requests" in container["resources"]
                 assert "limits" in container["resources"]
 
+    def test_resource_mode_none_omits_resources(self) -> None:
+        """Test that resourceMode=none omits the container resources block."""
+        manifest = JobSetSpec(
+            name="aiperf-test",
+            namespace="default",
+            job_id="test-123",
+            image="aiperf:latest",
+            resource_mode="none",
+        ).to_k8s_manifest()
+
+        for job in manifest["spec"]["replicatedJobs"]:
+            containers = job["template"]["spec"]["template"]["spec"]["containers"]
+            for container in containers:
+                assert "resources" not in container, (
+                    f"{container['name']} unexpectedly had resources"
+                )
+
     def test_containers_have_env_vars(self, jobset_manifest: dict[str, Any]) -> None:
         """Test that containers have environment variables."""
         for job in jobset_manifest["spec"]["replicatedJobs"]:

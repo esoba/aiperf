@@ -5,6 +5,7 @@ Tests for streaming_router_client.py - ZMQStreamingRouterClient class.
 """
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import msgspec.msgpack
 import pytest
@@ -374,6 +375,42 @@ class TestZMQStreamingRouterClientReceiver:
             recv_identity, recv_message = received[0]
             assert recv_identity == expected_identity
             assert isinstance(recv_message, WorkerReady)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_message_recreates_socket_on_host_unreachable(
+        self, streaming_router_test_helper, sample_credit
+    ):
+        """Test recoverable ROUTER send errors trigger socket recreation."""
+        async with streaming_router_test_helper.create_client() as client:
+            client._receiver_handler = AsyncMock(return_value=sample_credit)
+            client._recreate_socket = AsyncMock()
+            client.socket.send_multipart.side_effect = zmq.ZMQError(zmq.EHOSTUNREACH)
+
+            await client._dispatch_message(
+                "record_processor_24_17",
+                (b"record_processor_24_17",),
+                WorkerReady(worker_id="worker-1"),
+            )
+
+            client._recreate_socket.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_message_does_not_recreate_socket_on_generic_error(
+        self, streaming_router_test_helper, sample_credit
+    ):
+        """Test non-ZMQ send errors do not trigger socket recreation."""
+        async with streaming_router_test_helper.create_client() as client:
+            client._receiver_handler = AsyncMock(return_value=sample_credit)
+            client._recreate_socket = AsyncMock()
+            client.socket.send_multipart.side_effect = RuntimeError("boom")
+
+            await client._dispatch_message(
+                "record_processor_24_17",
+                (b"record_processor_24_17",),
+                WorkerReady(worker_id="worker-1"),
+            )
+
+            client._recreate_socket.assert_not_awaited()
 
 
 class TestZMQStreamingRouterClientLifecycle:

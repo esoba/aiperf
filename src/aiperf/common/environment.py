@@ -476,10 +476,10 @@ class _RecordSettings(BaseSettings):
     PROCESSOR_SCALE_FACTOR: int = Field(
         ge=1,
         le=100,
-        default=10,
+        default=4,
         description="Scale factor for number of record processors to spawn based on worker count. "
         "Formula: 1 record processor for every X workers. "
-        "Calibrated: tokenization throughput at 1.5M tokens/sec/core handles typical workloads with 1 RP per 10 workers.",
+        "Default: 1 record processor for every 4 workers.",
     )
     PROGRESS_REPORT_INTERVAL: float = Field(
         ge=0.1,

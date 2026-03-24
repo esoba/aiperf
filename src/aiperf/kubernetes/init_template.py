@@ -63,6 +63,7 @@ spec:
   # === Deployment Options ===
   # ttlSecondsAfterFinished: 300
   # timeoutSeconds: 0
+  # resourceMode: none   # escape hatch: omit controller/worker CPU+memory requests/limits
 
   # === Pod Customization ===
   # podTemplate:

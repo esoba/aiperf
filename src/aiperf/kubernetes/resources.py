@@ -400,6 +400,7 @@ class KubernetesDeployment(AIPerfBaseModel):
             job_id=self.job_id,
             image=self.deployment.image,
             image_pull_policy=self.deployment.image_pull_policy,
+            resource_mode=self.deployment.resource_mode,
             worker_replicas=self.worker_replicas,
             workers_per_pod=self.workers_per_pod,
             ttl_seconds=self.deployment.ttl_seconds_after_finished,

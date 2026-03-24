@@ -43,6 +43,9 @@ spec:
   # Container image (required)
   image: "nvcr.io/nvidia/aiperf:latest"
 
+  # Pod resource mode
+  resourceMode: guaranteed       # or "none" to omit CPU/memory requests+limits
+
   # Worker scaling
   connectionsPerWorker: 100       # max concurrent connections per worker process
 
@@ -130,6 +133,7 @@ phases:
 |-------|------|---------|-------------|
 | `image` | string | required | AIPerf container image |
 | `imagePullPolicy` | string | - | `Always`, `IfNotPresent`, or `Never` (Helm default: `IfNotPresent`) |
+| `resourceMode` | string | `guaranteed` | Pod CPU/memory mode. `guaranteed` keeps requests==limits; `none` omits CPU/memory requests and limits for both controller and worker pods. |
 | `connectionsPerWorker` | int | 100 | Max concurrent connections per worker process |
 | `ttlSecondsAfterFinished` | int | 300 | Seconds to keep pods after completion |
 | `timeoutSeconds` | int | 0 | Benchmark timeout in seconds (0 = no timeout) |

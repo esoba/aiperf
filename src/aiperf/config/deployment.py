@@ -7,7 +7,7 @@ concerns (pod templates, scheduling, images) with camelCase aliases for
 CRD round-tripping.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
 
@@ -88,6 +88,12 @@ class DeploymentConfig(BaseConfig):
     image_pull_policy: ImagePullPolicy | None = Field(
         default=None,
         description="Image pull policy (Always, Never, IfNotPresent)",
+    )
+    resource_mode: Literal["guaranteed", "none"] = Field(
+        default="guaranteed",
+        description="CPU/memory resource mode for controller and worker pods. "
+        "'guaranteed' applies the standard requests==limits block. "
+        "'none' omits CPU/memory requests and limits as an escape hatch.",
     )
     connections_per_worker: int = Field(
         default=100,

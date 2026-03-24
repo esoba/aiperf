@@ -456,6 +456,13 @@ class TestCheckNodeResources:
         result = await checker._check_node_resources()
         assert result.status == CheckStatus.WARN
 
+    @pytest.mark.asyncio
+    async def test_resource_mode_none_skips(self) -> None:
+        checker = _make_checker(deploy_config=DeploymentConfig(resource_mode="none"))
+        result = await checker._check_node_resources()
+        assert result.status == CheckStatus.SKIP
+        assert "resourceMode=none" in result.message
+
 
 # =============================================================================
 # Tier 3: Node Selector Match
@@ -551,6 +558,13 @@ class TestCheckPerNodeSchedulability:
         result = await checker._check_per_node_schedulability()
         assert result.status == CheckStatus.FAIL
 
+    @pytest.mark.asyncio
+    async def test_resource_mode_none_skips(self) -> None:
+        checker = _make_checker(deploy_config=DeploymentConfig(resource_mode="none"))
+        result = await checker._check_per_node_schedulability()
+        assert result.status == CheckStatus.SKIP
+        assert "resourceMode=none" in result.message
+
 
 # =============================================================================
 # Tier 3: Resource Quotas
@@ -600,6 +614,13 @@ class TestCheckResourceQuotas:
         assert result.status == CheckStatus.WARN
         assert "quota" in result.message.lower()
 
+    @pytest.mark.asyncio
+    async def test_resource_mode_none_skips(self) -> None:
+        checker = _make_checker(deploy_config=DeploymentConfig(resource_mode="none"))
+        result = await checker._check_resource_quotas()
+        assert result.status == CheckStatus.SKIP
+        assert "resourceMode=none" in result.message
+
 
 # =============================================================================
 # Tier 3: Memory Estimation
@@ -625,6 +646,13 @@ class TestCheckMemoryEstimation:
             result = await checker._check_memory_estimation()
         assert result.status == CheckStatus.WARN
         assert "bad config" in result.message
+
+    @pytest.mark.asyncio
+    async def test_resource_mode_none_skips(self) -> None:
+        checker = _make_checker(deploy_config=DeploymentConfig(resource_mode="none"))
+        result = await checker._check_memory_estimation()
+        assert result.status == CheckStatus.SKIP
+        assert "resourceMode=none" in result.message
 
 
 # =============================================================================

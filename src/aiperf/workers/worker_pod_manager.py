@@ -113,7 +113,8 @@ class WorkerPodManager(BaseComponentService):
         )
 
         # Configuration for record processors per pod
-        # Default: 1 RP for every 4 workers, minimum 1
+        # Default: 1 RP for every 4 workers, minimum 1.
+        # The Kubernetes path should set record_processors_per_pod explicitly.
         if cfg.runtime.record_processors_per_pod is not None:
             self.record_processors_per_pod = cfg.runtime.record_processors_per_pod
         else:

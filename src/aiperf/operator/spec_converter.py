@@ -93,6 +93,7 @@ class AIPerfJobSpecConverter:
         for key in (
             "image",
             "imagePullPolicy",
+            "resourceMode",
             "connectionsPerWorker",
             "timeoutSeconds",
             "ttlSecondsAfterFinished",
@@ -109,7 +110,8 @@ class AIPerfJobSpecConverter:
     def calculate_workers(self, dc: DeploymentConfig | None = None) -> int:
         """Calculate optimal worker count based on concurrency.
 
-        Uses the formula: workers = ceil(concurrency / connections_per_worker)
+        Uses an explicit runtime.workers override when provided. Otherwise,
+        workers = ceil(concurrency / connections_per_worker).
 
         Args:
             dc: Optional DeploymentConfig to read connections_per_worker from.
@@ -124,6 +126,7 @@ class AIPerfJobSpecConverter:
         with contextlib.suppress(Exception):
             config_dict = expand_config_dict(config_dict)
 
+        runtime = config_dict.get("runtime", {})
         phases = config_dict.get("phases", {})
 
         def _int(v: object, default: int = 1) -> int:
@@ -131,6 +134,10 @@ class AIPerfJobSpecConverter:
                 return int(v)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 return default
+
+        explicit_workers = _int(runtime.get("workers"), 0)
+        if explicit_workers >= 1:
+            return explicit_workers
 
         # Find max concurrency across all phases.
         # phases can be a single config (has "type") or named phases (dict of dicts).
@@ -218,7 +225,8 @@ def apply_worker_config(config: AIPerfConfig, total_workers: int) -> int:
     config.runtime.workers_per_pod = workers_per_pod
     config.runtime.workers = num_pods * workers_per_pod
 
-    rp_per_pod = max(1, workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR)
+    rp_per_pod = max(1, workers_per_pod // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR)
+    config.runtime.record_processors_per_pod = rp_per_pod
     config.runtime.record_processors = rp_per_pod * num_pods
 
     return num_pods

@@ -196,6 +196,19 @@ class TestToDeploymentConfig:
         assert deploy.pod_template.image_pull_secrets == ["my-registry-secret"]
         assert deploy.pod_template.service_account_name == "aiperf-sa"
 
+    def test_resource_mode_propagated(self) -> None:
+        converter = AIPerfJobSpecConverter(
+            {
+                "image": "aiperf:latest",
+                "resourceMode": "none",
+                "benchmark": {"endpoint": {"url": "http://localhost:8000"}},
+            },
+            "test-job",
+            "default",
+        )
+        deploy = converter.to_deployment_config()
+        assert deploy.resource_mode == "none"
+
     def test_env_vars_direct(self, full_aiperfjob_spec: dict[str, Any]) -> None:
         converter = AIPerfJobSpecConverter(full_aiperfjob_spec, "test-job", "default")
         deploy = converter.to_deployment_config()
@@ -309,6 +322,25 @@ class TestCalculateWorkers:
         # 500 concurrency / 100 cpw = 5
         assert workers == 5
 
+    def test_runtime_workers_override_takes_precedence(self) -> None:
+        spec = {
+            "connectionsPerWorker": 250,
+            "benchmark": {
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000"]},
+                "datasets": {"main": {"type": "synthetic"}},
+                "runtime": {"workers": 1250, "workers_per_pod": 25},
+                "phases": {
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 250000,
+                },
+            },
+        }
+        converter = AIPerfJobSpecConverter(spec, "test-job", "default")
+        workers = converter.calculate_workers()
+        assert workers == 1250
+
     def test_multi_phase_max_concurrency(self) -> None:
         spec = {
             "benchmark": {
@@ -365,7 +397,8 @@ class TestApplyWorkerConfig:
         )
         config = converter.to_aiperf_config()
         apply_worker_config(config, 10)
-        assert config.runtime.record_processors >= 1
+        assert config.runtime.record_processors_per_pod == 10
+        assert config.runtime.record_processors == 10
 
 
 # =============================================================================

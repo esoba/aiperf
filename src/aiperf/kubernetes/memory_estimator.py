@@ -275,6 +275,7 @@ class MemoryEstimationParams:
             connections_per_worker: Connections per worker.
         """
         from aiperf.common.environment import Environment
+        from aiperf.kubernetes.environment import K8sEnvironment
 
         wpp = (
             workers_per_pod
@@ -283,7 +284,7 @@ class MemoryEstimationParams:
         )
         num_pods = max(1, math.ceil(total_workers / wpp))
         actual_wpp = min(total_workers, wpp)
-        rp_per_pod = max(1, actual_wpp // Environment.RECORD.PROCESSOR_SCALE_FACTOR)
+        rp_per_pod = max(1, actual_wpp // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR)
 
         # Derive load profile from phases
         max_conc = 1

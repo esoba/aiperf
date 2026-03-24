@@ -616,10 +616,10 @@ class TestFromConfig:
 class TestConfigurationDefaults:
     """Test that the calibrated defaults are consistent across all components."""
 
-    def test_processor_scale_factor_is_10(self) -> None:
-        from aiperf.common.environment import Environment
+    def test_k8s_processor_scale_factor_is_1(self) -> None:
+        from aiperf.kubernetes.environment import K8sEnvironment
 
-        assert Environment.RECORD.PROCESSOR_SCALE_FACTOR == 10
+        assert K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR == 1
 
     def test_connections_per_worker_is_100(self) -> None:
         from aiperf.config.deployment import DeploymentConfig
@@ -632,12 +632,13 @@ class TestConfigurationDefaults:
         assert Environment.WORKER.DEFAULT_WORKERS_PER_POD == 10
 
     def test_rp_per_pod_with_10_workers(self) -> None:
-        """10 workers / scale_factor 10 = 1 RP per pod."""
+        """10 workers / scale_factor 1 = 10 RPs per pod."""
         from aiperf.common.environment import Environment
+        from aiperf.kubernetes.environment import K8sEnvironment
 
         wpp = Environment.WORKER.DEFAULT_WORKERS_PER_POD
-        sf = Environment.RECORD.PROCESSOR_SCALE_FACTOR
-        assert max(1, wpp // sf) == 1
+        sf = K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR
+        assert max(1, wpp // sf) == 10
 
     def test_pod_concurrency_at_defaults(self) -> None:
         """10 workers x 100 conc/worker = 1000 per pod."""

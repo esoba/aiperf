@@ -8,7 +8,7 @@ via environment variables through K8sEnvironment.
 """
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -137,8 +137,8 @@ class ContainerSpec(AIPerfBaseModel):
     env: list[dict[str, Any]] = Field(
         default_factory=list, description="Environment variables"
     )
-    resources: dict[str, dict[str, str]] = Field(
-        default_factory=dict, description="Resource requests and limits"
+    resources: dict[str, dict[str, str]] | None = Field(
+        default=None, description="Resource requests and limits"
     )
     volume_mounts: list[dict[str, Any]] = Field(
         default_factory=list, description="Volume mounts"
@@ -279,6 +279,11 @@ class JobSetSpec(AIPerfBaseModel):
         description="Image pull policy for all containers (Always, Never, IfNotPresent). "
         "Set to 'Never' for local development with minikube.",
     )
+    resource_mode: Literal["guaranteed", "none"] = Field(
+        default="guaranteed",
+        description="CPU/memory resource mode for controller and worker pods. "
+        "'guaranteed' emits requests==limits. 'none' omits the resources block.",
+    )
     worker_replicas: int = Field(default=1, description="Number of worker pods")
     workers_per_pod: int | None = Field(
         default=None,
@@ -337,6 +342,19 @@ class JobSetSpec(AIPerfBaseModel):
             "failureThreshold": health.FAILURE_THRESHOLD,
             "successThreshold": health.SUCCESS_THRESHOLD,
         }
+
+    def _resolve_pod_resources(
+        self, settings_key: str
+    ) -> dict[str, dict[str, str]] | None:
+        """Resolve controller/worker pod resources for this JobSet.
+
+        The default mode preserves the existing Guaranteed QoS behavior.
+        The ``none`` mode is an explicit escape hatch that omits CPU/memory
+        requests and limits from the generated container specs.
+        """
+        if self.resource_mode == "none":
+            return None
+        return getattr(K8sEnvironment, settings_key).to_k8s_resources()
 
     def _create_startup_probe(
         self, port: int, path: str = "/healthz"
@@ -420,7 +438,7 @@ class JobSetSpec(AIPerfBaseModel):
         name: str,
         service_type: str,
         health_port: int,
-        resources: dict[str, dict[str, str]],
+        resources: dict[str, dict[str, str]] | None,
         api_port: int | None = None,
         controller_host: str | None = None,
         extra_env: list[dict[str, Any]] | None = None,
@@ -432,7 +450,7 @@ class JobSetSpec(AIPerfBaseModel):
             name: Container name.
             service_type: AIPerf service type(s), comma-separated.
             health_port: Health check port.
-            resources: Kubernetes resource requests/limits.
+            resources: Optional Kubernetes resource requests/limits.
             api_port: Optional API port for services that expose APIs.
             controller_host: Controller DNS for worker containers.
             extra_env: Additional environment variables for this container.
@@ -501,7 +519,7 @@ class JobSetSpec(AIPerfBaseModel):
         """
         ports = K8sEnvironment.PORTS
 
-        control_plane_resources = K8sEnvironment.CONTROLLER_POD.to_k8s_resources()
+        control_plane_resources = self._resolve_pod_resources("CONTROLLER_POD")
 
         return [
             self._create_container(
@@ -527,7 +545,7 @@ class JobSetSpec(AIPerfBaseModel):
         """
         ports = K8sEnvironment.PORTS
 
-        worker_pod_resources = K8sEnvironment.WORKER_POD.to_k8s_resources()
+        worker_pod_resources = self._resolve_pod_resources("WORKER_POD")
 
         return [
             self._create_container(

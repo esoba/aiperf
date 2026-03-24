@@ -99,6 +99,19 @@ class OperatorPreflightChecker:
     total_workers: int
     num_pods: int
 
+    def _resource_mode_skip(self, check_name: str) -> CheckResult | None:
+        """Skip resource-based checks when pod resources are intentionally omitted."""
+        if self.deploy_config.resource_mode != "none":
+            return None
+        return CheckResult(
+            name=check_name,
+            status=CheckStatus.SKIP,
+            message=(
+                "Skipped because spec.resourceMode=none omits controller/worker "
+                "CPU and memory requests/limits."
+            ),
+        )
+
     async def run_all(
         self, timeout: float = OperatorEnvironment.PREFLIGHT_TIMEOUT
     ) -> PreflightResults:
@@ -397,6 +410,9 @@ class OperatorPreflightChecker:
 
         from aiperf.kubernetes.environment import K8sEnvironment
 
+        if skip := self._resource_mode_skip("Node Resources"):
+            return skip
+
         try:
             nodes = [n async for n in self.api.async_get(Node)]
         except Exception as e:
@@ -507,6 +523,9 @@ class OperatorPreflightChecker:
 
         from aiperf.kubernetes.environment import K8sEnvironment
 
+        if skip := self._resource_mode_skip("Per-Node Schedulability"):
+            return skip
+
         try:
             nodes = [n async for n in self.api.async_get(Node)]
         except Exception as e:
@@ -558,6 +577,9 @@ class OperatorPreflightChecker:
         from kr8s.asyncio.objects import ResourceQuota
 
         from aiperf.kubernetes.environment import K8sEnvironment
+
+        if skip := self._resource_mode_skip("Resource Quotas"):
+            return skip
 
         try:
             quotas = [
@@ -631,6 +653,8 @@ class OperatorPreflightChecker:
 
     async def _check_memory_estimation(self) -> CheckResult:
         """Use memory estimator to detect OOM risk."""
+        if skip := self._resource_mode_skip("Memory Estimation"):
+            return skip
         try:
             from aiperf.kubernetes.memory_estimator import estimate_memory
 

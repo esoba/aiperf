@@ -55,6 +55,14 @@ class ZMQStreamingRouterClient(BaseZMQClient):
     - Supports concurrent message processing
     """
 
+    _RECOVERABLE_SEND_ERRNOS = frozenset(
+        {
+            zmq.EHOSTUNREACH,
+            zmq.ENOTCONN,
+            zmq.EFSM,
+        }
+    )
+
     def __init__(
         self,
         address: str,
@@ -202,6 +210,33 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                 )
             except Exception as e:
                 self.exception(f"Failed to send response to {identity}: {e!r}")
+                await self._recover_from_send_failure(identity, e)
+
+    async def _recover_from_send_failure(self, identity: str, error: Exception) -> None:
+        """Recreate a ROUTER socket after a recoverable send failure.
+
+        ROUTER sockets with ROUTER_MANDATORY enabled can raise transport errors
+        when a peer disappears between receive and reply. Recover by recreating
+        the socket so later sends do not inherit a broken multipart state.
+        """
+        if self.stop_requested or not isinstance(error, zmq.ZMQError):
+            return
+
+        if error.errno not in self._RECOVERABLE_SEND_ERRNOS:
+            return
+
+        self.warning(
+            "Recovering streaming ROUTER socket after send failure to "
+            f"{identity}: errno={error.errno}"
+        )
+        try:
+            await self._recreate_socket()
+        except Exception as recreate_error:
+            if not self.stop_requested:
+                self.exception(
+                    "Failed to recreate streaming ROUTER socket after send "
+                    f"failure to {identity}: {recreate_error!r}"
+                )
 
     @background_task(immediate=True, interval=None)
     async def _streaming_router_receiver(self) -> None:

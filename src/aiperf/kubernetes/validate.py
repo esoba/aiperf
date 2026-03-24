@@ -27,6 +27,7 @@ K8S_NAME_MAX_LENGTH = 253
 _DEPLOYMENT_FIELDS = {
     "image",
     "imagePullPolicy",
+    "resourceMode",
     "connectionsPerWorker",
     "timeoutSeconds",
     "ttlSecondsAfterFinished",

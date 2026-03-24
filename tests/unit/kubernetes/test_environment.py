@@ -81,6 +81,9 @@ class TestK8sEnvironmentWorkerPod:
         assert resources["requests"]["memory"] == "6144Mi"
         assert resources["limits"]["memory"] == "6144Mi"
 
+    def test_k8s_record_processor_scale_factor_default(self) -> None:
+        assert K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR == 1
+
 
 class TestPodResourceEnvOverrides:
     """Tests for pod-level resource env var overrides."""
@@ -108,6 +111,15 @@ class TestPodResourceEnvOverrides:
         monkeypatch.setenv("AIPERF_K8S_WORKER_POD_MEMORY", "8192Mi")
         settings = _resource_settings("WORKER_POD_", "3350m", "6144Mi")
         assert settings.MEMORY == "8192Mi"
+
+    def test_k8s_record_processor_scale_factor_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AIPERF_K8S_RECORD_PROCESSOR_SCALE_FACTOR", "2")
+        from aiperf.kubernetes.environment import _K8sEnvironment
+
+        settings = _K8sEnvironment()
+        assert settings.RECORD_PROCESSOR_SCALE_FACTOR == 2
 
     def test_override_applies_to_both_requests_and_limits(
         self, monkeypatch: pytest.MonkeyPatch

@@ -256,7 +256,8 @@ class _K8sEnvironment(BaseSettings):
     # Worker pod: single container running N workers + M record_processors + WPM.
     #   Measured per-worker: 131m CPU / 50-80 MiB at realistic server latency.
     #   Measured per-RP: 389m CPU / 200+ MiB (tokenizer-dependent).
-    #   Default 3.3 cores / 3.1 GiB covers: 10 workers + 1 RP (1:10 ratio) + WPM.
+    #   Default 3.3 cores / 6 GiB covers typical 10-worker pods with record-processing
+    #   overhead. Increase via AIPERF_K8S_WORKER_POD_{CPU,MEMORY} for heavier workloads.
     # ---------------------------------------------------------------------------
     # Pod-level resource settings (user-facing).
     # Guaranteed QoS: requests == limits (no throttling, dedicated resources).
@@ -266,6 +267,13 @@ class _K8sEnvironment(BaseSettings):
     CONTROLLER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("CONTROLLER_POD_", "3000m", "2176Mi"), description="Controller pod container resources (all control-plane services)")
     WORKER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_POD_", "3350m", "6144Mi"), description="Worker pod container resources (workers + record processors + WPM)")
     # fmt: on
+    RECORD_PROCESSOR_SCALE_FACTOR: int = Field(
+        default=1,
+        ge=1,
+        le=100,
+        description="Kubernetes-only default scale factor for record processors per worker pod. "
+        "Formula: 1 record processor for every X workers. Default: 1 record processor per worker.",
+    )
 
     # Non-resource settings
     HEALTH: _HealthProbeSettings = Field(

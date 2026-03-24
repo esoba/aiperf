@@ -82,6 +82,14 @@ spec:
                   field names, identical to AIPerf CLI YAML config files.
                   Shorthand forms (e.g. models: ['name'], single-phase dict) are accepted
                   and normalized by the operator before validation.
+              resourceMode:
+                type: string
+                description: CPU/memory resource mode for controller and worker pods. 'guaranteed' applies the standard requests==limits
+                  block. 'none' omits CPU/memory requests and limits as an escape hatch.
+                enum:
+                - guaranteed
+                - none
+                default: guaranteed
               # -- Deployment fields (camelCase, K8s convention) ---------------
               connectionsPerWorker:
                 type: integer

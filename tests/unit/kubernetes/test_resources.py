@@ -479,6 +479,19 @@ class TestKubernetesDeployment:
         assert jobset_spec.job_id == basic_deployment.job_id
         assert jobset_spec.image == basic_deployment.deployment.image
 
+    def test_get_jobset_spec_propagates_resource_mode(self, sample_config) -> None:
+        """Test get_jobset_spec carries DeploymentConfig.resource_mode through."""
+        deployment = KubernetesDeployment(
+            job_id="abc123",
+            config=sample_config,
+            deployment=DeploymentConfig(
+                image="aiperf:latest",
+                resource_mode="none",
+            ),
+        )
+        jobset_spec = deployment.get_jobset_spec()
+        assert jobset_spec.resource_mode == "none"
+
     def test_get_all_manifests_auto_namespace(
         self, basic_deployment: KubernetesDeployment
     ) -> None:
