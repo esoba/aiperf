@@ -167,25 +167,6 @@ jobs:
           .venv-validate/bin/python -c "import aiperf; print(f'aiperf version: {aiperf.__version__}')"
           .venv-validate/bin/aiperf --help
 
-      - name: Upload wheel as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: aiperf-wheel
-          path: wheel-out/dist/*.whl
-          retention-days: 1
-
-  upload-wheel-to-s3:
-    name: Upload Wheel to S3
-    needs: [prepare-release, build-wheel]
-    runs-on: prod-aiperf-default-v1
-    environment: automated-release
-    steps:
-      - name: Download wheel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: aiperf-wheel
-          path: wheel-out/dist/
-
       - name: Upload wheel to S3
         env:
           S3_BUCKET: ${{ secrets.S3_CI_WHEELS_BUCKET }}
@@ -264,7 +245,7 @@ jobs:
       - unit-tests
       - integration-tests
       - gpu-e2e-tests
-      - upload-wheel-to-s3
+      - build-wheel
       - build-container
     runs-on: ubuntu-latest
     environment: automated-release
@@ -363,7 +344,7 @@ jobs:
 
   stage-wheel:
     name: Stage Wheel (S3 to Artifactory)
-    needs: [prepare-release, create-rc-tag, upload-wheel-to-s3]
+    needs: [prepare-release, create-rc-tag, build-wheel]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     steps:
