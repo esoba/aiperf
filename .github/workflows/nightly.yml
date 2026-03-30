@@ -547,7 +547,7 @@ jobs:
           # GITLAB_TRIGGER_TOKEN is passed via stdin to avoid appearing in
           # /proc/<pid>/cmdline on persistent self-hosted runners (H-2 fix).
           GITLAB_TRIGGER_TOKEN:    ${{ secrets.GITLAB_TRIGGER_TOKEN }}
-          GITLAB_TRIGGER_URL:      ${{ secrets.GITLAB_TRIGGER_URL }}
+          GITLAB_TRIGGER_URL:      ${{ secrets.GITLAB_PIPELINE_URL }}
           BASE_VERSION:            ${{ needs.prepare-nightly.outputs.base_version }}
           COMMIT_SHA:              ${{ github.sha }}
           GITHUB_RUN_ID:           ${{ github.run_id }}
