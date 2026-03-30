@@ -535,6 +535,7 @@ jobs:
     # gitlab-master.nvidia.com which is not publicly accessible.
     runs-on:
       group: gitlab_ci_runners
+    environment: automated-release
     if: ${{ inputs.skip_security_scan != 'true' }}
     outputs:
       scan_passed:         ${{ steps.result.outputs.scan_passed }}
