@@ -533,7 +533,8 @@ jobs:
     needs: [prepare-nightly]
     # Self-hosted runner on the NVIDIA internal network — required to reach
     # gitlab-master.nvidia.com which is not publicly accessible.
-    runs-on: aiperf-gitlab-runner
+    runs-on:
+      group: gitlab_ci_runners
     if: ${{ inputs.skip_security_scan != 'true' }}
     outputs:
       scan_passed:         ${{ steps.result.outputs.scan_passed }}
