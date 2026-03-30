@@ -249,7 +249,7 @@ jobs:
   build-wheel:
     name: Build Wheel
     needs: [prepare-nightly, pre-commit, unit-tests, integration-tests, gpu-e2e-tests]
-    runs-on: aiperf-builder-amd64
+    runs-on: prod-aiperf-builder-amd-v1
     if: ${{ inputs.publish_only != 'true' }}
     steps:
       - name: Checkout
@@ -312,13 +312,16 @@ jobs:
           echo "wheel_path=${WHEEL_PATH}" >> "$GITHUB_OUTPUT"
           echo "wheel_filename=$(basename "${WHEEL_PATH}")" >> "$GITHUB_OUTPUT"
 
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: aiperf-wheel
-          path: dist/*.whl
-          retention-days: 7
-          if-no-files-found: error
+      - name: Upload wheel to S3
+        env:
+          S3_BUCKET:      ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
+        run: |
+          set -euo pipefail
+          WHEEL=$(find dist/ -name "*.whl" | head -1)
+          S3_KEY="wheels/aiperf/${PEP440_VERSION}/"
+          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/${S3_KEY}" --sse AES256
+          echo "Uploaded to s3://${S3_BUCKET}/${S3_KEY}"
 
   build-container:
     name: Build Container (${{ matrix.arch }})
@@ -330,10 +333,10 @@ jobs:
         include:
           - arch: amd64
             platform: linux/amd64
-            runner: aiperf-builder-amd64
+            runner: prod-aiperf-builder-amd-v1
           - arch: arm64
             platform: linux/arm64
-            runner: aiperf-builder-arm64
+            runner: prod-aiperf-builder-arm-v1
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -413,44 +416,10 @@ jobs:
   # PHASE 4: STAGE TO INTERMEDIATES
   # ============================================================================
 
-  upload-wheel-to-s3:
-    name: Upload Wheel to S3
-    needs: [prepare-nightly, build-wheel]
-    runs-on: aiperf-default
-    if: ${{ inputs.publish_only != 'true' }}
-    steps:
-      - name: Download wheel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: aiperf-wheel
-          path: dist/
-
-      - name: Validate exactly one wheel before upload
-        run: |
-          set -euo pipefail
-          mapfile -t WHEELS < <(find dist/ -name "*.whl" -type f)
-          if [ "${#WHEELS[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one wheel in dist/, found ${#WHEELS[@]}"
-            printf '  %s\n' "${WHEELS[@]}"
-            exit 1
-          fi
-          echo "Uploading: ${WHEELS[0]}"
-
-      - name: Upload to S3
-        env:
-          S3_BUCKET:      ${{ secrets.S3_CI_WHEELS_BUCKET }}
-          PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
-        run: |
-          set -euo pipefail
-          S3_KEY="wheels/aiperf/${PEP440_VERSION}/"
-          WHEEL=$(find dist/ -name "*.whl" | head -1)
-          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/${S3_KEY}" --sse AES256
-          echo "Uploaded to s3://${S3_BUCKET}/${S3_KEY}"
-
   create-multiarch-manifest-ecr:
     name: Create Multi-arch Manifest (ECR)
     needs: [prepare-nightly, build-container]
-    runs-on: aiperf-default
+    runs-on: prod-aiperf-default-v1
     if: ${{ inputs.publish_only != 'true' }}
     env:
       CRANE_VERSION: v0.20.2
@@ -527,7 +496,7 @@ jobs:
 
   compliance-check:
     name: Compliance Check
-    needs: [prepare-nightly, upload-wheel-to-s3, create-multiarch-manifest-ecr]
+    needs: [prepare-nightly, build-wheel, create-multiarch-manifest-ecr]
     runs-on: ubuntu-latest
     if: ${{ always() && !failure() && !cancelled() }}
     outputs:
@@ -561,11 +530,11 @@ jobs:
 
   trigger-gitlab-security-scan:
     name: GitLab Security Scan
-    needs: [prepare-nightly, upload-wheel-to-s3, create-multiarch-manifest-ecr]
+    needs: [prepare-nightly]
     # Self-hosted runner on the NVIDIA internal network — required to reach
     # gitlab-master.nvidia.com which is not publicly accessible.
     runs-on: aiperf-gitlab-runner
-    if: ${{ always() && !failure() && !cancelled() && inputs.skip_security_scan != 'true' }}
+    if: ${{ inputs.skip_security_scan != 'true' }}
     outputs:
       scan_passed:         ${{ steps.result.outputs.scan_passed }}
       gitlab_pipeline_id:  ${{ steps.trigger.outputs.pipeline_id }}
@@ -578,14 +547,16 @@ jobs:
           # /proc/<pid>/cmdline on persistent self-hosted runners (H-2 fix).
           GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
           GITLAB_PIPELINE_URL:  ${{ secrets.GITLAB_PIPELINE_URL }}
-          PEP440_VERSION:       ${{ needs.prepare-nightly.outputs.pep440_version }}
-          NIGHTLY_TAG:          ${{ needs.prepare-nightly.outputs.nightly_tag }}
-          AWS_ACCOUNT_ID:       ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_DEFAULT_REGION:   ${{ secrets.AWS_DEFAULT_REGION }}
-          S3_BUCKET:            ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          BASE_VERSION:         ${{ needs.prepare-nightly.outputs.base_version }}
+          COMMIT_SHA:           ${{ github.sha }}
+          GITHUB_RUN_ID:        ${{ github.run_id }}
         run: |
           set -euo pipefail
-          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+          # GitLab preflight requires RC_TAG in v<M>.<m>.<p>-rc<N> format.
+          # For nightly runs there is no RC number — use rc0 as a placeholder
+          # until the GitLab pipeline adds first-class nightly support.
+          RC_TAG="v${BASE_VERSION}-rc0"
 
           # Write token to a temp file so it is not visible in the process list.
           TOKEN_FILE=$(mktemp)
@@ -596,16 +567,16 @@ jobs:
             --request POST \
             --form "token=<${TOKEN_FILE}" \
             --form "ref=main" \
-            --form "variables[PIPELINE_TYPE]=nightly" \
+            --form "variables[PIPELINE_TYPE]=security" \
             --form "variables[PROJECT]=aiperf" \
-            --form "variables[RC_TAG]=${NIGHTLY_TAG}" \
-            --form "variables[PEP440_VERSION]=${PEP440_VERSION}" \
-            --form "variables[COMMIT_SHA]=${{ github.sha }}" \
-            --form "variables[GITHUB_RUN_ID]=${{ github.run_id }}" \
-            --form "variables[ECR_CONTAINER]=${ECR_REGISTRY}/aiperf:${PEP440_VERSION}" \
-            --form "variables[S3_WHEEL_PATH]=s3://${S3_BUCKET}/wheels/aiperf/${PEP440_VERSION}/" \
+            --form "variables[RC_TAG]=${RC_TAG}" \
+            --form "variables[ARTIFACTS]=wheel,container" \
+            --form "variables[COMMIT_SHA]=${COMMIT_SHA}" \
+            --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
             --form "variables[ENABLE_PULSE_SCAN]=true" \
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
+            --form "variables[ENABLE_SONARQUBE]=true" \
+            --form "variables[DRY_RUN]=true" \
             "${GITLAB_PIPELINE_URL}")
 
           PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
@@ -868,8 +839,8 @@ jobs:
 
   publish-wheel-to-artifactory:
     name: Publish Wheel to Artifactory
-    needs: [prepare-nightly, release-approval-gate, upload-wheel-to-s3]
-    runs-on: aiperf-default
+    needs: [prepare-nightly, release-approval-gate, build-wheel]
+    runs-on: prod-aiperf-default-v1
     environment: automated-release
     if: ${{ needs.release-approval-gate.result == 'success' }}
     steps:
@@ -912,7 +883,7 @@ jobs:
   publish-container-to-ngc:
     name: Publish Container to NGC
     needs: [prepare-nightly, release-approval-gate, create-multiarch-manifest-ecr]
-    runs-on: aiperf-default
+    runs-on: prod-aiperf-default-v1
     environment: automated-release
     if: ${{ needs.release-approval-gate.result == 'success' }}
     env:
@@ -1000,7 +971,6 @@ jobs:
       - gpu-e2e-tests
       - build-wheel
       - build-container
-      - upload-wheel-to-s3
       - create-multiarch-manifest-ecr
       - compliance-check
       - trigger-gitlab-security-scan
@@ -1054,9 +1024,8 @@ jobs:
             echo "### Build + Stage"
             echo "| Job | Result |"
             echo "|-----|--------|"
-            echo "| build-wheel | ${{ needs.build-wheel.result }} |"
-            echo "| build-container | ${{ needs.build-container.result }} |"
-            echo "| upload-wheel-to-s3 | ${{ needs.upload-wheel-to-s3.result }} |"
+            echo "| build-wheel (+ S3 upload) | ${{ needs.build-wheel.result }} |"
+            echo "| build-container (+ ECR push) | ${{ needs.build-container.result }} |"
             echo "| create-multiarch-manifest-ecr | ${{ needs.create-multiarch-manifest-ecr.result }} |"
             echo ""
             echo "### Release"
