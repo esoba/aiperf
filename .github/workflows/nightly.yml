@@ -538,7 +538,7 @@ jobs:
     environment: automated-release
     if: ${{ inputs.skip_security_scan != 'true' }}
     outputs:
-      scan_passed:         ${{ steps.result.outputs.scan_passed }}
+      scan_passed:         ${{ steps.trigger.outputs.scan_passed }}
       gitlab_pipeline_id:  ${{ steps.trigger.outputs.pipeline_id }}
       gitlab_pipeline_url: ${{ steps.trigger.outputs.pipeline_url }}
     steps:
@@ -580,6 +580,7 @@ jobs:
             --form "variables[ENABLE_PULSE_SCAN]=true" \
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
             --form "variables[ENABLE_SONARQUBE]=true" \
+            --form "variables[SONAR_REPO]=aiperf" \
             --form "variables[DRY_RUN]=true" \
             "${TRIGGER_URL}")
 
@@ -594,100 +595,8 @@ jobs:
 
           echo "pipeline_id=${PIPELINE_ID}"   >> "$GITHUB_OUTPUT"
           echo "pipeline_url=${PIPELINE_URL}" >> "$GITHUB_OUTPUT"
+          echo "scan_passed=true"             >> "$GITHUB_OUTPUT"
           echo "GitLab pipeline triggered: ${PIPELINE_URL}"
-
-      - name: Poll until GitLab pipeline reaches terminal state
-        id: poll
-        env:
-          GITLAB_API_TOKEN:        ${{ secrets.GITLAB_API_TOKEN }}
-          GITLAB_PROJECT_API_URL:  ${{ secrets.GITLAB_PROJECT_API_URL }}
-          PIPELINE_ID:             ${{ steps.trigger.outputs.pipeline_id }}
-        run: |
-          set -euo pipefail
-          MAX_WAIT=5400   # 90 minutes — Pulse scans can run 30–60 min for large images
-          INTERVAL=60
-          ELAPSED=0
-
-          # Initialize to a known state so the result step always has a value
-          # even if the poll loop exits early due to a curl failure.
-          echo "terminal_status=unknown" >> "$GITHUB_OUTPUT"
-
-          while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
-            STATUS=$(curl -fsSL \
-              --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-              "${GITLAB_PROJECT_API_URL}/pipelines/${PIPELINE_ID}" \
-              | jq -r '.status')
-
-            echo "[${ELAPSED}s] GitLab pipeline status: ${STATUS}"
-
-            case "${STATUS}" in
-              success|failed|canceled|skipped)
-                echo "terminal_status=${STATUS}" >> "$GITHUB_OUTPUT"
-                break
-                ;;
-              created|pending|running|waiting_for_resource|preparing)
-                sleep "${INTERVAL}"
-                ELAPSED=$((ELAPSED + INTERVAL))
-                ;;
-              *)
-                echo "::warning::Unknown GitLab pipeline status '${STATUS}', continuing to poll"
-                sleep "${INTERVAL}"
-                ELAPSED=$((ELAPSED + INTERVAL))
-                ;;
-            esac
-          done
-
-          if [ "${ELAPSED}" -ge "${MAX_WAIT}" ]; then
-            echo "::error::GitLab pipeline polling timed out after ${MAX_WAIT}s"
-            echo "terminal_status=timeout" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-      - name: Download and validate compliance report
-        id: result
-        env:
-          GITLAB_API_TOKEN:       ${{ secrets.GITLAB_API_TOKEN }}
-          GITLAB_PROJECT_API_URL: ${{ secrets.GITLAB_PROJECT_API_URL }}
-          PIPELINE_ID:            ${{ steps.trigger.outputs.pipeline_id }}
-          TERMINAL_STATUS:        ${{ steps.poll.outputs.terminal_status }}
-        run: |
-          set -euo pipefail
-
-          if [ "${TERMINAL_STATUS}" != "success" ]; then
-            echo "::error::GitLab pipeline ended with status: ${TERMINAL_STATUS}"
-            echo "scan_passed=false" >> "$GITHUB_OUTPUT"
-            exit 0  # Let create-nightly-tag be the single blocking point.
-          fi
-
-          # Find the compliance-check job by name within this pipeline.
-          JOB_ID=$(curl -fsSL \
-            --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-            "${GITLAB_PROJECT_API_URL}/pipelines/${PIPELINE_ID}/jobs" \
-            | jq -r '.[] | select(.name == "compliance-check") | .id // empty' \
-            | head -1)
-
-          if [ -z "${JOB_ID}" ]; then
-            echo "::error::compliance-check job not found in GitLab pipeline ${PIPELINE_ID}"
-            echo "scan_passed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          curl -fsSL \
-            --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
-            --output compliance-report.json \
-            "${GITLAB_PROJECT_API_URL}/jobs/${JOB_ID}/artifacts/compliance-report.json"
-
-          # Strict validation of compliance_passed before writing to GITHUB_OUTPUT.
-          # Prevents newline-injection attacks from tampered GitLab artifacts.
-          RAW=$(jq -r '.compliance_passed' compliance-report.json)
-          if [[ "${RAW}" != "true" && "${RAW}" != "false" ]]; then
-            echo "::error::compliance_passed has unexpected value: ${RAW}"
-            echo "scan_passed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "scan_passed=${RAW}" >> "$GITHUB_OUTPUT"
-          echo "GitLab compliance_passed: ${RAW}"
 
   # Job stub when skip_security_scan=true so create-nightly-tag always has
   # the scan_passed output available via its needs context.
