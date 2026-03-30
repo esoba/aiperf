@@ -546,13 +546,15 @@ jobs:
         env:
           # GITLAB_TRIGGER_TOKEN is passed via stdin to avoid appearing in
           # /proc/<pid>/cmdline on persistent self-hosted runners (H-2 fix).
-          GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
-          GITLAB_PIPELINE_URL:  ${{ secrets.GITLAB_PIPELINE_URL }}
-          BASE_VERSION:         ${{ needs.prepare-nightly.outputs.base_version }}
-          COMMIT_SHA:           ${{ github.sha }}
-          GITHUB_RUN_ID:        ${{ github.run_id }}
+          GITLAB_TRIGGER_TOKEN:    ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+          GITLAB_TRIGGER_URL:      ${{ secrets.GITLAB_TRIGGER_URL }}
+          BASE_VERSION:            ${{ needs.prepare-nightly.outputs.base_version }}
+          COMMIT_SHA:              ${{ github.sha }}
+          GITHUB_RUN_ID:           ${{ github.run_id }}
         run: |
           set -euo pipefail
+
+          TRIGGER_URL="${GITLAB_TRIGGER_URL}"
 
           # GitLab preflight requires RC_TAG in v<M>.<m>.<p>-rc<N> format.
           # For nightly runs there is no RC number — use rc0 as a placeholder
@@ -578,7 +580,7 @@ jobs:
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
             --form "variables[ENABLE_SONARQUBE]=true" \
             --form "variables[DRY_RUN]=true" \
-            "${GITLAB_PIPELINE_URL}")
+            "${TRIGGER_URL}")
 
           PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
           PIPELINE_URL=$(echo "${RESPONSE}" | jq -r '.web_url // empty')
@@ -596,9 +598,9 @@ jobs:
       - name: Poll until GitLab pipeline reaches terminal state
         id: poll
         env:
-          GITLAB_API_TOKEN:       ${{ secrets.GITLAB_API_TOKEN }}
-          GITLAB_PROJECT_API_URL: ${{ secrets.GITLAB_PROJECT_API_URL }}
-          PIPELINE_ID:            ${{ steps.trigger.outputs.pipeline_id }}
+          GITLAB_API_TOKEN:        ${{ secrets.GITLAB_API_TOKEN }}
+          GITLAB_PROJECT_API_URL:  ${{ secrets.GITLAB_PROJECT_API_URL }}
+          PIPELINE_ID:             ${{ steps.trigger.outputs.pipeline_id }}
         run: |
           set -euo pipefail
           MAX_WAIT=5400   # 90 minutes — Pulse scans can run 30–60 min for large images
