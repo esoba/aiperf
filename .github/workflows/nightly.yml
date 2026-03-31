@@ -285,7 +285,7 @@ jobs:
           set -euo pipefail
 
           # Detect the actual wheel produced — do not assume pure-Python filename.
-          mapfile -t WHEELS < <(find dist/ -name "*.whl" -type f)
+          mapfile -t WHEELS < <(find dist/ -name "aiperf-*.whl" -type f)
           if [ "${#WHEELS[@]}" -eq 0 ]; then
             echo "::error::No wheel found in dist/ after build"
             exit 1
@@ -318,7 +318,7 @@ jobs:
           PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
         run: |
           set -euo pipefail
-          WHEEL=$(find dist/ -name "*.whl" | head -1)
+          WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
           S3_KEY="wheels/aiperf/${PEP440_VERSION}/"
           aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/${S3_KEY}" --sse AES256
           echo "Uploaded to s3://${S3_BUCKET}/${S3_KEY}"
@@ -538,7 +538,7 @@ jobs:
     environment: automated-release
     if: ${{ inputs.skip_security_scan != 'true' }}
     outputs:
-      scan_passed:         ${{ steps.trigger.outputs.scan_passed }}
+      scan_passed:         ${{ steps.poll.outputs.scan_passed }}
       gitlab_pipeline_id:  ${{ steps.trigger.outputs.pipeline_id }}
       gitlab_pipeline_url: ${{ steps.trigger.outputs.pipeline_url }}
     steps:
@@ -581,7 +581,6 @@ jobs:
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
             --form "variables[ENABLE_SONARQUBE]=true" \
             --form "variables[SONAR_REPO]=aiperf" \
-            --form "variables[DRY_RUN]=true" \
             "${TRIGGER_URL}")
 
           PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
@@ -595,8 +594,61 @@ jobs:
 
           echo "pipeline_id=${PIPELINE_ID}"   >> "$GITHUB_OUTPUT"
           echo "pipeline_url=${PIPELINE_URL}" >> "$GITHUB_OUTPUT"
-          echo "scan_passed=true"             >> "$GITHUB_OUTPUT"
           echo "GitLab pipeline triggered: ${PIPELINE_URL}"
+
+      - name: Poll GitLab pipeline until complete
+        id: poll
+        env:
+          GITLAB_API_TOKEN:        ${{ secrets.GITLAB_API_TOKEN }}
+          GITLAB_PROJECT_API_URL:  ${{ secrets.GITLAB_PROJECT_API_URL }}
+          PIPELINE_ID:             ${{ steps.trigger.outputs.pipeline_id }}
+        run: |
+          set -euo pipefail
+
+          POLL_INTERVAL=30
+          TIMEOUT_SECONDS=3600
+          ELAPSED=0
+
+          echo "Polling GitLab pipeline ${PIPELINE_ID} for completion (timeout: ${TIMEOUT_SECONDS}s)..."
+
+          while true; do
+            STATUS=$(curl -fsSL \
+              --header "PRIVATE-TOKEN: ${GITLAB_API_TOKEN}" \
+              "${GITLAB_PROJECT_API_URL}/pipelines/${PIPELINE_ID}" \
+              | jq -r '.status // empty')
+
+            echo "Pipeline status: ${STATUS} (elapsed: ${ELAPSED}s)"
+
+            case "${STATUS}" in
+              success)
+                echo "scan_passed=true" >> "$GITHUB_OUTPUT"
+                echo "GitLab SonarQube security scan passed."
+                exit 0
+                ;;
+              failed|canceled|skipped)
+                echo "scan_passed=false" >> "$GITHUB_OUTPUT"
+                echo "::error::GitLab security scan did not pass (status: ${STATUS})"
+                exit 0
+                ;;
+              running|pending|created|waiting_for_resource|preparing|scheduled)
+                ;;
+              "")
+                echo "::warning::Empty status returned from GitLab API — will retry"
+                ;;
+              *)
+                echo "::warning::Unexpected pipeline status: ${STATUS}"
+                ;;
+            esac
+
+            if [ "${ELAPSED}" -ge "${TIMEOUT_SECONDS}" ]; then
+              echo "::error::Timed out waiting for GitLab pipeline after ${TIMEOUT_SECONDS}s"
+              echo "scan_passed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            sleep "${POLL_INTERVAL}"
+            ELAPSED=$((ELAPSED + POLL_INTERVAL))
+          done
 
   # Job stub when skip_security_scan=true so create-nightly-tag always has
   # the scan_passed output available via its needs context.
