@@ -319,7 +319,7 @@ jobs:
         run: |
           set -euo pipefail
           WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
-          S3_KEY="wheels/aiperf/${PEP440_VERSION}/"
+          S3_KEY="wheels/aiperf/nightly/${PEP440_VERSION}/"
           aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/${S3_KEY}" --sse AES256
           echo "Uploaded to s3://${S3_BUCKET}/${S3_KEY}"
 
@@ -825,7 +825,7 @@ jobs:
           trap 'rm -rf "${TMPDIR}"' EXIT
 
           aws s3 cp \
-            "s3://${S3_BUCKET}/wheels/aiperf/${PEP440_VERSION}/" \
+            "s3://${S3_BUCKET}/wheels/aiperf/nightly/${PEP440_VERSION}/" \
             "${TMPDIR}/" --recursive --include "*.whl"
 
           # Validate exactly one wheel was downloaded.
