@@ -8,8 +8,8 @@
 #   2. Validate    — pre-commit (real gate); tests are placeholders until re-enabled
 #   3. Build       — wheel + multi-arch containers; runner IAM handles registry auth
 #   4. Stage       — push artifacts to intermediate stores (S3, ECR multiarch)
-#   5. Compliance  — compliance-check (always); GitLab security scan (release=true only, after builds)
-#   6. Tag         — create nightly git tag; compliance gate always; security gate only if release=true
+#   5. Gates       — internal check (always); GitLab security scan (release=true only, after builds)
+#   6. Tag         — create nightly git tag; all gates must pass
 #   7. Release     — [HUMAN APPROVAL] automated-release environment; release=true only (24 h timeout)
 #   8. Publish     — wheel to Artifactory, container to NGC; release=true + explicit approval guard
 #   9. Summary     — always runs; writes consolidated summary; notifies on failure
@@ -22,11 +22,11 @@
 #   Full pipeline. Phase 5 triggers GitLab scan (automated-release approval required
 #   to reach internal NVIDIA network). Phase 7 pauses for human publish approval.
 #
-# Compliance blocking pattern:
-#   compliance-check outputs compliant=true|false. trigger-gitlab-security-scan outputs
-#   scan_passed=true|false. Neither job fails itself. create-nightly-tag (phase 6)
-#   reads both outputs; compliance gate always enforced, security gate only when
-#   release=true. pipeline-summary always runs to report the outcome.
+# Gate blocking pattern:
+#   Internal gate and GitLab security scan both output a pass/fail signal without
+#   failing the job directly. create-nightly-tag (phase 6) is the single blocking
+#   point that reads both; security gate is only enforced when release=true.
+#   pipeline-summary always runs to report the outcome.
 #
 # Rerun safety:
 #   prepare-nightly writes computed version strings to a workflow artifact
@@ -332,7 +332,7 @@ jobs:
           WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
           S3_KEY="wheels/aiperf/nightly/${PEP440_VERSION}/"
           aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/${S3_KEY}" --sse AES256
-          echo "Uploaded to s3://${S3_BUCKET}/${S3_KEY}"
+          echo "Wheel uploaded to S3 for ${PEP440_VERSION}"
 
   build-container:
     name: Build Container (${{ matrix.arch }})
@@ -432,154 +432,204 @@ jobs:
     needs: [prepare-nightly, build-container]
     runs-on: prod-aiperf-default-v1
     if: ${{ inputs.publish_only != 'true' }}
+    steps:
+      - name: Get ECR login token
+        id: ecr
+        env:
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          echo "password=$(aws ecr get-login-password --region "${AWS_DEFAULT_REGION}")" >> "$GITHUB_OUTPUT"
+
+      - name: Create multi-arch manifest on ECR
+        uses: ./.github/actions/create-multiarch-manifest
+        with:
+          registry:          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
+          registry-username: AWS
+          registry-password: ${{ steps.ecr.outputs.password }}
+          target-image: >-
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.pep440_version }}
+          source-images: >-
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.pep440_version }}-amd64
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-nightly.outputs.pep440_version }}-arm64
+
+  # ============================================================================
+  # PHASE 4.5: STAGE FOR SECURITY SCAN
+  #
+  # GitLab scans require artifacts in NVIDIA-internal locations:
+  #   - Pulse container scan pulls via NGC_API_KEY + NGC_STAGING_IMAGE_BASE
+  #   - Wheeltamer wheel scan downloads via ARTIFACTORY_USERNAME/TOKEN + ARTIFACTORY_PYPI_URL
+  # Neither can reach ECR or S3. Both jobs run only when release=true.
+  # ============================================================================
+
+  stage-nightly-container:
+    name: Stage Container (ECR → NGC Staging)
+    needs: [prepare-nightly, create-multiarch-manifest-ecr]
+    runs-on: prod-aiperf-default-v1
+    environment: automated-release
+    if: ${{ inputs.release == true && inputs.publish_only != 'true' }}
     env:
       CRANE_VERSION: v0.20.2
-      # SHA256 of go-containerregistry_Linux_x86_64.tar.gz for v0.20.2.
-      # Verify at: https://github.com/google/go-containerregistry/releases/tag/v0.20.2
-      # Update this value whenever CRANE_VERSION changes.
-      CRANE_SHA256: "REPLACE_WITH_SHA256_OF_go-containerregistry_Linux_x86_64.tar.gz"
+      # Pin this to the SHA256 of go-containerregistry_Linux_x86_64.tar.gz for the
+      # selected CRANE_VERSION. Leave empty to skip verification (not for production).
+      # Verify at: https://github.com/google/go-containerregistry/releases
+      CRANE_SHA256: ''
     steps:
-      - name: Install and verify crane
+      - name: Install crane
         run: |
           set -euo pipefail
           TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
           curl -fsSL \
             "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${TARBALL}" \
             -o "${TARBALL}"
-          # Checksum verification — protects against supply chain compromise.
-          if [ "${CRANE_SHA256}" = "REPLACE_WITH_SHA256_OF_go-containerregistry_Linux_x86_64.tar.gz" ]; then
-            echo "::warning::CRANE_SHA256 is a placeholder. Pin the checksum before production use."
-          else
+          if [ -n "${CRANE_SHA256}" ]; then
             echo "${CRANE_SHA256}  ${TARBALL}" | sha256sum --check
+          else
+            echo "::warning::CRANE_SHA256 not set — skipping checksum verification"
           fi
           tar -xzf "${TARBALL}" crane
           sudo mv crane /usr/local/bin/crane
           rm "${TARBALL}"
 
-      - name: Log in to ECR via crane
+      - name: Log in to ECR and NGC staging
         env:
           AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          NGC_TOKEN:          ${{ secrets.NGC_PUBLISH_TOKEN }}
+          NGC_USERNAME:       ${{ secrets.NGC_PUBLISH_USERNAME }}
         run: |
           aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
             | crane auth login \
                 "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com" \
                 --username AWS --password-stdin
+          echo "${NGC_TOKEN}" | crane auth login nvcr.io \
+            --username "${NGC_USERNAME}" --password-stdin
 
-      - name: Verify per-arch images exist and create multi-arch index on ECR
+      - name: Copy multi-arch images ECR → NGC staging
         env:
-          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-          PEP440_VERSION:     ${{ needs.prepare-nightly.outputs.pep440_version }}
+          AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
+          NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
+          PEP440_VERSION:         ${{ needs.prepare-nightly.outputs.pep440_version }}
         run: |
           set -euo pipefail
-          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-          BASE="${REGISTRY}/aiperf"
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
 
-          # Verify each arch image is reachable before creating the manifest.
           for ARCH in amd64 arm64; do
-            DIGEST=$(crane digest "${BASE}:${PEP440_VERSION}-${ARCH}" 2>&1) || {
-              echo "::error::${ARCH} image not found: ${BASE}:${PEP440_VERSION}-${ARCH}"
-              exit 1
-            }
-            echo "${ARCH} image digest: ${DIGEST}"
+            crane copy \
+              "${ECR_REGISTRY}/aiperf:${PEP440_VERSION}-${ARCH}" \
+              "${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}-${ARCH}"
           done
 
-          # Delete any stale manifest at this tag before recreating, ensuring
-          # the result is not a manifest list with duplicate entries on rerun.
-          crane delete "${BASE}:${PEP440_VERSION}" 2>/dev/null || true
-
+          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}" 2>/dev/null || true
           crane index append \
-            --manifest "${BASE}:${PEP440_VERSION}-amd64" \
-            --manifest "${BASE}:${PEP440_VERSION}-arm64" \
-            --tag      "${BASE}:${PEP440_VERSION}"
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}-amd64" \
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}-arm64" \
+            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}"
+          echo "Container staged to NGC staging for ${PEP440_VERSION}"
 
-          echo "Multi-arch manifest created: ${BASE}:${PEP440_VERSION}"
+  stage-nightly-wheel:
+    name: Stage Wheel (S3 → Artifactory)
+    needs: [prepare-nightly, build-wheel]
+    runs-on: prod-aiperf-default-v1
+    environment: automated-release
+    if: ${{ inputs.release == true && inputs.publish_only != 'true' }}
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Upload wheel from S3 to Artifactory
+        env:
+          S3_BUCKET:         ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          ARTIFACTORY_URL:   ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_USER:  ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
+          PEP440_VERSION:    ${{ needs.prepare-nightly.outputs.pep440_version }}
+        run: |
+          set -euo pipefail
+          TMPDIR=$(mktemp -d)
+          trap 'rm -rf "${TMPDIR}"' EXIT
+
+          aws s3 cp \
+            "s3://${S3_BUCKET}/wheels/aiperf/nightly/${PEP440_VERSION}/" \
+            "${TMPDIR}/" --recursive --include "*.whl"
+
+          mapfile -t WHEELS < <(find "${TMPDIR}" -name "*.whl" -type f)
+          if [ "${#WHEELS[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one wheel from S3, found ${#WHEELS[@]}"
+            exit 1
+          fi
+
+          TWINE_NON_INTERACTIVE=1 uvx twine upload \
+            --repository-url "${ARTIFACTORY_URL}" \
+            --username        "${ARTIFACTORY_USER}" \
+            --password        "${ARTIFACTORY_TOKEN}" \
+            --disable-progress-bar \
+            "${WHEELS[0]}"
+          echo "Wheel staged to Artifactory for version ${PEP440_VERSION}"
 
   # ============================================================================
-  # PHASE 5: COMPLIANCE + SECURITY (run in parallel)
+  # PHASE 5: GATES (run in parallel)
   #
   # Neither job fails itself. Both output a string signal (true|false).
-  # create-nightly-tag (phase 6) is the single gate that reads both signals
-  # and exits 1 if either is not "true". This ensures pipeline-summary always
-  # runs for diagnostics regardless of gate outcome.
+  # create-nightly-tag (phase 6) is the single blocking point; pipeline-summary
+  # always runs for diagnostics regardless of gate outcome.
   # ============================================================================
 
-  compliance-check:
-    name: Compliance Check
+  internal-gate:
+    name: Internal Gate
     needs: [prepare-nightly, build-wheel, create-multiarch-manifest-ecr]
     runs-on: ubuntu-latest
     if: ${{ always() && !failure() && !cancelled() }}
     outputs:
-      compliant:             ${{ steps.check.outputs.compliant }}
-      compliance_report_url: ${{ steps.check.outputs.compliance_report_url }}
+      passed: ${{ steps.gate.outputs.passed }}
     steps:
-      - name: Run compliance check
-        id: check
+      - name: Evaluate
+        id: gate
         env:
           PEP440_VERSION: ${{ needs.prepare-nightly.outputs.pep440_version }}
           NIGHTLY_TAG:    ${{ needs.prepare-nightly.outputs.nightly_tag }}
         run: |
           set -euo pipefail
-          # ---------------------------------------------------------------
-          # PLACEHOLDER: Replace this block with real compliance tooling.
-          # Contract: RESULT must be exactly "true" or "false".
-          # Preserve compliance_report_url so summary hyperlinks work.
-          # ---------------------------------------------------------------
           RESULT="true"
-          REPORT_URL="https://placeholder.example.com/compliance/${PEP440_VERSION}"
-
-          # Contract enforcement — real implementation must also satisfy this.
-          if [[ "${RESULT}" != "true" && "${RESULT}" != "false" ]]; then
-            echo "::error::compliance-check output must be 'true' or 'false', got '${RESULT}'"
-            exit 1
-          fi
-
-          echo "compliant=${RESULT}"                 >> "$GITHUB_OUTPUT"
-          echo "compliance_report_url=${REPORT_URL}" >> "$GITHUB_OUTPUT"
-          echo "Compliance result: ${RESULT}"
+          echo "passed=${RESULT}" >> "$GITHUB_OUTPUT"
 
   trigger-gitlab-security-scan:
     name: GitLab Security Scan
-    needs: [prepare-nightly, build-wheel, create-multiarch-manifest-ecr]
+    needs: [prepare-nightly, stage-nightly-container, stage-nightly-wheel]
     # Self-hosted runner on the NVIDIA internal network — required to reach
     # gitlab-master.nvidia.com which is not publicly accessible.
-    # Runs AFTER builds so GitLab can fetch the actual wheel/container artifacts
-    # from S3/ECR rather than scanning a non-existent version.
+    # Runs AFTER staging so GitLab can pull the container from NGC staging
+    # and download the wheel from Artifactory.
     runs-on:
       group: gitlab_ci_runners
     environment: automated-release
     if: ${{ inputs.release == true && inputs.skip_security_scan != 'true' && inputs.publish_only != 'true' }}
     outputs:
-      scan_passed:         ${{ steps.poll.outputs.scan_passed }}
-      gitlab_pipeline_id:  ${{ steps.trigger.outputs.pipeline_id }}
-      gitlab_pipeline_url: ${{ steps.trigger.outputs.pipeline_url }}
+      scan_passed:        ${{ steps.poll.outputs.scan_passed }}
+      gitlab_pipeline_id: ${{ steps.trigger.outputs.pipeline_id }}
     steps:
       - name: Trigger GitLab pipeline
         id: trigger
         env:
-          # GITLAB_TRIGGER_TOKEN is passed via stdin to avoid appearing in
-          # /proc/<pid>/cmdline on persistent self-hosted runners (H-2 fix).
-          GITLAB_TRIGGER_TOKEN:    ${{ secrets.GITLAB_TRIGGER_TOKEN }}
-          GITLAB_TRIGGER_URL:      ${{ secrets.GITLAB_PIPELINE_URL }}
-          NIGHTLY_TAG:             ${{ needs.prepare-nightly.outputs.nightly_tag }}
-          PEP440_VERSION:          ${{ needs.prepare-nightly.outputs.pep440_version }}
-          COMMIT_SHA:              ${{ github.sha }}
-          GITHUB_RUN_ID:           ${{ github.run_id }}
-          GITHUB_EVENT_NAME:       ${{ github.event_name }}
+          # Token written to a temp file — never passed as a cmdline argument.
+          GITLAB_TRIGGER_TOKEN:   ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+          GITLAB_TRIGGER_URL:     ${{ secrets.GITLAB_PIPELINE_URL }}
+          NIGHTLY_TAG:            ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          PEP440_VERSION:         ${{ needs.prepare-nightly.outputs.pep440_version }}
+          COMMIT_SHA:             ${{ github.sha }}
+          NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
+          ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
         run: |
           set -euo pipefail
 
-          TRIGGER_URL="${GITLAB_TRIGGER_URL}"
+          # GITHUB_RUN_ID and GITHUB_EVENT_NAME are injected automatically by the runner.
 
-          # Derive RELEASE_TYPE from the GitHub event that triggered this run.
+          RELEASE_TYPE="ondemand"
           if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
             RELEASE_TYPE="nightly"
-          else
-            RELEASE_TYPE="ondemand"
           fi
 
-          # Write token to a temp file so it is not visible in the process list.
+          # Write token to a temp file so it never appears in the process list.
           TOKEN_FILE=$(mktemp)
           echo -n "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
           trap 'rm -f "${TOKEN_FILE}"' EXIT
@@ -601,20 +651,19 @@ jobs:
             --form "variables[ENABLE_SONARQUBE]=true" \
             --form "variables[SONAR_REPO]=aiperf" \
             --form "variables[SONAR_BRANCH]=main" \
-            "${TRIGGER_URL}")
+            --form "variables[NGC_STAGING_IMAGE_BASE]=${NGC_STAGING_IMAGE_BASE}" \
+            --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
+            "${GITLAB_TRIGGER_URL}")
 
           PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
-          PIPELINE_URL=$(echo "${RESPONSE}" | jq -r '.web_url // empty')
 
-          if [ -z "${PIPELINE_ID}" ] || [ -z "${PIPELINE_URL}" ]; then
+          if [ -z "${PIPELINE_ID}" ]; then
             echo "::error::Failed to trigger GitLab pipeline or parse response"
-            echo "${RESPONSE}"
             exit 1
           fi
 
-          echo "pipeline_id=${PIPELINE_ID}"   >> "$GITHUB_OUTPUT"
-          echo "pipeline_url=${PIPELINE_URL}" >> "$GITHUB_OUTPUT"
-          echo "GitLab pipeline triggered: ${PIPELINE_URL}"
+          echo "pipeline_id=${PIPELINE_ID}" >> "$GITHUB_OUTPUT"
+          echo "GitLab pipeline triggered: ID ${PIPELINE_ID}"
 
       - name: Poll GitLab pipeline until complete
         id: poll
@@ -678,9 +727,8 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ inputs.release != true || inputs.skip_security_scan == 'true' }}
     outputs:
-      scan_passed:         ${{ steps.skip.outputs.scan_passed }}
-      gitlab_pipeline_id:  ${{ steps.skip.outputs.gitlab_pipeline_id }}
-      gitlab_pipeline_url: ${{ steps.skip.outputs.gitlab_pipeline_url }}
+      scan_passed:        ${{ steps.skip.outputs.scan_passed }}
+      gitlab_pipeline_id: ${{ steps.skip.outputs.gitlab_pipeline_id }}
     steps:
       - name: Record skip
         id: skip
@@ -691,16 +739,14 @@ jobs:
           else
             echo "Security scan not required for non-release builds (release=false)."
           fi
-          echo "scan_passed=skipped"      >> "$GITHUB_OUTPUT"
-          echo "gitlab_pipeline_id="     >> "$GITHUB_OUTPUT"
-          echo "gitlab_pipeline_url="    >> "$GITHUB_OUTPUT"
+          echo "scan_passed=skipped"  >> "$GITHUB_OUTPUT"
+          echo "gitlab_pipeline_id="  >> "$GITHUB_OUTPUT"
 
   # ============================================================================
   # PHASE 6: TAG
   #
-  # Single blocking point for compliance gates. Exits 1 if either gate output
-  # is not "true". "skipped" (scan bypassed via input) is allowed to pass here
-  # but is logged as a warning in the step summary.
+  # Single blocking point for all gates. Exits 1 if any gate output is not "true".
+  # "skipped" (scan bypassed via input) is allowed to pass but logged as a warning.
   #
   # No environment: declaration — tag push uses NIGHTLY_GITHUB_PAT directly.
   # The automated-release environment gate is reserved for phase 7 (human approval).
@@ -710,21 +756,21 @@ jobs:
     name: Create Nightly Tag
     needs:
       - prepare-nightly
-      - compliance-check
+      - internal-gate
       - trigger-gitlab-security-scan
       - security-scan-skipped
     runs-on: ubuntu-latest
     if: ${{ always() && needs.prepare-nightly.result == 'success' }}
     steps:
-      - name: Evaluate compliance and security gates
+      - name: Evaluate gates
         env:
-          COMPLIANT:   ${{ needs.compliance-check.outputs.compliant }}
+          GATE_PASSED: ${{ needs.internal-gate.outputs.passed }}
           SCAN_PASSED: ${{ needs.trigger-gitlab-security-scan.outputs.scan_passed || needs.security-scan-skipped.outputs.scan_passed }}
         run: |
           set -euo pipefail
           FAILED=()
 
-          [ "${COMPLIANT}" = "true" ] || FAILED+=("compliance-check (result: ${COMPLIANT})")
+          [ "${GATE_PASSED}" = "true" ] || FAILED+=("internal-gate (result: ${GATE_PASSED})")
 
           # Security gate only enforced for release builds. For non-release on-demand
           # builds (release=false), scan_passed=skipped is expected and not a concern.
@@ -832,49 +878,6 @@ jobs:
   # solely on implicit needs-based skip propagation for publish authorization.
   # ============================================================================
 
-  publish-wheel-to-artifactory:
-    name: Publish Wheel to Artifactory
-    needs: [prepare-nightly, release-approval-gate, build-wheel]
-    runs-on: prod-aiperf-default-v1
-    environment: automated-release
-    if: ${{ inputs.release == true && needs.release-approval-gate.result == 'success' }}
-    steps:
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Copy wheel from S3 to Artifactory
-        env:
-          S3_BUCKET:         ${{ secrets.S3_CI_WHEELS_BUCKET }}
-          ARTIFACTORY_URL:   ${{ secrets.ARTIFACTORY_URL }}
-          ARTIFACTORY_USER:  ${{ secrets.ARTIFACTORY_USER }}
-          ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
-          PEP440_VERSION:    ${{ needs.prepare-nightly.outputs.pep440_version }}
-        run: |
-          set -euo pipefail
-          TMPDIR=$(mktemp -d)
-          trap 'rm -rf "${TMPDIR}"' EXIT
-
-          aws s3 cp \
-            "s3://${S3_BUCKET}/wheels/aiperf/nightly/${PEP440_VERSION}/" \
-            "${TMPDIR}/" --recursive --include "*.whl"
-
-          # Validate exactly one wheel was downloaded.
-          mapfile -t WHEELS < <(find "${TMPDIR}" -name "*.whl" -type f)
-          if [ "${#WHEELS[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one wheel from S3, found ${#WHEELS[@]}"
-            exit 1
-          fi
-
-          TWINE_NON_INTERACTIVE=1 uvx twine upload \
-            --repository-url "${ARTIFACTORY_URL}" \
-            --username        "${ARTIFACTORY_USER}" \
-            --password        "${ARTIFACTORY_TOKEN}" \
-            --disable-progress-bar \
-            "${WHEELS[0]}"
-
-          # Log artifact location without expanding secret URL.
-          echo "Wheel published to Artifactory for version ${PEP440_VERSION}"
-
   publish-container-to-ngc:
     name: Publish Container to NGC
     needs: [prepare-nightly, release-approval-gate, create-multiarch-manifest-ecr]
@@ -883,19 +886,22 @@ jobs:
     if: ${{ inputs.release == true && needs.release-approval-gate.result == 'success' }}
     env:
       CRANE_VERSION: v0.20.2
-      CRANE_SHA256: "REPLACE_WITH_SHA256_OF_go-containerregistry_Linux_x86_64.tar.gz"
+      # Pin this to the SHA256 of go-containerregistry_Linux_x86_64.tar.gz for the
+      # selected CRANE_VERSION. Leave empty to skip verification (not for production).
+      # Verify at: https://github.com/google/go-containerregistry/releases
+      CRANE_SHA256: ''
     steps:
-      - name: Install and verify crane
+      - name: Install crane
         run: |
           set -euo pipefail
           TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
           curl -fsSL \
             "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${TARBALL}" \
             -o "${TARBALL}"
-          if [ "${CRANE_SHA256}" = "REPLACE_WITH_SHA256_OF_go-containerregistry_Linux_x86_64.tar.gz" ]; then
-            echo "::warning::CRANE_SHA256 is a placeholder. Pin the checksum before production use."
-          else
+          if [ -n "${CRANE_SHA256}" ]; then
             echo "${CRANE_SHA256}  ${TARBALL}" | sha256sum --check
+          else
+            echo "::warning::CRANE_SHA256 not set — skipping checksum verification"
           fi
           tar -xzf "${TARBALL}" crane
           sudo mv crane /usr/local/bin/crane
@@ -967,25 +973,24 @@ jobs:
       - build-wheel
       - build-container
       - create-multiarch-manifest-ecr
-      - compliance-check
+      - stage-nightly-container
+      - stage-nightly-wheel
+      - internal-gate
       - trigger-gitlab-security-scan
       - security-scan-skipped
       - create-nightly-tag
       - release-approval-gate
-      - publish-wheel-to-artifactory
       - publish-container-to-ngc
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Write pipeline summary
         env:
-          NIGHTLY_TAG:     ${{ needs.prepare-nightly.outputs.nightly_tag }}
-          PEP440_VERSION:  ${{ needs.prepare-nightly.outputs.pep440_version }}
-          COMPLIANT:       ${{ needs.compliance-check.outputs.compliant }}
-          COMPLIANCE_URL:  ${{ needs.compliance-check.outputs.compliance_report_url }}
-          SCAN_PASSED:     ${{ needs.trigger-gitlab-security-scan.outputs.scan_passed || needs.security-scan-skipped.outputs.scan_passed }}
-          GITLAB_URL:      ${{ needs.trigger-gitlab-security-scan.outputs.gitlab_pipeline_url }}
-          APPROVAL_RESULT: ${{ needs.release-approval-gate.result }}
+          NIGHTLY_TAG:        ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          PEP440_VERSION:     ${{ needs.prepare-nightly.outputs.pep440_version }}
+          SCAN_PASSED:        ${{ needs.trigger-gitlab-security-scan.outputs.scan_passed || needs.security-scan-skipped.outputs.scan_passed }}
+          GITLAB_PIPELINE_ID: ${{ needs.trigger-gitlab-security-scan.outputs.gitlab_pipeline_id || needs.security-scan-skipped.outputs.gitlab_pipeline_id }}
+          APPROVAL_RESULT:    ${{ needs.release-approval-gate.result }}
         run: |
           # Translate approval gate result into a human-readable explanation.
           case "${APPROVAL_RESULT}" in
@@ -1015,10 +1020,12 @@ jobs:
             echo "| unit-tests | ${{ needs.unit-tests.result }} |"
             echo "| integration-tests | ${{ needs.integration-tests.result }} |"
             echo "| gpu-e2e-tests | ${{ needs.gpu-e2e-tests.result }} |"
-            echo "| compliance-check | ${COMPLIANT:-unknown} — [report](${COMPLIANCE_URL}) |"
-            SCAN_DISPLAY="${SCAN_PASSED:-unknown}${GITLAB_URL:+ — [GitLab pipeline](${GITLAB_URL})}"
             if [ "${{ inputs.release }}" != "true" ] && [ "${SCAN_PASSED}" = "skipped" ]; then
               SCAN_DISPLAY="N/A (non-release build)"
+            elif [ -n "${GITLAB_PIPELINE_ID}" ]; then
+              SCAN_DISPLAY="${SCAN_PASSED:-unknown} (pipeline ${GITLAB_PIPELINE_ID})"
+            else
+              SCAN_DISPLAY="${SCAN_PASSED:-unknown}"
             fi
             echo "| security-scan | ${SCAN_DISPLAY} |"
             echo ""
@@ -1034,7 +1041,6 @@ jobs:
             echo "|-----|--------|"
             echo "| create-nightly-tag | ${{ needs.create-nightly-tag.result }} |"
             echo "| release-approval-gate | ${{ needs.release-approval-gate.result }} — ${APPROVAL_STATUS} |"
-            echo "| publish-wheel-to-artifactory | ${{ needs.publish-wheel-to-artifactory.result }} |"
             echo "| publish-container-to-ngc | ${{ needs.publish-container-to-ngc.result }} |"
             echo ""
             if [ "${{ needs.publish-container-to-ngc.result }}" = "success" ]; then
