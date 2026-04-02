@@ -492,15 +492,15 @@ jobs:
           for ARCH in amd64 arm64; do
             crane copy \
               "${ECR_REGISTRY}/aiperf:${PEP440_VERSION}-${ARCH}" \
-              "${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}-${ARCH}"
+              "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}-${ARCH}"
           done
 
-          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}" 2>/dev/null || true
+          crane delete "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}" 2>/dev/null || true
           crane index append \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}-amd64" \
-            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}-arm64" \
-            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}"
-          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}"
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}-amd64" \
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}-arm64" \
+            --tag      "${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}"
+          echo "Container staged: ${NGC_STAGING_IMAGE_BASE}/aiperf-nightly:${PEP440_VERSION}"
 
   stage-nightly-wheel:
     name: Stage Wheel (S3 → Artifactory)
@@ -562,7 +562,6 @@ jobs:
           GITLAB_TRIGGER_URL:     ${{ secrets.GITLAB_PIPELINE_URL }}
           NIGHTLY_TAG:            ${{ needs.prepare-nightly.outputs.nightly_tag }}
           PEP440_VERSION:         ${{ needs.prepare-nightly.outputs.pep440_version }}
-          NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
           ARTIFACTORY_PYPI_URL:   ${{ secrets.ARTIFACTORY_PYPI_URL }}
         run: |
           set -euo pipefail
@@ -589,10 +588,7 @@ jobs:
             --form "variables[COMMIT_SHA]=${{ github.sha }}" \
             --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
             --form "variables[ARTIFACTS]=wheel,container" \
-            --form "variables[CONTAINER_TAG]=${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}" \
-            --form "variables[CONTAINER_TAG_AMD64]=${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}-amd64" \
-            --form "variables[CONTAINER_TAG_ARM64]=${NGC_STAGING_IMAGE_BASE}/aiperf:${PEP440_VERSION}-arm64" \
-            --form "variables[WHEEL_ARTIFACTORY_URL]=${ARTIFACTORY_PYPI_URL}" \
+            --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
             --form "variables[ENABLE_PULSE_SCAN]=true" \
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
             --form "variables[ENABLE_SONARQUBE]=true" \
