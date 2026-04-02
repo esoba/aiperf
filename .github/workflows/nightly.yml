@@ -3,23 +3,30 @@
 
 # Nightly build and optional release pipeline.
 #
-# Phases (all run automatically unless noted):
+# Phases:
 #   1. Init        — compute version strings; save to artifact for rerun stability
 #   2. Validate    — pre-commit (real gate); tests are placeholders until re-enabled
 #   3. Build       — wheel + multi-arch containers; runner IAM handles registry auth
 #   4. Stage       — push artifacts to intermediate stores (S3, ECR multiarch)
-#   5. Compliance  — compliance-check placeholder + GitLab security scan (blocking poll)
-#   6. Tag         — create nightly git tag; exits 1 if any phase-5 gate failed
-#   7. Release     — [HUMAN APPROVAL] automated-release environment pauses here (24 h timeout)
-#   8. Publish     — wheel to Artifactory, container to NGC; explicit approval guard
+#   5. Compliance  — compliance-check (always); GitLab security scan (release=true only, after builds)
+#   6. Tag         — create nightly git tag; compliance gate always; security gate only if release=true
+#   7. Release     — [HUMAN APPROVAL] automated-release environment; release=true only (24 h timeout)
+#   8. Publish     — wheel to Artifactory, container to NGC; release=true + explicit approval guard
 #   9. Summary     — always runs; writes consolidated summary; notifies on failure
 #
+# release=false (default):
+#   Phases 1–6 run unattended. No security scan, no approval gate, no publishing.
+#   Use for on-demand builds against any ref/SHA to validate the artifact is clean.
+#
+# release=true:
+#   Full pipeline. Phase 5 triggers GitLab scan (automated-release approval required
+#   to reach internal NVIDIA network). Phase 7 pauses for human publish approval.
+#
 # Compliance blocking pattern:
-#   compliance-check and trigger-gitlab-security-scan (phase 5) each output
-#   compliant=true|false and scan_passed=true|false respectively. Neither job
-#   fails itself. create-nightly-tag (phase 6) reads both outputs and exits 1
-#   if either is not "true". All downstream jobs inherit that failure via needs.
-#   pipeline-summary always runs to report the outcome.
+#   compliance-check outputs compliant=true|false. trigger-gitlab-security-scan outputs
+#   scan_passed=true|false. Neither job fails itself. create-nightly-tag (phase 6)
+#   reads both outputs; compliance gate always enforced, security gate only when
+#   release=true. pipeline-summary always runs to report the outcome.
 #
 # Rerun safety:
 #   prepare-nightly writes computed version strings to a workflow artifact
@@ -58,8 +65,12 @@ on:
         description: 'Git ref to build from (branch, tag, or full SHA). Defaults to the default branch.'
         default: ''
         required: false
+      release:
+        description: 'Enable release pipeline: GitLab security scan, staging, and publish to NGC/Artifactory. Requires automated-release approval.'
+        type: boolean
+        default: false
       skip_security_scan:
-        description: 'Skip GitLab security scan. Emergency use only — requires explicit justification.'
+        description: 'Skip GitLab security scan. Emergency use only — requires explicit justification. Only applies when release=true.'
         type: boolean
         default: false
       publish_only:
@@ -530,13 +541,15 @@ jobs:
 
   trigger-gitlab-security-scan:
     name: GitLab Security Scan
-    needs: [prepare-nightly]
+    needs: [prepare-nightly, build-wheel, create-multiarch-manifest-ecr]
     # Self-hosted runner on the NVIDIA internal network — required to reach
     # gitlab-master.nvidia.com which is not publicly accessible.
+    # Runs AFTER builds so GitLab can fetch the actual wheel/container artifacts
+    # from S3/ECR rather than scanning a non-existent version.
     runs-on:
       group: gitlab_ci_runners
     environment: automated-release
-    if: ${{ inputs.skip_security_scan != 'true' }}
+    if: ${{ inputs.release == true && inputs.skip_security_scan != 'true' && inputs.publish_only != 'true' }}
     outputs:
       scan_passed:         ${{ steps.poll.outputs.scan_passed }}
       gitlab_pipeline_id:  ${{ steps.trigger.outputs.pipeline_id }}
@@ -549,18 +562,22 @@ jobs:
           # /proc/<pid>/cmdline on persistent self-hosted runners (H-2 fix).
           GITLAB_TRIGGER_TOKEN:    ${{ secrets.GITLAB_TRIGGER_TOKEN }}
           GITLAB_TRIGGER_URL:      ${{ secrets.GITLAB_PIPELINE_URL }}
-          BASE_VERSION:            ${{ needs.prepare-nightly.outputs.base_version }}
+          NIGHTLY_TAG:             ${{ needs.prepare-nightly.outputs.nightly_tag }}
+          PEP440_VERSION:          ${{ needs.prepare-nightly.outputs.pep440_version }}
           COMMIT_SHA:              ${{ github.sha }}
           GITHUB_RUN_ID:           ${{ github.run_id }}
+          GITHUB_EVENT_NAME:       ${{ github.event_name }}
         run: |
           set -euo pipefail
 
           TRIGGER_URL="${GITLAB_TRIGGER_URL}"
 
-          # GitLab preflight requires RC_TAG in v<M>.<m>.<p>-rc<N> format.
-          # For nightly runs there is no RC number — use rc0 as a placeholder
-          # until the GitLab pipeline adds first-class nightly support.
-          RC_TAG="v${BASE_VERSION}-rc0"
+          # Derive RELEASE_TYPE from the GitHub event that triggered this run.
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            RELEASE_TYPE="nightly"
+          else
+            RELEASE_TYPE="ondemand"
+          fi
 
           # Write token to a temp file so it is not visible in the process list.
           TOKEN_FILE=$(mktemp)
@@ -572,8 +589,10 @@ jobs:
             --form "token=<${TOKEN_FILE}" \
             --form "ref=main" \
             --form "variables[PIPELINE_TYPE]=security" \
+            --form "variables[RELEASE_TYPE]=${RELEASE_TYPE}" \
             --form "variables[PROJECT]=aiperf" \
-            --form "variables[RC_TAG]=${RC_TAG}" \
+            --form "variables[NIGHTLY_TAG]=${NIGHTLY_TAG}" \
+            --form "variables[PEP440_VERSION]=${PEP440_VERSION}" \
             --form "variables[ARTIFACTS]=wheel,container" \
             --form "variables[COMMIT_SHA]=${COMMIT_SHA}" \
             --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
@@ -581,6 +600,7 @@ jobs:
             --form "variables[ENABLE_WHEEL_SCAN]=true" \
             --form "variables[ENABLE_SONARQUBE]=true" \
             --form "variables[SONAR_REPO]=aiperf" \
+            --form "variables[SONAR_BRANCH]=main" \
             "${TRIGGER_URL}")
 
           PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
@@ -650,13 +670,13 @@ jobs:
             ELAPSED=$((ELAPSED + POLL_INTERVAL))
           done
 
-  # Job stub when skip_security_scan=true so create-nightly-tag always has
-  # the scan_passed output available via its needs context.
+  # Job stub so create-nightly-tag always has scan_passed output available.
+  # Runs when: release=false (scan not required) OR release=true with emergency skip.
   security-scan-skipped:
     name: Security Scan (skipped)
     needs: [prepare-nightly]
     runs-on: ubuntu-latest
-    if: ${{ inputs.skip_security_scan == 'true' }}
+    if: ${{ inputs.release != true || inputs.skip_security_scan == 'true' }}
     outputs:
       scan_passed:         ${{ steps.skip.outputs.scan_passed }}
       gitlab_pipeline_id:  ${{ steps.skip.outputs.gitlab_pipeline_id }}
@@ -665,8 +685,12 @@ jobs:
       - name: Record skip
         id: skip
         run: |
-          echo "::warning::GitLab security scan was explicitly skipped via workflow input."
-          echo "This must be justified by the operator triggering this run."
+          if [ "${{ inputs.release }}" = "true" ]; then
+            echo "::warning::GitLab security scan was explicitly skipped for a release build."
+            echo "This must be justified by the operator triggering this run."
+          else
+            echo "Security scan not required for non-release builds (release=false)."
+          fi
           echo "scan_passed=skipped"      >> "$GITHUB_OUTPUT"
           echo "gitlab_pipeline_id="     >> "$GITHUB_OUTPUT"
           echo "gitlab_pipeline_url="    >> "$GITHUB_OUTPUT"
@@ -700,12 +724,16 @@ jobs:
           set -euo pipefail
           FAILED=()
 
-          [ "${COMPLIANT}"   = "true" ] || FAILED+=("compliance-check (result: ${COMPLIANT})")
+          [ "${COMPLIANT}" = "true" ] || FAILED+=("compliance-check (result: ${COMPLIANT})")
 
-          if [ "${SCAN_PASSED}" = "skipped" ]; then
-            echo "::warning::Security scan was skipped. This run will be tagged but the skip is recorded."
-          elif [ "${SCAN_PASSED}" != "true" ]; then
-            FAILED+=("gitlab-security-scan (result: ${SCAN_PASSED})")
+          # Security gate only enforced for release builds. For non-release on-demand
+          # builds (release=false), scan_passed=skipped is expected and not a concern.
+          if [ "${{ inputs.release }}" = "true" ]; then
+            if [ "${SCAN_PASSED}" = "skipped" ]; then
+              echo "::warning::Security scan skipped for a release build (emergency override). This run will be tagged but the skip is recorded."
+            elif [ "${SCAN_PASSED}" != "true" ]; then
+              FAILED+=("gitlab-security-scan (result: ${SCAN_PASSED})")
+            fi
           fi
 
           if [ "${#FAILED[@]}" -gt 0 ]; then
@@ -770,8 +798,9 @@ jobs:
   release-approval-gate:
     name: Release Approval Gate
     needs: [prepare-nightly, create-nightly-tag]
-    runs-on: ubuntu-latest
+    runs-on: prod-aiperf-default-v1
     environment: automated-release
+    if: ${{ inputs.release == true }}
     steps:
       - name: Summarize artifacts pending approval
         env:
@@ -791,6 +820,7 @@ jobs:
             echo "| Property | Value |"
             echo "|----------|-------|"
             echo "| Nightly tag | \`${NIGHTLY_TAG}\` |"
+            echo "| Git ref | \`${{ inputs.ref || github.ref }}\` |"
             echo "| Commit | \`${{ github.sha }}\` |"
             echo "| Run | [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -807,7 +837,7 @@ jobs:
     needs: [prepare-nightly, release-approval-gate, build-wheel]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
-    if: ${{ needs.release-approval-gate.result == 'success' }}
+    if: ${{ inputs.release == true && needs.release-approval-gate.result == 'success' }}
     steps:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -850,7 +880,7 @@ jobs:
     needs: [prepare-nightly, release-approval-gate, create-multiarch-manifest-ecr]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
-    if: ${{ needs.release-approval-gate.result == 'success' }}
+    if: ${{ inputs.release == true && needs.release-approval-gate.result == 'success' }}
     env:
       CRANE_VERSION: v0.20.2
       CRANE_SHA256: "REPLACE_WITH_SHA256_OF_go-containerregistry_Linux_x86_64.tar.gz"
@@ -974,7 +1004,9 @@ jobs:
             echo "| Tag | \`${NIGHTLY_TAG}\` |"
             echo "| Version | \`${PEP440_VERSION}\` |"
             echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Git ref | \`${{ inputs.ref || github.ref }}\` |"
             echo "| Trigger | ${{ github.event_name }} |"
+            echo "| Release mode | ${{ inputs.release }} |"
             echo ""
             echo "### Quality Gates"
             echo "| Gate | Result |"
@@ -984,7 +1016,11 @@ jobs:
             echo "| integration-tests | ${{ needs.integration-tests.result }} |"
             echo "| gpu-e2e-tests | ${{ needs.gpu-e2e-tests.result }} |"
             echo "| compliance-check | ${COMPLIANT:-unknown} — [report](${COMPLIANCE_URL}) |"
-            echo "| security-scan | ${SCAN_PASSED:-unknown}${GITLAB_URL:+ — [GitLab pipeline](${GITLAB_URL})} |"
+            SCAN_DISPLAY="${SCAN_PASSED:-unknown}${GITLAB_URL:+ — [GitLab pipeline](${GITLAB_URL})}"
+            if [ "${{ inputs.release }}" != "true" ] && [ "${SCAN_PASSED}" = "skipped" ]; then
+              SCAN_DISPLAY="N/A (non-release build)"
+            fi
+            echo "| security-scan | ${SCAN_DISPLAY} |"
             echo ""
             echo "### Build + Stage"
             echo "| Job | Result |"
