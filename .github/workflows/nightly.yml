@@ -277,8 +277,7 @@ jobs:
         run: |
           set -euo pipefail
           WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
-          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/wheels/aiperf/nightly/${PEP440_VERSION}/" --sse AES256
-          echo "Wheel uploaded: s3://${S3_BUCKET}/wheels/aiperf/nightly/${PEP440_VERSION}/"
+          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/wheels/aiperf/${PEP440_VERSION}/" --sse AES256
 
   build-container:
     name: Build Container (${{ matrix.arch }})
@@ -428,8 +427,7 @@ jobs:
           fi
 
           git tag -a "${NIGHTLY_TAG}" -m "Nightly build ${NIGHTLY_TAG}"
-          git push origin "${NIGHTLY_TAG}"
-          echo "Tag pushed: ${NIGHTLY_TAG}"
+          echo "Tag created locally (not pushed): ${NIGHTLY_TAG}"
 
   # ============================================================================
   # PHASE 5: STAGE
@@ -524,7 +522,7 @@ jobs:
           trap 'rm -rf "${TMPDIR}"' EXIT
 
           aws s3 cp \
-            "s3://${S3_BUCKET}/wheels/aiperf/nightly/${PEP440_VERSION}/" \
+            "s3://${S3_BUCKET}/wheels/aiperf/${PEP440_VERSION}/" \
             "${TMPDIR}/" --recursive --include "*.whl"
 
           mapfile -t WHEELS < <(find "${TMPDIR}" -name "*.whl" -type f)
