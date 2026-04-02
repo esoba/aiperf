@@ -277,7 +277,7 @@ jobs:
         run: |
           set -euo pipefail
           WHEEL=$(find dist/ -name "aiperf-*.whl" | head -1)
-          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/wheels/aiperf/${PEP440_VERSION}/" --sse AES256
+          aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" --sse AES256
 
   build-container:
     name: Build Container (${{ matrix.arch }})
@@ -367,6 +367,9 @@ jobs:
     runs-on: prod-aiperf-default-v1
     if: ${{ inputs.publish_only != 'true' }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Get ECR login token
         id: ecr
         env:
@@ -522,7 +525,7 @@ jobs:
           trap 'rm -rf "${TMPDIR}"' EXIT
 
           aws s3 cp \
-            "s3://${S3_BUCKET}/wheels/aiperf/${PEP440_VERSION}/" \
+            "s3://${S3_BUCKET}/aiperf/nightly/${PEP440_VERSION}/" \
             "${TMPDIR}/" --recursive --include "*.whl"
 
           mapfile -t WHEELS < <(find "${TMPDIR}" -name "*.whl" -type f)
