@@ -362,3 +362,8 @@ class TestParseStrOrListOfPositiveValues:
     def test_parse_str_as_numeric_dict_error_param(self, error_message, pattern):
         with pytest.raises(ValueError, match=pattern):
             parse_str_as_numeric_dict(error_message)
+
+    def test_parse_str_as_numeric_dict_passthrough_dict(self):
+        # Already-parsed dict (e.g., from model_dump/model_validate round-trip) passes through unchanged
+        parsed = {"time_to_first_token": 50.0}
+        assert parse_str_as_numeric_dict(parsed) == parsed
