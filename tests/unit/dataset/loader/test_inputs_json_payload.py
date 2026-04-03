@@ -5,9 +5,11 @@ from unittest.mock import MagicMock
 
 import orjson
 import pytest
+from pydantic import ValidationError
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.dataset.loader.inputs_json import InputsJsonPayloadLoader
+from aiperf.dataset.loader.models import InputsJsonSession
 
 
 @pytest.fixture
@@ -59,6 +61,17 @@ class TestCanLoad:
 
     def test_rejects_non_dict(self):
         assert InputsJsonPayloadLoader.can_load(data={"messages": []}) is False
+
+    @pytest.mark.parametrize("data", [[1, 2, 3], "not a dict", 42])
+    def test_non_dict_data_returns_false(self, data):
+        """Non-dict data must return False, not raise AttributeError."""
+        assert InputsJsonPayloadLoader.can_load(data=data) is False
+
+    def test_file_containing_json_array_returns_false(self, tmp_path):
+        """File whose root JSON value is an array must return False."""
+        path = tmp_path / "array.json"
+        path.write_bytes(orjson.dumps([1, 2, 3]))
+        assert InputsJsonPayloadLoader.can_load(filename=path) is False
 
     def test_accepts_file(self, inputs_json_file):
         assert InputsJsonPayloadLoader.can_load(filename=inputs_json_file) is True
@@ -121,3 +134,16 @@ class TestContextMode:
             InputsJsonPayloadLoader.get_default_context_mode()
             == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         )
+
+
+class TestInputsJsonSessionValidation:
+    def test_empty_payloads_raises_validation_error(self):
+        """Sessions with zero payloads must be rejected at the schema boundary."""
+        with pytest.raises(ValidationError):
+            InputsJsonSession(session_id="test", payloads=[])
+
+    def test_non_empty_payloads_accepted(self):
+        session = InputsJsonSession(
+            session_id="test", payloads=[{"model": "m", "messages": []}]
+        )
+        assert len(session.payloads) == 1

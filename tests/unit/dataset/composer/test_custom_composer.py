@@ -356,7 +356,6 @@ class TestPreformatPayloads:
         with patch(
             "aiperf.dataset.composer.custom.format_conversation_payloads"
         ) as mock_fmt:
-            mock_fmt.return_value = iter([])
             mock_fmt.return_value = Mock(__iter__=Mock(side_effect=NotImplementedError))
             composer._preformat_payloads(conversations)
 

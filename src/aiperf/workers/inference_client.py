@@ -169,7 +169,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         Returns:
             RequestRecord containing the response data and metadata.
         """
-        if not request_info.turns:
+        if not request_info.turns and not request_info.payload_bytes:
             raise ValueError(
                 f"RequestInfo has no turns (credit_num={request_info.credit_num}, "
                 f"conversation_id={request_info.conversation_id})"

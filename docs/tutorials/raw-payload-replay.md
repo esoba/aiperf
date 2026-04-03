@@ -174,7 +174,7 @@ Response parsing uses auto-detection (works with OpenAI-compatible and other com
 
 ## Context Mode
 
-Raw payload conversations use `message_array_with_responses` [context mode](conversation-context-mode.md) by default. Each turn is sent exactly as written -- AIPerf does not accumulate prior turns or inject server responses into subsequent requests.
+Raw payload conversations use `message_array_with_responses` [context mode](../reference/conversation-context-mode.md) by default. Each turn is sent exactly as written -- AIPerf does not accumulate prior turns or inject server responses into subsequent requests.
 
 This is the correct behavior because raw payloads already contain the complete message history for each turn. In directory mode, each line in a session file should include all prior context needed for that point in the conversation (see the multi-turn examples above).
 

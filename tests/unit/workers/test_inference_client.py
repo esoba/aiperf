@@ -242,6 +242,30 @@ class TestInferenceClient:
         with pytest.raises(ValueError, match="no turns"):
             await inference_client.send_request(request_info)
 
+    @pytest.mark.asyncio
+    async def test_send_request_allows_empty_turns_with_payload_bytes(
+        self, inference_client
+    ):
+        """Empty turns must be accepted when payload_bytes provides the pre-built body."""
+        request_info = RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[],
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-id",
+            x_correlation_id="test-corr",
+            conversation_id="test-conv",
+            payload_bytes=b'{"model":"test","messages":[]}',
+        )
+
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord(request_info=request_info)
+        )
+
+        record = await inference_client.send_request(request_info)
+        assert record is not None
+
     def test_enrich_request_record_uses_last_turn_model(self, inference_client):
         """Test _enrich_request_record uses turns[-1] not turns[turn_index].
 

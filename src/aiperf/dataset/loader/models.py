@@ -347,7 +347,7 @@ class InputsJsonSession(AIPerfBaseModel):
 
     session_id: str = Field(description="Session ID of the conversation.")
     payloads: list[dict[str, Any]] = Field(
-        description="Ordered list of per-turn payloads."
+        min_length=1, description="Ordered list of per-turn payloads."
     )
 
 

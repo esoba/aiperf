@@ -128,6 +128,15 @@ class TestRawEndpointParseResponse:
         assert isinstance(parsed.data, TextResponseData)
         assert parsed.data.text == "auto-detected"
 
+    def test_jmespath_non_string_response_field_logs_error(self):
+        """Non-string response_field must not crash jmespath.compile."""
+        model_endpoint = create_model_endpoint(
+            EndpointType.RAW,
+            extra=[("response_field", 42)],
+        )
+        endpoint = create_endpoint_with_mock_transport(RawEndpoint, model_endpoint)
+        assert endpoint._compiled_jmespath is None
+
 
 def test_metadata():
     metadata = plugins.get_endpoint_metadata(EndpointType.RAW)

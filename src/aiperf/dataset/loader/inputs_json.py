@@ -37,7 +37,7 @@ class InputsJsonPayloadLoader(BaseRawPayloadLoader):
         cls, data: dict[str, Any] | None = None, filename: str | Path | None = None
     ) -> bool:
         """Return True for InputsFile format: top-level ``data`` list with ``payloads`` items."""
-        if data is not None:
+        if isinstance(data, dict):
             data_list = data.get("data")
             if isinstance(data_list, list) and len(data_list) > 0:
                 first = data_list[0]

@@ -279,17 +279,33 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         model_endpoint: ModelEndpointInfo,
     ) -> InputsFile:
         """Generate input payloads from the dataset for use in the inputs.json file."""
-        from aiperf.dataset.payload_formatting import format_conversation_payloads
-
         inputs = InputsFile()
         session_payloads_map: dict[str, list] = {}
 
-        for session_id, _turn_idx, payload in format_conversation_payloads(
-            self.dataset.values(), model_endpoint
-        ):
-            if session_id not in session_payloads_map:
-                session_payloads_map[session_id] = []
-            session_payloads_map[session_id].append(payload)
+        has_raw_payloads = any(
+            turn.raw_payload is not None
+            for conv in self.dataset.values()
+            for turn in conv.turns
+        )
+
+        if has_raw_payloads:
+            for conversation in self.dataset.values():
+                payloads = [
+                    turn.raw_payload
+                    for turn in conversation.turns
+                    if turn.raw_payload is not None
+                ]
+                if payloads:
+                    session_payloads_map[conversation.session_id] = payloads
+        else:
+            from aiperf.dataset.payload_formatting import format_conversation_payloads
+
+            for session_id, _turn_idx, payload in format_conversation_payloads(
+                self.dataset.values(), model_endpoint
+            ):
+                if session_id not in session_payloads_map:
+                    session_payloads_map[session_id] = []
+                session_payloads_map[session_id].append(payload)
 
         for session_id, payloads in session_payloads_map.items():
             inputs.data.append(

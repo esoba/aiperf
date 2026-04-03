@@ -25,7 +25,7 @@ class JMESPathResponseMixin:
             try:
                 self._compiled_jmespath = jmespath.compile(response_field)
                 self.info(f"Compiled JMESPath query: '{response_field}'")
-            except jmespath.exceptions.JMESPathError as e:
+            except (jmespath.exceptions.JMESPathError, TypeError) as e:
                 self.error(
                     f"Failed to compile JMESPath query: '{response_field}' - {e!r}"
                 )
