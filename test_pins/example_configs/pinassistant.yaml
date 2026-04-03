@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# PinAssistant agentic framework — multi-turn benchmark config.
+#
+# This config describes 3 sequential phases. Each phase adds a system prompt
+# and user message on top of all prior context (accumulated messages + synthetic
+# assistant responses).
+#
+# Usage:
+#   python tools/generate_replay_data.py \
+#       --config tools/example_configs/pinassistant.yaml \
+#       --output-dir /tmp/pinassistant_replay \
+#       --num-conversations 100 \
+#       --seed 42
+
+defaults:
+  model: "meta/llama-4-maverick-17b-128e-instruct"
+
+phases:
+  - name: "planning"
+    system_tokens: 5500
+    user_tokens: 3000
+    max_output_tokens: 300
+    images:
+      count: 3
+      width: 512
+      height: 512
+
+  - name: "summarization"
+    system_tokens: 2600
+    user_tokens: 300
+    max_output_tokens: 100
+
+  - name: "product_brand_mapping"
+    system_tokens: 500
+    user_tokens: 1000
+    max_output_tokens: 70
