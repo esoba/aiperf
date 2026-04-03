@@ -57,7 +57,10 @@ class CustomDatasetComposer(BaseDatasetComposer):
         # Finalize conversation-level context prompts
         self._finalize_conversations(conversations)
 
-        if dataset_type == CustomDatasetType.SINGLE_TURN:
+        if dataset_type in (
+            CustomDatasetType.SINGLE_TURN,
+            CustomDatasetType.RANDOM_POOL,
+        ):
             self._preformat_payloads(conversations)
 
         return conversations

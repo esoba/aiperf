@@ -390,12 +390,21 @@ class TestPreformatPayloads:
         assert conversations[0].turns[0].raw_payload == {"turn": 0}
         assert conversations[0].turns[1].raw_payload == {"turn": 1}
 
+    @pytest.mark.parametrize(
+        "dataset_type",
+        [CustomDatasetType.SINGLE_TURN, CustomDatasetType.RANDOM_POOL],
+    )
     @patch("aiperf.dataset.composer.custom.check_file_exists")
     @patch("aiperf.dataset.composer.custom.plugins.get_class")
-    def test_create_dataset_calls_preformat_for_single_turn(
-        self, mock_get_class, mock_check_file, custom_config, mock_tokenizer
+    def test_create_dataset_calls_preformat_for_single_turn_types(
+        self,
+        mock_get_class,
+        mock_check_file,
+        custom_config,
+        mock_tokenizer,
+        dataset_type,
     ):
-        """Test that create_dataset calls _preformat_payloads for SINGLE_TURN datasets."""
+        """Test that create_dataset calls _preformat_payloads for single-turn dataset types."""
         mock_check_file.return_value = None
         mock_loader = Mock()
         mock_loader.load_dataset.return_value = {}
@@ -412,7 +421,7 @@ class TestPreformatPayloads:
         )
         mock_get_class.return_value = mock_loader_class
 
-        custom_config.input.custom_dataset_type = CustomDatasetType.SINGLE_TURN
+        custom_config.input.custom_dataset_type = dataset_type
         composer = CustomDatasetComposer(custom_config, mock_tokenizer)
 
         with patch.object(composer, "_preformat_payloads") as mock_preformat:
@@ -424,7 +433,7 @@ class TestPreformatPayloads:
     def test_create_dataset_skips_preformat_for_multi_turn(
         self, mock_get_class, mock_check_file, custom_config, mock_tokenizer
     ):
-        """Test that create_dataset does NOT call _preformat_payloads for non-SINGLE_TURN datasets."""
+        """Test that create_dataset does NOT call _preformat_payloads for multi-turn datasets."""
         mock_check_file.return_value = None
         mock_loader = Mock()
         mock_loader.load_dataset.return_value = {}
