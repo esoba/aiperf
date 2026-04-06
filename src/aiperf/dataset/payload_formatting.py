@@ -56,4 +56,7 @@ def format_conversation_payloads(
             )
             request_info.endpoint_headers = endpoint.get_endpoint_headers(request_info)
             request_info.endpoint_params = endpoint.get_endpoint_params(request_info)
-            yield conversation.session_id, i, endpoint.format_payload(request_info)
+            if turn.raw_payload is not None:
+                yield conversation.session_id, i, turn.raw_payload
+            else:
+                yield conversation.session_id, i, endpoint.format_payload(request_info)
