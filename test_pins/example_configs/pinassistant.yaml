@@ -17,6 +17,12 @@
 defaults:
   model: "meta/llama-4-maverick-17b-128e-instruct"
 
+# Extra fields merged into every request payload.
+# Useful for vLLM-specific parameters that bypass endpoint formatting.
+extra_inputs:
+  min_tokens: 300
+  ignore_eos: true
+
 phases:
   - name: "planning"
     system_tokens: 5500
