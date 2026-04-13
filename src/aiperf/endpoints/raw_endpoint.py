@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from aiperf.common.models import RequestInfo
-from aiperf.common.types import RequestOutputT
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.endpoints.response_mixin import JMESPathResponseMixin
 
@@ -21,8 +22,19 @@ class RawEndpoint(JMESPathResponseMixin, BaseEndpoint):
         super().__init__(*args, **kwargs)
         self._init_response_parser()
 
-    def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
+    def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
+        """Return the pre-built raw payload from request turns.
+
+        During live requests the inference client bypasses this method via the
+        payload_bytes / raw_payload fast paths.  This implementation exists so
+        that downstream consumers (e.g. raw-export post-processor) can
+        reconstruct the payload from the serialised RequestInfo.
+        """
+        if request_info.turns:
+            turn = request_info.turns[-1]
+            if turn.raw_payload is not None:
+                return turn.raw_payload
         raise NotImplementedError(
-            "RawEndpoint does not format payloads. "
-            "Use raw_payload or inputs_json dataset types."
+            "RawEndpoint does not construct payloads and no raw_payload "
+            "found on request turns. Use raw_payload or inputs_json dataset types."
         )

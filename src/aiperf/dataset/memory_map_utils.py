@@ -177,8 +177,13 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             turn_offsets: list[PayloadOffset] = []
             for turn in conversation.turns:
                 payload_bytes = orjson.dumps(turn.raw_payload)
+                image_count = sum(len(img.contents) for img in turn.images)
                 turn_offsets.append(
-                    PayloadOffset(offset=self._current_offset, size=len(payload_bytes))
+                    PayloadOffset(
+                        offset=self._current_offset,
+                        size=len(payload_bytes),
+                        image_count=image_count,
+                    )
                 )
                 self._current_offset += len(payload_bytes)
                 await self._write_bytes(payload_bytes)
@@ -344,15 +349,19 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         """Open memory-mapped files (read-only)."""
         self._loop = asyncio.get_running_loop()
         self.debug(
-            lambda: f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
+            lambda: (
+                f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
+            )
         )
         self._client = MemoryMapDatasetClient(
             self._data_path,
             self._index_path,
         )
         self.debug(
-            lambda: f"Memory-mapped client store initialized with "
-            f"{len(self._client.index.conversation_ids)} conversations"
+            lambda: (
+                f"Memory-mapped client store initialized with "
+                f"{len(self._client.index.conversation_ids)} conversations"
+            )
         )
 
     async def get_conversation(self, conversation_id: str) -> Conversation:
@@ -393,6 +402,22 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
             None, self._client.get_payload_bytes, conversation_id, turn_index
         )
 
+    async def get_turn_image_count(self, conversation_id: str, turn_index: int) -> int:
+        """Retrieve the number of images for a specific turn from the index.
+
+        Pure index lookup -- no mmap read or deserialization required.
+
+        Args:
+            conversation_id: The session ID of the conversation
+            turn_index: Turn index within the conversation
+
+        Returns:
+            Number of images in the turn, 0 if not available.
+        """
+        if self._client is None:
+            return 0
+        return self._client.get_turn_image_count(conversation_id, turn_index)
+
     @on_stop
     async def _cleanup(self) -> None:
         """Close memory-mapped files."""
@@ -416,6 +441,11 @@ class PayloadOffset(AIPerfBaseModel):
         description="Byte offset where payload data starts (-1 if no payload)"
     )
     size: int = Field(ge=0, description="Size of the payload data in bytes")
+    image_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of images in this turn (for metrics without payload deserialization).",
+    )
 
 
 class MemoryMapDatasetIndex(AIPerfBaseModel):
@@ -525,7 +555,9 @@ class MemoryMapDatasetClient:
         )
 
         _logger.debug(
-            lambda: f"MemoryMapDatasetClient initialized successfully: data_file={self.data_file_path}, index_file={self.index_file_path}, conversations={len(self.index.conversation_ids)}, size={self.index.total_size} bytes, format={self.index.format}"
+            lambda: (
+                f"MemoryMapDatasetClient initialized successfully: data_file={self.data_file_path}, index_file={self.index_file_path}, conversations={len(self.index.conversation_ids)}, size={self.index.total_size} bytes, format={self.index.format}"
+            )
         )
 
     def __enter__(self) -> "MemoryMapDatasetClient":
@@ -619,7 +651,9 @@ class MemoryMapDatasetClient:
             ]
 
             _logger.debug(
-                lambda: f"Loading conversation '{conversation_id}': offset={offset_info.offset}, size={offset_info.size} bytes"
+                lambda: (
+                    f"Loading conversation '{conversation_id}': offset={offset_info.offset}, size={offset_info.size} bytes"
+                )
             )
 
             return self._deserialize_conversation(conv_bytes)
@@ -653,6 +687,23 @@ class MemoryMapDatasetClient:
         return bytes(
             self.data_mmap[offset_info.offset : offset_info.offset + offset_info.size]
         )
+
+    def get_turn_image_count(self, conversation_id: str, turn_index: int) -> int:
+        """Get the number of images for a specific turn from the index.
+
+        O(1) lookup -- no payload deserialization required.
+
+        Args:
+            conversation_id: Conversation ID
+            turn_index: Turn index within the conversation
+
+        Returns:
+            Number of images in the turn, 0 if not available.
+        """
+        turn_offsets = self.index.payload_offsets.get(conversation_id)
+        if turn_offsets is None or turn_index >= len(turn_offsets):
+            return 0
+        return turn_offsets[turn_index].image_count
 
     def close(self) -> None:
         """Close the memory-mapped files and associated resources.

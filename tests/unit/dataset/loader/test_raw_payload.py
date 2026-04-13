@@ -7,7 +7,10 @@ import orjson
 import pytest
 
 from aiperf.common.enums import ConversationContextMode
-from aiperf.dataset.loader.raw_payload import RawPayloadDatasetLoader
+from aiperf.dataset.loader.raw_payload import (
+    RawPayloadDatasetLoader,
+    _count_images_in_payload,
+)
 
 
 @pytest.fixture
@@ -110,6 +113,124 @@ class TestLoadDataset:
                 conv.context_mode
                 == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
             )
+
+
+class TestCountImagesInPayload:
+    def test_no_images_text_only(self):
+        payload = {"messages": [{"role": "user", "content": "Hello"}]}
+        assert _count_images_in_payload(payload) == 0
+
+    def test_single_image(self):
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe this"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,abc"},
+                        },
+                    ],
+                }
+            ]
+        }
+        assert _count_images_in_payload(payload) == 1
+
+    def test_multiple_images_single_message(self):
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": "a"}},
+                        {"type": "text", "text": "compare"},
+                        {"type": "image_url", "image_url": {"url": "b"}},
+                        {"type": "image_url", "image_url": {"url": "c"}},
+                    ],
+                }
+            ]
+        }
+        assert _count_images_in_payload(payload) == 3
+
+    def test_images_across_multiple_messages(self):
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": "a"}},
+                    ],
+                },
+                {"role": "assistant", "content": "I see an image"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": "b"}},
+                    ],
+                },
+            ]
+        }
+        assert _count_images_in_payload(payload) == 2
+
+    def test_no_messages_key(self):
+        assert _count_images_in_payload({}) == 0
+        assert _count_images_in_payload({"model": "test"}) == 0
+
+    def test_string_content_not_counted(self):
+        payload = {
+            "messages": [
+                {"role": "user", "content": "text only"},
+                {"role": "assistant", "content": "also text"},
+            ]
+        }
+        assert _count_images_in_payload(payload) == 0
+
+
+class TestConvertToConversationsWithImages:
+    def _make_loader(self, filename):
+        loader = RawPayloadDatasetLoader.__new__(RawPayloadDatasetLoader)
+        loader.filename = str(filename)
+        loader.session_id_generator = MagicMock()
+        loader.session_id_generator.next.side_effect = [f"s{i}" for i in range(100)]
+        loader.info = MagicMock()
+        loader.debug = MagicMock()
+        return loader
+
+    def test_turns_have_image_placeholders(self, tmp_path):
+        payload_with_images = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What is this?"},
+                        {"type": "image_url", "image_url": {"url": "data:abc"}},
+                        {"type": "image_url", "image_url": {"url": "data:def"}},
+                    ],
+                }
+            ]
+        }
+        path = tmp_path / "img.jsonl"
+        path.write_bytes(orjson.dumps(payload_with_images) + b"\n")
+
+        loader = self._make_loader(path)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert len(turn.images) == 2
+        assert turn.raw_payload is not None
+
+    def test_turns_without_images_have_empty_list(self, tmp_path):
+        payload = {"messages": [{"role": "user", "content": "Hello"}]}
+        path = tmp_path / "text.jsonl"
+        path.write_bytes(orjson.dumps(payload) + b"\n")
+
+        loader = self._make_loader(path)
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        turn = conversations[0].turns[0]
+        assert len(turn.images) == 0
 
 
 class TestContextMode:

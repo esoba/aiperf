@@ -20,6 +20,7 @@ import orjson
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Turn
+from aiperf.common.models.dataset_models import Image
 from aiperf.dataset.loader.base_loader import BaseRawPayloadLoader
 from aiperf.dataset.loader.models import RawPayload
 
@@ -127,7 +128,14 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
         """
         conversations: list[Conversation] = []
         for session_id, payloads in data.items():
-            turns = [Turn(role="user", raw_payload=rp.payload) for rp in payloads]
+            turns = []
+            for rp in payloads:
+                image_count = _count_images_in_payload(rp.payload)
+                images = [
+                    Image(name="image", contents=["placeholder"])
+                    for _ in range(image_count)
+                ]
+                turns.append(Turn(role="user", raw_payload=rp.payload, images=images))
             conversations.append(
                 Conversation(
                     session_id=session_id,
@@ -136,6 +144,23 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
                 )
             )
         return conversations
+
+
+def _count_images_in_payload(payload: dict[str, Any]) -> int:
+    """Count ``image_url`` content blocks in an OpenAI chat-completions payload.
+
+    Iterates ``messages[*].content`` arrays looking for content parts with
+    ``"type": "image_url"``.  Only list-typed ``content`` fields are inspected
+    (string content is text-only by definition).
+    """
+    count = 0
+    for msg in payload.get("messages", []):
+        content = msg.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    count += 1
+    return count
 
 
 def _dir_has_raw_payload_jsonl(directory: Path) -> bool:

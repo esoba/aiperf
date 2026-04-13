@@ -7,6 +7,8 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
+import orjson
+
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.config import ServiceConfig, UserConfig
 from aiperf.common.constants import BYTES_PER_MIB
@@ -36,6 +38,7 @@ from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
+    Image,
     MemoryMapClientMetadata,
     ModelEndpointInfo,
     ProcessHealth,
@@ -432,15 +435,30 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         try:
             # Payload bytes fast path: bypass session/conversation deserialization.
             if self._is_payload_bytes and self._dataset_client is not None:
+                conversation_id = credit_context.credit.conversation_id
+                turn_index = credit_context.credit.turn_index
                 payload_bytes = await self._dataset_client.get_payload_bytes(
-                    credit_context.credit.conversation_id,
-                    credit_context.credit.turn_index,
+                    conversation_id, turn_index
                 )
                 if payload_bytes is not None:
+                    image_count = await self._dataset_client.get_turn_image_count(
+                        conversation_id, turn_index
+                    )
+                    # Decode payload to dict so it survives ZMQ serialization
+                    # on request_info.turns for raw export post-processing.
+                    raw_payload = orjson.loads(payload_bytes)
+                    turn_kwargs: dict = {"role": "user", "raw_payload": raw_payload}
+                    if image_count > 0:
+                        turn_kwargs["images"] = [
+                            Image(name="image", contents=["placeholder"])
+                            for _ in range(image_count)
+                        ]
+                    turns: list[Turn] = [Turn(**turn_kwargs)]
                     request_info = self._create_request_info(
                         x_request_id=x_request_id,
                         credit_context=credit_context,
                         payload_bytes=payload_bytes,
+                        turns=turns,
                     )
                     await self._execute_request(
                         credit_context, request_info, first_token_callback
@@ -574,6 +592,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         system_message: str | None = None,
         user_context_message: str | None = None,
         payload_bytes: bytes | None = None,
+        turns: list[Turn] | None = None,
     ) -> RequestInfo:
         """Create RequestInfo for inference request.
 
@@ -588,11 +607,15 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             system_message: Optional shared system message to prepend to first turn
             user_context_message: Optional per-conversation user context message
             payload_bytes: Pre-encoded payload bytes from mmap (raw payload path)
+            turns: Explicit turns list (raw payload fast path with image metadata).
+                   Takes precedence over session-derived turns when provided.
 
         Returns:
             RequestInfo with all data needed to send inference request
         """
         credit = credit_context.credit
+        if turns is None:
+            turns = session.turn_list if session else []
         return RequestInfo(
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,
@@ -606,7 +629,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if session
             else credit.conversation_id,
             turn_index=session.turn_index if session else credit.turn_index,
-            turns=session.turn_list if session else [],
+            turns=turns,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
             system_message=system_message,

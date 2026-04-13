@@ -3,6 +3,7 @@
 
 import pytest
 
+from aiperf.common.models import Turn
 from aiperf.common.models.record_models import (
     EmbeddingResponseData,
     RankingsResponseData,
@@ -31,11 +32,19 @@ def raw_endpoint(raw_model_endpoint):
 
 
 class TestRawEndpointFormatPayload:
-    def test_format_payload_raises(self, raw_endpoint, raw_model_endpoint):
-        with pytest.raises(NotImplementedError, match="does not format payloads"):
+    def test_format_payload_raises_without_raw_payload(self, raw_endpoint, raw_model_endpoint):
+        with pytest.raises(NotImplementedError, match="does not construct payloads"):
             raw_endpoint.format_payload(
                 create_request_info(model_endpoint=raw_model_endpoint)
             )
+
+    def test_format_payload_returns_raw_payload_from_turn(self, raw_endpoint, raw_model_endpoint):
+        payload = {"model": "test", "messages": [{"role": "user", "content": "hi"}]}
+        request_info = create_request_info(
+            model_endpoint=raw_model_endpoint,
+            turns=[Turn(role="user", raw_payload=payload)],
+        )
+        assert raw_endpoint.format_payload(request_info) == payload
 
 
 class TestRawEndpointParseResponse:

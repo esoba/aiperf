@@ -5,7 +5,7 @@ import orjson
 import pytest
 
 from aiperf.common.enums import MemoryMapFormat
-from aiperf.common.models import Conversation, Turn
+from aiperf.common.models import Conversation, Image, Turn
 from aiperf.dataset.memory_map_utils import (
     MemoryMapDatasetBackingStore,
     MemoryMapDatasetClient,
@@ -13,12 +13,19 @@ from aiperf.dataset.memory_map_utils import (
 )
 
 
-def _make_raw_conversation(session_id: str, payloads: list[dict]) -> Conversation:
+def _make_raw_conversation(
+    session_id: str,
+    payloads: list[dict],
+    image_counts: list[int] | None = None,
+) -> Conversation:
     """Create a conversation where every turn has a raw_payload."""
-    return Conversation(
-        session_id=session_id,
-        turns=[Turn(role="user", raw_payload=p) for p in payloads],
-    )
+    if image_counts is None:
+        image_counts = [0] * len(payloads)
+    turns = []
+    for p, ic in zip(payloads, image_counts, strict=True):
+        images = [Image(name="image", contents=["placeholder"]) for _ in range(ic)]
+        turns.append(Turn(role="user", raw_payload=p, images=images))
+    return Conversation(session_id=session_id, turns=turns)
 
 
 @pytest.mark.asyncio
@@ -156,4 +163,71 @@ async def test_payload_bytes_format_multi_conversation(tmp_path, monkeypatch):
     assert orjson.loads(client.get_payload_bytes("conv-2", 0)) == p3
 
     client.close()
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_image_count_round_trip(tmp_path, monkeypatch):
+    """Test that image_count is stored in the index and retrievable."""
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_images", format=MemoryMapFormat.PAYLOAD_BYTES
+    )
+    await store.initialize()
+
+    p1 = {"messages": [{"role": "user", "content": "Hello"}]}
+    p2 = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "a"}},
+                    {"type": "image_url", "image_url": {"url": "b"}},
+                ],
+            }
+        ]
+    }
+    conv = _make_raw_conversation("conv-1", [p1, p2], image_counts=[0, 2])
+    await store.add_conversation("conv-1", conv)
+    await store.finalize()
+
+    metadata = store.get_client_metadata()
+    client = MemoryMapDatasetClient(
+        metadata.data_file_path,
+        metadata.index_file_path,
+    )
+
+    assert client.get_turn_image_count("conv-1", 0) == 0
+    assert client.get_turn_image_count("conv-1", 1) == 2
+    assert client.get_turn_image_count("conv-1", 99) == 0
+    assert client.get_turn_image_count("conv-999", 0) == 0
+
+    client.close()
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_client_store_get_turn_image_count(tmp_path, monkeypatch):
+    """Test MemoryMapDatasetClientStore.get_turn_image_count async wrapper."""
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_img_async", format=MemoryMapFormat.PAYLOAD_BYTES
+    )
+    await store.initialize()
+
+    p = {"messages": [{"role": "user", "content": "img"}]}
+    conv = _make_raw_conversation("conv-1", [p], image_counts=[3])
+    await store.add_conversation("conv-1", conv)
+    await store.finalize()
+
+    metadata = store.get_client_metadata()
+    client_store = MemoryMapDatasetClientStore(client_metadata=metadata)
+    await client_store.initialize()
+
+    assert await client_store.get_turn_image_count("conv-1", 0) == 3
+    assert await client_store.get_turn_image_count("conv-1", 99) == 0
+
+    await client_store.stop()
     await store.stop()

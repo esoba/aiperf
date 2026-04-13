@@ -230,3 +230,18 @@ class DatasetClientStoreProtocol(AIPerfLifecycleProtocol, Protocol):
             Pre-encoded JSON bytes or None if not available
         """
         ...
+
+    async def get_turn_image_count(self, conversation_id: str, turn_index: int) -> int:
+        """Retrieve the number of images for a specific turn.
+
+        Used by the payload-bytes fast path to populate image metrics
+        without deserializing the full payload.
+
+        Args:
+            conversation_id: The session ID of the conversation
+            turn_index: Turn index within the conversation
+
+        Returns:
+            Number of images in the turn, 0 if not available.
+        """
+        ...
