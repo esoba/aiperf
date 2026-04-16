@@ -114,6 +114,7 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
 
         if request_info.x_request_id:
             headers["X-Request-ID"] = request_info.x_request_id
+            headers["request-id"] = request_info.x_request_id
         if request_info.x_correlation_id:
             headers["X-Correlation-ID"] = request_info.x_correlation_id
 

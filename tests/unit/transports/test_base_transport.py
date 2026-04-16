@@ -113,7 +113,11 @@ class TestBaseTransport:
             (
                 "req-123456",
                 None,
-                {"User-Agent": AIPERF_USER_AGENT, "X-Request-ID": "req-123456"},
+                {
+                    "User-Agent": AIPERF_USER_AGENT,
+                    "X-Request-ID": "req-123456",
+                    "request-id": "req-123456",
+                },
             ),
             (
                 None,
@@ -126,6 +130,7 @@ class TestBaseTransport:
                 {
                     "User-Agent": AIPERF_USER_AGENT,
                     "X-Request-ID": "req-123",
+                    "request-id": "req-123",
                     "X-Correlation-ID": "corr-456",
                 },
             ),
